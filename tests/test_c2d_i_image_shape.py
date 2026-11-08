@@ -14,7 +14,7 @@ from starlette.responses import Response
 
 from gateway.request_spool import FileRequestSpool
 from tests.test_frontend_shapes import (  # noqa: F401 - the autouse fixture
-    CALLER, ROWS, no_deployment_default, FakeJobService, FakeSnapshot, FakeRunCore, entry, finish, json_request, multipart_request, run_request,
+    CALLER, ROWS, FakeSpool, no_deployment_default, FakeJobService, FakeSnapshot, FakeRunCore, entry, finish, json_request, multipart_request, run_request,
     shape_of, snapshot, submit)
 
 MIB = 1024 * 1024
