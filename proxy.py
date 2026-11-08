@@ -15964,6 +15964,7 @@ _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
     metadata_reader=_read_asset_metadata,
     asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
     metadata_path_resolver=_asset_metadata_path,
+    metadata_writer=_write_asset_metadata,
     prompt_memory_path=lambda: media_jobs.DB_PATH,
 )
 
@@ -26257,6 +26258,7 @@ def _delete_owned_asset(asset_id: str, auth_context: AuthContext) -> Response:
         actor_id=app_id or getattr(identity, "credential_id", None) or getattr(identity, "key_hash", None),
         actor_label=getattr(identity, "name", None), job_id=None,
         asset_deleter=_LIBRARY_ASSET_DELETER, admin_db_path=ADMIN_STORE.path, prompt_memory_path=media_jobs.DB_PATH,
+        owner_keys=_asset_read_owner_keys(auth_context),
     )
     return JSONResponse({"id": asset_id, "object": "gateway.asset", "deleted": True, "physical_removed": removed})
 

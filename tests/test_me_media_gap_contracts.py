@@ -147,7 +147,7 @@ class MeMediaGapContractTests(unittest.TestCase):
             ids.append(data["asset_id"])
         return ids
 
-    def _delete_unshared(self, asset_id: str) -> bool:
+    def _delete_unshared(self, asset_id: str, **_release) -> bool:
         owners = set(self._asset_metadata(asset_id).get("owner_key_hashes") or [])
         if len(owners) > 1:
             return False
@@ -198,6 +198,7 @@ class MeMediaGapContractTests(unittest.TestCase):
                     metadata_reader=self._asset_metadata,
                     asset_path_resolver=self._asset_path,
                     metadata_path_resolver=self._meta_path,
+                    metadata_writer=lambda asset_id, data: self._meta_path(asset_id).write_text(json.dumps(data)),
                     prompt_memory_path=lambda: self.prompt_db,
                 )
                 self.assertEqual(delete(asset_id), expected_removed)

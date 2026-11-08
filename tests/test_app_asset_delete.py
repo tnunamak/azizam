@@ -119,3 +119,47 @@ def test_asset_with_no_recorded_owner_is_not_deleted(tmp_path, monkeypatch):
     asset_id = proxy.store_asset_bytes(_png(), kind="img", suffix=".png", owner_key_hash=None)
     assert world.delete(asset_id, world.maker_auth).status_code == 404
     assert proxy.asset_cache_path(asset_id).exists()
+
+
+def _share(world, asset_id):
+    """Add the other App's key and person as a second owner and maker of the asset."""
+    proxy._record_asset_owner(asset_id, proxy._asset_owner_key(world.other_auth))
+    metadata = proxy._read_asset_metadata(asset_id)
+    metadata["maker_person_ids"] = sorted({*metadata.get("maker_person_ids", []), world.other["id"]})
+    proxy._write_asset_metadata(asset_id, metadata)
+    prompt_memory.put(asset_id, world.other["id"], "other prompt", kept_until=None, admin_path=world.admin)
+
+
+def test_shared_asset_delete_releases_only_the_callers_ownership(tmp_path, monkeypatch):
+    world = _World(tmp_path, monkeypatch)
+    asset_id = world.make_asset()
+    _share(world, asset_id)
+    path = proxy.asset_cache_path(asset_id)
+    maker_key, other_key = proxy._asset_owner_key(world.maker_auth), proxy._asset_owner_key(world.other_auth)
+
+    response = world.delete(asset_id, world.maker_auth)
+    assert response.status_code == 200
+    assert response.json()["physical_removed"] is False
+    assert path.exists()
+    metadata = proxy._read_asset_metadata(asset_id)
+    assert maker_key not in metadata["owner_key_hashes"] and other_key in metadata["owner_key_hashes"]
+    assert metadata["maker_person_ids"] == [world.other["id"]]
+    assert prompt_memory.get(asset_id, world.maker["id"]) is None
+    assert prompt_memory.get(asset_id, world.other["id"]) is not None
+    assert proxy._asset_access_allowed(asset_id, world.other_auth)
+    assert not proxy._asset_access_allowed(asset_id, world.maker_auth)
+
+    again = world.delete(asset_id, world.maker_auth)
+    assert again.status_code == 404 and again.json()["error"]["code"] == "asset_not_found"
+    assert len(world.audit()) == 1
+
+
+def test_last_owner_delete_removes_the_file_after_a_shared_delete(tmp_path, monkeypatch):
+    world = _World(tmp_path, monkeypatch)
+    asset_id = world.make_asset()
+    _share(world, asset_id)
+    assert world.delete(asset_id, world.maker_auth).json()["physical_removed"] is False
+    last = world.delete(asset_id, world.other_auth)
+    assert last.status_code == 200 and last.json()["physical_removed"] is True
+    assert not proxy.asset_cache_path(asset_id).exists()
+    assert proxy._read_asset_metadata(asset_id) == {}

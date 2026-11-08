@@ -40,7 +40,7 @@ MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
 SignedUrlBuilder = Callable[[Request, str, str], str]
 AssetPathResolver = Callable[[str], Path | None]
 AssetMediaTypeResolver = Callable[[str, Path | None], str]
-AssetDeleter = Callable[[str], bool]
+AssetDeleter = Callable[..., bool]
 AssetCatalogProvider = Callable[[], Iterable[str]]
 AssetMetadataReader = Callable[[str], Mapping[str, Any]]
 PathProvider = Path | Callable[[], Path]
@@ -99,13 +99,16 @@ def remove_asset(
     asset_deleter: AssetDeleter,
     admin_db_path: Path,
     prompt_memory_path: Path,
+    owner_keys: Iterable[str] = (),
 ) -> bool:
     """Delete one asset the caller already proved they own: the file, that person's kept prompt, one audit row.
 
     The browser Delete and the App-key ``DELETE /v1/assets/{id}`` both end here, so the two cannot drift.
-    Returns whether the file was physically removed (a file with several owners is kept).
+    Returns whether the file was physically removed. A file with several owners is kept, and the
+    caller's own ownership (``owner_keys``, ``person_id``) leaves its metadata, so the caller no longer reads it.
     """
-    physical_removed = asset_deleter(asset_id)
+    physical_removed = asset_deleter(
+        asset_id, release_owner_keys=tuple(owner_keys), release_person_id=person_id)
     if person_id:
         prompt_memory.delete_asset_for_person(asset_id, person_id, path=prompt_memory_path)
     admin_store.record_audit(
@@ -331,6 +334,7 @@ def create_me_media_router(
                 asset_id, person_id=actor.user_id, actor_kind="user", actor_id=actor.user_id,
                 actor_label=str(actor.user.get("email") or actor.user_id), job_id=item.get("job_id"),
                 asset_deleter=asset_deleter, admin_db_path=admin_path, prompt_memory_path=prompt_path,
+                owner_keys=scope.owner_keys or (),
             )
             return _json({
                 "asset_id": asset_id,
@@ -776,9 +780,11 @@ def conservative_asset_deleter(
     metadata_reader: AssetMetadataReader,
     asset_path_resolver: AssetPathResolver,
     metadata_path_resolver: Callable[[str], Path | None],
+    metadata_writer: Callable[[str, Mapping[str, Any]], None],
     prompt_memory_path: PathProvider | None = None,
 ) -> AssetDeleter:
-    def delete(asset_id: str) -> bool:
+    """Remove an asset file nobody else owns; for a shared one keep the file and release the caller's claim."""
+    def delete(asset_id: str, *, release_owner_keys: Iterable[str] = (), release_person_id: str | None = None) -> bool:
         from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
         removed = False
         # Asset storage records owners and makers under this lock. Check them
@@ -791,6 +797,18 @@ def conservative_asset_deleter(
                 if isinstance(owner, str)
             }
             if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
+                released = dict(metadata)
+                # Never release the last owner key: another maker may still read through it.
+                remaining = owners - set(release_owner_keys)
+                if remaining and remaining != owners:
+                    released["owner_key_hashes"] = sorted(remaining)
+                makers = [m for m in metadata.get("maker_person_ids") or [] if isinstance(m, str)]
+                # A lone maker stays: dropping them would let every remaining owner key read a private creation.
+                if len(makers) > 1 and release_person_id in makers:
+                    released["maker_person_ids"] = [m for m in makers if m != release_person_id]
+                if released != dict(metadata):
+                    released["updated_at"] = int(time.time())
+                    metadata_writer(asset_id, released)
                 return False
             source = asset_path_resolver(asset_id)
             thumbnails.remove_thumbnail(source)

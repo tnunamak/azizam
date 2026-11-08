@@ -58,7 +58,7 @@ class Library:
             signed_url_builder=lambda request, asset_id, mode: f"http://t/{mode}/{asset_id}",
             asset_path_resolver=self.path_of,
             asset_media_type_resolver=lambda asset_id, path: "image/png",
-            asset_deleter=lambda asset_id: False,
+            asset_deleter=lambda asset_id, **_: False,
             asset_catalog_provider=lambda: [],
             asset_metadata_reader=lambda asset_id: {},
             admin_db_path=self.admin, media_jobs_path=self.jobs,
