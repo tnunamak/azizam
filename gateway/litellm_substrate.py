@@ -249,15 +249,38 @@ def litellm_public_model_records(
     return out
 
 
+def _record_lifecycle(record: Mapping[str, Any]) -> bool:
+    return bool(record.get("gateway_lifecycle") or record.get("local_lifecycle") or record.get("lifecycle_backed"))
+
+
+def _record_backend(record: Mapping[str, Any]) -> str:
+    return str(record.get("gateway_backend") or record.get("backend") or record.get("service_id") or "")
+
+
+def serving_service_id(service_id: str, config: Mapping[str, Any], record: Mapping[str, Any]) -> str:
+    """The service that answers a model record declared by ``service_id``.
+
+    A record on gateway lifecycle routing (its own flag or the service config's) is sent to its lifecycle
+    backend, the same backend `_model_list_entries` puts in its route; any other record is answered by the
+    service that declares it. The record keys are the raw ones `_deployment_records` reads.
+    """
+
+    if record.get("enabled") is False or not (_record_lifecycle(record) or config.get("gateway_lifecycle")):
+        return service_id
+    return _record_backend(record) or service_id
+
+
 def litellm_public_model_service_ids(
     registry: Mapping[str, Any], *, include_disabled: bool = False,
 ) -> dict[str, list[str]]:
     """Return ``{public model name: [service id, ...]}`` for every LiteLLM-routable model.
 
     Unlike ``litellm_public_model_records`` this keeps every service that serves a name,
-    in priority order, so a caller can judge a name by all the services behind it.
+    in priority order, so a caller can judge a name by all the services behind it. A lifecycle-routed
+    record names its lifecycle backend (`serving_service_id`), not the service that declares it.
     With ``include_disabled`` it also names the services that are turned off, for a caller that
-    reports on them. Routing never passes it.
+    reports on them; a turned-off service names itself, since nothing is routed through it.
+    Routing never passes it.
     """
 
     services = registry.get("services") if isinstance(registry, Mapping) else {}
@@ -266,10 +289,14 @@ def litellm_public_model_service_ids(
     for service in sorted(service_records, key=lambda row: (row["priority"], row["id"])):
         if (not include_disabled and not service.get("enabled", True)) or not _is_openai_compatible(service):
             continue
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
         for deployment in _deployment_records(service):
+            service_id = str(service["id"])
+            if service.get("enabled", True):
+                service_id = serving_service_id(service_id, config, deployment["record"])
             ids = out.setdefault(str(deployment["model_group"]), [])
-            if str(service["id"]) not in ids:
-                ids.append(str(service["id"]))
+            if service_id not in ids:
+                ids.append(service_id)
     return out
 
 
@@ -460,17 +487,8 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "model_group": model_group,
                 "upstream_model": upstream_model,
                 "litellm_provider": str(item.get("litellm_provider") or litellm_provider),
-                "gateway_lifecycle": bool(
-                    item.get("gateway_lifecycle")
-                    or item.get("local_lifecycle")
-                    or item.get("lifecycle_backed")
-                ),
-                "gateway_backend": str(
-                    item.get("gateway_backend")
-                    or item.get("backend")
-                    or item.get("service_id")
-                    or service["id"]
-                ),
+                "gateway_lifecycle": _record_lifecycle(item),
+                "gateway_backend": _record_backend(item) or str(service["id"]),
                 "record": item,
             }
         )

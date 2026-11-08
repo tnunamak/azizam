@@ -16,8 +16,10 @@ What it does, in the order the route checks them:
 - reads ``duration`` against the **effective** manifest (``effective_manifest``): the manifest's bounds, narrowed by the
   workflow's configured limits (the proxy's ``audio.workflows.<name>``). The compiler reads the same effective manifest,
   so a direct compile and this route refuse the same duration by the same name;
-- **the unset-seed rule**: when the manifest declares ``seed`` and the request names none, a random seed inside the
-  declared bounds is drawn here, once per request, before the job is saved. A resumed job therefore keeps the seed it was given;
+- **generated inputs**: an input the manifest declares with a ``generate`` rule takes the request's value of the same
+  name; when the request names none, ``resolve_generated`` fills it (``gateway/generated_defaults.py``). A job draws it
+  once when it is accepted and keeps it in its envelope, so a resumed job passes the stored block as ``stored`` and
+  reads it. The synchronous route has no envelope and draws on each request;
 - merges the ``extensions.com.azizam.workflow`` block under the extension rules (``audio_extensions``), refusing the names
   the standard fields own.
 
@@ -27,10 +29,10 @@ Errors are ``InvalidAudioRequest`` with the request field that is wrong (``param
 from __future__ import annotations
 
 import math
-import random
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from gateway import generated_defaults
 from gateway.audio_extensions import detect_unknown_audio_fields, validate_audio_workflow_extensions
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.extensions import ExtensionError
@@ -82,10 +84,25 @@ def effective_manifest(manifest: Mapping[str, Any], limits: AudioLimits) -> dict
     return apply_deployment_inputs(dict(manifest), {"duration": narrowing} if narrowing else {})
 
 
-def manifest_inputs(body: Mapping[str, Any], *, manifest: Mapping[str, Any]) -> dict[str, Any]:
+def generated_block(body: Mapping[str, Any], *, manifest: Mapping[str, Any],
+                    stored: Mapping[str, Mapping[str, Any]] | None = None,
+                    source: generated_defaults.Source | None = None) -> dict[str, dict[str, Any]]:
+    """The envelope ``generated`` block for one request: the generated inputs the request left empty, each filled once.
+
+    ``manifest`` must be the ``effective_manifest`` of the workflow. ``stored`` is a block a job already kept; its values
+    are read back, not drawn again."""
+    declared = manifest["inputs"]
+    given = {name: body[name] for name in generated_defaults.generated_inputs(declared) if name in body}
+    return generated_defaults.resolve_generated(declared, given, stored=stored, source=source)
+
+
+def manifest_inputs(body: Mapping[str, Any], *, manifest: Mapping[str, Any],
+                    stored: Mapping[str, Mapping[str, Any]] | None = None,
+                    source: generated_defaults.Source | None = None) -> dict[str, Any]:
     """The typed inputs the effective manifest declares, read from one public audio request. ``body`` is not modified.
 
-    ``manifest`` must be the ``effective_manifest`` of the workflow."""
+    ``manifest`` must be the ``effective_manifest`` of the workflow. ``stored`` and ``source`` are for generated inputs
+    (``generated_block``)."""
     declared = manifest["inputs"]
     text, prompt = _read_request(body)
     duration = _duration(body, declared) if "duration" in declared else None
@@ -94,8 +111,10 @@ def manifest_inputs(body: Mapping[str, Any], *, manifest: Mapping[str, Any]) -> 
     _place_text(inputs, declared, prompt=prompt, tags=text["tags"], lyrics=text["lyrics"])
     if duration is not None:
         inputs["duration"] = duration
-    if "seed" in declared:
-        inputs["seed"] = body["seed"] if "seed" in body else _draw_seed(declared["seed"])
+    for name, spec in generated_defaults.generated_inputs(declared).items():
+        if name in body and generated_defaults.caller_may_set(spec):
+            inputs[name] = body[name]
+    inputs.update(generated_defaults.values(generated_block(body, manifest=manifest, stored=stored, source=source)))
     try:
         validation = validate_audio_workflow_extensions(body, manifest)
     except (ExtensionError, ManifestError) as error:
@@ -154,18 +173,6 @@ def _place_text(inputs: dict[str, Any], declared: Mapping[str, Any], *, prompt: 
         inputs["tags"] = prompt
     if lyrics is not None and "lyrics" in declared:
         inputs["lyrics"] = lyrics
-
-
-def _draw_seed(spec: Mapping[str, Any]) -> int:
-    """A random seed inside both the public range and the manifest's declared bounds.
-
-    The bounds may be fractional, so the integers inside them run from the ceiling of the minimum to the floor of the
-    maximum. When no integer is inside both ranges the manifest is at fault, not the request: ``ManifestError``."""
-    low = max(0, math.ceil(spec.get("minimum", 0)))
-    high = min(SEED_LIMIT, math.floor(spec.get("maximum", SEED_LIMIT)))
-    if low > high:
-        raise ManifestError("seed bounds leave no integer inside the public seed range")
-    return random.randint(low, high)
 
 
 def _check_type(body: Mapping[str, Any]) -> None:

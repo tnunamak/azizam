@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 import sqlite3
 import threading
 from pathlib import Path
 
 import pytest
 
-from gateway import media_jobs
+from gateway import definition_store, media_jobs
 from gateway.definition_store import (
     DefinitionStore,
     DefinitionUnavailable,
@@ -460,9 +462,9 @@ def test_clear_generated_rewrites_the_envelope(store: DefinitionStore):
     contract, binding, template = three_blobs(store)
     record(store, "job-1", make_envelope(contract, binding, template, n={"generator": "gen-kept", "value": 99}))
     store.clear_generated("job-1")
-    cleared = store.envelope("job-1")  # no map needed: nothing generated remains
+    cleared = store.envelope("job-1", GENERATORS)
     assert cleared is not None
-    assert cleared.generated == {}
+    assert cleared.generated == {"n": {"generator": "gen-kept", "erased": True}}, "the value goes; the entry says so"
     assert (cleared.contract, cleared.binding, cleared.template) == (contract, binding, template)
     store.clear_generated("job-1")  # idempotent
     store.clear_generated("no-such-job")
@@ -625,3 +627,40 @@ def test_a_write_outside_a_transaction_is_refused(store: DefinitionStore, tmp_pa
         with pytest.raises(RuntimeError, match="BEGIN IMMEDIATE"):
             WRITES[name](conn)
     assert [rows(path, t) for t in ("definition_blob", "definition_ref", "job_envelope")] == before
+
+
+def test_clear_generated_in_has_one_definition():
+    # A second definition of the same name silently replaces the first, so a changed contract would be dead code.
+    tree = ast.parse(Path(definition_store.__file__).read_text(encoding="utf-8"))
+    assert [node.name for node in tree.body if isinstance(node, ast.FunctionDef)].count("clear_generated_in") == 1
+
+
+def test_clear_generated_in_erases_every_value_keeps_the_generator_and_returns_nothing(store: DefinitionStore, tmp_path: Path):
+    contract, binding, _ = three_blobs(store)
+    record(store, "job-1", make_envelope(contract, binding, n={"generator": "gen-kept", "value": 5}, m={"generator": "gen-kept", "value": 6}))
+    with media_jobs.connection(tmp_path / "media_jobs.db") as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        assert clear_generated_in(conn, "job-1") is None
+        assert clear_generated_in(conn, "job-1") is None  # idempotent: an erased entry stays erased
+        assert clear_generated_in(conn, "no-such-job") is None
+        conn.commit()
+    stored = json.loads(rows(tmp_path / "media_jobs.db", "job_envelope")[0][1])["generated"]
+    assert stored == {"n": {"generator": "gen-kept", "erased": True}, "m": {"generator": "gen-kept", "erased": True}}
+    assert store.envelope("job-1", GENERATORS).generated == {
+        "n": {"generator": "gen-kept", "erased": True}, "m": {"generator": "gen-kept", "erased": True}}
+
+
+@pytest.mark.parametrize("entry", [
+    {"generator": "gen-kept", "erased": False},
+    {"generator": "gen-kept", "erased": True, "value": 3},
+    {"generator": "gen-kept", "erased": "yes"},
+], ids=["false", "with-value", "not-a-bool"])
+def test_an_erased_entry_must_say_true_and_hold_no_value(store: DefinitionStore, tmp_path: Path, entry):
+    contract, binding, _ = three_blobs(store)
+    record(store, "job-1", make_envelope(contract, binding, n={"generator": "gen-kept", "value": 5}))
+    body = json.loads(rows(tmp_path / "media_jobs.db", "job_envelope")[0][1])
+    body["generated"]["n"] = entry
+    with sqlite3.connect(tmp_path / "media_jobs.db") as conn:
+        conn.execute("UPDATE job_envelope SET envelope_json = ?", (json.dumps(body),))
+    with pytest.raises(DefinitionUnavailable):
+        store.envelope("job-1", GENERATORS)

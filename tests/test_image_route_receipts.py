@@ -422,7 +422,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         raw = _png_bytes((7, 8, 9, 255))
         asset_id = proxy.store_image_bytes(raw)
 
-        content, filename = await proxy._resolve_input_reference({"asset_id": asset_id})
+        content, filename = await proxy._resolve_input_reference({"asset_id": asset_id}, accepts=("image/*",))
 
         self.assertEqual(content, raw)
         self.assertTrue(filename.startswith(asset_id))
@@ -435,6 +435,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         content, _ = await proxy._resolve_input_reference(
             {"asset_id": asset_id},
             proxy.AuthContext(identity=_identity("alice")),
+            accepts=("image/*",),
         )
         self.assertEqual(content, raw)
 
@@ -445,6 +446,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             await proxy._resolve_input_reference(
                 {"asset_id": asset_id},
                 proxy.AuthContext(identity=_identity("bob")),
+                accepts=("image/*",),
             )
 
     def test_asset_content_route_accepts_signed_url_without_bearer(self) -> None:
@@ -1302,8 +1304,8 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "inputs": inputs
             or {
                 "prompt": {"type": "string", "required": True},
-                "source_image": {"type": "asset", "required": True},
-                "control_image": {"type": "asset"},
+                "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
+                "control_image": {"type": "asset", "accepts": ["image/*"]},
                 "controlnet_strength": {
                     "type": "number",
                     "minimum": 0,
@@ -1439,7 +1441,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             manifest=self._conditioning_manifest(
                 inputs={
                     "prompt": {"type": "string", "required": True},
-                    "source_image": {"type": "asset", "required": True},
+                    "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
                     "controlnet_strength": {
                         "type": "number",
                         "minimum": 0,
@@ -1472,7 +1474,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             "capability": "image",
             "version": "0.1.0",
             "inputs": {
-                "source_image": {"type": "asset", "required": True},
+                "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
                 "scale": {"type": "number", "enum": [2, 4], "default": 2},
             },
             "outputs": {"image": {"media_type": "image/png"}},
@@ -1576,8 +1578,8 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         manifest = self._conditioning_manifest(
             inputs={
                 "prompt": {"type": "string", "required": True},
-                "source_image": {"type": "asset", "required": True},
-                "sampler": {"type": "asset"},
+                "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
+                "sampler": {"type": "asset", "accepts": ["image/*"]},
             },
             mapping={
                 "prompt": [{"node": "6", "input": "text"}],
@@ -1605,7 +1607,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         manifest = self._conditioning_manifest(
             inputs={
                 "prompt": {"type": "string", "required": True},
-                "source_image": {"type": "asset", "required": True},
+                "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
                 "denoise": {"type": "number", "minimum": 0, "maximum": 1},
             },
             mapping={
@@ -2297,7 +2299,7 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
             "capability": "image",
             "inputs": {
                 "prompt": {"type": "string", "required": True},
-                "source_image": {"type": "asset", "required": True},
+                "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
                 "steps": {"type": "integer", "minimum": 1, "maximum": 100},
             },
             "outputs": {"image": {"media_type": "image/png"}},
@@ -2459,7 +2461,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
     def _edit_manifest(self, *, with_denoise: bool) -> dict[str, Any]:
         inputs: dict[str, Any] = {
             "prompt": {"type": "string", "required": True},
-            "source_image": {"type": "asset", "required": True},
+            "source_image": {"type": "asset", "accepts": ["image/*"], "required": True},
         }
         mapping: dict[str, Any] = {
             "prompt": [{"node": "6", "input": "text"}],

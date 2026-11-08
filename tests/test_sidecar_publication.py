@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import time
 
 import pytest
 import yaml
@@ -233,6 +234,78 @@ sleep() { echo "$LAST_HASH"; exit 0; }
 ''' + watcher + '\nwatch_litellm_config\n'
     result = subprocess.run(["bash", "-c", script, "watcher-test", str(artifact), str(receipt)], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "launched"
+
+
+
+def _run_hash_gated_watcher(tmp_path, polls, *, on_poll="", refresh_polls=60, age_s=600):
+    """Run the real watcher loop for `polls` polls; return (hash calls, launches)."""
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_inputs() {")
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
+    config = tmp_path / "selected.yaml"
+    config.write_text("exists")
+    db = tmp_path / "admin.db"
+    db.write_text("db")
+    old = time.time() - age_s
+    for path in (config, db):
+        os.utime(path, (old, old))
+    (tmp_path / "hash-value").write_text("h1")
+    script = '''
+WORK=$1
+LITELLM_CONFIG_PATH=$WORK/selected.yaml
+AZIZAM_ADMIN_DB_PATH=$WORK/admin.db
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+MAX_POLLS=$2
+AZIZAM_LITELLM_HASH_REFRESH_POLLS=$3
+LITELLM_PID=""
+POLL=0
+litellm_runtime_hash() { echo x >> "$WORK/hash-calls"; cat "$WORK/hash-value"; }
+start_litellm() { echo x >> "$WORK/launches"; cat "$WORK/hash-value" > "$LITELLM_RUNTIME_HASH_FILE"; LITELLM_PID=123; }
+kill() { return 0; }
+sleep() {
+    POLL=$((POLL + 1))
+    if [ "$POLL" -ge "$MAX_POLLS" ]; then exit 0; fi
+    on_poll
+}
+on_poll() { :; ON_POLL_HOOK; }
+'''.replace("ON_POLL_HOOK", on_poll or ":") + source[start:end] + "\nwatch_litellm_config\n"
+    subprocess.run(["bash", "-c", script, "gate-test", str(tmp_path), str(polls), str(refresh_polls)],
+                   capture_output=True, text=True, check=True, timeout=60)
+
+    def count(name):
+        path = tmp_path / name
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    return count("hash-calls"), count("launches")
+
+
+def test_watcher_skips_the_hash_while_its_inputs_are_unchanged(tmp_path):
+    # Each hash starts a Python; unchanged settled inputs must not start one per poll.
+    assert _run_hash_gated_watcher(tmp_path, 10) == (1, 1)
+
+
+def test_watcher_hashes_again_and_restarts_when_an_input_changes(tmp_path):
+    # Poll 3 rewrites the DB with an old mtime; the size and mtime still differ.
+    hook = ('if [ "$POLL" -eq 3 ]; then echo h2 > "$WORK/hash-value"; echo changed-db > "$WORK/admin.db"; '
+            'touch -d @1000000000 "$WORK/admin.db"; fi')
+    assert _run_hash_gated_watcher(tmp_path, 10, on_poll=hook) == (2, 2)
+
+
+def test_watcher_sees_a_journal_appear_as_an_input_change(tmp_path):
+    hook = ('if [ "$POLL" -eq 3 ]; then echo h2 > "$WORK/hash-value"; echo page > "$WORK/admin.db-wal"; '
+            'touch -d @1000000000 "$WORK/admin.db-wal"; fi')
+    assert _run_hash_gated_watcher(tmp_path, 10, on_poll=hook) == (2, 2)
+
+
+def test_watcher_does_not_trust_an_input_changed_in_the_last_seconds(tmp_path):
+    # A write in the same clock tick as a stat can keep its mtime: hash every poll until it
+    # settles. A future mtime keeps the input unsettled however slow the host is.
+    assert _run_hash_gated_watcher(tmp_path, 6, age_s=-3600) == (6, 1)
+
+
+def test_watcher_hashes_again_after_the_refresh_polls(tmp_path):
+    # Polls 1, 5 and 9 hash.
+    assert _run_hash_gated_watcher(tmp_path, 10, refresh_polls=4) == (3, 1)
 
 
 def test_start_litellm_passes_private_snapshot_to_child(tmp_path):

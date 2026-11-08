@@ -42,7 +42,7 @@ CONTROLNET_EDIT_MANIFEST = {
     "inputs": {
         "prompt": {"type": "string", "required": True},
         "denoise": {"type": "number", "minimum": 0, "maximum": 1},
-        "control_image": {"type": "asset"},
+        "control_image": {"type": "asset", "accepts": ["image/*"]},
         "controlnet_strength": {"type": "number", "minimum": 0, "maximum": 2},
         "sampler": {"type": "string", "enum": ["euler", "dpmpp_2m"]},
     },

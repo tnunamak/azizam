@@ -182,6 +182,24 @@ has keywords we must not run (`$ref` to outside, `pattern` on member input, `one
 plus `x-` keywords for `asset`, `generate` and `step`, which is a second grammar in disguise. Instead, the input grammar
 is ours, and the OpenAPI projection (`workflow_openapi._input_schema`) maps it to JSON Schema, as it does today.
 
+As built (S3.7): `validate_inputs` checks an input through its whole tree (`value_problems`) and reports each refusal with
+its path and code. A string is refused in this order: type, enum, then `min_length` and `max_length`, for a caller's value and
+for a default checked at save. `media_bearing` and `asset_leaf_specs` (`gateway/manifests.py`) are a grammar walker for contracts
+that passed the save check. They are not a validator, and a malformed spec can read as media-bearing. The routes pass the
+contract's `accepts` to the resolver; a picture field the contract does not declare takes the wire's `image/*`, and one it
+declares with another shape is refused. An extension request resolves and checks every supplied input before the first engine
+upload, and its leases end on every exit.
+- Known gaps, left as they are: the source-video branch ignores `accepts` and trusts the URI or fetched media type; a stored
+  extension reference still needs the `img_` prefix; opaque JSON has no depth, item or byte budget in this validator (S2.3
+  owns the request limits); declared per-input `max_bytes` is not enforced, only the resolver-wide limits; a request that
+  names no workflow extension does not load the contract on the video create route, so that route keeps the wire's list; the
+  extension path reports a container of assets as rejected text with no structured code (`media_not_resolved` is on
+  `bind_backend_request` only); the extension preflight holds every input's bytes until the uploads end, so its peak memory
+  is the sum of the declared inputs' sizes, as on the `image[]` edit route, and no request-wide byte budget bounds it.
+- Deferred: resolving a reference nested in a list or object. A container that holds assets is refused at intake and at bind
+  (`media_not_resolved`), so a required media-container workflow can be saved but not run on these routes. The per-leaf
+  media type check and the atomic upload of nested references come with that resolver.
+
 ### D5. Outputs: declared type, count and JSON shape, checked after selection
 
 An output spec (v2): `media_type` (required), `count: {min, max}`, `schema` (only for `application/json`), `label`,
@@ -265,6 +283,66 @@ seed:
 Grounding: no surveyed system declares a generated default such as a seed as data (N1 to N10; the synthesis). fal's
 default factory is the nearest precedent (FA6), but it is code. JSON Schema treats `default` as an annotation only
 (JS2). The tagged form is the plan's own decision (row S3) and the red team's (M3). Otherwise ungrounded.
+
+As built (S3.6): `gateway/generated_defaults.py` holds the reviewed generator registry (`REVIEWED`, one entry:
+`random_integer`, persisted as `value`), `legal_integer_domain`, `resolve_generated` and the crypto source `secure_source`. The save-time
+refusals (`generator_unknown`, `generator_range_empty`, `generate` with `default`, `settable: false` without `generate`)
+were already in the S3.2 contract; the registry is checked against the contract's `GENERATORS` by a test.
+
+- **Supported generated inputs.** Generation and `settable: false` are top-level input features only.
+  A nested property or array item carrying either is refused at save with `generator_nested_unsupported`;
+  recursive validation does not imply recursive generation or persistence.
+- **Legal integer domain.** Save-time feasibility, sampling and deployment narrowing share one exact domain:
+  the intersected bounds, enum and step/offset grid. A grid is first value, period and count, not an expanded list.
+  Sampling draws a uniform index into this domain. Non-numeric step/offset retains the legacy plain-range fallback;
+  it is not a proof of emptiness and runtime validation can still refuse malformed constraints.
+- **When it draws.** At accept, after idempotency resolution and before the envelope is written. A same-key replay
+  returns the existing job and draws nothing. The block `{input: {generator, value}}` is stored in the envelope's
+  `generated` field. A runner sets a context variable (`_JOB_GENERATED`) from the stored envelope, so a retry, a restart
+  and a replay read the value (`stored=`) and never draw. The block is read from the envelope itself, not from the pin,
+  so it also works when compile-from-pin is off.
+- **Routes switched.** Audio (`audio_graph.manifest_inputs`, `audio_graph.generated_block`, `proxy_audio_generate`, the
+  audio job accept) and the image generation and edit routes (`_image_generated_values`,
+  `_bind_generated_image_inputs`, the batching loop with the per-round offset, the OOM retry and the background-removal
+  recursion). `_draw_seed` and the image `random.randint` calls are gone. No function that selects or fills a generated
+  input names `seed`; a test scans them.
+- **Draws that stay** (listed with a reason in `tests/test_generated_defaults.py`, which fails on an unlisted draw): the
+  video routes (two in the graph create route, one in the chain route), `_reseed_image_workflow` (a graph with no
+  contract, and the offset tile base), the tile seam draw, the A1111 frontend `map_payload`, the avatar number, the
+  measurement resampling in `stt_measure`, and the equality tool's reproducible stand-in.
+- **Choices where this text was open.** (1) The value of a caller-settable input the caller gave is not stored (the
+  request already carries it); only a draw is. (2) For an image batch, the stored value (or the caller's) is one base, and round `n`
+  wraps through the ordered legal integers of the input's declared bounds, enum and grid, independently of a
+  narrower generator interval. For a plain range this remains exactly
+  `low + ((base - low + offset) mod (high - low + 1))`, where the offset
+  is the number of images collected so far (a round that returns no image still moves the offset by one). This is **not**
+  behaviourally identical to the old loop: it drew a fresh value for each round, and the first design added the offset to
+  the base, which left the declared range at the top (maximum 9, base 9 gave 10; at the public maximum it reached
+  2**32). For valid numeric constraints, wrapping keeps every bound value legal and advances by the offset in the ordered
+  domain; a singleton domain repeats its only value. Rounds are no longer independent draws, and a
+  caller-given value is wrapped the same way. (3) A drawn value that fails the input's own
+  validation is a document fault: HTTP 500 on every route, with no job row, no payload and no engine submission (the
+  sync image routes answered 503 before; they answer 500 now). (4) The provenance record keeps its
+  `seed` field name; it is the receipt's public field, not a selection by name. (5) The legacy contract-less graph path
+  keeps its own draw and field name until the roles move. (6) The token test ignores a `seed=` keyword argument for that
+  receipt field.
+- **Durable and fail closed.** A new job that needs a generated value has its `generated` block stored in the same
+  transaction as its job row, whether or not the route compiles from the pin; if the envelope cannot be built or
+  written, the accept fails (503) and no job, payload or submission remains. A workflow whose binding has no pin (it has no graph
+  binding, for example a gateway composition such as the bundled seamless tile) builds no envelope; its job is accepted
+  as before S3.6 and draws at run, so a retry of such a job can draw a different value. Closing that gap needs an
+  envelope for bindings without a graph pin, which is not in S3.6. A reader tells three states apart: an input
+  with no entry (a job made before values were kept, or one with no envelope) keeps the old draw so an in-flight job
+  survives the deploy; an erased entry (`{generator, erased: true}`) and an unreadable or malformed one fail the job with
+  a plain error and draw nothing. The idempotency race: two same-key image requests can both draw before either
+  creates a job, but only the request whose job row wins keeps its envelope; the loser answers the winner's job, and its
+  value reaches no receipt, log, submission or response (a threaded test proves it). Audio acceptance has no same-key
+  idempotency check at all (it makes a fresh request id), so a repeated audio request makes a new job with a new draw.
+- **Erasure.** `erase_prompt_derivatives` erases the value of each generated entry for every job it is asked to erase,
+  keeping the pins and marking each entry `erased` (closes the S2 matrix 2.3 gap). The privacy matrix test seeds a canary value and checks it is gone
+  and that another person's value stays.
+- **Controls.** Putting a `"seed"` name test back in a route fails the token test; removing the stored-value read in
+  `resolve_generated` fails the stored-value, restart and audio retry tests.
 
 ### D7. Bindings: the key names an adapter; a descriptor closes the block; roles name reviewed implementations
 
@@ -558,7 +636,7 @@ Every step is additive. Each step has the S2 gate:
 | S3.3 | Binding descriptors (D7): `binding_fields`, `roles` and `inputs_via` in `protocol.schema.json`; `node-graph.yml` extended; `gateway-compose.yml` and `http-multipart.yml` added; the role registry; the `check_targets` hooks; `binding_unavailable` at run. The `compose` dispatch in `proxy.py` reads the role registry. | Unchanged for every bundled binding. | Unknown key, field and role are refused at save. A listed but unregistered role fails `binding_unavailable` with zero engine calls. A pinned job whose role is removed fails `definition_unavailable`. Control: give the compose dispatch a fallback branch; the dispatch test fails. |
 | S3.4 | Readers switch (D3, D9): every consumer reads the normalized v2 contract that S3.2's loader makes in memory from the v1 files: the catalog, OpenAPI, capabilities, requirements, the compositions and the mesh route. The mesh route reads its record from the registry and runs the mesh frontend profile; the old mesh validator still runs beside it as a check. The policy reader reads the record-level facts (D2), with the old defaults still filled in. | Unchanged. The files are still v1. | All route goldens, mesh included. A test proves no consumer reads a v1-only field (`trusted`, `source`, `type: image`, top-level `requires`, `transport`). Control: make the mesh route read the old `MeshManifest` again for its image input; the v1-field test fails. |
 | S3.5 | Migration and enforcement (D2, D3, D10): rewrite the bundled files; write the release policy file; the stored-record migration with dry run; the loader enforces v2, refuses v1 and drops the in-memory converter; `trusted` and `source` move to provenance; the policy reader loses its defaults; `_capability_from_intent` is deleted. | Enforced. Wire unchanged. Internal goldens move by the named list only. | `diff-effective` passes with only named differences, and fails on the tile swap control. A stored v1 record converts; a broken one is stored disabled and listed. Controls: remove `capability` from a manifest (refused, not inferred). Remove one workflow's policy facts: it shows "needs configuration" and a run makes zero engine calls. Policy reader: a test runs the image route's policy build on a valid v2 contract wrapped in a mapping that records key reads, and fails if any of `exposure`, `trust_tier`, `resource_tier`, `tags`, `trusted` is read from the contract; putting back the manifest read makes it fail. Deploy at idle. |
-| S3.6 | Generated defaults (D6): the generator registry, `resolve_generated` after idempotency, the envelope `generated` block, the audio and image routes switch to it. The video draws, the tile seam draw and the A1111 frontend draw stay, listed in the ratchet with their reason. | Same ranges as today. The envelope's `generated` block is filled. | Per route, a differential test shows a draw exactly where one was drawn before. A retry and a restart read the stored value. Erasure clears a non-empty `generated` block (closes the S2 matrix 2.3 gap). Controls: put back `if name == "seed"` in a route (the token test fails); remove the stored value read (the replay test fails). |
+| S3.6 | Generated defaults (D6): the generator registry, `resolve_generated` after idempotency, the envelope `generated` block, the audio and image routes switch to it. The video draws, the tile seam draw and the A1111 frontend draw stay, listed in the ratchet with their reason. | Same ranges as today. The envelope's `generated` block is filled. | Per route, a differential test shows a draw exactly where one was drawn before. A retry and a restart read the stored value. Erasure erases the values of a non-empty `generated` block (closes the S2 matrix 2.3 gap). Controls: put back `if name == "seed"` in a route (the token test fails); remove the stored value read (the replay test fails). |
 | S3.7 | Runtime types (D4): recursive input checking with paths for object, array and asset; `media_bearing` used by the echo check, the resolver and OpenAPI; the routes pass `accepts` from the contract to the resolver; the OpenAPI projection follows the grammar. | Unchanged for bundled workflows: the routes passed `image/*`, and the converted contracts say `image/*`. | Nested refusal paths (for example `inputs.people[2].box`). OpenAPI snapshots unchanged. Controls: pass a constant `accepts` again (a test with a `video/*` input fails); make `media_bearing` look at the top level only (a test with an array of assets mapped to a linked node that is also selected fails to be refused). |
 | S3.8 | Output checks (D5): `check_result` for count and JSON shape, called by both adapters; `selector_cardinality` hooks and the `count_unreachable` save check. | Unchanged for bundled workflows: the default count is today's behaviour, and every bundled selector meets it. | S2 matrix item 5 extended: too few, too many, a JSON value that breaks its `schema`. Nothing published after a refusal. Controls: skip `check_result` (the count tests fail); remove the cardinality check (a `count: {min: 2}` on a `take: single` selector is saved, and its test fails). |
 | S3.9 | Mesh validator deleted (D9): `mesh_manifest.py` keeps only frontend code (form decoding, wire codes, scalar encoding). | Mesh wire byte-identical, GLB included. | The mesh route goldens. A second mesh-shaped workflow registered as data passes the profile. Every former mesh refusal has a test in its new home. Control: register a mesh-shaped workflow with two image inputs; the profile refuses it. |

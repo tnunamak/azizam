@@ -840,7 +840,7 @@ def test_feasibility_is_decided_exactly(extra, low, high, feasible):
 
 @pytest.mark.parametrize("spec_extra", [{"step": 2, "offset": 0.5}, {"step": 1.5}, {"step": 3, "offset": 1}, {"step": 0.5, "offset": 0.25}])
 def test_the_exact_grid_and_the_validator_judge_a_sample_alike(spec_extra):
-    from gateway.workflow_contract import _first_on_grid
+    from gateway.generated_defaults import _first_on_grid
     spec = {"type": "integer", **spec_extra}
     first = _first_on_grid(-50, Fraction(spec["step"]), Fraction(spec.get("offset", 0)))
     sample = range(-50, 50)

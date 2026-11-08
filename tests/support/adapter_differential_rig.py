@@ -284,6 +284,10 @@ class GatewayRig:
         self._exit.callback(self.fakes.close)
         self._exit.callback(random.setstate, random.getstate())
         random.seed(20260101)
+        # The generated-default source draws from the seeded generator, so a golden trace keeps its values.
+        from gateway import generated_defaults
+
+        self.monkeypatch.setattr(generated_defaults, "secure_source", random.randint)
         self.media_jobs_db = Path(media_jobs.DB_PATH)
         self.receipts_db = Path(receipt_store.DB_PATH)
         media_jobs.init_db(self.media_jobs_db)

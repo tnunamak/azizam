@@ -18,7 +18,8 @@ INPUT_SPECS: dict[str, dict[str, Any]] = {
     "tags": {"type": "string"},
     "lyrics": {"type": "string"},
     "duration": {"type": "number", "minimum": 0, "maximum": 3600},
-    "seed": {"type": "integer", "minimum": 0, "maximum": 2**32 - 1},
+    "seed": {"type": "integer", "minimum": 0, "maximum": 2**32 - 1,
+             "generate": {"generator": "random_integer", "minimum": 0, "maximum": 2**32 - 1}},
 }
 
 

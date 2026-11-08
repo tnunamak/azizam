@@ -1903,7 +1903,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(captured["fixed_seed"], 12345)
+        self.assertEqual(captured["generated_values"], {"seed": 12345})
         self.assertEqual(captured["base_workflow"]["8"]["inputs"]["width"], 512)
         self.assertEqual(captured["base_workflow"]["8"]["inputs"]["height"], 512)
         self.assertIn("com.azizam.workflow.seed", receipt.accepted_inputs)

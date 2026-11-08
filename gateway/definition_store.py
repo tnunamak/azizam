@@ -27,7 +27,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from gateway import media_jobs
+from gateway import generated_defaults, media_jobs
 from gateway.workflow_envelope import Envelope, definition_shas, parse_envelope
 
 
@@ -147,13 +147,13 @@ def record_envelope_in(
 
 def envelope_in(conn: sqlite3.Connection, job_id: str, generators: Mapping[str, str] | None = None) -> Envelope | None:
     """The job's envelope, or None. ``generators`` is the reviewed map that ``parse_envelope`` needs while the envelope
-    still holds generated values. An envelope that no longer parses (the map changed, or the row is damaged) raises
+    holds generated values; with none given, the reviewed generators' own map is used. An envelope that no longer parses (the map changed, or the row is damaged) raises
     ``DefinitionUnavailable``."""
     row = conn.execute("SELECT envelope_json FROM job_envelope WHERE job_id = ?", (job_id,)).fetchone()
     if row is None:
         return None
     try:
-        return parse_envelope(json.loads(row[0]), generators)
+        return parse_envelope(json.loads(row[0]), generated_defaults.persistence() if generators is None else generators)
     except ValueError as exc:  # json.JSONDecodeError is a ValueError
         raise DefinitionUnavailable(f"job {job_id}: the stored envelope cannot be read: {exc}") from exc
 
@@ -183,7 +183,11 @@ def set_bundle_in(conn: sqlite3.Connection, job_id: str, bundle_ref: str) -> boo
 
 
 def clear_generated_in(conn: sqlite3.Connection, job_id: str) -> None:
-    """Rewrite the job's envelope with ``generated`` empty (erasure and forget). No-op without an envelope.
+    """Erase the values in the job's envelope ``generated`` block, in the caller's transaction. No-op without an envelope.
+
+    Each entry keeps its generator and gains ``erased: true`` in place of its value (``generated_defaults.erased_block``),
+    so a later read can tell an erased value from a job that never kept one: the first never runs, the second is a job
+    made before values were kept. The pinned definitions stay (``release_in`` removes those with the job). Idempotent.
 
     A stored envelope that cannot be read is released instead (``release_in``): erasure must not fail on a damaged
     row, and a row that cannot be parsed cannot be partly cleared. Recording the original envelope again after this
@@ -197,10 +201,10 @@ def clear_generated_in(conn: sqlite3.Connection, job_id: str) -> None:
         data = json.loads(row[0])
     except ValueError:
         data = None
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or not isinstance(data.get("generated"), dict):
         release_in(conn, job_id)
         return
-    data["generated"] = {}
+    data["generated"] = generated_defaults.erased_block(data["generated"])
     conn.execute("UPDATE job_envelope SET envelope_json = ? WHERE job_id = ?", (_canonical(data), job_id))
 
 

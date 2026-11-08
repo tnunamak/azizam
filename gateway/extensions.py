@@ -32,7 +32,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-from gateway.manifests import validate_input_value
+from gateway.manifests import media_bearing, validate_input_value
 from gateway.provenance import (
     RESERVED_GATEWAY_CONTROLS,
     WORKFLOW_EXTENSION_NAMESPACE as _WORKFLOW_NAMESPACE,
@@ -159,6 +159,10 @@ def validate_extension_inputs(
             continue
         if not isinstance(spec, Mapping):
             raise ExtensionError(f"spec for input {name!r} must be a mapping")
+        if spec.get("type") != "asset" and media_bearing(spec):
+            # No frontend resolves the references inside a list or object yet; refusing here keeps one from reaching an engine.
+            result.rejected[name] = f"{name} cannot hold media inside a list or object on this route"
+            continue
         reason = validate_input_value(name, value, dict(spec))
         if reason is None:
             result.accepted[name] = value

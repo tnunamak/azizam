@@ -122,14 +122,65 @@ def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors
     return ContractErrors([ContractError(tuple(path), code, message)])
 
 
-# The input types that carry media: a value that names a stored or supplied file, not a plain value.
+# The input types whose value is one media reference: a value that names a stored or supplied file, not a plain value.
+# This is the leaf test of a value check (a reference is a string or a mapping). It does not say whether an input
+# carries media: an array or object can hold assets, and ``media_bearing`` answers that for every rule that asks.
 MEDIA_INPUT_TYPES = frozenset({"asset", "image"})
+
+# A spec nests at most four levels (CODE_TO_DATA_S3, D4); the walk stops a little past that, so a spec built in code
+# without the save check cannot make it run away.
+_SPEC_WALK_LIMIT = 8
+
+
+def asset_leaf_specs(spec: Any, _depth: int = 0) -> Iterator[Mapping[str, Any]]:
+    """The ``asset`` specs inside ``spec``, at any depth, following the type grammar: an object's ``properties`` and an
+    array's ``items``. This is a walker for contracts that passed the save check, not a validator: a subtree of the
+    wrong shape (a type that is not a word, children that are not mappings) holds none, so a broken document is
+    answered, not crashed on, but a malformed spec can still read as true (for example an object marked opaque that
+    also lists ``properties``, or an asset whose ``accepts`` is not a list). Only the walk of a valid opaque object
+    is guaranteed to find nothing."""
+    if not isinstance(spec, Mapping) or _depth > _SPEC_WALK_LIMIT:
+        return
+    kind = spec.get("type")
+    if kind == "asset":
+        yield spec
+    elif kind == "object":
+        properties = spec.get("properties")
+        if isinstance(properties, Mapping):
+            for child in properties.values():
+                yield from asset_leaf_specs(child, _depth + 1)
+    elif kind == "array":
+        yield from asset_leaf_specs(spec.get("items"), _depth + 1)
+
+
+def accepts_of(spec: Any) -> tuple[str, ...]:
+    """The media types an ``asset`` spec accepts, as its contract lists them. Nothing is guessed: a spec that lists none
+    accepts none, so the resolver refuses every file for it."""
+    accepts = spec.get("accepts") if isinstance(spec, Mapping) else None
+    return tuple(item for item in accepts if isinstance(item, str)) if isinstance(accepts, (list, tuple)) else ()
+
+
+def media_bearing(spec: Any) -> bool:
+    """True when the input is an ``asset``, or an ``array`` or ``object`` whose spec holds an ``asset`` at any depth
+    (CODE_TO_DATA_S3, D4). The one answer to "does this input carry media" for the source-echo check, the resolver
+    boundary and the OpenAPI projection. It reads the type grammar and does not validate it: for a contract that
+    passed the save check the answer is exact, for a malformed spec it may be true."""
+    return next(asset_leaf_specs(spec), None) is not None
 
 
 @dataclass
 class InputValidationResult:
+    """What a request's inputs came to. ``accepted`` and ``rejected`` (one short reason per top-level input) are what the
+    frontends report from, as before. ``errors`` is the full list: every refusal at its own place, in the order the check
+    found them, with a stable code. ``contract_errors()`` is that list as the sorted, capped D8 error."""
+
     accepted: dict[str, Any] = field(default_factory=dict)
     rejected: dict[str, str] = field(default_factory=dict)
+    errors: list[ContractError] = field(default_factory=list)
+
+    def contract_errors(self) -> ContractErrors | None:
+        """All the errors as one ``ContractErrors`` whose ``primary`` is the error found first, or ``None`` if there are none."""
+        return ContractErrors(self.errors, primary=self.errors[0]) if self.errors else None
 
     @property
     def ok(self) -> bool:
@@ -386,6 +437,9 @@ def validate_inputs(
     manifest: dict[str, Any],
     supplied: dict[str, Any],
 ) -> InputValidationResult:
+    """Check a request's inputs against the manifest, every one, to any depth. An object or array input is checked
+    through its whole tree, and each refusal is listed at its place (``inputs.people[2].box``). A scalar keeps the reason
+    text it always had."""
     validate_manifest(manifest)
     specs = manifest["inputs"]
     result = InputValidationResult()
@@ -394,16 +448,23 @@ def validate_inputs(
         spec = specs.get(name)
         if spec is None:
             result.rejected[name] = "unknown input"
+            result.errors.append(ContractError(("inputs", name), "input_unknown", "unknown input"))
             continue
         reason = validate_input_value(name, value, spec)
         if reason is None:
             result.accepted[name] = value
+            continue
+        result.rejected[name] = reason
+        if spec.get("type") in ("object", "array"):
+            for path, code, message in value_problems(spec, value, ("inputs", name)):
+                result.errors.append(ContractError(path, code, message))
         else:
-            result.rejected[name] = reason
+            result.errors.append(ContractError(("inputs", name), "value_invalid", reason))
 
     for name, spec in specs.items():
         if spec.get("required") and name not in supplied:
             result.rejected[name] = "required input missing"
+            result.errors.append(ContractError(("inputs", name), "required_missing", "required input missing"))
 
     return result
 
@@ -468,6 +529,14 @@ def _narrow_input(name: str, limits: Mapping[str, Any], inputs: dict[str, Any], 
     if "minimum" in spec and "maximum" in spec and spec["minimum"] > spec["maximum"]:
         errors.add(at, "bounds_empty", f"effective bounds for {name} are empty: {spec['minimum']} > {spec['maximum']}")
         return
+    if isinstance(spec.get("generate"), Mapping):
+        # Local import avoids the generated-defaults -> scalar-validator import cycle.
+        from gateway.generated_defaults import legal_integer_domain
+
+        if not legal_integer_domain(spec["generate"], spec).count:
+            errors.add(at + ("generate",), "generator_range_empty",
+                       "the generator and effective input share no legal integer")
+            return
     if "default" in spec:
         reason = _validate_value(name, spec["default"], spec)
         if reason is not None:
@@ -514,7 +583,14 @@ def bind_backend_request(
     applied: list[str] = []
     ignored: dict[str, str] = {}
 
+    specs = manifest.get("inputs")
     for input_name, value in accepted_inputs.items():
+        spec = specs.get(input_name) if isinstance(specs, Mapping) else None
+        if spec is not None and spec.get("type") != "asset" and media_bearing(spec):
+            # A scalar asset reaches here as the name its route gave the uploaded file. No route resolves the references
+            # inside a list or object yet, so one would be handed to the engine as the caller wrote it.
+            raise refusal(("inputs", input_name), "media_not_resolved",
+                          f"{input_name} holds media inside a list or object, which no route resolves yet")
         # Each mapping gets its own copy, so the request does not share a caller's mutable value.
         value = copy.deepcopy(value)
         if input_name not in binding_map:
@@ -586,6 +662,11 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     if expected_type == "string":
         if not isinstance(value, str):
             return f"{name} must be a string"
+    elif expected_type in ("object", "array"):
+        # A container is checked through its whole tree; the reason names the first place that fails.
+        for path, _code, message in value_problems(spec, value, ()):
+            return f"{name}{_path_text(path)}: {message}"
+        return None
     elif expected_type == "number":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return f"{name} must be a number"
@@ -608,6 +689,13 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     enum = spec.get("enum")
     if enum is not None and value not in enum:
         return f"{name} must be one of: {', '.join(map(str, enum))}"
+
+    # The length bounds come after the enum, as the first refusal for a value that breaks both has always been the enum's.
+    if expected_type == "string":
+        if "min_length" in spec and len(value) < spec["min_length"]:
+            return f"{name} must have at least {spec['min_length']} characters"
+        if "max_length" in spec and len(value) > spec["max_length"]:
+            return f"{name} must have at most {spec['max_length']} characters"
 
     if expected_type in {"number", "integer"}:
         minimum = spec.get("minimum")
@@ -633,6 +721,58 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
                 return f"{name} must be a multiple of {spec['step']}"
 
     return None
+
+
+def _path_text(path: Iterable[PathPart]) -> str:
+    """A path as people write it: ``[2].box``."""
+    return "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in path)
+
+
+def value_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
+    """Why ``value`` does not fit ``spec``: ``(path, code, message)`` for each problem, nested ones with their own path
+    (``at`` plus the keys and indexes of the value, never the spec's ``properties`` or ``items``). A default is held to
+    this, and so is a caller's value (CODE_TO_DATA_S3, D4). A message never holds the value."""
+    kind = spec.get("type")
+    if kind == "object":
+        yield from _object_problems(spec, value, at)
+    elif kind == "array":
+        yield from _array_problems(spec, value, at)
+    else:
+        reason = _validate_value("the value", value, spec)
+        if reason is not None:
+            yield at, "value_invalid", reason
+
+
+def _object_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
+    if not isinstance(value, dict):
+        yield at, "value_invalid", "the value must be an object"
+        return
+    properties = spec.get("properties")
+    if not isinstance(properties, Mapping):  # opaque: any JSON object
+        return
+    for key in value:
+        if key not in properties:
+            yield at + (key,), "unknown_field", "the object has a field its input does not list"
+    for name, child in properties.items():
+        if not isinstance(child, Mapping):
+            continue
+        if name in value:
+            yield from value_problems(child, value[name], at + (name,))
+        elif child.get("required"):
+            yield at + (name,), "required_missing", f"the object is missing the required field {name}"
+
+
+def _array_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
+    if not isinstance(value, list):
+        yield at, "value_invalid", "the value must be a list"
+        return
+    maximum = spec.get("max_items")
+    if len(value) < spec.get("min_items", 0) or (maximum is not None and len(value) > maximum):
+        yield at, "value_invalid", "the list has too few or too many items"
+    items = spec.get("items")
+    if isinstance(items, Mapping):
+        for index, item in enumerate(value):
+            yield from value_problems(items, item, at + (index,))
 
 
 def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any, at: tuple[PathPart, ...]) -> None:

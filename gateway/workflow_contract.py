@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from fractions import Fraction
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -28,8 +27,9 @@ from typing import Any, Iterable, Mapping
 import jsonschema
 
 from gateway.manifests import (
-    SCHEMA_VERSION_MESSAGE, SUPPORTED_SCHEMA_VERSIONS, ContractError, ContractErrors, ErrorCollector, PathPart, exact_number,
-    validate_input_value)
+    SCHEMA_VERSION_MESSAGE, SUPPORTED_SCHEMA_VERSIONS, ContractError, ContractErrors, ErrorCollector, PathPart,
+    media_bearing, validate_input_value, value_problems)
+from gateway.generated_defaults import _generates_a_value
 from gateway.result_bundle import ResultLimits
 from gateway.workflow_call import SNIFFED_MEDIA_TYPES
 
@@ -239,6 +239,11 @@ class _Semantic:
         if not isinstance(spec, Mapping):
             return
         self._annotations(spec.get("annotations"))
+        if at and at[0] == "inputs" and depth > 1:
+            for key in ("generate", "settable"):
+                if (key == "generate" and key in spec) or (key == "settable" and spec.get(key) is False):
+                    self.errors.add(at + (key,), "generator_nested_unsupported",
+                                    "generated and gateway-only inputs are supported only at the top level")
         if depth > MAX_INPUT_DEPTH:
             self.errors.add(at, "nesting_too_deep", f"inputs nest at most {MAX_INPUT_DEPTH} levels")
             return
@@ -345,7 +350,7 @@ class _Semantic:
         schema = output.get("schema")
         if isinstance(schema, Mapping):
             self.spec(at + ("schema",), schema, 1)
-            if _holds_asset(schema):
+            if media_bearing(schema):
                 self.errors.add(at + ("schema",), "asset_in_result_schema", "a result schema describes data, not media")
 
 
@@ -358,45 +363,6 @@ def _is_finite(value: Any) -> bool:
     return not isinstance(value, float) or math.isfinite(value)
 
 
-def _generates_a_value(spec: Mapping[str, Any], low: Any, high: Any) -> bool:
-    """True when some integer in ``low..high`` is also a value the input accepts (its enum, its step and offset).
-    Decided with exact arithmetic: the grid ``offset + k*step`` is a congruence, solved, not searched. When the input
-    cannot be reasoned about (a step or offset that is not a number), the answer is yes: only a proven empty domain is refused."""
-    low_exact, high_exact = exact_number(low), exact_number(high)
-    if low_exact is None or high_exact is None:
-        return True
-    first, last = math.ceil(low_exact), math.floor(high_exact)
-    if first > last:
-        return False
-    enum = spec.get("enum")
-    if isinstance(enum, list):
-        return any(
-            isinstance(v, int) and not isinstance(v, bool) and first <= v <= last and validate_input_value("value", v, spec) is None
-            for v in enum
-        )
-    step = spec.get("step")
-    if step is None:
-        return True
-    step_exact, offset_exact = exact_number(step), exact_number(spec.get("offset", 0))
-    if step_exact is None or offset_exact is None or step_exact <= 0:
-        return True
-    found = _first_on_grid(first, step_exact, offset_exact)
-    return found is not None and found <= last
-
-
-def _first_on_grid(first: int, step: Fraction, offset: Fraction) -> int | None:
-    """The least integer n >= first with n = offset + k*step for an integer k (the grid ``on_grid`` tests), or None
-    when no integer is on the grid. With D the common denominator, D*n = A (mod P) for the integers A = offset*D and P = step*D."""
-    denominator = math.lcm(step.denominator, offset.denominator)
-    target, period = int(offset * denominator), int(step * denominator)
-    divisor = math.gcd(denominator, period)
-    if target % divisor:
-        return None
-    modulus = period // divisor
-    residue = (target // divisor) * pow(denominator // divisor, -1, modulus) % modulus
-    return first + (residue - first) % modulus
-
-
 def _whole(value: Any) -> int | None:
     """The integer a JSON Schema integer is: an int, or a float with no fraction. Anything else is not one."""
     if isinstance(value, bool):
@@ -406,66 +372,3 @@ def _whole(value: Any) -> int | None:
     if isinstance(value, float) and math.isfinite(value) and value.is_integer():
         return int(value)
     return None
-
-
-def _holds_asset(spec: Mapping[str, Any]) -> bool:
-    if spec.get("type") == "asset":
-        return True
-    # A broken document is checked too, so a subtree of the wrong shape is skipped here; the schema layer reports it.
-    properties = spec.get("properties")
-    children = (list(properties.values()) if isinstance(properties, Mapping) else []) + [spec.get("items")]
-    return any(isinstance(child, Mapping) and _holds_asset(child) for child in children)
-
-
-# --------------------------------------------------------------------------------------------------- value checks
-
-
-def value_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
-    """Why ``value`` does not fit ``spec``: ``(path, code, message)`` for each problem, nested ones with their own path.
-    A default is held to this, and a caller's value will be (S3.7). A message never holds the value."""
-    kind = spec.get("type")
-    if kind == "object":
-        yield from _object_problems(spec, value, at)
-    elif kind == "array":
-        yield from _array_problems(spec, value, at)
-    else:
-        reason = validate_input_value("the value", value, spec)
-        if reason is None and kind == "string":
-            reason = _length_reason(spec, value)
-        if reason is not None:
-            yield at, "value_invalid", reason
-
-
-def _length_reason(spec: Mapping[str, Any], value: str) -> str | None:
-    if "min_length" in spec and len(value) < spec["min_length"]:
-        return f"the value must have at least {spec['min_length']} characters"
-    if "max_length" in spec and len(value) > spec["max_length"]:
-        return f"the value must have at most {spec['max_length']} characters"
-    return None
-
-
-def _object_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
-    if not isinstance(value, dict):
-        yield at, "value_invalid", "the value must be an object"
-        return
-    properties = spec.get("properties")
-    if properties is None:  # opaque
-        return
-    for key in value:
-        if key not in properties:
-            yield at + (key,), "unknown_field", "the object has a field its input does not list"
-    for name, child in properties.items():
-        if name in value:
-            yield from value_problems(child, value[name], at + (name,))
-        elif child.get("required"):
-            yield at + (name,), "required_missing", f"the object is missing the required field {name}"
-
-
-def _array_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
-    if not isinstance(value, list):
-        yield at, "value_invalid", "the value must be a list"
-        return
-    if len(value) < spec.get("min_items", 0) or len(value) > spec["max_items"]:
-        yield at, "value_invalid", "the list has too few or too many items"
-    for index, item in enumerate(value):
-        yield from value_problems(spec["items"], item, at + (index,))

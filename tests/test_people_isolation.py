@@ -278,11 +278,11 @@ def test_member_cannot_mint_another_members_asset_url_or_reuse_asset_input(peopl
     )
     context = proxy.AuthContext(identity=identity)
     own_bytes, _ = asyncio.run(proxy._resolve_input_reference(
-        {"asset_id": people.alice.asset_id}, context
+        {"asset_id": people.alice.asset_id}, context, accepts=("image/*",)
     ))
     assert own_bytes == people.alice.raw
     with pytest.raises(proxy._InputReferenceError, match="not accessible"):
-        asyncio.run(proxy._resolve_input_reference({"asset_id": people.bob.asset_id}, context))
+        asyncio.run(proxy._resolve_input_reference({"asset_id": people.bob.asset_id}, context, accepts=("image/*",)))
 
 
 def test_signed_url_cannot_be_changed_to_another_members_asset(people):
