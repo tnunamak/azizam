@@ -135,7 +135,7 @@ Handler: proxy.py:26088.
 |---|---|---|---|---|---|
 | audio-59 | 2 | Content preflight runs before the lookup. For an audio job the policy denial gives 403 `not_in_access_plan`. | proxy.py:23825-23850, 26099-26101 | s7_aj_policy_refusal.json; test_media_job_errors.py | unknown |
 | audio-60 | 9 | A job id that does not exist gives 404 `media_job_not_found` ("media job '<id>' not found"). A job the caller cannot read gives 404 with message "Media job not found." | proxy.py:26106-26115, 26120-26134 | unpinned for audio (`media_job_not_found` in test_gateway_media_api.py) | unknown |
-| audio-61 | 7 | Signed content handles carry the delivery mode: the GET's own override, else the job's `metadata_mode` from submit, else the caller's default. | proxy.py:26122-26130 | unpinned | unknown |
+| audio-61 | 7 | Corrected by A3 (2026-11-08) from the old code at 7daa31769. The job keeps the submit's choice: `metadata_mode` is set on the job from the request body's `extensions` (the runner replays `request`). Signed content handles are always `md=none`: `_media_job_asset_items` calls `build_signed_asset_url` with no mode (proxy.py:23793 at 7daa31769), so neither the GET override nor the caller's default reaches the handle. The precedence the inventory first gave (override, job mode, caller default) is not what the old code does. This is a pre-existing gap, not a parity regression; the new path matches the old. | proxy.py:26122-26130 (GET handler), proxy.py:23793 at 7daa31769 (signing) | pinned: `test_audio_61_job_records_the_submit_metadata_choice`, `test_audio_61_content_handle_is_none_for_a_job_submitted_with_none`, `test_audio_61_content_handle_ignores_the_get_override_on_a_none_job`, `test_audio_61_content_handle_ignores_the_caller_default` (test_s7_parity_audio.py) |
 
 Counted R5 items: 3.
 
@@ -145,7 +145,7 @@ Counted R5 items: 3.
 
 | id | cat | behaviour | code | pin | row path |
 |---|---|---|---|---|---|
-| audio-62 | 8 | The route always returns 404 `media_job_result_not_found` with `Cache-Control: private, no-store`. Results are not readable through this route, even for an audio job with assets. | gateway/api.py:796-821 | unpinned | unknown |
+| audio-62 | 8 | Corrected by A3 (2026-11-08) from the old code at 7daa31769. The route answers 404 `media_job_result_not_found` for a missing job, for an owned completed audio job, and for any result it cannot read. That refusal carries no `Cache-Control` header (`refused` in gateway/api.py, lines 800-803). The `Cache-Control: private, no-store` and `X-Content-Type-Options: nosniff` headers are set only on a successful read (gateway/api.py:820). The earlier text said every refusal carries `private, no-store`; the old code does not. | gateway/api.py:796-821 | pinned: `test_audio_62_results_route_is_404_for_a_missing_job`, `test_audio_62_results_route_is_404_for_an_owned_completed_job`, `test_audio_62_refusal_for_a_completed_job_carries_no_cache_control` (test_s7_parity_audio.py) |
 
 Counted R6 items: 1.
 
@@ -196,7 +196,7 @@ Counted R8 items: 4.
 | audio-81 | 10 | A job that was `running` fails at restart with "The gateway restarted before completion could be confirmed; this job was not run again". It is never re-run. | proxy.py:24961-24992 | test_audio_media_job_integration.py (case `running`) | unknown |
 | audio-82 | 10 | A queued job that passes the checks is rescheduled. | proxy.py:24961-24992 | unpinned | unknown |
 | audio-83 | 11 | A crash in the task marks the job failed with the crash code and logs it. | proxy.py:24934-24958 (`_done` callback) | test_media_job_crash.py (file exists; audio coverage not checked) | unknown |
-| audio-84 | 9 | A cancel requested while running is honoured when the next status update tries to succeed: `update_status` refuses SUCCEEDED with `CancellationPending`, and `_settle_native_job` sets `canceled`. | gateway/media_jobs.py:1610, 1714; proxy.py:23985 | unpinned for audio (the running-cancel golden does not exist) | unknown |
+| audio-84 | 9 | A cancel requested while running is honoured when the next status update tries to succeed: `update_status` refuses SUCCEEDED with `CancellationPending`, and `_settle_native_job` sets `canceled`. The engine's success is held until the HTTP cancel returns 202, so the refused SUCCEEDED attempt happens after the cancel. | gateway/media_jobs.py:1610, 1714; proxy.py:23985 | pinned: `test_audio_84_cancel_while_running_wins_over_success` (test_s7_parity_audio.py; a spy on `update_status` records the refused attempt) | unknown |
 
 Counted R9 items: 16 (audio-69 to audio-84). Totals: R1 32, R2 21, R3 3, R4 2, R5 3, R6 1, R7 2, R8 4, R9 16; 84 items in all.
 
