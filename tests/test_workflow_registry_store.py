@@ -217,7 +217,7 @@ def _with_inline(contract: dict, template: dict) -> dict:
 def bundled_template(workflow_id: str = BUNDLED_ID) -> dict:
     """The graph the bundled workflow names by file, to carry inline."""
     import json
-    from gateway.discovery import ROOT
+    from gateway.registry_snapshot import ROOT
     block = next(iter(discovery.bundled_workflow_manifests()[workflow_id]["bindings"].values()))
     return json.loads((ROOT / block["workflow"]).read_text(encoding="utf-8"))
 
