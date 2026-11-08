@@ -437,8 +437,11 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_context_probe_cache_is_honored(self) -> None:
-        # Listing performs no loaded-state lookup, but the context-window
-        # annotation still probes once on a cold/expired cache.
+        # The selector's own reads are held out; the context-window annotation
+        # still probes once on a cold/expired cache.
+        selector = patch.object(proxy, "_first_servable_loaded_llm_target", _no_servable_target)
+        selector.start()
+        self.addCleanup(selector.stop)
         for alias in self.backends["kobold"]["models"][1:]:
             alias.pop("context_window", None)
         now = time.time()
