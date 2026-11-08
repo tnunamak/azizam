@@ -205,3 +205,23 @@ def test_a_published_workflow_shows_on_every_surface_and_an_unpublished_one_on_n
     refused = call("post", f"/gateway/v1/workflows/{OWNER_ID}/run", json={"inputs": {"prompt": "x"}})
     assert refused.status_code in (403, 404, 409), refused.text
     assert engine.calls == []
+
+
+def test_a_disabled_workflow_refuses_new_runs_and_fails_a_queued_job_at_dispatch(world, monkeypatch):  # rows 2 and 4
+    publish(world.db, owner_workflow(False))
+    engine = serve_engine(world, FakeGraphEngine(manifest_of(IMAGE_ID), png_bytes((9, 9, 9)), "image/png", "out.png"))
+    scheduled: list[str] = []
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", lambda job_id: scheduled.append(job_id))
+    queued = call("post", f"/gateway/v1/workflows/{OWNER_ID}/run", json={"inputs": {"prompt": "x"}})
+    assert queued.status_code in (200, 202), queued.text
+    job_id = queued.json()["job_id"]
+    assert scheduled == [job_id] and queued.json()["status"] == "queued"
+
+    publish(world.db, owner_workflow(False, state="disabled"))
+    refused = call("post", f"/gateway/v1/workflows/{OWNER_ID}/run", json={"inputs": {"prompt": "x"}})
+    assert (refused.status_code, refused.json()["error"]["code"]) == (409, "workflow_disabled"), refused.text
+
+    asyncio.run(proxy._run_workflow_job(job_id))          # the worker takes the queued job
+    job = media_jobs.get(job_id, path=world.media)
+    assert (job["status"], job["error_code"]) == ("failed", "workflow_disabled")
+    assert engine.calls == []
