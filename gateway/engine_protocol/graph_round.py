@@ -109,7 +109,6 @@ async def run_round(
     contract_outputs: Mapping[str, Any],
     limits: Any,
     say: Callable[[str], None] = lambda _text: None,
-    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
 ) -> RoundResult:
     """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first."""
     prompt_id: Optional[str] = None
@@ -135,7 +134,7 @@ async def run_round(
                 await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="client disconnect", timeout=control_timeout, say=say)
                 raise RoundFailure(DISCONNECTED, prompt_id=prompt_id)
             if delay:
-                await sleep(delay)
+                await asyncio.sleep(delay)
                 remaining -= delay
             delay = min(delay * 2 if delay else POLL_FIRST_S, POLL_MAX_S, remaining)
             try:
