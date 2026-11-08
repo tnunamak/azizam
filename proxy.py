@@ -26933,6 +26933,7 @@ _register_graph_runner()
 
 # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.ImageJobs.shape_id] = _image_default_model
 
 
 def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
