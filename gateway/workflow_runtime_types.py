@@ -382,6 +382,8 @@ class RunRequest:
     idempotency_key: str | None = None
     wait_s: float = 0.0
     frontend_id: str = "workflows"
+    # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
+    request_id: str | None = None
 
 
 @dataclass(frozen=True)

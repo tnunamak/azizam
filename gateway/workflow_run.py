@@ -46,6 +46,12 @@ log = logging.getLogger(__name__)
 
 # The job store's intent and mode for a job made by this core. The job's workflow id is the workflow it runs.
 RUN_INTENT = "workflow.run"
+# How a job's terminal status closes the request receipt it carries (status, reason); a failed job uses its error code.
+RECEIPT_OUTCOMES = {
+    media_jobs.STATUS_SUCCEEDED: ("succeeded", "succeeded"),
+    media_jobs.STATUS_FAILED: ("failed", "failed"),
+    media_jobs.STATUS_CANCELED: ("cancelled", "cancelled"),
+}
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
 CLAIM_POLL_S = 0.05
@@ -455,7 +461,7 @@ class WorkflowRunCore:
         owner_hash, app_id, key_name = port.job_owner(caller)
         job = media_jobs.MediaJob(
             intent=RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
-            api_key_name=key_name,
+            api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
                       "frontend": req.frontend_id})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
@@ -494,6 +500,12 @@ class WorkflowRunCore:
     async def execute_run(self, job_id: str) -> None:
         """The worker. Decides from the job's state what it needs (the 5.4 table), then runs the checks of 5.2 in order,
         then the first effect."""
+        try:
+            await self._execute(job_id)
+        finally:
+            await self.close_receipt(job_id)
+
+    async def _execute(self, job_id: str) -> None:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
         if job is None or media_jobs.is_terminal(str(job["status"])):
             return
@@ -506,6 +518,23 @@ class WorkflowRunCore:
             self._fail(job_id, SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start again.")
         else:
             await self._run(job_id, checks=action == "resume")
+
+    async def close_receipt(self, job_id: str) -> None:
+        """When the job is terminal, tell the port to close the request receipt the job carries. A job still running (the
+        worker was cancelled) keeps it open; the port ignores a receipt it does not hold. Never raises."""
+        close = getattr(self._port, "close_receipt", None)
+        if close is None:
+            return
+        try:
+            job = media_jobs.get(job_id, audience="internal", path=self._path)
+            if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
+                return
+            status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
+            if status == "failed":
+                reason = str(job.get("error_code") or reason)
+            await close(str(job["request_id"]), status, reason)
+        except Exception:  # noqa: BLE001 - a receipt that does not close never changes the job
+            log.exception("job %s ended but its receipt was not closed", job_id)
 
     def _classify(self, job: Mapping[str, Any]) -> str:
         from gateway.workflow_envelope import classify_recovery

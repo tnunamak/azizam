@@ -23913,6 +23913,10 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
 def _recover_workflow_runs() -> None:
     """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
     runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
+    # No task of a stopped gateway is left to close the receipt of a run it was serving.
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if job.get("intent") == workflow_run.RUN_INTENT:
+            receipt_store.close_orphan(str(job.get("request_id") or ""))
     core = _workflow_run_core()
     if core is None:
         return
@@ -26809,6 +26813,15 @@ class _WorkflowRunPort:
         return path.read_bytes()
 
 
+    async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
+        """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
+        handed off (a sync request closes its own) is not held here, and nothing is done."""
+        owner = _RUN_RECEIPT_OWNERS.pop(request_id, None)
+        if owner is not None:
+            owner.report(status=status, reason=reason)
+            await owner.settle()
+
+
 _WORKFLOW_RUN_PORT = _WorkflowRunPort()
 
 # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
@@ -26904,6 +26917,35 @@ def _new_row_spool() -> request_spool.FileRequestSpool:
         measure=lambda head, _declared: media_inputs.measure(head).media_type)
 
 
+# Receipts that a row handed off to the run core, by request id, until the core closes them at the job's end.
+_RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
+
+
+class _RunReceiptOwner(ReceiptLifecycleOwner):
+    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
+
+    def handoff(self) -> "_RunReceiptOwner":
+        super().handoff()
+        _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
+        return self
+
+
+def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
+    """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
+    (``_name_row_receipt``)."""
+    identity = auth.identity
+    return _RunReceiptOwner(RouteReceipt(
+        protocol=row.receipt_protocol, intent=workflow_run.RUN_INTENT, path=path, request_id=request_id,
+        app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None))
+
+
+def _name_row_receipt(owner: _RunReceiptOwner, entry: Any) -> None:
+    owner.receipt.resolved_workflow = entry.id
+    owner.receipt.attach_manifest(manifest_id=entry.id, manifest_version=str(entry.record_revision),
+                                  manifest_hash=entry.contract_digest)
+
+
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
 _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     authenticate=lambda request, path: authenticate_request(request, path),
@@ -26914,6 +26956,9 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     new_spool=_new_row_spool,
     scope=lambda request, spool: request_spool.request_scope(request, spool),
     refused=_workflow_run_response,
+    new_request_id=new_request_id,
+    open_receipt=_open_row_receipt,
+    name_receipt=_name_row_receipt,
 )
 
 
