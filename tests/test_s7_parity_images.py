@@ -768,7 +768,8 @@ def job_everything(rig, job_id):
 
 def _job_doc(o, i=1):
     d = doc(o, i) or {}
-    return {k: d.get(k) for k in ("status", "intent", "workflow", "progress", "error", "retryable", "attempts", "mode") if k in d}
+    # ``intent`` is left out: the core files every workflow run under one intent (delta ``job_row_intent``, see J06).
+    return {k: d.get(k) for k in ("status", "workflow", "progress", "error", "retryable", "attempts", "mode") if k in d}
 
 
 def test_images_J01_body_not_json_400(tmp_path):
@@ -806,11 +807,13 @@ def test_images_J05_admission_refusal_writes_a_receipt(tmp_path):
     assert_same(old, row, receipt_summary, ("resource decision", lambda o: receipt_fields(o, "resource_decision", "metadata")))
 
 
-@ROW_PENDING
 def test_images_J06_job_row_intent_workflow_payload(tmp_path):
+    """DELTA ``job_row_intent``: the old job row filed its intent as the image intent; the core files every workflow run under
+    one intent and the row names the workflow. The workflow and status are unchanged."""
     old, row = job_pair(tmp_path, job_body(), job_setup(), run=False)
     old_has(old, "a job row", media_jobs(old))
-    assert_same(old, row, ("jobs", lambda o: [(j["intent"], j.get("workflow"), j["status"]) for j in media_jobs(o)]))
+    assert [(j["intent"], j.get("workflow"), j["status"]) for j in media_jobs(old)] == [("image.generate", "image.generate.krea2-turbo", "queued")]
+    assert [(j["intent"], j.get("workflow"), j["status"]) for j in media_jobs(row)] == [("workflow.run", "image.generate.krea2-turbo", "queued")]
 
 
 def _job_rows(o):
@@ -1100,16 +1103,24 @@ def test_images_R05_restart_during_the_run(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R06_crash_mid_run_copy(tmp_path):
+    """DELTA ``executor_crash_text``: a worker that dies with an unexpected error. The old job stored "Image media job executor
+    error: <type>" with HTTP 502 and retried; the core stores its fixed sentence for an unexpected failure and does not
+    retry, because only an adapter's named retry reason retries."""
+    from gateway import node_graph_runner
+
     def setup(rig):
         job_setup()(rig)
 
         async def crash(*_a, **_k):
             raise RuntimeError("worker died")
         rig.set(proxy, "proxy_image_request", crash)
+        rig.set(node_graph_runner.NodeGraphRunner, "_rounds", crash)
     old, row = job_pair(tmp_path, job_body(), setup, after=job_get())
-    assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("job states", _states))
+    old_has(old, "the old executor text", _states(old) == [("failed", "Image media job executor error: RuntimeError")])
+    assert [s for s, _ in _states(row)] == ["failed"] and "worker died" not in str(_states(row))
+    assert _job_doc(row, 1)["error"] == "The job failed."
+    assert len(engine_bodies(row, "/prompt")) == 0
 
 
 def test_images_R07_restart_closes_open_receipts(tmp_path):
