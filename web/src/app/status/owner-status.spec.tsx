@@ -661,6 +661,129 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
   ).toBeVisible();
 });
 
+const UNCONFIRMED = "Another engine is set up for chat, but it is not confirmed working.";
+const EXPOSED = "Chat: no other engine serves it.";
+const chatEngine = (
+  id: string,
+  name: string,
+  observation: string,
+  tone: string,
+  lastError: string | null,
+  label = "Chat",
+) => ({
+  service_id: id,
+  name: `${name} (${label.toLowerCase()})`,
+  engine_label: `${name} (${label.toLowerCase()})`,
+  capability_title: label,
+  capability_labels: [label],
+  icon_key: label.toLowerCase(),
+  configured: true,
+  enabled: true,
+  role: "standby",
+  routable: true,
+  in_use: true,
+  observation,
+  tone,
+  last_error: lastError,
+});
+
+it.each([
+  ["busy", "ok", "Chat", "Nothing yet: another engine still serves chat."],
+  ["up", "ok", "Chat", "Nothing yet: another engine still serves chat."],
+  // Starting is not answering yet: neither working nor down.
+  ["starting", "neutral", "Chat", UNCONFIRMED],
+  // No health check: its state is Unknown once its last request ages out.
+  ["unavailable", "neutral", "Chat", UNCONFIRMED],
+  // A fault on record is not a spare.
+  ["unavailable", "bad", "Chat", EXPOSED],
+  // An engine for another capability covers nothing.
+  ["busy", "ok", "Images", EXPOSED],
+  ["unavailable", "neutral", "Images", EXPOSED],
+])("scopes a down engine by the other engine: %s/%s serving %s", async (observation, tone, label, affects) => {
+  // Live 2026-11-08: a down test engine said "Chat is unavailable right now"
+  // while the stable chat engine, which has no health check, was unmeasured.
+  mount(
+    {
+      generated_at: 1_800_000_000,
+      current_health: {
+        state: "warn",
+        tone: "warn",
+        label: "Needs attention",
+        detail: "Test chat is down.",
+        observation_available: true,
+        services: [
+          chatEngine("chat", "Test chat", "down", "warn", "connect refused"),
+          chatEngine("stable", "Stable", observation, tone, null, label),
+        ],
+      },
+      backends: [],
+    } as unknown as StatusPayload,
+    {
+      ...registry,
+      services: {
+        chat: registry.services.chat,
+        stable: { ...registry.services.chat, id: "stable", name: "Stable" },
+      },
+    },
+  );
+  // With no spare the card names the lost capability; otherwise the engine.
+  const title = await screen.findByRole("heading", {
+    name:
+      affects === EXPOSED
+        ? "Chat is unavailable right now"
+        : "Test chat is not accepting connections",
+  });
+  const card = title.closest("article")!;
+  expect(within(card).getByText(affects)).toBeVisible();
+  if (affects !== EXPOSED) {
+    expect(
+      screen.queryByRole("heading", { name: /Chat is unavailable right now/ }),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain(EXPOSED);
+  }
+  // One sentence per capability: a covered capability is never also unconfirmed.
+  if (affects.startsWith("Nothing yet")) {
+    expect(document.body.textContent).not.toContain(UNCONFIRMED);
+  }
+});
+
+it.each([
+  ["busy", "ok", "Chat (an engine on this computer still serves it)"],
+  ["unavailable", "neutral", "Chat (an engine on this computer is set up for it, not confirmed working)"],
+  ["starting", "neutral", "Chat (an engine on this computer is set up for it, not confirmed working)"],
+  ["unavailable", "bad", "Chat"],
+])("scopes a down provider by a local engine that is %s/%s", async (observation, tone, affects) => {
+  providerState.state = "ready";
+  providerState.providers = [{ id: "remote", name: "Data provider", enabled: true, reachable: false, keyState: "set", spendText: "" }];
+  mount(
+    {
+      generated_at: 1_800_000_000,
+      current_health: {
+        state: "warn",
+        tone: "warn",
+        label: "Needs attention",
+        detail: "Data provider is down.",
+        observation_available: true,
+        services: [
+          chatEngine("remote", "Data provider", "down", "bad", "connect refused"),
+          chatEngine("stable", "Stable", observation, tone, null),
+        ],
+      },
+      backends: [],
+    } as unknown as StatusPayload,
+    {
+      ...registry,
+      services: {
+        remote: registry.services.remote,
+        stable: { ...registry.services.chat, id: "stable", name: "Stable" },
+      },
+    },
+  );
+  const title = await screen.findByRole("heading", { name: "Data provider is down" });
+  const card = title.closest("article")!;
+  expect(within(card).getByText(affects)).toBeVisible();
+});
+
 it("waits for the status check before drawing engine rows, never a passing Unknown", async () => {
   vi.useFakeTimers();
   vi.spyOn(api.services, "registry").mockResolvedValue(chatRegistry);
