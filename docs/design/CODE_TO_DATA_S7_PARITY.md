@@ -49,10 +49,11 @@ The receipt fields the old routes wrote (`accepted_inputs` in their order, `reso
 ### M2. Wire options travel on the run request (category 3)
 
 `RunRequest` gains `options: Mapping[str, Any] = {}`: the transport options a caller chose on the wire that change what
-the engine is asked for (`n`, `size`, `output_format`, `background`, `quality`, the audio container, video `seconds`
-when it is not a workflow input). The shape fills it; the core includes it in run identity (so a replay with other
+the engine is asked for (`n`, `size`, `output_format`, `background`, `quality`, video `seconds`
+when it is not a workflow input). The audio delivery container is an answer form, not an option (it is read from
+the wire request at rendering, 13.2), so it never changes run identity. The shape fills it; the core includes it in run identity (so a replay with other
 options is a conflict, as today); the run port passes it to the adapter in the flat body under `options`. The answer
-form that changes only the rendering (images `response_format`) stays on the wire request (13.2 addendum) and is not an
+form that changes only the rendering (images `response_format`, the audio container) stays on the wire request (13.2 addendum) and is not an
 option.
 
 Clamps and checks the old routes made on these values (`n` clamped to 10 with a warning, `size` grammar) stay in the
@@ -195,6 +196,11 @@ and a reason. Nothing else may differ.
 - `restart_closes_receipt`: a sync request cut by a restart left no receipt row (images) or an `in_progress` row that
   reads as `stale_incomplete` (audio, video) (writers.md, images-R07); every row's receipt is now closed as
   `GATEWAY_RESTARTED` by startup recovery (M1).
+- `contract_manifest_hash`: a receipt's `manifest_hash` is the hash of the workflow's schema-2 contract, the record the
+  run used; the old routes hashed the old manifest file. `manifest_id` and `manifest_version` keep their values.
+- `refusal_precedence`: a request with several faults gets the first refusal of authentication, route policy, body
+  validation, service state (section 6.4). The old image route validated the body before policy; the old audio route
+  checked the service before reading the body.
 - `recovery_text_unified`: where audio or video recovery text differs from the image text for the same outcome, the
   image text wins.
 
@@ -205,3 +211,36 @@ Any other delta found while building is reported to the integrator with its item
 Every inventory item has a parity test that passes, or is on section 4. The old image, audio and video handlers,
 runners and schedulers are gone. The domain-literal and engine-knowledge ratchets do not rise. The full hermetic suite,
 the goldens under oracle profile 2, and the route baseline pass.
+
+## 6. Design review answers (dot review c2d-S7-addendum-review-1108)
+
+Each answer is binding; each names the contract test that holds it and the builder who turns it green.
+
+1. **Recovery keeps the classifier's precedence (M12).** A committed bundle is replayed and a recorded upstream job is
+   polled, as section 5.4 of S4-S8 says; only a job with no upstream id and no bundle gets the old restart text. M12
+   changes text, never the outcome. Test `test_s7_recovery_preserves_poll_and_committed_bundle_precedence` (core fixer).
+2. **A replay answers before live admission (M4).** `submit_run` resolves a matching claim first; the service-state
+   refusal applies to a new job only. The row server does not call `target_gate` before `submit_run`. Test
+   `test_s7_same_key_replays_after_backend_becomes_unavailable` (RH for the row server, core fixer for `submit_run`).
+3. **The audio container is an answer form (M2, fixed above).** Test
+   `test_s7_audio_delivery_container_does_not_change_run_identity` (A).
+4. **One refusal order for every row.** A request refused for more than one reason gets the first of: authentication,
+   route policy, body validation, service state. Allowed delta `refusal_precedence` (section 4). Test
+   `test_s7_combined_refusals_follow_the_row_order` (RH).
+5. **Result processing is an adapter stage (M6).** Pixel and sample transforms between the engine's output and the
+   stored result (background-removal fallback, source-alpha and post-composite masking, offset-inpaint composition, peak
+   normalisation) run in the adapter before it commits its bundle, so the Library stores the final bytes. The stage is
+   named by binding data (`result_processing: [..]`), and its code lives with the adapter, not the core. Tests
+   `test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels`,
+   `test_s7_background_fallback_and_offset_inpaint_preserve_composition` (I), `test_s7_audio_normalize_peak_db_preserves_output_samples` (A).
+6. **Job retry is the core's (new M13).** A retryable failure is retried on the same job with its pin and generated
+   values, up to the binding's attempt limit, with the old delay rule (base 5 s, max 30 s, `Retry-After` wins) and the
+   old retry event. Test `test_s7_image_job_retry_preserves_delay_events_and_attempt_limit` (core fixer).
+7. **Delete is a job operation (M7).** `JobService` gains an additive `delete(job_id, caller)`: owner check, cancel
+   first, tombstone persisted, hidden from status, content and list after restart, reaped after its window; a failed
+   cancel answers the old 409 and keeps the job. The legacy reader may mark an existing legacy row deleted (it never
+   creates one). Test `test_s7_legacy_video_delete_survives_restart_and_cancel_failure_keeps_record` (core fixer for
+   `JobService.delete`, V3 for the route and the legacy row).
+8. **Each operation keeps its own poll schedule (M6).** The image round's cadence is the image operations'; audio keeps
+   sleep 2 s per poll with its 600-poll bound, the video media job 5 s. The adapter keys cadence by operation, from
+   binding data. Test `test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule` (I, with A and V3).
