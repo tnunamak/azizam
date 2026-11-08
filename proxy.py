@@ -17626,6 +17626,9 @@ STT_MEASUREMENTS = stt_measurement.Measurements(ADMIN_STORE, _operator_stt_trans
                                                 preflight=_operator_stt_preflight, active=_operator_stt_owner_active)
 
 
+service_registry.set_dynamic_model_aliases_source(lambda: config.get("model_aliases"))
+
+
 def _workflow_store_snapshot(document, _release, *, generation):
     """The store's prospective snapshot, built by the same builder and bundled release the provider uses."""
     return registry_snapshot.build(document, registry_snapshot.bundled_release(), generation=generation,
@@ -26592,18 +26595,28 @@ def _backend_address(record: Mapping[str, Any]) -> str | None:
     return f"http://{host}:{port}" if host and port else None
 
 
-def _workflow_engine(adapter_id: str) -> tuple[str, Mapping[str, Any], Any, Any] | None:
-    """The configured service whose reviewed protocol names ``adapter_id``: (service id, record, protocol, adapter).
-    Found by data (the protocol description's adapter id and the record's protocol), never by an engine name."""
+def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+    """The configured service whose reviewed protocol holds the bindings under ``binding_key``: (service id, record,
+    protocol, adapter). Found by data (the protocol description's ``binding`` key and the record's protocol), never by
+    an engine name."""
     from gateway.engine_protocol import description as protocol_description
     from gateway.engine_protocol import reviewed
     from gateway.engine_protocol.errors import ProtocolError
     for doc in protocol_description.load_registry().values():
-        if adapter_id not in (doc.adapter_id, doc.binding):      # a binding is keyed by the description's binding name
+        if not binding_key or doc.binding != binding_key:
             continue
+        # A record is the engine for this binding when it names the protocol itself, or when its service id is the
+        # binding key. A record that merely could serve a capability is not: that would pick any service with an address.
+        candidates = []
         for service_id, record in (config.get("backends") or {}).items():
             if not isinstance(record, Mapping) or _backend_address(record) is None:
                 continue
+            connection = record.get("connection")
+            named = next((str(source["protocol"]).strip() for source in (connection if isinstance(connection, Mapping) else {}, record)
+                          if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
+            if named == doc.id or service_id == binding_key:
+                candidates.append((named != doc.id, service_id, record))
+        for _, service_id, record in sorted(candidates, key=lambda item: item[0]):
             for capability in (*doc.serves, ""):
                 try:
                     if reviewed.protocol_for_backend(record, capability).id != doc.id:
@@ -26728,7 +26741,7 @@ class _WorkflowRunPort:
         if ref is None:
             return None
         if ref.inline is not None:
-            return job_envelope.canonical_bytes(ref.inline)
+            return job_envelope.canonical_bytes(workflow_run.plain(ref.inline))
         return _resolve_workflow_artifact_path(None, ref.path).read_bytes() if ref.path else None
 
     # the execution payload
@@ -26760,10 +26773,16 @@ class _WorkflowRunPort:
         adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
         result bundle is committed by ``engine_protocol.jobs.run`` itself."""
         from gateway.engine_protocol import jobs as protocol_jobs
-        engine = _workflow_engine(ctx.pin.envelope.adapter_id)
+        from gateway.engine_protocol.media import GatewayAssetStore
+        engine = _workflow_engine(ctx.pin.envelope.binding_key)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
-        service_id, record, protocol, adapter = engine
+        service_id, record, protocol, _ = engine
+        # The result files are kept for the person who asked, so the adapter is built over that person's asset store.
+        owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+        adapter = reviewed_adapters.adapter_for_backend(
+            record, next(iter(protocol.serves), ""),
+            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner))
 
         def connection() -> AdapterConnection:
             _require_egress_lease(service_id)
@@ -26774,12 +26793,11 @@ class _WorkflowRunPort:
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
             timing=(2.0, float(DERIVED.COMFY_TIMEOUT)), jobs_path=media_jobs.DB_PATH,
             context=ResultContext(self.result_limits()))
-        op = next((name for name, item in protocol.operations.items() if item.job is not None),
-                  next(iter(protocol.operations)))
-        media = {name: [{"media_type": ref.wire_media_type or ref.media_type, "filename": ref.filename,
-                         "size": ref.size, "digest": ref.digest} for ref in refs] for name, refs in ctx.media.items()}
-        await protocol_jobs.run(runtime_, op, {"inputs": dict(ctx.inputs), "generated": dict(ctx.generated),
-                                               "media": media}, job_id=ctx.job_id)
+        # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
+        # it. No operation of the protocol is picked by position.
+        op = str(ctx.pin.contract["intent"])
+        # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
+        await protocol_jobs.run(runtime_, op, {**dict(ctx.inputs), **dict(ctx.generated)}, job_id=ctx.job_id)
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
         path = asset_cache_path(asset_id)

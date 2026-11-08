@@ -22,7 +22,9 @@ from typing import Any
 
 import yaml
 
+from gateway import binding_descriptors
 from gateway.alias_policy import service_model_records
+from gateway.binding_descriptors import BindingDescriptor
 from gateway.registry_layers import RUN_CONTROL_PATCH_KEY
 from gateway.discovery import WorkflowRecord
 from gateway.manifests import BUNDLED_PROVENANCE, ContractError, Provenance
@@ -184,24 +186,25 @@ def _path_template_digest(path: str) -> str:
     return digest({"template_path": path})
 
 
-def _template_of(body: Mapping[str, Any]) -> TemplateRef | None:
-    declared = body.get("template")
-    if isinstance(declared, Mapping) and isinstance(declared.get("inline"), Mapping):
-        inline = declared["inline"]
-        return TemplateRef(digest=digest(inline), inline=frozen(inline))
-    path = body.get("workflow")
-    if isinstance(path, str) and path:
-        return TemplateRef(digest=_path_template_digest(path), path=path)
-    return None
+def _template_of(descriptor: BindingDescriptor | None, body: Mapping[str, Any]) -> TemplateRef | None:
+    """The template a binding names (a file) or carries (inline), found by the description's template field."""
+    if descriptor is None:
+        return None
+    carried = binding_descriptors.inline_template(descriptor, body)
+    if carried is not None:
+        return TemplateRef(digest=digest(carried[1]), inline=frozen(carried[1]))
+    path = binding_descriptors.template_path(descriptor, body)
+    return TemplateRef(digest=_path_template_digest(path), path=path) if path else None
 
 
 def _bindings_of(contract: Mapping[str, Any]) -> Mapping[str, BindingDef]:
     bindings = contract.get("bindings")
     if not isinstance(bindings, Mapping):
         return MappingProxyType({})
+    descriptors = binding_descriptors.cached_shipped_binding_descriptors()
     return MappingProxyType({
         str(key): BindingDef(adapter_id=str(key), binding=frozen(body), binding_digest=digest(body),
-                             template=_template_of(body))
+                             template=_template_of(descriptors.get(str(key)), body))
         for key, body in bindings.items() if isinstance(body, Mapping)})
 
 

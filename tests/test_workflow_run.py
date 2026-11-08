@@ -341,6 +341,9 @@ def test_a_new_job_pins_its_definitions_and_records_the_registry_facts(db, tmp_p
     assert port.payloads[view.job_id]["body"] == {"inputs": {"prompt": "hello"}}
 
 
+PNG_HEAD = b"\x89PNG\r\n\x1a\n"
+
+
 def test_staged_files_are_adopted_by_a_new_job_and_deleted_when_the_job_does_not_commit(db, tmp_path):
     snap = snapshot()
     core, port, _ = make_core(db, tmp_path, snap)
@@ -349,7 +352,7 @@ def test_staged_files_are_adopted_by_a_new_job_and_deleted_when_the_job_does_not
         spool = FileRequestSpool(tmp_path, max_bytes=1000, request_id="req1")
 
         async def chunks():
-            yield b"abcdef"
+            yield PNG_HEAD + b"abcdef"
 
         ref = await spool.stage("photo", chunks(), filename="a.png", wire_media_type="image/png")
         return spool, ref
@@ -358,7 +361,7 @@ def test_staged_files_are_adopted_by_a_new_job_and_deleted_when_the_job_does_not
     view = run(core.submit_run(request(media={"photo": (ref,)}), Caller(), snapshot=snap))
     assert (tmp_path / "jobs" / view.job_id).is_dir()
     adopted = port.payloads[view.job_id]["media"]["photo"][0]
-    assert (tmp_path / "jobs" / view.job_id / adopted["spool_key"]).read_bytes() == b"abcdef"
+    assert (tmp_path / "jobs" / view.job_id / adopted["spool_key"]).read_bytes() == PNG_HEAD + b"abcdef"
     spool.release()
     assert not (tmp_path / "staging" / "req1").exists()
     assert (tmp_path / "jobs" / view.job_id / adopted["spool_key"]).exists()   # release never touches an adopted file
@@ -381,12 +384,16 @@ def test_the_request_spool_refuses_oversize_and_unknown_types_and_keeps_no_bytes
         yield data
 
     big = asyncio.run(spool.stage("a", chunks(b"x" * 11), filename=None, wire_media_type="image/png"))
-    unknown = asyncio.run(spool.stage("a", chunks(b"xx"), filename=None, wire_media_type=None))
-    ok = asyncio.run(spool.stage("a", chunks(b"xx"), filename="f", wire_media_type="image/png; charset=x"))
+    unknown = asyncio.run(spool.stage("a", chunks(b"xx"), filename=None, wire_media_type="image/png"))
+    ok = asyncio.run(spool.stage("a", chunks(PNG_HEAD), filename="f", wire_media_type="image/jpeg; charset=x"))
     assert isinstance(big, RunRefused) and big.http_status == 413
-    assert isinstance(unknown, RunRefused) and unknown.http_status == 415
-    assert isinstance(ok, MediaRef) and ok.media_type == "image/png" and ok.size == 2 and ok.digest.startswith("sha256:")
-    assert len(list((tmp_path / "staging" / "r").iterdir())) == 1
+    # The type is measured from the bytes: bytes of no known type are the unidentified type whatever the caller says,
+    # and a picture is a picture whatever the caller says. The declared type is only kept for the wire.
+    assert isinstance(unknown, MediaRef) and unknown.media_type == "application/octet-stream"
+    assert unknown.wire_media_type == "image/png"
+    assert isinstance(ok, MediaRef) and ok.media_type == "image/png" and ok.size == 8 and ok.digest.startswith("sha256:")
+    assert ok.wire_media_type == "image/jpeg; charset=x"
+    assert len(list((tmp_path / "staging" / "r").iterdir())) == 2
     spool.release()
     spool.release()
     assert not (tmp_path / "staging" / "r").exists()
