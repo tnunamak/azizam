@@ -249,7 +249,7 @@ def test_a_finished_run_names_the_contract_binding_and_template_it_ran(  # W5: t
     store = DefinitionStore(world.media)
     envelope = store.envelope(view["job_id"])
     served = proxy.WORKFLOW_SNAPSHOTS.current().get(workflow_id)          # what the gateway served when the run was made
-    contract = workflow_run.plain(served.contract)
+    contract = workflow_run.execution_contract(workflow_run.plain(served.contract))
     assert (contract["id"], contract["intent"]) == (manifest["id"], manifest["intent"])
     template_file = (discovery_root() / manifest["bindings"]["comfyui"]["workflow"]).read_bytes()
     assert envelope.source_id == workflow_id and envelope.binding_key == "comfyui"
