@@ -134,12 +134,43 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
         } | sha256sum | cut -d' ' -f1
     }
 
+    # Each hash starts a Python that spends about 0.7 s of CPU on imports, so
+    # the watcher hashes again only when an input file changed. A write in the
+    # same clock tick as a stat can keep its mtime; an input changed in the
+    # last 2 s is not trusted, and every AZIZAM_LITELLM_HASH_REFRESH_POLLS polls
+    # hash again for changes that no file stat shows.
+    litellm_runtime_inputs() {
+        stat -L -c '%n %d %i %s %.9Y' -- "$LITELLM_CONFIG_PATH" "$AZIZAM_ADMIN_DB_PATH" \
+            "$AZIZAM_ADMIN_DB_PATH-wal" "$AZIZAM_ADMIN_DB_PATH-journal" 2>/dev/null
+    }
+
+    litellm_runtime_inputs_settled() {
+        local now newest
+        printf -v now '%(%s)T' -1
+        newest="$(stat -L -c '%Y' -- "$LITELLM_CONFIG_PATH" "$AZIZAM_ADMIN_DB_PATH" \
+            "$AZIZAM_ADMIN_DB_PATH-wal" "$AZIZAM_ADMIN_DB_PATH-journal" 2>/dev/null | sort -n | tail -1)"
+        [ -n "$newest" ] && [ $((now - newest)) -ge 2 ]
+    }
+
     watch_litellm_config() {
         trap 'if [ -n "$LITELLM_PID" ]; then kill "$LITELLM_PID" >/dev/null 2>&1 || true; wait "$LITELLM_PID" >/dev/null 2>&1 || true; fi; rm -f "$LITELLM_RUNTIME_HASH_FILE" "${LITELLM_LAUNCH_CONFIG_PATH:-}"; exit 0' EXIT INT TERM
         LAST_HASH=""
+        LAST_INPUTS=""
+        HASH_POLLS=0
         while true; do
             while [ ! -s "$LITELLM_CONFIG_PATH" ]; do sleep 1; done
-            NEXT_HASH="$(litellm_runtime_hash)"
+            # Read the inputs before the hash: a change after this read shows next poll.
+            INPUTS="$(litellm_runtime_inputs)"
+            HASH_POLLS=$((HASH_POLLS + 1))
+            if [ -z "$LAST_HASH" ] || [ "$INPUTS" != "$LAST_INPUTS" ] \
+                || [ "$HASH_POLLS" -ge "${AZIZAM_LITELLM_HASH_REFRESH_POLLS:-60}" ] \
+                || ! litellm_runtime_inputs_settled; then
+                NEXT_HASH="$(litellm_runtime_hash)"
+                HASH_POLLS=0
+            else
+                NEXT_HASH=$LAST_HASH
+            fi
+            LAST_INPUTS=$INPUTS
             if [ "$NEXT_HASH" != "$LAST_HASH" ] || ! kill -0 "${LITELLM_PID:-0}" >/dev/null 2>&1; then
                 if [ -n "$LITELLM_PID" ]; then
                     kill "$LITELLM_PID" >/dev/null 2>&1 || true
