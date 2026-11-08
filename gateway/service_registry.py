@@ -2710,7 +2710,8 @@ def _claims_override(payload: Mapping[str, Any], workflow_id: str) -> bool:
             continue
         manifest = raw.get("manifest")
         if workflow_id in (key, raw.get("id"), manifest.get("id") if isinstance(manifest, Mapping) else None):
-            return raw.get("overrides") == workflow_id
+            # A run-control patch names the bundled id it changes; it holds no contract to claim the id with.
+            return raw.get("overrides") == workflow_id or raw.get(registry_layers.RUN_CONTROL_PATCH_KEY) == workflow_id
     return False
 
 
