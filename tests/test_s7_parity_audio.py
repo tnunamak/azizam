@@ -24,7 +24,7 @@ import pytest
 from fastapi import Response
 
 import proxy
-from gateway import media_jobs, media_metadata, provenance, receipt_store, result_bundle
+from gateway import generated_defaults, media_jobs, media_metadata, provenance, receipt_store, result_bundle
 from tests import test_adapter_differential as base
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential import dump_sqlite
@@ -35,6 +35,13 @@ SYNC = "/v1/audio/generate"
 JOBS = "/gateway/v1/media/jobs"
 BODY = {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}
 JOB_BODY = {"intent": "audio.generate", "request": BODY}
+# The metadata control of an audio job is read from the request body the runner replays (extensions inside "request").
+# A control on the envelope is ignored, so a job built that way has no submit choice at all.
+NONE_JOB_BODY = {"intent": "audio.generate", "request": {**BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}}}
+# The fake engine's prompt id (comfy_exchanges' default, which the history answer also uses).
+ENGINE_PROMPT_ID = "p1"
+# A seed the generator returns in place of the one the process draws: any value the test can tell from a constant.
+GENERATED_SEED = 4242
 # The real service-availability reader, kept before any rig patches it (the rig replaces it with a no-op).
 REAL_SERVICE_AVAILABILITY = proxy._service_availability_response
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter_differential"
@@ -120,20 +127,30 @@ def _provenance(content: bytes) -> dict[str, Any]:
     return json.loads(tags["comment"].removeprefix(f"{provenance.PROVENANCE_KEY}="))
 
 
+def _require(condition: bool, message: str) -> None:
+    """A setup precondition. It raises RuntimeError, not AssertionError, so a test marked ``raises=AssertionError``
+    still fails on it: only the behaviour the xfail names may be expected to fail."""
+    if not condition:
+        raise RuntimeError(f"test setup: {message}")
+
+
+_TERMINAL = (media_jobs.STATUS_SUCCEEDED, media_jobs.STATUS_FAILED, media_jobs.STATUS_CANCELED)
+
+
 def _submit_and_run(rig, body: dict[str, Any]) -> str:
     """Submit through the route, then run the job through the real scheduler, so the runner keeps the submit's request
-    context (its delivery choice) the way production does. Returns the job id once it is terminal."""
+    context (its delivery choice) the way production does. Returns the job id once it is terminal; raises RuntimeError
+    if the bounded poll never reaches a terminal state."""
     async def flow() -> str:
         r = await rig.call("POST", JOBS, label="submit", json_body=body, unordered_json=True)
-        assert r.status_code == 202, r.text
+        _require(r.status_code == 202, f"submit answered {r.status_code}: {r.text}")
         job_id = _job_id(r)
-        assert REAL_SCHEDULE_AUDIO_MEDIA_JOB(job_id) is True
+        _require(REAL_SCHEDULE_AUDIO_MEDIA_JOB(job_id) is True, "the scheduler did not take the job")
         for _ in range(1000):
-            if _stored(rig, job_id)["status"] in (media_jobs.STATUS_SUCCEEDED, media_jobs.STATUS_FAILED,
-                                                  media_jobs.STATUS_CANCELED):
-                break
+            if _stored(rig, job_id)["status"] in _TERMINAL:
+                return job_id
             await asyncio.sleep(0.01)
-        return job_id
+        raise RuntimeError(f"job {job_id} never reached a terminal state; last status {_stored(rig, job_id)['status']}")
 
     return asyncio.run(flow())
 
@@ -327,16 +344,17 @@ def test_audio_14_duration_reaches_the_engine_request(tmp_path):
 
 
 def test_audio_15_seed_is_generated_and_reaches_the_engine_request(tmp_path):
-    """audio-15: a seed is generated when the caller gives none; the engine's sampler seed is that integer, and the
-    delivered provenance names the same seed."""
+    """audio-15: a seed is generated when the caller gives none. The generator's value (replaced at the one seam the
+    generator draws through, ``generated_defaults.secure_source``, with GENERATED_SEED) is the engine sampler's seed,
+    and the delivered provenance names the same seed. A route that draws its own value, or 999, fails here."""
     with GatewayRig("audio-15", tmp_path) as rig:
         _ok(rig)
         rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
+        rig.set(generated_defaults, "secure_source", lambda low, high: GENERATED_SEED)
         r = asyncio.run(rig.call("POST", SYNC, label="generate", json_body=BODY))
         assert r.status_code == 200
-        seed = _engine_sampler(rig)["seed"]
-        assert isinstance(seed, int) and not isinstance(seed, bool)
-        assert _provenance(r.content)["seed"] == seed
+        assert _engine_sampler(rig)["seed"] == GENERATED_SEED
+        assert _provenance(r.content)["seed"] == GENERATED_SEED
 
 
 def test_audio_16_manifest_input_outside_its_bound_is_refused_with_param(tmp_path):
@@ -489,7 +507,8 @@ def test_audio_28_delivery_carries_provenance_and_the_sync_asset(tmp_path):
         assert record["kind"] == "audio"
         assert record["workflow_id"] == "audio.generate.tangoflux"
         assert record["requested_model"] == record["resolved_model"] == "tangoflux"
-        assert record["request_id"].startswith("audio_")
+        assert record["backend"] == "comfyui"  # the fixture's engine backend
+        assert record["request_id"] == f"audio_{ENGINE_PROMPT_ID}"  # the id the fake engine returned, exactly
         assert record["seed"] == sampler["seed"]
         assert record["parameters"]["duration"] == sampler["duration"]
         assert record["parameters"]["type"] == r.headers["x-audio-type"] == "music"
@@ -966,41 +985,49 @@ def test_audio_60_content_404_texts_for_missing_and_unreadable_jobs(tmp_path):
 
 
 def test_audio_61_content_handle_is_none_for_a_job_submitted_with_none(tmp_path):
-    """audio-61: a job submitted with metadata 'none' hands out a content handle with md=none, although the caller's
-    plan delivers full metadata. The job row not recording the submit's choice, and the handle ignoring the GET
-    override and the caller's default, are the two strict xfails below."""
+    """audio-61: a job submitted with metadata 'none' hands out a content handle with md=none. The old code signs every
+    audio handle with no delivery mode (build_signed_asset_url without one), so the handle is md=none whatever the
+    submit, the GET override or the caller's plan says. The two pins below name that old behaviour."""
     with GatewayRig("audio-61", tmp_path) as rig:
         _jobs_ok(rig)
         rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
-        job_id = _submit_and_run(rig, {**JOB_BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}})
-        assert _stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED
+        job_id = _submit_and_run(rig, NONE_JOB_BODY)
+        _require(_stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED, "the job did not succeed")
         assert _content_md(rig, job_id) == "none"
 
 
-@pytest.mark.xfail(strict=True, reason="audio-61 defect: the audio job route opens no delivery context "
-                                       "(_submit_audio_media_job), so the submit's metadata choice is never stored on the job")
-def test_audio_61_delta_job_records_the_submit_metadata_choice(tmp_path):
-    """audio-61 (inventory: the job keeps the submit's metadata choice for its content GET). Observed: the job row has no
-    metadata_mode after a submit that asked for none."""
+def test_audio_61_job_records_the_submit_metadata_choice(tmp_path):
+    """audio-61 (inventory: the job keeps the submit's metadata choice for its content GET). The old code and the new
+    path both record metadata_mode 'none' on the job for a submit that asked for it. (The first version of this test put
+    the request body (extensions inside "request"), where the runner reads it.)"""
     with GatewayRig("audio-61-job", tmp_path) as rig:
         _jobs_ok(rig)
-        job_id = _submit_and_run(rig, {**JOB_BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}})
-        assert _stored(rig, job_id)["metadata"]["metadata_mode"] == "none"
+        job_id = _submit_and_run(rig, NONE_JOB_BODY)
+        _require(_stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED, "the job did not succeed")
+        metadata = _stored(rig, job_id).get("metadata") or {}
+        assert metadata.get("metadata_mode") == "none"
 
 
-@pytest.mark.xfail(strict=True, reason="audio-61 defect: _media_job_asset_items signs content handles without the "
-                                       "delivery mode, so every handle is md=none (proxy.py _media_job_asset_items)")
-def test_audio_61_delta_content_handles_carry_the_get_override_and_the_caller_default(tmp_path):
-    """audio-61 (inventory: the GET's override, else the submit's mode, else the caller's default). The caller's plan
-    delivers full metadata. A job submitted with none, read with ?metadata=full, must hand out md=full (the override
-    wins); a job with no submit choice must hand out md=full (the caller's default)."""
-    with GatewayRig("audio-61-delta", tmp_path) as rig:
+def test_audio_61_content_handle_ignores_the_get_override_on_a_none_job(tmp_path):
+    """audio-61 pin, old behaviour (7daa31769): the GET's ?metadata=full does not change an audio handle, which stays
+    md=none. audio.md said override, then job mode, then caller default; the old code does not do that."""
+    with GatewayRig("audio-61-override", tmp_path) as rig:
         _jobs_ok(rig)
         rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
-        submitted_none = _submit_and_run(rig, {**JOB_BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}})
-        assert _content_md(rig, submitted_none, "?metadata=full") == "full"
-        no_choice = _submit_and_run(rig, JOB_BODY)
-        assert _content_md(rig, no_choice) == "full"
+        job_id = _submit_and_run(rig, NONE_JOB_BODY)
+        _require(_stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED, "the job did not succeed")
+        assert _content_md(rig, job_id, "?metadata=full") == "none"
+
+
+def test_audio_61_content_handle_ignores_the_caller_default(tmp_path):
+    """audio-61 pin, old behaviour (7daa31769): a job with no submit choice, read by a caller whose plan delivers full
+    metadata, still gets an md=none audio handle. The caller's default does not reach the signed handle."""
+    with GatewayRig("audio-61-default", tmp_path) as rig:
+        _jobs_ok(rig)
+        rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
+        job_id = _submit_and_run(rig, JOB_BODY)
+        _require(_stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED, "the job did not succeed")
+        assert _content_md(rig, job_id) == "none"
 
 
 def test_audio_62_results_route_is_404_for_a_missing_job(tmp_path):
@@ -1027,17 +1054,17 @@ def test_audio_62_results_route_is_404_for_an_owned_completed_job(tmp_path):
         assert r.json()["error"]["code"] == "media_job_result_not_found"
 
 
-@pytest.mark.xfail(strict=True, reason="audio-62 inventory delta: the refusal is documented as Cache-Control private, "
-                                       "no-store, but the refused response sets no header (gateway/api.py refused)")
-def test_audio_62_delta_refusal_for_a_completed_job_is_private_no_store(tmp_path):
-    """audio-62 (inventory: Cache-Control: private, no-store on the refusal). Observed: the refused answer for an owned
-    completed job carries no Cache-Control header."""
-    with GatewayRig("audio-62-delta", tmp_path) as rig:
+def test_audio_62_refusal_for_a_completed_job_carries_no_cache_control(tmp_path):
+    """audio-62 pin, old behaviour (7daa31769): the refusal for an owned completed job is the same 404 as a missing job,
+    and it carries no Cache-Control header. audio.md said 'private, no-store' on every refusal; the old refusal has
+    none. The header is set only on a successful read (gateway/api.py), which an audio job does not reach here."""
+    with GatewayRig("audio-62-refusal", tmp_path) as rig:
         _jobs_ok(rig)
         job_id = _submit_and_run(rig, JOB_BODY)
+        _require(_stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED, "the job did not succeed")
         r = asyncio.run(rig.call("GET", f"{JOBS}/{job_id}/results/{result_bundle.DEFAULT_NAME}", label="result"))
         assert r.status_code == 404
-        assert r.headers.get("cache-control") == "private, no-store"
+        assert "cache-control" not in r.headers
 
 
 def test_audio_63_events_list_shows_the_job_events(tmp_path):
@@ -1350,27 +1377,70 @@ def test_audio_83_a_crash_in_the_task_marks_the_job_failed(tmp_path):
         assert _stored(rig, job_id)["status"] == media_jobs.STATUS_FAILED
 
 
-def test_audio_84_cancel_while_running_wins_over_success(tmp_path):
-    """audio-84: the engine is held after real dispatch. A cancel sent over HTTP while the engine's answer is pending is
-    accepted (202); when the engine then releases a successful result, the job settles canceled, not succeeded, with
-    no asset and no published result bundle."""
-    with GatewayRig("audio-84", tmp_path) as rig:
-        # Still running when released: the engine answers "not in history yet" 50 times, then succeeds. Non-strict,
-        # because a cancel can end the run before the engine's last answers are asked for.
-        base._audio_comfy(rig, running_polls=50, strict=False)
-        base._capture_scheduling(rig)
-        job_id = _submit(rig)
+class _HeldHistory(httpx.AsyncBaseTransport):
+    """Wraps the engine's transport. The first history answer for the prompt is held until the test releases it, so the
+    engine's success is not available before the cancel. Every other request passes through unchanged. A hold that is not
+    released in time raises, so a broken test cannot wait forever."""
 
-        async def cancel_while_the_engine_is_pending() -> None:
-            while not any(e["path"] == "/history/p1" for e in rig.recorder.engine):
-                await asyncio.sleep(0)
-            cancel = await rig.call("POST", f"{JOBS}/{job_id}/cancel", label="cancel while pending", json_body={})
-            assert cancel.status_code == 202, cancel.text
+    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+        self.inner = inner
+        self.reached = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/history/{ENGINE_PROMPT_ID}":
+            self.reached.set()
+            await asyncio.wait_for(self.release.wait(), timeout=30)
+        return await self.inner.handle_async_request(request)
+
+
+def test_audio_84_cancel_while_running_wins_over_success(tmp_path):
+    """audio-84: the engine's answer is held after real dispatch. A cancel sent over HTTP while that answer is pending
+    is accepted (202). Only then is the engine released with a successful result. The runner then tries to move the job
+    to SUCCEEDED, the store refuses it (CancellationPending), and the job settles canceled with no asset and no published
+    result bundle."""
+    with GatewayRig("audio-84", tmp_path) as rig:
+        base._audio_comfy(rig, strict=False)
+        base._capture_scheduling(rig)
+        held = _HeldHistory(rig.fakes.router._routes[base.COMFY_HOST])
+        rig.fakes.router._routes[base.COMFY_HOST] = held
+        attempts: list[str] = []
+        real_update = media_jobs.update_status
+
+        def spy_update(job_id_arg, status, *args, **kwargs):
+            if job_id_arg != job_id or status != media_jobs.STATUS_SUCCEEDED:
+                return real_update(job_id_arg, status, *args, **kwargs)
+            try:
+                result = real_update(job_id_arg, status, *args, **kwargs)
+            except media_jobs.CancellationPending:
+                attempts.append("refused")
+                raise
+            attempts.append("accepted")
+            return result
+
+        job_id = _submit(rig)
+        rig.set(media_jobs, "update_status", spy_update)
 
         async def run_and_cancel() -> None:
-            await asyncio.gather(_run_job(rig, job_id), cancel_while_the_engine_is_pending())
+            runner = asyncio.ensure_future(_run_job(rig, job_id))
+            try:
+                seen = asyncio.ensure_future(held.reached.wait())
+                done, _ = await asyncio.wait({seen, runner}, timeout=20, return_when=asyncio.FIRST_COMPLETED)
+                if seen not in done:
+                    seen.cancel()
+                    raise AssertionError("the runner returned before the engine was asked for its result")
+                cancel = await rig.call("POST", f"{JOBS}/{job_id}/cancel", label="cancel while pending", json_body={})
+                assert cancel.status_code == 202, cancel.text
+                held.release.set()
+                await asyncio.wait_for(runner, timeout=30)
+            finally:
+                held.release.set()
+                if not runner.done():
+                    runner.cancel()
 
         asyncio.run(run_and_cancel())
+        assert any(e["path"] == "/view" for e in rig.recorder.engine), "the engine's success was never fetched"
+        assert attempts == ["refused"], f"expected one SUCCEEDED attempt after the cancel, refused: {attempts}"
         job = _stored(rig, job_id)
         assert job["status"] == media_jobs.STATUS_CANCELED
         assert job["error"] == "Canceled by requester"
