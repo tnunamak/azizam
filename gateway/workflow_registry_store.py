@@ -35,7 +35,7 @@ from gateway.definition_store import DefinitionStore
 from gateway.job_envelope import canonical_bytes
 from gateway.manifests import ContractError, ContractErrors, ManifestError
 from gateway.workflow_contract import Report, check_contract
-from gateway.workflow_kernel import name_clashes
+from gateway.workflow_kernel import _thaw, name_clashes
 from gateway.workflow_policy import facts_from_mapping
 from gateway.workflow_runtime_types import (
     BOUND_EXCEEDED, KEEP, WORKFLOW_EXISTS, WORKFLOW_NOT_FOUND, Actor, Commit, EntryState, HistoryEntry, Keep,
@@ -405,10 +405,12 @@ class WorkflowRegistryStore:
 
         def build(stored: Mapping[str, Any], generation: int, base: RegistrySnapshot) -> tuple[dict[str, Any] | None, str]:
             old = self._effective_record(stored, workflow_id)
-            if old is None:
+            if old is not None:
+                record = self._carry(old, self._stored_has(stored, workflow_id))
+            elif workflow_id in self._bundled_ids() and base.get(workflow_id) is not None:
+                record = self._bundled_override(base.get(workflow_id))
+            else:
                 raise RegistryRefused((ContractError(("id",), WORKFLOW_NOT_FOUND, f"no workflow {workflow_id}"),))
-            existed = self._stored_has(stored, workflow_id)
-            record = self._carry(old, existed)
             record[key] = value
             return record, change
 
@@ -486,6 +488,21 @@ class WorkflowRegistryStore:
         record["published"] = control.get("published", True)
         record["incarnation"] = control.get("incarnation") or uuid.uuid4().hex
         record["record_revision"] = control.get("record_revision", 1 if existed else 0) + 1
+        return record
+
+    @staticmethod
+    def _bundled_override(entry: Any) -> dict[str, Any]:
+        """The first stored record of a bundled workflow whose run control the owner changes: the bundled contract and
+        facts under ``overrides: <id>``, with the bundled entry's state, publication and incarnation, so a queued job of
+        it still passes dispatch check 2 (the bundled release's workflows are not in the release registry layer)."""
+        record: dict[str, Any] = {
+            "manifest": json.loads(json.dumps(_thaw(entry.contract))), "overrides": entry.id,
+            "source": "ui", "editable": True, "enabled": True,
+            "state": entry.state, "published": entry.published, "incarnation": entry.incarnation,
+            "record_revision": entry.record_revision + 1,
+        }
+        if entry.facts is not None:
+            record["policy"] = facts_record(entry.facts)
         return record
 
     def _new_record(self, old: Mapping[str, Any] | None, existed: bool, contract: dict[str, Any],

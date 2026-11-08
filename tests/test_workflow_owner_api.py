@@ -25,14 +25,21 @@ FACTS_BODY = {"exposure": "default", "trust_tier": "stable", "resource_tier": "b
 ID = "owner.test.demo"
 
 
-@pytest.fixture
-def api(tmp_path):
+def _real_snapshot(document, _release, *, generation):
+    """The production builder over the bundled release, as the gateway wires it."""
+    from gateway import registry_snapshot
+    return registry_snapshot.build(document, registry_snapshot.bundled_release(), generation=generation)
+
+
+@pytest.fixture(params=["fake"])
+def api(tmp_path, request):
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     write_service_registry_for_test(service_registry.normalize_service_registry({}), path=db)
     config: dict = {}
+    builder = _real_snapshot if request.param == "real" else build_snapshot
     registry = WorkflowRegistryStore(path=db, definitions=DefinitionStore(tmp_path / "jobs.db"),
-                                     build_snapshot=build_snapshot, config=lambda: config)
+                                     build_snapshot=builder, config=lambda: config)
     roles = {"current": OWNER}
 
     def auth(_request):
@@ -127,6 +134,18 @@ def test_check_reports_without_writing(api):
     assert os_n(api) == before
 
 
+def test_a_body_that_is_not_a_json_object_is_400_invalid_json_on_every_body_route(api):
+    # The admin body reader refuses a list or broken JSON; the owner routes answer its 400, never a 500.
+    before = os_n(api)
+    headers = {"Content-Type": "application/json", "If-Match": before}
+    for method, path in (("POST", "/admin/api/workflows"), ("POST", "/admin/api/workflows/check"),
+                         ("PUT", f"/admin/api/workflows/{ID}")):
+        for raw in ("[]", "{not json"):
+            response = api.request(method, path, content=raw, headers=headers)
+            assert (response.status_code, response.json()["error"]["code"]) == (400, "invalid_json"), (method, path, raw)
+    assert os_n(api) == before
+
+
 def test_publish_state_and_delete_are_visible_in_the_listing(api):  # rows 2, 4, 5, 16, 17
     create(api)
     incarnation = api.get(f"/admin/api/workflows/{ID}").json()["workflow"]["incarnation"]
@@ -148,6 +167,31 @@ def test_publish_state_and_delete_are_visible_in_the_listing(api):  # rows 2, 4,
     assert api.get(f"/admin/api/workflows/{ID}").status_code == 404
     create(api)
     assert api.get(f"/admin/api/workflows/{ID}").json()["workflow"]["incarnation"] != incarnation
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_bundled_workflow_unpublishes_and_publishes_again_through_the_owner_api(api):  # row 2 for a bundled id
+    def detail():
+        return api.get(f"/admin/api/workflows/{BUNDLED_ID}").json()["workflow"]
+
+    def publish(value):
+        return api.post(f"/admin/api/workflows/{BUNDLED_ID}/publish", json={"published": value},
+                        headers={"If-Match": os_n(api)})
+
+    before = detail()
+    assert before["published"] is True
+    off = publish(False)
+    assert off.status_code == 200, off.json()
+    assert detail()["published"] is False
+    row = next(r for r in api.get("/admin/api/workflows").json()["workflows"] if r["id"] == BUNDLED_ID)
+    assert row["published"] is False
+    on = publish(True)
+    assert on.status_code == 200, on.json()
+    after = detail()
+    assert after["published"] is True
+    # The override keeps what the bundled entry runs: its contract, facts and incarnation (a queued job stays valid).
+    assert (after["contract"], after["facts"], after["incarnation"], after["overrides"]) == \
+        (before["contract"], before["facts"], before["incarnation"], BUNDLED_ID)
 
 
 def test_delete_of_a_bundled_id_is_409_id_is_bundled(api):

@@ -170,6 +170,48 @@ def test_dynamic_aliases_are_names_and_a_glob_is_not():
     assert names.owner("model_alias", "gpt-") is None
 
 
+def test_a_dynamic_alias_and_a_service_alias_of_one_name_and_one_model_are_one_owner():
+    # The household seed's stable names: the services section declares "coder" over "qwen-coder" and the chat table maps
+    # "coder" to "qwen-coder". Both name the same model, so the revision builds.
+    services = {"svc": {"config": {"models": [{"id": "qwen-coder"}, {"id": "coder", "base_model_id": "qwen-coder"}]}}}
+    aliases = {"chat": {"stable": {"coder": "qwen-coder"}}, "speech": {"stable": {"voice": ["tts-1"]}}}
+    names = build({"services": services}, model_aliases=aliases).names
+    assert names.owner("model_alias", "coder") == NameOwner("model_alias", "qwen-coder")
+    assert names.owner("model_alias", "voice") == NameOwner("model_alias", "tts-1")
+
+
+@pytest.mark.parametrize("aliases", [
+    {"chat": {"stable": {"coder": "other-model"}}},                                      # another model
+    {"chat": {"stable": {"coder": "qwen-coder"}}, "images": {"stable": {"coder": "x"}}},  # two targets
+    {"chat": {"stable": {"coder": None}}},                                               # points nowhere
+    {"chat": {"openai": [{"match": "coder", "to": "fast"}]}},                             # a pattern, not a model
+])
+def test_a_dynamic_alias_that_does_not_name_the_same_one_model_still_clashes(aliases):
+    services = {"svc": {"config": {"models": [{"id": "qwen-coder"}, {"id": "coder", "base_model_id": "qwen-coder"}]}}}
+    with pytest.raises(rs.SnapshotBuildError) as caught:
+        build({"services": services}, model_aliases=aliases)
+    assert [p.code for p in caught.value.problems] == [ID_CLASH]
+
+
+def test_an_engine_table_alias_that_ends_at_the_services_model_of_its_name_is_one_owner():
+    # The UI oracle: the decisions service declares public "decide" over upstream "oracle-decider-v1", and the decisions
+    # table maps "decide" to the engine entry naming that service and upstream model.
+    services = {"decisions": {"config": {"models": [{"id": "decide", "upstream_model": "oracle-decider-v1"}]}}}
+    aliases = {"decisions": {"engines": {"oracle-decider": {"service": "decisions", "model": "oracle-decider-v1"}},
+                             "stable": {"decide": ["oracle-decider"]}}}
+    assert build({"services": services}, model_aliases=aliases).names.owner("model_alias", "decide") == \
+        NameOwner("model_alias", "decide")
+    elsewhere = {"decisions": {**aliases["decisions"], "engines": {"oracle-decider": {"service": "other", "model": "m"}}}}
+    with pytest.raises(rs.SnapshotBuildError):
+        build({"services": services}, model_aliases=elsewhere)
+
+
+def test_a_dynamic_alias_over_a_plain_model_of_its_name_clashes():
+    services = {"svc": {"config": {"models": [{"id": "coder"}, {"id": "qwen-coder"}]}}}
+    with pytest.raises(rs.SnapshotBuildError):
+        build({"services": services}, model_aliases={"chat": {"stable": {"coder": "qwen-coder"}}})
+
+
 def test_frontend_ids_and_route_keys_are_names():
     release = rs.BundledRelease(bundled_of(CONTRACT).workflows, (row("front", "/V1/Things/"),))
     names = rs.build({}, release, generation=1).names

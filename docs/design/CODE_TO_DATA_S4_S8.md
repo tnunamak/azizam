@@ -719,3 +719,18 @@ Integration addenda (the design owner, on `release/c2d-int`):
   finding).
 - A `MediaRef` for a Library asset carries `asset_id` and no `spool_key`; the core fills its `digest` from the asset
   at submit, before `run_identity` (builder D's finding; a contract test of the core).
+- **Mesh capacity is the mesh adapter's internals** (builder D2's finding: the run port has no lease hook). The
+  exclusive-pool observer, the VRAM claim and the lease move from `gateway/mesh_api.py` into the mesh adapter and are
+  held from dispatch until the engine answers or times out, as today. A pool that is busy at dispatch fails the job with
+  `resource_unavailable` (retryable, with the pool's retry delay); the sync mesh row renders that failure as today's 503
+  `resource_unavailable` with `Retry-After`. Service policy (exists, enabled, declares the capability, exclusive
+  capacity enabled) stays a binding problem (`AdapterAvailability.binding_problem`), so it refuses before a job exists.
+  No interface changes. The mesh routes are replacement routes: their goldens are new acceptance contracts, and the
+  `mr` cells recorded on `/v1/meshes/generate` are the evidence of what each outcome looked like before.
+- **Golden differences are the golden design's list, applied per scenario** (the dot report section 4, kept at
+  `tests/support/adapter_differential_deltas.py`): `sync_workflow_lifecycle`, `envelope_v2`, `workflow_run_metadata`,
+  `graph_template_meta`, `mesh_route_replacement`, `idempotency_acceptance`, `terminal_cancel_noop`, `bounded_wait`,
+  each with exact JSON paths, old and new values and a reason. Receipt fields (`accepted_inputs`,
+  `resolved_workflow`), `img_` asset rows (`origin`, `asset_url`), engine request bytes and order, wire status codes,
+  error vocabularies and headers are not on the list: a moved route keeps them identical, and a mismatch is fixed in
+  the adapter, the template or the shape, never masked.

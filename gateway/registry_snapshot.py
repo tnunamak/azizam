@@ -349,20 +349,64 @@ def service_model_names(services: Mapping[str, Any]) -> list[tuple[str, NameOwne
     return pairs
 
 
-def dynamic_alias_names(model_aliases: Mapping[str, Any] | None) -> list[tuple[str, NameOwner]]:
+def _model_of(services: Mapping[str, Any], service_id: str | None, model: str) -> str:
+    """The model a target name ends at: a services alias stands for its base model; an engine entry's (service, upstream
+    model) is the services-section model declaring that pair, when exactly one does. Otherwise the name itself."""
+    found: list[str] = []
+    for sid, service in services.items():
+        if service_id is not None and str(sid) != service_id:
+            continue
+        config = service.get("config") if isinstance(service, Mapping) else None
+        for record in service_model_records(config if isinstance(config, Mapping) else {}):
+            model_id = str(record.get("id") or "").strip()
+            upstream = str(record.get("upstream_model") or "").strip()
+            declared = model_id if service_id is None else (upstream or model_id)
+            if declared == model:
+                found.append(str(record.get("base_model_id") or "").strip() or model_id)
+    return found[0] if len(set(found)) == 1 else model
+
+
+def dynamic_alias_names(model_aliases: Mapping[str, Any] | None,
+                        services: Mapping[str, Any] | None = None) -> list[tuple[str, NameOwner]]:
     """The names of the ``model_aliases`` config section: each operation's stable names and its exact (non-glob) matches.
-    A dynamic alias is its own entity (it resolves per operation, so one name in two operations is one name)."""
-    pairs: list[tuple[str, NameOwner]] = []
+    A dynamic alias resolves per operation, so one name in two operations is one name. Its owner is the model it ends at
+    (``_model_of``; an engine table's entry goes through its service and upstream model) when every operation's stable
+    entry ends at that one model, so the services section may declare the same name for that model without a clash.
+    Otherwise, or when it points nowhere, or when a pattern names it, it is its own entity."""
+    services = services or {}
+    names: list[str] = []
+    targets: dict[str, set[str]] = {}
     for table in (model_aliases or {}).values():
         if not isinstance(table, Mapping):
             continue
-        names = list((table.get("stable") or {}))
+        engines = table.get("engines") if isinstance(table.get("engines"), Mapping) else {}
+        stable = table.get("stable") or {}
+        for name, target in (stable.items() if isinstance(stable, Mapping) else ()):
+            names.append(str(name))
+            for value in (target if isinstance(target, list) else [target]):
+                if not (isinstance(value, str) and value.strip()):
+                    continue
+                engine = engines.get(value.strip())
+                if isinstance(engine, Mapping) and engine.get("service") and engine.get("model"):
+                    ends_at = _model_of(services, str(engine["service"]), str(engine["model"]))
+                else:
+                    ends_at = _model_of(services, None, value.strip())
+                targets.setdefault(str(name), set()).add(ends_at)
         for pattern in table.get("openai") or ():
             if isinstance(pattern, Mapping):
                 match = str(pattern.get("match") or "")
                 names += [match] if match and not any(c in match for c in _GLOB_CHARS) else []
                 names += [str(n) for n in (pattern.get("names") or ()) if isinstance(n, str)]
-        pairs += [(str(name), NameOwner("model_alias", str(name))) for name in names if str(name).strip()]
+                # An OpenAI-name pattern points at a stable name, not a model: its names stay their own entity.
+                for name in (n for n in [match, *(pattern.get("names") or ())] if isinstance(n, str)):
+                    targets.setdefault(name, set()).add("\0pattern")
+    pairs: list[tuple[str, NameOwner]] = []
+    for name in names:
+        if not name.strip():
+            continue
+        named = targets.get(name, set())
+        owner = next(iter(named)) if len(named) == 1 and "\0pattern" not in named else name
+        pairs.append((name, NameOwner("model_alias", owner)))
     return pairs
 
 
@@ -420,7 +464,7 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
     for row in frontends.values():
         pairs += frontend_names(row)
     pairs += service_model_names(services)
-    pairs += dynamic_alias_names(model_aliases)
+    pairs += dynamic_alias_names(model_aliases, services)
     problems = name_clashes(pairs)
     if problems:
         raise SnapshotBuildError(problems)
