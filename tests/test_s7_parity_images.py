@@ -25,7 +25,7 @@ from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
 from tests.support.s7_parity_images_facts import (
     assert_same, asset_files, data_items, doc, engine, engine_bodies, engine_without_probes, failure, header, headers_with,
-    item_keys, media_jobs, old_has, origins, receipt_fields, receipt_row, receipt_summary, receipts, retention_destinations,
+    item_keys, media_jobs, old_has, origins, receipt_fields, receipt_work_fields, receipt_row, receipt_summary, receipts, retention_destinations,
     sleeps, status, top_keys,
 )
 from tests.support.s7_parity_images_rig import ROW_PREFIX, observe
@@ -215,7 +215,7 @@ def test_images_14_size_adjustment_is_reported_and_recorded(tmp_path):
     old, row = pair(tmp_path, GEN, body(size="768X512"), ok)
     old_has(old, "an adjustment", header(old, "x-azizam-size-adjusted") or (receipt_fields(old, "metadata") or {}).get("metadata"))
     assert_same(old, row, status, ("header", lambda o: header(o, "x-azizam-size-adjusted")),
-                ("receipt", lambda o: receipt_fields(o, "metadata", "warnings")), ("size", lambda o: (doc(o) or {}).get("size")))
+                ("receipt", lambda o: receipt_work_fields(o, "metadata", "warnings")), ("size", lambda o: (doc(o) or {}).get("size")))
 
 
 def test_images_15_adjustment_text_is_requested_arrow_effective(tmp_path):
@@ -251,7 +251,7 @@ def test_images_19_out_of_memory_frees_models_and_retries(tmp_path):
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "a /free call", any(path == "/free" for _m, path in engine(old)))
     assert_same(old, row, status, failure, engine_without_probes, ("freed header", lambda o: header(o, "x-comfyui-models-freed")),
-                ("receipt metadata", lambda o: receipt_fields(o, "metadata")))
+                ("receipt metadata", lambda o: receipt_work_fields(o, "metadata")))
 
 
 def test_images_20_an_empty_round_ends_the_batch(tmp_path):
@@ -375,7 +375,7 @@ def test_images_31_receipt_closes_with_the_outcome(tmp_path):
     bad_pair = pair(tmp_path / "bad", GEN, raw_json(b"{"), ok)
     err_pair = pair(tmp_path / "err", GEN, body(), EXEC_ERROR)
     for old, row in (ok_pair, bad_pair, err_pair):
-        assert_same(old, row, receipt_summary, ("metadata", lambda o: receipt_fields(o, "metadata", "warnings")))
+        assert_same(old, row, receipt_summary, ("metadata", lambda o: receipt_work_fields(o, "metadata", "warnings")))
 
 
 def test_images_32_idempotency_key_replays_the_first_answer(tmp_path):
@@ -657,7 +657,7 @@ def test_images_V05_delegated_prompt_workflow_and_denoise(tmp_path):
 def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(), variation_ok)
     old_has(old, "the metadata key", "variations_delegated_workflow" in json.dumps(receipt_fields(old, "metadata") or {}))
-    assert_same(old, row, ("receipt", lambda o: receipt_fields(o, "metadata")))
+    assert_same(old, row, ("receipt", lambda o: receipt_work_fields(o, "metadata")))
 
 
 @ROW_PENDING
@@ -686,7 +686,7 @@ def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
 def test_images_V10_size_adjustment_on_variations(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(size="768X512"), variation_ok)
     old_has(old, "an answer", status(old) == 200)
-    assert_same(old, row, status, ("header", lambda o: header(o, "x-azizam-size-adjusted")), ("receipt", lambda o: receipt_fields(o, "metadata", "warnings")))
+    assert_same(old, row, status, ("header", lambda o: header(o, "x-azizam-size-adjusted")), ("receipt", lambda o: receipt_work_fields(o, "metadata", "warnings")))
 
 
 # ------------------------------------------------------------------------------------------------ 4. image job route

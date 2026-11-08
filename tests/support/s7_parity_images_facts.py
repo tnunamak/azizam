@@ -92,6 +92,18 @@ def receipt_fields(obs: Obs, *keys: str, i: int = 0) -> dict[str, Any] | None:
     return {k: body.get(k) for k in keys}
 
 
+# Receipt metadata the lifecycle owner adds to every receipt it closes; the old image routes wrote none (delta receipt_status_words).
+LIFECYCLE_METADATA = ("terminal_reason",)
+
+
+def receipt_work_fields(obs: Obs, *keys: str, i: int = 0) -> dict[str, Any] | None:
+    """``receipt_fields`` with the lifecycle owner's own metadata left out."""
+    found = receipt_fields(obs, *keys, i=i)
+    if found and isinstance(found.get("metadata"), dict):
+        found["metadata"] = {k: v for k, v in found["metadata"].items() if k not in LIFECYCLE_METADATA}
+    return found
+
+
 def media_jobs(obs: Obs) -> list[dict[str, Any]]:
     return list((obs.trace["media_jobs"] or {}).get("media_jobs") or [])
 
