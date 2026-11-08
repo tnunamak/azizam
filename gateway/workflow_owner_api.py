@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import egress, workflow_policy
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS
+from gateway.session_guard import SessionEnded
 from gateway.workflow_registry_store import RegistryNotApplied, WorkflowIdIsBundled, WorkflowRegistryStore
 from gateway.workflow_runtime_types import (
     GENERATION_MISMATCH, ID_CLASH, KEEP, Actor, Commit, RegistryConflict, RegistryRefused, WorkflowEntry, WorkflowFacts,
@@ -142,12 +143,14 @@ def register_workflow_owner_routes(
         try:
             if_match = match(request) if needs_match else None
             body = await read_json(request) if read_body else {}
-            actor = Actor(ctx.actor_kind, ctx.audit_actor_id, ctx.actor_label)
+            actor = Actor(ctx.actor_kind, ctx.audit_actor_id, ctx.actor_label, ctx.browser_session)
             commit = await asyncio.to_thread(work, actor, (if_match, body))
         except _Reply as reply:
             return reply.response
         except BodyError as error:
             return _refused([{"path": [error.path], "pointer": f"/{error.path}", "code": INVALID, "message": error.message}])
+        except SessionEnded as error:
+            return _error(status.HTTP_401_UNAUTHORIZED, error.code, error.message)
         except RegistryConflict as error:
             if error.code == GENERATION_MISMATCH:
                 return _error(status.HTTP_412_PRECONDITION_FAILED, GENERATION_MISMATCH,

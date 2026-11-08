@@ -564,7 +564,7 @@ class WorkflowRegistryStore:
                         audit_target_id=wid,
                         audit_metadata={"workflow_id": wid, "change": change,
                                         "record_revision": record["record_revision"] if record else None},
-                        session=None,
+                        session=actor.browser_session,
                         path=self._path,
                         stored_form=True,
                         also_in_transaction=history.apply,

@@ -122,6 +122,24 @@ def _engine_body(ctx: Ctx, **extra: Any) -> dict[str, Any]:
     return {"definition": view["definition"], "values": values, **extra}
 
 
+def _workflow_contract(workflow_id: str = "owner.sweep.demo", **changes: Any) -> dict[str, Any]:
+    from tests.test_workflow_registry_store import owner_contract
+
+    return owner_contract(workflow_id, **changes)
+
+
+def _saved_workflow(ctx: Ctx, revisions: int = 1) -> dict[str, Any]:
+    """Save the owner workflow the ``{workflow_id}`` routes name (as the owner), with ``revisions`` saved revisions."""
+    created = ctx.owner.post("/admin/api/workflows", json={"contract": _workflow_contract()}, headers=csrf_for(ctx.owner))
+    assert created.status_code == 201, created.text
+    for number in range(2, revisions + 1):
+        edited = ctx.owner.put("/admin/api/workflows/owner.sweep.demo",
+                               json={"contract": _workflow_contract(display_name=f"Revision {number}")},
+                               headers={**csrf_for(ctx.owner), "If-Match": _etag(ctx.gateway)})
+        assert edited.status_code == 200, edited.text
+    return {}
+
+
 BUILT: dict[tuple[str, str], list[Built]] = {
     ("PUT", "/admin/api/operator/service-registry"): [
         ("registry echo", True, lambda c: {"json": c.registry_echo()}),
@@ -183,6 +201,17 @@ BUILT: dict[tuple[str, str], list[Built]] = {
     ("DELETE", "/admin/api/providers/-/global-caps"): [("clear the global caps", True, lambda c: {})],
     ("DELETE", "/admin/api/operator/services/{service_id}"): [("remove an engine", True, lambda c: {})],
     ("DELETE", "/admin/api/extensions/{package_id}"): [("remove an enabled package", True, lambda c: c.enable_package_a())],
+    ("POST", "/admin/api/workflows"): [
+        ("create a workflow", True, lambda c: {"json": {"contract": _workflow_contract("owner.sweep.new")}})],
+    ("PUT", "/admin/api/workflows/{workflow_id}"): [
+        ("edit a workflow", True, lambda c: {**_saved_workflow(c), "json": {"contract": _workflow_contract(display_name="Edited")}})],
+    ("POST", "/admin/api/workflows/{workflow_id}/publish"): [
+        ("publish a workflow", True, lambda c: {**_saved_workflow(c), "json": {"published": True}})],
+    ("POST", "/admin/api/workflows/{workflow_id}/state"): [
+        ("disable a workflow", True, lambda c: {**_saved_workflow(c), "json": {"state": "disabled"}})],
+    ("POST", "/admin/api/workflows/{workflow_id}/restore"): [
+        ("restore a revision", True, lambda c: {**_saved_workflow(c, revisions=2), "json": {"record_revision": 1}})],
+    ("DELETE", "/admin/api/workflows/{workflow_id}"): [("delete a workflow", True, lambda c: _saved_workflow(c))],
 }
 # Routes that need a provider to exist: one is created (by the owner) before each call.
 NEEDS_PROVIDER_PREFIX = "/admin/api/providers/{provider_id}"

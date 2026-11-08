@@ -190,6 +190,9 @@ class Actor:
     kind: str
     id: str
     label: str | None = None
+    # The browser sign-in that asked for the change (a ``session_guard.BrowserSession``), or None for a key. The registry
+    # write checks it inside its transaction, so a sign-out that lands first refuses the write (decision D41).
+    browser_session: Any = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
