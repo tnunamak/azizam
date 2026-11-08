@@ -236,7 +236,8 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
-from gateway.availability import availability_evidence_snapshot, project_capabilities
+from gateway.availability import availability_evidence_snapshot, model_availability, project_capabilities
+from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
@@ -382,6 +383,7 @@ from gateway.litellm_substrate import (
     litellm_known_model_names,
     router_reply_timeout,
     litellm_public_model_records,
+    litellm_public_model_service_ids,
     set_own_listen_port,
 )
 from gateway.manifests import (
@@ -502,6 +504,12 @@ class _DerivedValues:
             return runtime().derived[name]
         except KeyError:
             raise AttributeError(f"the snapshot derived no value named {name!r}") from None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # An instance attribute would shadow ``__getattr__`` for good: every later read would see it, not the snapshot.
+        # (``monkeypatch.setattr`` "restores" such an attribute with the old value, so it never goes away.) A test
+        # that needs another value patches the snapshot: ``monkeypatch.setitem(proxy.runtime().derived, name, value)``.
+        raise AttributeError(f"DERIVED is read-only; the snapshot owns {name!r}")
 
 
 DERIVED = _DerivedValues()
@@ -27892,6 +27900,158 @@ async def anthropic_models(request: Request):
     return response
 
 
+def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, list[str]]:
+    """{normalized public model id: [service id, ...]} for every service that serves the name.
+
+    The same names as `_service_model_index`, but every serving service is kept, not only the first.
+    Disabled declarations are kept too: this index only judges availability, it never decides what is listed or
+    routed. A remote provider counts only under its provider-prefixed public names, as in the catalog."""
+    index: dict[str, list[str]] = {}
+
+    def add(name: str, service_id: str) -> None:
+        name = normalize_model_id(name)
+        if name and service_id and service_id not in index.setdefault(name, []):
+            index[name].append(service_id)
+
+    try:
+        for public_name, service_ids in litellm_public_model_service_ids(registry or {}, include_disabled=True).items():
+            for service_id in service_ids:
+                add(public_name, service_id)
+    except Exception:  # noqa: BLE001
+        pass
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    for service_id, service_cfg in backends.items():
+        # A remote provider is reached only by its provider-prefixed public names, which the LiteLLM part above
+        # already maps. Its raw upstream names would attach it to an unrelated local entry of the same name.
+        if not isinstance(service_cfg, Mapping) or service_registry.is_remote_provider_config(service_cfg):
+            continue
+        for record in _service_model_records(service_cfg):
+            for key in ("id", "model_group", "public_name"):
+                add(str(record.get(key) or ""), str(service_id))
+        add(str(service_cfg.get("model_id") or ""), str(service_id))
+    return index
+
+
+def _model_entry_availability(
+    entry: Mapping[str, Any],
+    *,
+    by_name: Mapping[str, list[str]],
+    workflows: Mapping[str, Any],
+    workflow_ids_by_model: Mapping[str, str],
+    service_records: Mapping[str, Any],
+    evidence: Mapping[str, Mapping[str, Any]],
+    snapshot_fresh: bool,
+    services: Mapping[str, Mapping[str, Any]] | None = None,
+    projected: dict[str, Any] | None = None,
+) -> dict[str, str] | None:
+    """The `azizam_availability` value for one model entry, or None when no service can be mapped to it.
+
+    A name maps through a workflow it is (the services the workflow needs, all at once), through the services
+    that serve it by name, or through the names an alias resolves to. It reads evidence only: no probe."""
+
+    def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, str] | None:
+        if not service_ids:
+            return None
+        if not snapshot_fresh:
+            return {"state": "unknown"}
+        return model_availability(service_ids, service_records=service_records, evidence=evidence,
+                                  require_all=require_all, services=services, projected=projected)
+
+    def by_workflow(workflow_id: str) -> dict[str, str] | None:
+        record = workflows.get(workflow_id)
+        if record is None:
+            return None
+        requirements = requirements_of(record.contract)
+        if not isinstance(requirements, Mapping):
+            return judge(list(record.supported_backends))
+        needed = [str(service) for service in requirements.get("services") or ()]
+        unresolved = False
+        for required_id in requirements.get("workflows") or ():
+            required = workflows.get(str(required_id))
+            if required is None or len(required.supported_backends) != 1:
+                unresolved = True
+                continue
+            needed.append(required.supported_backends[0])
+        # A known-down requirement decides the entry even when another requirement cannot be resolved.
+        judged = judge(needed, require_all=True)
+        if unresolved and (judged is None or judged["state"] != "unavailable"):
+            return {"state": "unknown"}
+        return judged
+
+    def by_name_or_workflow(name: str) -> dict[str, str] | None:
+        workflow_id = workflow_ids_by_model.get(name)
+        if workflow_id:
+            return by_workflow(workflow_id)
+        return judge(by_name.get(normalize_model_id(name), []))
+
+    workflow_id = entry.get("azizam_workflow_id")
+    if isinstance(workflow_id, str) and workflow_id:
+        return by_workflow(workflow_id)
+    model_id = str(entry.get("id") or "")
+    resolves_to = entry.get("azizam_resolves_to")
+    if isinstance(resolves_to, Mapping) and resolves_to:
+        # A target that maps to no service is one more unknown alternative, not a missing one.
+        judged = [by_name_or_workflow(target)
+                  for target in dict.fromkeys(t for t in resolves_to.values() if isinstance(t, str) and t)]
+        if all(state is None for state in judged):
+            return None
+        states = [state or {"state": "unknown"} for state in judged]
+        if any(s["state"] == "available" for s in states):
+            return {"state": "available"}
+        if all(s["state"] == "unavailable" for s in states):
+            return states[0]
+        return {"state": "unknown"}
+    return by_name_or_workflow(model_id)
+
+
+def _annotate_model_availability(data: list[Any], *, only_available: bool) -> list[Any]:
+    """Set `azizam_availability` on each mappable entry and remove a stale one from each entry that maps to no service;
+    with `only_available`, drop the `unavailable` ones.
+
+    One cached status snapshot read plus one receipt-store read. It starts no probe and waits for no status build.
+    A missing or stale snapshot reads as `unknown`. Blocking (SQLite): call it off the event loop."""
+    try:
+        registry = ADMIN_STORE.get_service_registry()
+    except Exception:  # noqa: BLE001
+        return data
+    service_records = _workflow_availability_services(registry)
+    status_payload = _cached_status_payload_for_availability()
+    snapshot_fresh = bool(status_payload)
+    evidence: dict[str, dict[str, Any]] = {}
+    if snapshot_fresh:
+        try:
+            evidence = _runtime_availability_evidence(service_records, status_payload=status_payload)
+        except Exception:  # noqa: BLE001
+            # An unreadable receipt store must not fail the list: judge by the status snapshot alone.
+            evidence = availability_evidence_snapshot(service_records=service_records, status_payload=status_payload)
+    by_name = _model_service_ids_index(registry)
+    # Built once for this request: the service mapping, and each service's projection.
+    services = availability_services_mapping(service_records)
+    projected: dict[str, Any] = {}
+    workflows = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+    workflow_ids_by_model: dict[str, str] = {}
+    for record in workflows.values():
+        public_id = _workflow_public_model_id(record.manifest)
+        if public_id:
+            workflow_ids_by_model.setdefault(public_id, record.id)
+    kept: list[Any] = []
+    for item in data:
+        if isinstance(item, dict):
+            state = _model_entry_availability(
+                item, by_name=by_name, workflows=workflows, workflow_ids_by_model=workflow_ids_by_model,
+                service_records=service_records, evidence=evidence, snapshot_fresh=snapshot_fresh,
+                services=services, projected=projected,
+            )
+            if state is None:
+                item.pop("azizam_availability", None)
+            else:
+                item["azizam_availability"] = state
+                if only_available and state["state"] == "unavailable":
+                    continue
+        kept.append(item)
+    return kept
+
+
 async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
@@ -28062,6 +28222,12 @@ async def list_models(request: Request):
         if isinstance(item, dict) and item.get("id") in inherited_windows:
             item["context_window"] = observed_alias_windows.get(item["id"], inherited_windows[item["id"]])
     model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
+
+    # After the profile filter: `?available=true` hides only entries known to be down. Everything else stays.
+    data = await asyncio.to_thread(
+        _annotate_model_availability, data,
+        only_available=request.query_params.get("available") == "true",
+    )
 
     # Resolve metadata against the full catalog, then hide target IDs that the
     # caller cannot see. This does not change which alias entries are listed.
@@ -33492,8 +33658,13 @@ def SelfAuthOp(endpoint, methods, *, auth, **options):
     """An operation that checks its caller itself. ``auth`` declares how: ``operation_security.APP_KEY``, or
     ``operation_security.SIGNED_URL`` for a link whose query signature is the credential."""
     return frontend_mount.Operation(endpoint, methods, self_authenticates=True, auth=auth, **options)
+MODELS_LIST_OPENAPI = {"parameters": [{
+    "name": "available", "in": "query", "required": False, "schema": {"type": "string", "enum": ["true"]},
+    "description": "With `true`, leave out models known to be unavailable (see `azizam_availability`). "
+                   "Models in any other state stay listed, and a left-out model can still be called.",
+}]}
 FRONTEND_TRANSLATORS.register("identity", {
-    "models.list": SelfAuthOp(list_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.list": SelfAuthOp(list_models, frozenset({"GET"}), openapi_extra=MODELS_LIST_OPENAPI, auth=operation_security.APP_KEY),
     "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
     "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI, auth=operation_security.APP_KEY),
     "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,

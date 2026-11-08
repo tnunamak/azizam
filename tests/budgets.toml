@@ -627,7 +627,14 @@
 # Train 23: 21573 (main) + 4 (mesh live record) + 5 (real-test final route guard); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21582.
 # Input type guards: +5 cases (a list or dict input type is refused or is not a media input); 21582 + 5 = 21587.
 # Train 24: 21582 (main) + 5 (input type guards) + 3 (S3.10 audio duration boundary); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21590.
-pytest = 21590
+# Model list availability: +7 cases (tests/test_models_availability.py); 21582 + 7 = 21589, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# Model list availability review fixes: +10 cases (8 in tests/test_models_availability.py, 2 in tests/test_headless_access.py for the `available` parameter on both list paths); 21589 + 10 = 21599, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# Models availability review r2: +1 (the remote raw-name test became a collision test, plus a projection-count test); 21599 + 1 = 21600.
+# S3.8 output checks: 21582 (main) + 51 added cases (20 output_selectors, 14 node_graph_selection, 17 start_outcome_v2); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21633.
+# S3.8 review: +1 (a wrong-family file with a short count stays result_wrong_type); 21633 + 1 = 21634.
+# Seed-order leak fix: +1 test (DERIVED refuses assignment); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21583.
+# Train 25: 21590 (main) + models-list availability + S3.8 output count and JSON checks + the read-only DERIVED guard; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21661.
+pytest = 21661
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

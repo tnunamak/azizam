@@ -31,6 +31,7 @@ from gateway.engine_protocol import description, jobs
 from gateway.engine_protocol.adapter import AdapterRegistry
 from gateway.engine_protocol.assets import MemoryAssetStore
 from gateway.engine_protocol.errors import DescriptionError, ProtocolError, SelectionRefused
+from gateway.engine_protocol.http_adapter import HttpV1Adapter
 from gateway.engine_protocol.node_graph import NodeGraphAdapter
 from gateway.engine_protocol.transport import HttpxTransport
 from gateway.engine_protocol.types import (
@@ -225,7 +226,8 @@ def graph_manifest(names: Names, shape: str, relative: str) -> dict[str, Any]:
     return manifest
 
 
-def graph_rig(fake_upstreams, jobs_db, tmp_path, *, shape: str, host: str = "graph.test:7890", file_view: Any = None) -> Rig:
+def graph_rig(fake_upstreams, jobs_db, tmp_path, *, shape: str, host: str = "graph.test:7890", file_view: Any = None,
+              meta: Any = META) -> Rig:
     names = Names()
     relative = f"{rnd('w')}.json"
     template = graph_template(names, shape)
@@ -255,7 +257,7 @@ def graph_rig(fake_upstreams, jobs_db, tmp_path, *, shape: str, host: str = "gra
             if file_view is not None and request.url.params.get("filename") == "t.wav":
                 return file_view(request)
             if request.url.params.get("filename") == "r.json":
-                return httpx.Response(200, content=json.dumps(META).encode(), headers={"content-type": "application/json"})
+                return httpx.Response(200, content=json.dumps(meta).encode(), headers={"content-type": "application/json"})
             return httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"})
         return httpx.Response(404)
 
@@ -832,3 +834,186 @@ def test_no_new_core_code_names_a_modality_or_an_engine():
                 if any(word in token.string.lower() for word in banned):
                     hits.append(f"{relative}:{token.start[0]}: {token.string[:50]!r}")
     assert hits == []
+
+
+# --- S3.8 (D5): count and JSON shape, checked after selection, on each engine ------------------------------------------
+
+SHAPE = {
+    "type": "object",
+    "properties": {
+        "scores": {"type": "array", "required": True, "max_items": 3, "items": {"type": "integer"}},
+        "label": {"type": "string", "required": True, "enum": ["ok"]},
+    },
+}
+
+
+def second_host(engine: str) -> dict[str, str]:
+    """A test that builds two graph rigs gives the second its own host: the fake router refuses a host routed twice."""
+    return {"host": "graph.test:7891"} if engine == "graph" else {}
+
+
+def declare(rig: Rig, result: str, **changes: Any) -> None:
+    """Add keys to one output of the rig's contract before the job is accepted (and so pinned)."""
+    rig.manifest["outputs"][result].update(changes)
+
+
+def single_item_rig(kind: str, fake_upstreams, jobs_db, **count: int) -> tuple[Any, str]:
+    """A synchronous engine whose only result is read by ``kind`` (json, base64 or binary) and so holds exactly one item.
+    Returns a ``start`` call (one request, one answer, read into a bundle) and the result name."""
+    if kind == "binary":
+        names = Names()
+        protocol = description.parse_description_text(http_description_text(names, shape="json", binary=True), source="b.yml")
+        manifest = contract(names, "json")
+        manifest["outputs"] = {names.file_result: {"media_type": "audio/wav"}}
+        manifest["bindings"] = {names.binding: {"selectors": {names.file_result: {"source": "body", "decode": "binary"}}}}
+        transport = HttpxTransport.for_tests(HandlerTransport(lambda _r: httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"})))
+        adapter = AdapterRegistry({protocol.id: protocol}, transport=transport, assets=MemoryAssetStore()).adapter_for(protocol.id)
+        result = names.file_result
+    else:
+        rig = http_rig(fake_upstreams, jobs_db, shape="mixed")
+        adapter, names, manifest = rig.adapter, rig.names, rig.manifest
+        result = names.json_result if kind == "json" else names.file_result
+        for other in [name for name in manifest["outputs"] if name != result]:
+            del manifest["outputs"][other]
+            del manifest["bindings"][names.binding]["selectors"][other]
+    if count:
+        manifest["outputs"][result]["count"] = count
+
+    def start() -> Any:
+        request = CanonicalRequest(op=names.op, body={names.input: BODY_TEXT}, params={"manifest": manifest})
+        return asyncio.run(adapter.start(Connection(address="http://sync.test:9000", timeouts=TIMEOUTS), names.op, request))
+
+    return start, result
+
+
+@pytest.mark.parametrize("kind", ["json", "base64", "binary"])
+def test_each_http_decode_checks_its_single_result_count(kind, fake_upstreams, jobs_db):
+    start, _ = single_item_rig(kind, fake_upstreams, jobs_db, min=1, max=1)
+    assert isinstance(start(), Completed)
+    start, _ = single_item_rig(kind, fake_upstreams, jobs_db, min=2, max=3)
+    with pytest.raises(SelectionRefused) as refused:
+        start()                        # a save refuses this count for http; the run defends itself too
+    assert refused.value.code == "result_count"
+
+
+@pytest.mark.parametrize("kind", ["json", "base64", "binary"])
+def test_an_absent_count_keeps_each_http_selector_style(kind, fake_upstreams, jobs_db):
+    start, result = single_item_rig(kind, fake_upstreams, jobs_db)
+    outcome = start()
+    assert isinstance(outcome, Completed) and set(outcome.bundle.results) == {result}
+    assert output_selectors.effective_count({"media_type": "x/y"}, 64) == (1, 64)
+
+
+@pytest.mark.parametrize("kind", ["json", "base64", "binary"])
+def test_each_http_selector_can_save_one_item_but_never_two(kind):
+    names = Names()
+    protocol = description.parse_description_text(http_description_text(names, shape="json"), source="s.yml")
+    decode = {"source": names.meta_source, "decode": kind}
+    hook = HttpV1Adapter.selector_cardinality
+    assert hook(decode) == (1, 1)
+    media = "application/json" if kind == "json" else "audio/wav"
+
+    def save(**count: int) -> None:
+        manifest = contract(names, "json")
+        manifest["outputs"] = {names.json_result: {"media_type": media, "count": count}}
+        manifest["bindings"] = {names.binding: {"selectors": {names.json_result: decode}}}
+        output_selectors.check_for_save(protocol.result_selectors, manifest, names.binding, cardinality=hook)
+
+    save(min=1, max=2)
+    with pytest.raises(output_selectors.SelectorError) as refused:
+        save(min=2, max=3)
+    assert refused.value.code == "count_unreachable" and refused.value.path == ("outputs", names.json_result, "count")
+
+
+def test_a_json_document_that_breaks_its_schema_is_refused_on_each_engine_and_one_that_fits_is_published(
+        engine, fake_upstreams, jobs_db, tmp_path):
+    fits = build(engine, "json", fake_upstreams, jobs_db, tmp_path)
+    declare(fits, fits.names.json_result, schema=SHAPE)
+    job_id = fits.accept()
+    fits.run(job_id)
+    check_published(fits, job_id)
+    broken = build(engine, "json", fake_upstreams, jobs_db, tmp_path, **second_host(engine))
+    declare(broken, broken.names.json_result, schema={**SHAPE, "properties": {
+        **SHAPE["properties"], "label": {"type": "string", "required": True, "enum": ["different"]}}})
+    job_id = broken.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        broken.run(job_id)
+    assert refused.value.code == "result_schema" and "ok" not in str(refused.value)
+    assert result_bundle.bundle_summary(job_id, path=broken.db) is None
+
+
+def test_a_json_array_is_one_result_on_each_engine(engine, fake_upstreams, jobs_db, tmp_path):
+    array = [1, 2, 3]
+    rig = build(engine, "json", fake_upstreams, jobs_db, tmp_path, meta=array)
+    declare(rig, rig.names.json_result, count={"min": 1, "max": 1}, schema={"type": "array", "max_items": 3, "items": {"type": "integer"}})
+    job_id = rig.accept()
+    rig.run(job_id)
+    read = result_bundle.read_json(job_id, rig.names.json_result, rig.reader(), path=rig.db)
+    assert read is not None and json.loads(read.body) == array
+    tight = build(engine, "json", fake_upstreams, jobs_db, tmp_path, meta=array, **second_host(engine))
+    declare(tight, tight.names.json_result, schema={"type": "array", "max_items": 2, "items": {"type": "integer"}})
+    job_id = tight.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        tight.run(job_id)
+    assert refused.value.code == "result_schema"
+
+
+def test_a_late_schema_refusal_publishes_nothing_on_either_engine(engine, fake_upstreams, jobs_db, tmp_path):
+    rig = build(engine, "mixed", fake_upstreams, jobs_db, tmp_path)
+    names = rig.names
+    declare(rig, names.json_result, schema={"type": "object", "properties": {"label": {"type": "string", "required": True, "enum": ["different"]}}})
+    # The file is processed first and saved; the JSON value that breaks its schema comes after it.
+    rig.manifest["outputs"] = {k: rig.manifest["outputs"][k] for k in (names.file_result, names.json_result)}
+    block = rig.manifest["bindings"][rig.binding_key]
+    block["selectors"] = {k: block["selectors"][k] for k in (names.file_result, names.json_result)}
+    job_id = rig.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "result_schema"
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+    assert result_bundle.read_json(job_id, names.json_result, rig.reader(), path=rig.db) is None
+    with media_jobs.connection(rig.db) as conn:
+        states = {row[0] for row in conn.execute("SELECT state FROM result_stage WHERE job_id = ?", (job_id,))}
+    assert states <= {"aborted"}, "a staged result was left readable"
+    if engine == "http":
+        assert rig.job(job_id)["metadata"]["protocol_submitting"] is True
+
+
+def test_a_count_refusal_publishes_nothing_even_after_a_good_json_result(fake_upstreams, jobs_db, tmp_path):
+    rig = graph_rig(fake_upstreams, jobs_db, tmp_path, shape="mixed")
+    declare(rig, rig.names.file_result, count={"min": 2, "max": 3})     # the selector takes the first file, the fixture has one
+    job_id = rig.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "result_count"
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+    assert result_bundle.read_json(job_id, rig.names.json_result, rig.reader(), path=rig.db) is None
+
+
+def test_a_file_of_the_wrong_family_stays_wrong_type_when_its_count_is_also_short(fake_upstreams, jobs_db, tmp_path):
+    rig = graph_rig(fake_upstreams, jobs_db, tmp_path, shape="mixed")
+    # The fixture returns one audio file; the contract asks for at least two images. The family is the first fault.
+    declare(rig, rig.names.file_result, media_type="image/png", count={"min": 2, "max": 3})
+    job_id = rig.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "result_wrong_type"
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+
+
+def test_the_graph_results_boundary_checks_count_even_if_selection_was_precomputed(fake_upstreams, jobs_db, tmp_path, monkeypatch):
+    rig = graph_rig(fake_upstreams, jobs_db, tmp_path, shape="mixed")
+    declare(rig, rig.names.file_result, count={"min": 1, "max": 1})
+    original = rig.adapter.collect
+
+    def two_files(*args: Any, **kwargs: Any) -> Any:
+        picked = original(*args, **kwargs)
+        (only,) = picked[rig.names.file_result]
+        return {**picked, rig.names.file_result: (only, {**only, "filename": "t2.wav"})}
+
+    monkeypatch.setattr(rig.adapter, "collect", two_files)
+    job_id = rig.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "result_count"
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None

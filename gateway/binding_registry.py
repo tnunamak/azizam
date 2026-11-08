@@ -6,6 +6,9 @@ engine-side references. The code is registered here, by id, and nowhere else:
 - A *role implementation* is the reviewed code a role id stands for. A document names a role by id; it never carries
   code. A role the description lists but no code registered is not run: the caller asks ``role_implementation`` and gets
   ``None``, and refuses the work as ``binding_unavailable`` before any effect.
+- A *selector cardinality* hook says how many items one normalized selector yields when it succeeds
+  (``selector_cardinality(selector) -> (min, max)``, ``max`` ``None`` for no bound of its own). It is registered under the
+  adapter's id. Core checks only that a declared output ``count`` meets that interval (``count_unreachable``).
 - A *target check* is a reviewed ``check_targets`` hook, registered under a name that a description gives
   (``check_targets`` in the description). Core checks only the type and the bound of an engine-side reference; the hook
   checks what the reference points at.
@@ -44,6 +47,7 @@ class RoleImplementation:
 
 _ROLES: dict[str, RoleImplementation] = {}
 _TARGET_CHECKS: dict[str, Callable[..., None]] = {}
+_CARDINALITIES: dict[str, Callable[[Any], tuple[int, int | None]]] = {}
 
 
 def register_role(role: str, serves: Entry, run: Callable[..., Any]) -> None:
@@ -77,3 +81,14 @@ def register_target_check(name: str, check: Callable[..., None]) -> None:
 def target_check(name: str | None) -> Callable[..., None] | None:
     with _LOCK:
         return _TARGET_CHECKS.get(name) if name else None
+
+
+def register_selector_cardinality(adapter_id: str, cardinality: Callable[[Any], tuple[int, int | None]]) -> None:
+    """Register (or replace) the ``selector_cardinality`` hook of the adapter called ``adapter_id``."""
+    with _LOCK:
+        _CARDINALITIES[adapter_id] = cardinality
+
+
+def selector_cardinality(adapter_id: str | None) -> Callable[[Any], tuple[int, int | None]] | None:
+    with _LOCK:
+        return _CARDINALITIES.get(adapter_id) if adapter_id else None

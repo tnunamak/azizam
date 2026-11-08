@@ -30,14 +30,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import weakref
-from collections.abc import AsyncGenerator, Iterable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from gateway.engine_protocol.errors import SelectionRefused
 from gateway.manifests import MEDIA_INPUT_TYPES, ContractErrors, ErrorCollector, ManifestError, PathPart
 
 DESCRIPTOR_VERSION = 1
@@ -265,7 +267,8 @@ def check_binding(descriptor: SelectorDescriptor, outputs: Mapping[str, Any], bl
 
 
 def _check_binding_into(descriptor: SelectorDescriptor, outputs: Mapping[str, Any], block: Mapping[str, Any],
-                        max_selectors: int, at: tuple[PathPart, ...], errors: ErrorCollector) -> dict[str, dict[str, str]]:
+                        max_selectors: int, at: tuple[PathPart, ...], errors: ErrorCollector,
+                        cardinality: Cardinality | None = None) -> dict[str, dict[str, str]]:
     raw = block.get("selectors")
     if raw is None:
         return {}
@@ -297,6 +300,8 @@ def _check_binding_into(descriptor: SelectorDescriptor, outputs: Mapping[str, An
                        f"results {seen[place]} and {name} read the same place; each result needs its own selector")
             continue
         seen[place] = name
+    if cardinality is not None:
+        _check_count_reachable(selectors, outputs, cardinality, errors)
     return selectors
 
 
@@ -366,24 +371,25 @@ def _check_echo_into(descriptor: SelectorDescriptor, selectors: Mapping[str, Map
 
 def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str, Any], binding_key: str, *,
                    template: Mapping[str, Any] | None = None, max_selectors: int = DEFAULT_MAX_SELECTORS,
-                   ) -> dict[str, dict[str, str]]:
+                   cardinality: Cardinality | None = None) -> dict[str, dict[str, str]]:
     """The contract rules for a new or changed binding (D5). Raises ``SelectorErrors`` (a ``SelectorError``) with every
     error found, each with a clear reason.
 
     ``descriptor`` is the selector form of the binding's adapter (found with ``selector_form``), ``None`` if the adapter
     takes none: then the binding must declare none. Otherwise the binding must declare selectors, the shape check passes, and, when the template is
     given, no selector reads a node that is not a producer. Outputs that share a media type and cannot be told apart are
-    refused with their own reason.
+    refused with their own reason. ``cardinality`` is the adapter's reviewed ``selector_cardinality`` hook: with it, a
+    declared ``count`` that the selector can never yield is refused (``count_unreachable``).
     """
     errors = ErrorCollector()
-    selectors = _check_for_save_into(descriptor, manifest, binding_key, template, max_selectors, errors)
+    selectors = _check_for_save_into(descriptor, manifest, binding_key, template, max_selectors, errors, cardinality)
     errors.raise_if_any(SelectorErrors)
     return selectors
 
 
 def _check_for_save_into(descriptor: SelectorDescriptor | None, manifest: Mapping[str, Any], binding_key: str,
                          template: Mapping[str, Any] | None, max_selectors: int,
-                         errors: ErrorCollector) -> dict[str, dict[str, str]]:
+                         errors: ErrorCollector, cardinality: Cardinality | None = None) -> dict[str, dict[str, str]]:
     at = ("bindings", binding_key)
     block = (manifest.get("bindings") or {}).get(binding_key)
     if not isinstance(block, Mapping):
@@ -405,7 +411,7 @@ def _check_for_save_into(descriptor: SelectorDescriptor | None, manifest: Mappin
                                                 "where each result comes from")
         return {}
     before = len(errors)
-    selectors = _check_binding_into(descriptor, outputs, block, max_selectors, at, errors)
+    selectors = _check_binding_into(descriptor, outputs, block, max_selectors, at, errors, cardinality)
     # The echo check reads the selectors; with a broken selector there is nothing sound to read.
     if template is not None and len(errors) == before:
         _check_echo_into(descriptor, selectors, template, block, manifest.get("inputs") or {}, at, errors)
@@ -432,8 +438,10 @@ def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, Select
 
 
 def collect_manifest_errors(manifest: Mapping[str, Any], errors: ErrorCollector,
-                            descriptors: Mapping[str, SelectorDescriptor] | None = None) -> None:
-    """``check_manifest`` with the errors added to ``errors``."""
+                            descriptors: Mapping[str, SelectorDescriptor] | None = None,
+                            cardinalities: Mapping[str, Cardinality] | None = None) -> None:
+    """``check_manifest`` with the errors added to ``errors``. ``cardinalities`` are the reviewed ``selector_cardinality``
+    hooks by selector-form binding key; a binding with a hook also has its declared counts checked against its selectors."""
     bindings = manifest.get("bindings")
     outputs = manifest.get("outputs")
     if not isinstance(bindings, Mapping) or not isinstance(outputs, Mapping):
@@ -446,7 +454,8 @@ def collect_manifest_errors(manifest: Mapping[str, Any], errors: ErrorCollector,
         if descriptor is None:
             errors.add(("bindings", key, "selectors"), "selector_malformed", f"binding {key} has selectors, but its adapter takes none")
             continue
-        _check_binding_into(descriptor, outputs, block, DEFAULT_MAX_SELECTORS, ("bindings", key), errors)
+        _check_binding_into(descriptor, outputs, block, DEFAULT_MAX_SELECTORS, ("bindings", key), errors,
+                            (cardinalities or {}).get(selector_form(key, block)))
 
 
 # ------------------------------------------------------------------------------------------------- the fetch gate
@@ -516,3 +525,84 @@ def wrong_type_reason(spec: Any, kind: str, media_types: Iterable[str]) -> str |
         if str(media_type).split("/", 1)[0].lower() != family:
             return f"a file is {media_type}, but the contract declares {declared}"
     return None
+
+
+# ------------------------------------------------------------------------------------- count and shape of a result
+
+# An adapter's reviewed ``selector_cardinality(selector) -> (min, max)``: how many items the selector yields when it
+# succeeds. ``max`` is ``None`` when the selector has no upper bound of its own (the deployment's asset limit still holds).
+Cardinality = Callable[[Mapping[str, str]], tuple[int, int | None]]
+
+
+def _bound(value: Any) -> int | None:
+    """A count bound as a whole number: an int, or a float with no fraction. Anything else is not one (the structural
+    layer reports it)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
+
+
+def effective_count(spec: Any, max_assets: int | None = None) -> tuple[int, int | None]:
+    """The ``(min, max)`` a result must meet. An absent ``count`` means ``{min: 1, max: <deployment max_assets>}`` (D5):
+    that is today's behaviour. ``max_assets`` is ``None`` where the caller has no deployment limit; the aggregate limit on
+    all results still holds elsewhere, this is the limit of one output. The result is computed here, not written into
+    the document, so the document and its hash stay as they were."""
+    count = spec.get("count") if isinstance(spec, Mapping) else None
+    low = _bound(count.get("min")) if isinstance(count, Mapping) else None
+    high = _bound(count.get("max")) if isinstance(count, Mapping) else None
+    return (1 if low is None else low, max_assets if high is None else high)
+
+
+def _check_count_reachable(selectors: Mapping[str, Mapping[str, str]], outputs: Mapping[str, Any], cardinality: Cardinality,
+                           errors: ErrorCollector) -> None:
+    """Refuse a declared ``count`` that the output's selector can never yield (``count_unreachable``). The two intervals
+    must meet; sharing one end is enough. Core does not know why a selector yields what it yields: the adapter says."""
+    for name, selector in selectors.items():
+        spec = outputs.get(name)
+        if not isinstance(spec, Mapping):
+            continue
+        low, high = effective_count(spec)
+        yields_low, yields_high = cardinality(selector)
+        meets = max(low, yields_low) <= min(math.inf if high is None else high, math.inf if yields_high is None else yields_high)
+        if not meets:
+            errors.add(("outputs", str(name), "count"), "count_unreachable",
+                       f"result {name} declares {_interval(low, high)} items, but its selector yields {_interval(yields_low, yields_high)}")
+
+
+def _interval(low: int, high: int | None) -> str:
+    return f"{low} or more" if high is None else (str(low) if low == high else f"{low} to {high}")
+
+
+def check_count(spec: Any, count: int, *, name: str | None = None, max_assets: int | None = None) -> None:
+    """Refuse a result that holds fewer or more items than its output's ``count`` allows. Raises ``SelectionRefused``
+    (``result_count``); the message holds numbers only, never a value."""
+    low, high = effective_count(spec, max_assets)
+    if count < low or (high is not None and count > high):
+        label = f"result {name}" if name else "a result"
+        raise SelectionRefused("result_count", f"{label} holds {count} items, but its contract allows {_interval(low, high)}")
+
+
+def check_result(spec: Any, kind: str, items: Sequence[Any], *, name: str | None = None, max_assets: int | None = None) -> None:
+    """Check a finished result against its output: how many items it holds, and for JSON, the shape of the value (D5).
+
+    ``items`` are the retained files of an ``assets`` result. A ``json`` result is one item: the decoded document, which
+    is one item even when it is an array. The decoded value must be bounded already (``result_bundle.check_json``). The
+    shape is checked with the input grammar of D4 (``workflow_contract.value_problems``) and only when the output
+    declares a ``schema``. Raises ``SelectionRefused`` with ``result_count`` or ``result_schema``; the message never holds a
+    value from the answer. The type and media family are ``wrong_type_reason``'s, checked beside this."""
+    from gateway.workflow_contract import value_problems
+
+    check_count(spec, len(items), name=name, max_assets=max_assets)
+    schema = spec.get("schema") if isinstance(spec, Mapping) else None
+    if kind != "json" or not isinstance(schema, Mapping) or not items:
+        return
+    for path, code, message in value_problems(schema, items[0], ()):
+        if code == "unknown_field":
+            path = path[:-1]   # the name came from the answer, not from the contract
+        label = f"result {name}" if name else "a result"
+        where = "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in path) or "the document"
+        raise SelectionRefused("result_schema", f"{label} does not fit its schema at {where}: {message}")

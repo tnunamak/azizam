@@ -239,3 +239,104 @@ def test_a_selector_yields_the_kind_its_decode_names():
     assert descriptor.kind_of(output_selectors.normalize(descriptor, "r", {"node": "1", "key": "images", "from": "output_dir"})) == "assets"
     assert descriptor.kind_of(output_selectors.normalize(
         descriptor, "r", {"node": "1", "key": "images", "from": "output_dir", "decode": "json"})) == "json"
+
+
+# ------------------------------------------------------------------------------- count after selection (S3.8, D5)
+
+def counted(**count: int) -> dict[str, Any]:
+    return {"result": {"media_type": "a/b", "count": count}}
+
+
+def collect_counted(count: dict[str, Any], block: Any, history: Any, limits: Any = LIMITS):
+    return ADAPTER.collect(history, block, count, limits=limits)
+
+
+def selecting(take: str = "all", decode: str = "none") -> dict[str, Any]:
+    return {"workflow": "w.json", "selectors": {"result": sel(take=take, decode=decode)}}
+
+
+def test_a_graph_result_is_counted_after_filtering_and_deduplication():
+    block = selecting("all")
+    once = job(n9={"images": [file("a.png"), file("a.png"), file("peek.png", "temp"), file("echo.png", "input")]})
+    with pytest.raises(SelectionRefused) as caught:
+        collect_counted(counted(min=2, max=3), block, once)     # five entries, one retained file
+    assert caught.value.code == "result_count"
+    twice = job(n9={"images": [file("a.png"), file("a.png"), file("b.png"), file("peek.png", "temp")]})
+    chosen = collect_counted(counted(min=2, max=3), block, twice)
+    assert [f["filename"] for f in chosen["result"]] == ["a.png", "b.png"]     # order is the answer's, each file once
+
+
+def test_a_graph_result_above_its_count_is_refused_before_anything_is_fetched():
+    history = job(n9={"images": [file("a.png"), file("b.png"), file("c.png")]})
+    with pytest.raises(SelectionRefused) as caught:
+        collect_counted(counted(min=1, max=2), selecting("all"), history)
+    assert caught.value.code == "result_count"
+    assert len(collect_counted(counted(min=1, max=3), selecting("all"), history)["result"]) == 3
+
+
+def test_take_first_counts_the_selected_file_not_the_raw_list():
+    history = job(n9={"images": [file("a.png"), file("b.png")]})
+    with pytest.raises(SelectionRefused) as caught:          # a save refuses this; the run defends itself too
+        collect_counted(counted(min=2, max=3), selecting("first"), history)
+    assert caught.value.code == "result_count"
+    chosen = collect_counted(counted(min=1, max=1), selecting("first"), history)
+    assert [f["filename"] for f in chosen["result"]] == ["a.png"]
+
+
+def test_the_default_count_is_the_limit_of_the_deployment():
+    history = job(n9={"images": [file("a.png"), file("b.png"), file("c.png")]})
+    assert len(collect_counted({"result": {"media_type": "a/b"}}, selecting("all"), history, ResultLimits(max_assets=3))["result"]) == 3
+    with pytest.raises(SelectionRefused) as caught:
+        collect_counted({"result": {"media_type": "a/b"}}, selecting("all"), history, ResultLimits(max_assets=2))
+    assert caught.value.code == "result_count"
+
+
+@pytest.mark.parametrize("take", ["all", "first", "single"])
+@pytest.mark.parametrize("decode", ["none", "json"])
+def test_an_absent_count_keeps_each_selector_style(take: str, decode: str):
+    history = job(n9={"images": [file("a.png")]})
+    chosen = collect_counted({"result": {"media_type": "a/b"}}, selecting(take, decode), history)
+    assert [f["filename"] for f in chosen["result"]] == ["a.png"]
+
+
+def test_an_absent_count_keeps_the_selection_refusals_in_their_order():
+    two = job(n9={"images": [file("a.png"), file("b.png")]})
+    block = {"result": {"media_type": "a/b"}}
+    with pytest.raises(SelectionRefused) as caught:
+        collect_counted(block, selecting("single"), two)
+    assert caught.value.code == "result_ambiguous"            # before the count, as before
+    with pytest.raises(SelectionRefused) as caught:
+        collect_counted(counted(min=2), selecting("all"), job(n9={"images": []}))
+    assert caught.value.code == "result_missing"              # an empty list is missing, not a short count
+    assert len(collect_counted(block, selecting("all", "json"), two)["result"]) == 2   # two JSON files: ``results`` says ambiguous
+
+
+def test_json_selectors_advertise_one_document_even_with_take_all():
+    assert ADAPTER.selector_cardinality(sel(take="all", decode="json")) == (1, 1)
+    assert ADAPTER.selector_cardinality(sel(take="all")) == (1, None)
+    assert ADAPTER.selector_cardinality(sel(take="first")) == (1, 1)
+    assert ADAPTER.selector_cardinality(sel(take="single")) == (1, 1)
+
+
+def test_the_adapter_hook_is_the_one_the_save_path_finds():
+    from gateway import binding_registry
+
+    assert binding_registry.selector_cardinality("node-graph") is node_graph.graph_selector_cardinality
+    assert binding_registry.selector_cardinality("unknown") is None and binding_registry.selector_cardinality(None) is None
+
+
+def test_fetch_selected_keeps_selection_count_semantics_when_a_download_fails(fake_upstreams):
+    # The route that takes bytes counts the files selected, not the files delivered: a file the engine could not give is
+    # left out as it always was, and a count of two is not refused afterwards. A delivered-count recheck would change this.
+    from tests.test_node_graph_adapter import CONN, HOST
+
+    def view(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("filename") == "gone.png":
+            return httpx.Response(404)
+        return httpx.Response(200, content=b"bytes")
+
+    fake_upstreams.router.add_transport(HOST, HandlerTransport(view))
+    history = job(n9={"images": [file("a.png"), file("gone.png")]})
+    status = SimpleNamespace(record=node_graph.FinishedRecord(history, 10))
+    delivered = asyncio.run(ADAPTER.fetch_selected(CONN, status, selecting("all"), counted(min=2, max=2), limits=LIMITS))
+    assert delivered == {"result": [b"bytes"]}

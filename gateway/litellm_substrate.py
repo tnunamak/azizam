@@ -249,6 +249,30 @@ def litellm_public_model_records(
     return out
 
 
+def litellm_public_model_service_ids(
+    registry: Mapping[str, Any], *, include_disabled: bool = False,
+) -> dict[str, list[str]]:
+    """Return ``{public model name: [service id, ...]}`` for every LiteLLM-routable model.
+
+    Unlike ``litellm_public_model_records`` this keeps every service that serves a name,
+    in priority order, so a caller can judge a name by all the services behind it.
+    With ``include_disabled`` it also names the services that are turned off, for a caller that
+    reports on them. Routing never passes it.
+    """
+
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    service_records = _normalize_services(services if isinstance(services, Mapping) else {})
+    out: dict[str, list[str]] = {}
+    for service in sorted(service_records, key=lambda row: (row["priority"], row["id"])):
+        if (not include_disabled and not service.get("enabled", True)) or not _is_openai_compatible(service):
+            continue
+        for deployment in _deployment_records(service):
+            ids = out.setdefault(str(deployment["model_group"]), [])
+            if str(service["id"]) not in ids:
+                ids.append(str(service["id"]))
+    return out
+
+
 def litellm_provider_key_statuses(
     registry: Mapping[str, Any],
     *,
