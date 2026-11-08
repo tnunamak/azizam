@@ -81,9 +81,9 @@ def disabled(rig):
     """The image service is off, and the engine would refuse any call."""
     base._comfy_down(rig)
     rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
-    for record in (proxy.config.get("backends") or {}).values():
-        if isinstance(record, dict) and record.get("protocol") == "node-graph":
-            rig.monkeypatch.setitem(record, "enabled", False)
+    for service_id, record in (proxy.config.get("backends") or {}).items():
+        if isinstance(record, dict) and (record.get("protocol") == "node-graph" or service_id == proxy._GRAPH_BACKEND_ID):
+            rig.monkeypatch.setitem(record, "enabled", False)       # the service record is where an operator switches it off
 
 
 def denied(rig):
