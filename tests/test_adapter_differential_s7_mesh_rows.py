@@ -61,7 +61,7 @@ import proxy
 from gateway import media_jobs, multipart_adapter, receipt_store, request_spool, workflow_adapters
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.gateway import gateway_client, use_admin_db
-from tests.support.mesh_harness import GLB, PNG, TRELLIS_URL, Harness
+from tests.support.mesh_harness import GLB, PNG, Harness
 
 SYNC = "/v1/3d/generations"
 RAW = "/v1/3d/generations/glb"
@@ -72,7 +72,7 @@ OLD_CELLS = FIXTURES / "s7_mr_cells.json"
 MARK = "S7-MESH-ROWS-RECORD"
 RECORD = os.environ.get("AZIZAM_RECORD_MESH_ROWS") == "1"
 ASYNC = {"Prefer": "respond-async"}
-TERMINAL = {"succeeded", "failed", "canceled"}
+TERMINAL = {"succeeded", "failed", "canceled", "cancelled"}
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ def rig(monkeypatch, tmp_path):
     harness = Harness()
     monkeypatch.setattr(proxy.MESH_DEPS, "services", lambda: harness.services)
     monkeypatch.setattr(proxy.MESH_DEPS, "client_factory", harness.deps().client_factory)
-    host = dataclasses.replace(proxy.MULTIPART_HOST, leases=harness.leases, require_egress=lambda _s: None)
+    host = dataclasses.replace(proxy.MULTIPART_HOST, leases=harness.leases, require_egress=lambda _service: None)
     runner = multipart_adapter.runner(host)
     monkeypatch.setitem(workflow_adapters._RUNNERS, runner.binding_key, runner)
     return harness
@@ -142,11 +142,31 @@ def job_id_of(response: httpx.Response) -> str:
     return response.json()["id"]
 
 
-async def job_facts(client: httpx.AsyncClient, job_id: str) -> dict[str, Any]:
-    body = (await client.get(f"{JOBS}/{job_id}")).json()
-    error = body.get("error") or {}
-    return _mask({"status": body.get("status"), "error_code": error.get("code") if isinstance(error, dict) else error,
-                  "results": len(body.get("results") or [])})
+def _providers():
+    """The media-job routes' own getter and canceler, built over the test's store (the router binds the live store path
+    at import, so the test builds them over its own, as the run-route tests do)."""
+    from gateway import api
+
+    _, getter, _lister, _events, _append, canceler = api._build_media_job_providers(
+        media_job_creator=None, media_job_getter=None, media_job_lister=None, media_job_event_lister=None,
+        media_job_event_appender=None, media_job_canceler=None, media_job_store_path=media_jobs.DB_PATH)
+    return getter, canceler
+
+
+async def job_facts(_client: httpx.AsyncClient, job_id: str) -> dict[str, Any]:
+    row = _providers()[0](job_id, audience="client")
+    return _mask({"status": row["status"], "error_code": row.get("error_code"), "error_category": row.get("error_category"),
+                  "retryable": row.get("retryable"), "cancel_requested": row.get("cancel_requested"),
+                  "results": row.get("results") or {}})
+
+
+def cancel(job_id: str) -> dict[str, Any]:
+    """The cancel route's own function: the new state, or why the job refuses."""
+    try:
+        done = _providers()[1](job_id, audience="client")
+    except ValueError as error:
+        return {"refused": str(error)}
+    return {"status": done["status"], "cancel_requested": done.get("cancel_requested")}
 
 
 async def settle(client: httpx.AsyncClient, job_id: str, timeout: float = 15.0) -> dict[str, Any]:
@@ -280,12 +300,11 @@ def cell_cancel_running(h: Harness) -> dict[str, Any]:
         created = await c.post(SYNC, headers=ASYNC, **form())
         job_id = job_id_of(created)
         await gate.started.wait()
-        cancel = await c.post(f"{JOBS}/{job_id}/cancel", json={})
-        again = await c.post(f"{JOBS}/{job_id}/cancel", json={})
+        first, again = cancel(job_id), cancel(job_id)
         during = await job_facts(c, job_id)
         gate.release.set()
         after = await settle(c, job_id)
-        return {"created": answer(created), "cancel": answer(cancel), "cancel_again": answer(again), "during": during,
+        return {"created": answer(created), "cancel": first, "cancel_again": again, "during": during,
                 "after": after, "pool_held_after": h.leases.active_claims() != 0}
     return run(h, go)
 
@@ -295,9 +314,8 @@ def cell_cancel_finished(h: Harness) -> dict[str, Any]:
         created = await c.post(SYNC, headers=ASYNC, **form())
         job_id = job_id_of(created)
         before = await settle(c, job_id)
-        cancel = await c.post(f"{JOBS}/{job_id}/cancel", json={})
-        again = await c.post(f"{JOBS}/{job_id}/cancel", json={})
-        return {"created": answer(created), "before": before, "cancel": answer(cancel), "cancel_again": answer(again),
+        first, again = cancel(job_id), cancel(job_id)
+        return {"created": answer(created), "before": before, "cancel": first, "cancel_again": again,
                 "after": await job_facts(c, job_id)}
     return run(h, go)
 
