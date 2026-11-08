@@ -152,7 +152,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "6bed99ed7ad494d26a628402e0ad419364614da8ec27b847d023543293f1083b",
+      "source_sha256": "e1b38ebf215f48540f9f1d7b508251e45dbe39747d29ffcb4783c7e88903fc72",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -160,7 +160,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "6bed99ed7ad494d26a628402e0ad419364614da8ec27b847d023543293f1083b",
+      "source_sha256": "e1b38ebf215f48540f9f1d7b508251e45dbe39747d29ffcb4783c7e88903fc72",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
