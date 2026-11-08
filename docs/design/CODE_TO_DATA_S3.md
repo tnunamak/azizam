@@ -285,10 +285,17 @@ default factory is the nearest precedent (FA6), but it is code. JSON Schema trea
 (JS2). The tagged form is the plan's own decision (row S3) and the red team's (M3). Otherwise ungrounded.
 
 As built (S3.6): `gateway/generated_defaults.py` holds the reviewed generator registry (`REVIEWED`, one entry:
-`random_integer`, persisted as `value`), `resolve_generated` and the crypto source `secure_source`. The save-time
+`random_integer`, persisted as `value`), `legal_integer_domain`, `resolve_generated` and the crypto source `secure_source`. The save-time
 refusals (`generator_unknown`, `generator_range_empty`, `generate` with `default`, `settable: false` without `generate`)
 were already in the S3.2 contract; the registry is checked against the contract's `GENERATORS` by a test.
 
+- **Supported generated inputs.** Generation and `settable: false` are top-level input features only.
+  A nested property or array item carrying either is refused at save with `generator_nested_unsupported`;
+  recursive validation does not imply recursive generation or persistence.
+- **Legal integer domain.** Save-time feasibility, sampling and deployment narrowing share one exact domain:
+  the intersected bounds, enum and step/offset grid. A grid is first value, period and count, not an expanded list.
+  Sampling draws a uniform index into this domain. Non-numeric step/offset retains the legacy plain-range fallback;
+  it is not a proof of emptiness and runtime validation can still refuse malformed constraints.
 - **When it draws.** At accept, after idempotency resolution and before the envelope is written. A same-key replay
   returns the existing job and draws nothing. The block `{input: {generator, value}}` is stored in the envelope's
   `generated` field. A runner sets a context variable (`_JOB_GENERATED`) from the stored envelope, so a retry, a restart
@@ -305,12 +312,14 @@ were already in the S3.2 contract; the registry is checked against the contract'
   measurement resampling in `stt_measure`, and the equality tool's reproducible stand-in.
 - **Choices where this text was open.** (1) The value of a caller-settable input the caller gave is not stored (the
   request already carries it); only a draw is. (2) For an image batch, the stored value (or the caller's) is one base, and round `n`
-  binds `low + ((base - low + offset) mod (high - low + 1))` for `low..high` the input's declared range, where the offset
+  wraps through the ordered legal integers of the input's declared bounds, enum and grid, independently of a
+  narrower generator interval. For a plain range this remains exactly
+  `low + ((base - low + offset) mod (high - low + 1))`, where the offset
   is the number of images collected so far (a round that returns no image still moves the offset by one). This is **not**
   behaviourally identical to the old loop: it drew a fresh value for each round, and the first design added the offset to
   the base, which left the declared range at the top (maximum 9, base 9 gave 10; at the public maximum it reached
-  2**32). The wrap keeps every bound value legal and still gives each round a value different from the last while the
-  range holds more than one number; a range of one repeats its only value. Rounds are no longer independent draws, and a
+  2**32). For valid numeric constraints, wrapping keeps every bound value legal and advances by the offset in the ordered
+  domain; a singleton domain repeats its only value. Rounds are no longer independent draws, and a
   caller-given value is wrapped the same way. (3) A drawn value that fails the input's own
   validation is a document fault: HTTP 500 on every route, with no job row, no payload and no engine submission (the
   sync image routes answered 503 before; they answer 500 now). (4) The provenance record keeps its

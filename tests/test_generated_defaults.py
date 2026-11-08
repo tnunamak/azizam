@@ -34,8 +34,8 @@ from gateway import generated_defaults, media_jobs
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol import audio_graph
 from gateway.job_envelope import build_job_envelope
-from gateway.manifests import ManifestError
-from gateway.workflow_contract import GENERATORS
+from gateway.manifests import ManifestError, ErrorCollector, _narrow_input, validate_input_value
+from gateway.workflow_contract import GENERATORS, ContractContext, _Semantic
 from tests.support.access import access_context, authenticated
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -202,9 +202,82 @@ def test_a_generator_no_reviewed_code_backs_is_refused_at_run():
         generated_defaults.resolve_generated(inputs, {}, source=Recorder())
 
 
-def test_a_drawn_value_the_input_does_not_accept_is_refused():
-    with pytest.raises(ManifestError):
-        generated_defaults.resolve_generated(inputs_with(step=2, offset=0), {}, source=lambda low, high: 3)
+@pytest.mark.parametrize("extra, expected", [
+    ({"step": 2}, [0, 2, 4]),
+    ({"step": 2, "offset": 1}, [1, 3]),
+    ({"step": 1.5, "offset": 0.5}, [2]),
+    ({"enum": [2]}, [2]),
+    ({"enum": [4, 0, 2, 2], "step": 2}, [0, 2, 4]),
+])
+def test_every_legal_domain_index_draws_an_accepted_value(extra, expected):
+    inputs = inputs_with(minimum=0, maximum=4, generate=rule(0, 4), **extra)
+    for index, value in enumerate(expected):
+        source = Recorder(index)
+        block = generated_defaults.resolve_generated(inputs, {}, source=source)
+        assert block["n"]["value"] == value
+        assert source.asked == [(0, len(expected) - 1)]
+        assert validate_input_value("n", value, inputs["n"]) is None
+        assert generated_defaults.resolve_generated(inputs, {}, stored=block, source=refuse_a_draw) == block
+
+
+def test_large_grid_is_compact_and_non_numeric_step_keeps_plain_range():
+    domain = generated_defaults.legal_integer_domain(rule(), inputs_with(step=2)["n"])
+    assert domain.members is None and domain.count == 2**31 and domain.period == 2
+    for extra in ({"step": "unknown"}, {"step": 2, "offset": "unknown"}):
+        domain = generated_defaults.legal_integer_domain(rule(0, 4), inputs_with(**extra)["n"])
+        assert domain.count == 5 and domain.period == 1
+
+
+@pytest.mark.parametrize("extra, base, expected", [
+    ({"step": 2}, 2, [2, 4, 0, 2]),
+    ({"step": 2, "offset": 1}, 1, [1, 3, 1, 3]),
+    ({"enum": [2]}, 2, [2, 2, 2, 2]),
+    ({"enum": [4, 0, 2]}, 2, [2, 4, 0, 2]),
+])
+def test_batch_wraps_the_input_domain_not_the_narrower_generator(extra, base, expected):
+    inputs = inputs_with(minimum=0, maximum=4, generate=rule(base, base), **extra)
+    assert [generated_defaults.offset_values(inputs, {"n": base}, i)["n"] for i in range(4)] == expected
+    assert all(validate_input_value("n", value, inputs["n"]) is None for value in expected)
+
+
+@pytest.mark.parametrize("array", [False, True])
+@pytest.mark.parametrize("extra", [{"generate": rule(2, 2)}, {"settable": False},
+                                    {"generate": rule(2, 2), "settable": False, "required": True}])
+def test_nested_generated_inputs_are_refused_at_the_nested_path(array, extra):
+    child = {"type": "integer", **extra}
+    spec = {"type": "object", "properties": {"n": child}}
+    at = ("inputs", "box", "properties", "n")
+    if array:
+        spec = {"type": "array", "max_items": 3, "items": spec}
+        at = ("inputs", "box", "items", "properties", "n")
+    errors = ErrorCollector()
+    _Semantic(ContractContext(), [], errors).run({"inputs": {"box": spec}})
+    for key in extra.keys() & {"generate", "settable"}:
+        assert any(e.path == at + (key,) and e.code == "generator_nested_unsupported" for e in errors.errors)
+
+
+@pytest.mark.parametrize("extra, limits", [
+    ({"generate": rule(0, 1)}, {"minimum": 2}),
+    ({"step": 2}, {"minimum": 1, "maximum": 1}),
+    ({"enum": [0]}, {"minimum": 1}),
+])
+def test_deployment_narrowing_refuses_an_empty_generator_domain(extra, limits):
+    inputs = inputs_with(minimum=0, maximum=4, generate=rule(0, 4))
+    inputs["n"].update(extra)
+    errors = ErrorCollector()
+    _narrow_input("n", limits, inputs, errors)
+    assert any(e.path == ("inputs", "n", "generate") and e.code == "generator_range_empty" for e in errors.errors)
+
+
+@pytest.mark.parametrize("extra", [{"step": 2}, {"enum": [2]}, {"step": 1.5, "offset": 0.5}])
+def test_semantic_feasibility_and_draw_share_the_legal_domain(extra):
+    inputs = inputs_with(minimum=0, maximum=4, generate=rule(0, 4), **extra)
+    errors = ErrorCollector()
+    _Semantic(ContractContext(), [], errors).run({"inputs": inputs})
+    assert not errors.errors
+    domain = generated_defaults.legal_integer_domain(inputs["n"]["generate"], inputs["n"])
+    assert domain.count > 0
+    assert all(validate_input_value("n", domain.value(i), inputs["n"]) is None for i in range(domain.count))
 
 
 def test_the_default_source_is_operating_system_randomness(monkeypatch):
