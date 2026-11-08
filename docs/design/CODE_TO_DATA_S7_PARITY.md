@@ -188,6 +188,9 @@ and a reason. Nothing else may differ.
 - `persistence_failure_visible`: the old video create swallowed a failed record save and still answered 200
   (video-16); the job store's write is the job, so a failed save is a 500 and no job.
 - `template_role_at_load`: a template missing a declared node role is a load problem, not a request-time 400 (video-114).
+- `restart_closes_receipt`: a sync request cut by a restart left no receipt row (images) or an `in_progress` row that
+  reads as `stale_incomplete` (audio, video) (writers.md, images-R07); every row's receipt is now closed as
+  `GATEWAY_RESTARTED` by startup recovery (M1).
 - `recovery_text_unified`: where audio or video recovery text differs from the image text for the same outcome, the
   image text wins.
 
