@@ -150,6 +150,30 @@
       "access": "content:job:read"
     },
     {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "6bed99ed7ad494d26a628402e0ad419364614da8ec27b847d023543293f1083b",
+      "call": "append_event",
+      "event": "'started'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "6bed99ed7ad494d26a628402e0ad419364614da8ec27b847d023543293f1083b",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_fail",
+      "source_sha256": "fb7894099478d42d0c038eef22df52c62f25198f5d39a258af80897960b170c9",
+      "call": "append_event",
+      "event": "'failed'",
+      "access": "content:job:read"
+    },
+    {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
       "source_sha256": "da3dc921f12be3745fe3b891ac7037d8f34b9803572a7365b80577393f45efb5",

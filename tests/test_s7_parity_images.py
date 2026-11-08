@@ -883,7 +883,9 @@ def test_images_J12_accepted_202_with_links(tmp_path):
 def test_images_J13_a_queued_event_then_scheduling(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/events"), run=False)
     old_has(old, "events", doc(old, 1))
-    assert_same(old, row, ("events", lambda o: doc(o, 1)), ("scheduled", lambda o: len(o.trace["notes"])))
+    # The old scheduler is captured, so its job shows only the queued event; the row runs the job at once, so later events may
+    # already be there. The fact is that the first event is the queued one.
+    assert_same(old, row, ("first event", lambda o: doc(o, 1)["events"][0]), ("scheduled", lambda o: len(o.trace["notes"])))
 
 
 @NEEDS_RH
