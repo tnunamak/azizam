@@ -8204,7 +8204,7 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     if not isinstance(chain, Mapping):
         return error
     index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "",
-                                         node_prefix=chain.get("node_prefix"))
+                                         node_prefix=video_extend.record_node_prefix(chain))
     if index is None:
         return error
     total = int(chain.get("segments") or 0)
