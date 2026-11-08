@@ -17,6 +17,8 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
+from gateway import registry_snapshot
+from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
@@ -1573,6 +1575,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     updates = _derive_backend_constants(new_cfg, registry=registry)
     # The workflow registry is built whole here too, so a failure leaves the old one serving; ``adopt`` below swaps it in.
     workflow_registry = _load_gateway_workflow_registry(strict=True)
+    # The registry snapshot is built whole here too (strict), so a revision that does not build leaves the old one serving.
+    next_registry_snapshot = _build_registry_snapshot(new_cfg.get("model_aliases"), strict=True)
     # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
     egress = _project_egress(new_cfg.get("backends"))
     # The snapshot is built here too, before anything is published, so a failure leaves the old one serving.
@@ -1614,6 +1618,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
         _g[name] = updates[name]
     # Swapped in place, not assigned: a router and a bound method hold the registry from import (8.4).
     GATEWAY_WORKFLOW_REGISTRY.adopt(workflow_registry)
+    GATEWAY_REGISTRY_PROVIDER.swap(next_registry_snapshot)
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
 
     print(
@@ -14452,6 +14457,32 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
 GATEWAY_WORKFLOW_REGISTRY = _load_gateway_workflow_registry()
 
 
+def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict: bool = False) -> registry_snapshot.Snapshot:
+    """The registry snapshot of the stored document. A boot keeps the bundled release when the stored one does not build;
+    a reload (``strict``) raises instead, so the snapshot that is serving stays."""
+    try:
+        return registry_snapshot.load_current(ADMIN_DB_PATH, model_aliases=model_aliases)
+    except Exception as e:  # noqa: BLE001
+        if strict:
+            raise
+        print(f"[proxy] Registry snapshot unavailable; the bundled release is kept: {e}", flush=True)
+        return registry_snapshot.build({}, registry_snapshot.bundled_release(), generation=0, model_aliases=model_aliases)
+
+
+def _boot_registry_snapshot() -> registry_snapshot.Snapshot:
+    return _build_registry_snapshot(config.get("model_aliases"))
+
+
+GATEWAY_REGISTRY_PROVIDER = registry_snapshot.Provider(_boot_registry_snapshot())
+
+
+@app.middleware("http")
+async def _registry_snapshot_scope(request: Request, call_next):
+    """One registry revision for the life of a request: the first read is taken here, before any handler runs."""
+    registry_snapshot.snapshot_of(request, GATEWAY_REGISTRY_PROVIDER)
+    return await call_next(request)
+
+
 def _auth_context_from_scope(request: Request) -> AuthContext:
     auth_context = request.scope.get("auth_context")
     if isinstance(auth_context, AuthContext):
@@ -15729,7 +15760,7 @@ def _stable_alias_model_entries() -> list[dict[str, Any]]:
 
 app.include_router(
     create_gateway_router(
-        GATEWAY_WORKFLOW_REGISTRY,
+        GATEWAY_REGISTRY_PROVIDER,
         aliases_provider=_gateway_aliases_provider,
         entry_visible=_gateway_discovery_visible,
         alias_resolver=_gateway_alias_resolver,
@@ -16171,7 +16202,8 @@ def _mcp_rename(request: Request, auth: Any, tool: str, args: Mapping[str, Any])
 
 
 def _mcp_catalog() -> list[dict[str, Any]]:
-    records = GATEWAY_WORKFLOW_REGISTRY.records()
+    # The tools list published workflows only (5.9), from the one snapshot this call takes.
+    records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
     by_id = {record.id: record for record in records}
     entries = workflow_catalog(records, _gateway_aliases_provider())
     return [{**entry, "inputs": advertised_inputs_schema(by_id[entry["id"]])} for entry in entries]
@@ -18272,13 +18304,15 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     evidence = await _capabilities_availability_evidence(capabilities, service_records)
 
     def build_catalog() -> dict[str, Any]:
+        # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
+        published_records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
         projected = project_capabilities(
             capabilities, service_records=service_records,
             evidence=evidence,
-            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            workflow_records=published_records,
         )
         return build_workflows_catalog(
-            records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            records=published_records,
             capabilities=projected,
             aliases=_gateway_aliases_provider(),
             recent_receipts=activity.get("receipts") or (),
@@ -34319,14 +34353,15 @@ def _gateway_openapi() -> dict[str, Any]:
     """
     aliases = _gateway_aliases_provider()
     limits = video_limits(config.get("videos"))
-    inputs = json.dumps([aliases, limits], sort_keys=True, default=str)
+    registry_view = GATEWAY_REGISTRY_PROVIDER.current()
+    inputs = json.dumps([aliases, limits, registry_view.digest], sort_keys=True, default=str)
     if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
     app.openapi_schema = None
     schema = _fastapi_openapi()
     _augment_workflow_openapi(
         schema,
-        GATEWAY_WORKFLOW_REGISTRY.records(),
+        SnapshotRegistry(registry_view, published_only=True).records(),
         aliases=aliases,
         video_limits=limits,
     )

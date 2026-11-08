@@ -1,0 +1,13 @@
+{
+  "note": "Temporary data for the resource-class fact (CODE_TO_DATA_S4_S8, S5). It holds what the admission code assumed for a workflow before the fact was record data: the class each intent mapped to, and the class of an intent the table did not list. A stored policy block that states the other four facts and not this one is completed from it once, when it is read. It goes when no install can hold a policy block without resource_class.",
+  "by_intent": {
+    "image.generate": "image",
+    "image.edit": "image",
+    "image.identity": "image",
+    "audio.generate": "audio",
+    "music.generate": "audio",
+    "sfx.generate": "audio",
+    "video.generate": "video"
+  },
+  "default": "media"
+}

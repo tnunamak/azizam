@@ -12,11 +12,12 @@ from collections.abc import Iterator, Mapping
 
 from gateway.workflow_policy import PolicyFacts
 
-STANDARD_FACTS = PolicyFacts(exposure="default", trust_tier="stable", resource_tier="batch", tags=())
+STANDARD_FACTS = PolicyFacts(exposure="default", trust_tier="stable", resource_tier="batch", resource_class="media", tags=())
 
 
-def facts(*, exposure: str = "default", trust_tier: str = "stable", resource_tier: str = "batch", tags: tuple[str, ...] = ()) -> PolicyFacts:
-    return PolicyFacts(exposure=exposure, trust_tier=trust_tier, resource_tier=resource_tier, tags=tags)
+def facts(*, exposure: str = "default", trust_tier: str = "stable", resource_tier: str = "batch",
+          resource_class: str = "media", tags: tuple[str, ...] = ()) -> PolicyFacts:
+    return PolicyFacts(exposure=exposure, trust_tier=trust_tier, resource_tier=resource_tier, resource_class=resource_class, tags=tags)
 
 
 class EveryWorkflow(Mapping[str, PolicyFacts]):

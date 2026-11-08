@@ -40,7 +40,7 @@ from gateway.capabilities import Capability, ResourceEstimate, summarize_capabil
 from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
 from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summarize_workflow
 from gateway.manifests import Provenance, enforce_contract, manifest_identity
-from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, facts_from_mapping, release_facts
+from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, release_facts, stored_facts
 from gateway.transition_gate import ServicePaths, domain_violations
 from gateway import frontend_profiles, transition_profiles
 
@@ -2536,7 +2536,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
-    facts = facts_from_mapping(policy) or _release_facts_of(identity.id, source, provenance)
+    facts = stored_facts(policy, manifest_dict.get("intent")) or _release_facts_of(identity.id, source, provenance)
     source_path = str(raw.get("source_path") or "")
     manifest_path = str(raw.get("manifest_path") or "")
     record = WorkflowRecord(
@@ -2562,7 +2562,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         "manifest_path": manifest_path,
         "provenance": copy.deepcopy(dict(provenance)),
     }
-    stated = facts_from_mapping(policy)
+    stated = stored_facts(policy, manifest_dict.get("intent"))
     if stated is not None:
         # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
         normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
@@ -2654,7 +2654,7 @@ def workflow_records_from_registry(registry: Mapping[str, Any]) -> list[Workflow
                 manifest=manifest_dict,
                 identity=identity,
                 source_path=Path(source_path) if source_path else Path("admin.db"),
-                facts=facts_from_mapping(record.get("policy")) or _release_facts_of(
+                facts=stored_facts(record.get("policy"), manifest_dict.get("intent")) or _release_facts_of(
                     identity.id, str(record.get("source") or "ui"), record.get("provenance")),
             )
         )

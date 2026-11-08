@@ -41,12 +41,12 @@ class DerivationTableTests(unittest.TestCase):
         self.assertEqual(_arch(fields), (["text"], ["image"]))
 
     def test_image_edit(self) -> None:
-        fields = self._workflow_fields("image.edit", {"inputs": {"source_image": {"type": "asset"}}, "outputs": {"image": {"media_type": "image/png"}}})
+        fields = self._workflow_fields("image.edit", {"inputs": {"prompt": {"type": "string"}, "source_image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"image": {"media_type": "image/png"}}})
         self.assertEqual(fields["type"], "image")
         self.assertEqual(_arch(fields), (["text", "image"], ["image"]))
 
     def test_image_analyze_uses_manifest_output(self) -> None:
-        fields = self._workflow_fields("image.analyze", {"inputs": {"candidate": {"type": "asset"}}, "outputs": {"report": {"media_type": "application/json"}}})
+        fields = self._workflow_fields("image.analyze", {"inputs": {"candidate": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"report": {"media_type": "application/json"}}})
         self.assertEqual(fields["type"], "image")
         self.assertEqual(_arch(fields), (["image"], ["text"]))
 
@@ -56,11 +56,11 @@ class DerivationTableTests(unittest.TestCase):
         self.assertEqual(_arch(fields), (["text"], ["video"]))
 
     def test_video_generate_with_input_image(self) -> None:
-        fields = self._workflow_fields("video.generate", {"inputs": {"prompt": {"type": "string"}, "image": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
+        fields = self._workflow_fields("video.generate", {"inputs": {"prompt": {"type": "string"}, "image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         self.assertEqual(_arch(fields), (["text", "image"], ["video"]))
 
     def test_video_generate_asset_media_type_is_respected(self) -> None:
-        fields = self._workflow_fields("video.generate", {"inputs": {"clip": {"type": "asset", "media_type": "audio/wav"}}, "outputs": {}})
+        fields = self._workflow_fields("video.generate", {"inputs": {"prompt": {"type": "string"}, "clip": {"type": "asset", "media_type": "audio/wav"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         self.assertEqual(_arch(fields), (["text", "audio"], ["video"]))
 
     def test_video_edit_with_reference_image_and_source_video(self) -> None:
@@ -76,11 +76,11 @@ class DerivationTableTests(unittest.TestCase):
         self.assertEqual(_arch(fields), (["text", "image", "video"], ["video"]))
 
     def test_video_edit_asset_without_media_type_is_the_edited_video(self) -> None:
-        fields = self._workflow_fields("video.edit", {"inputs": {"source_video": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
+        fields = self._workflow_fields("video.edit", {"inputs": {"prompt": {"type": "string"}, "source_video": {"type": "asset", "accepts": ["video/mp4"]}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         self.assertEqual(_arch(fields), (["text", "video"], ["video"]))
 
     def test_image_edit_asset_media_type_is_respected(self) -> None:
-        fields = self._workflow_fields("image.edit", {"inputs": {"image": {"type": "asset"}, "clip": {"type": "asset", "media_type": "video/mp4"}}, "outputs": {}})
+        fields = self._workflow_fields("image.edit", {"inputs": {"prompt": {"type": "string"}, "image": {"type": "asset", "accepts": ["image/png"]}, "clip": {"type": "asset", "media_type": "video/mp4"}}, "outputs": {"image": {"media_type": "image/png"}}})
         self.assertEqual(_arch(fields), (["text", "image", "video"], ["image"]))
 
     def test_repository_video_edit_manifests_declare_their_inputs(self) -> None:
@@ -92,7 +92,7 @@ class DerivationTableTests(unittest.TestCase):
         for workflow_id, inputs in expected.items():
             with self.subTest(workflow=workflow_id):
                 manifest = yaml.safe_load((ROOT / "manifests" / "workflows" / f"{workflow_id}.yml").read_text(encoding="utf-8"))
-                derived = mm.from_intent(manifest["intent"], manifest)
+                derived = mm.from_contract(manifest)
                 assert derived is not None
                 self.assertEqual(list(derived.input_modalities), inputs)
                 for name, spec in manifest["inputs"].items():
@@ -101,7 +101,7 @@ class DerivationTableTests(unittest.TestCase):
                         self.assertIn("accepts", spec, f"{workflow_id}.{name}")
 
     def test_audio_generate(self) -> None:
-        fields = self._workflow_fields("audio.generate", {"inputs": {}, "outputs": {"audio": {"media_type": "audio/wav"}}})
+        fields = self._workflow_fields("audio.generate", {"inputs": {"prompt": {"type": "string"}}, "outputs": {"audio": {"media_type": "audio/wav"}}})
         self.assertEqual(fields["type"], "audio")
         self.assertEqual(_arch(fields), (["text"], ["audio"]))
 
@@ -147,13 +147,13 @@ class DerivationTableTests(unittest.TestCase):
         self.assertNotIn("architecture", fields)
 
     def test_alias_target_listed_in_catalog_wins_over_operation_default(self) -> None:
-        entry, manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset"}}, "outputs": {}})
+        entry, manifests = _workflow("i2v", "video.generate", {"inputs": {"prompt": {"type": "string"}, "image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         sources = mm.MetadataSources(manifest=manifests.get)
         out = _annotated([{"id": "video", "azizam_resolves_to": {"videos": "i2v"}}], sources, catalog=[entry])
         self.assertEqual(_arch(out["video"]), (["text", "image"], ["video"]))
 
     def test_alias_target_resolves_through_workflow_registry_when_unlisted(self) -> None:
-        manifest = {"intent": "video.edit", "inputs": {"source_video": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}}
+        manifest = {"intent": "video.edit", "inputs": {"prompt": {"type": "string"}, "source_video": {"type": "asset", "accepts": ["video/mp4"]}}, "outputs": {"video": {"media_type": "video/mp4"}}}
         sources = mm.MetadataSources(workflow_for_model={"remix-wf": manifest}.get)
         out = _annotated([{"id": "video-remix", "azizam_resolves_to": {"videos": "remix-wf"}}], sources)
         self.assertEqual(_arch(out["video-remix"]), (["text", "video"], ["video"]))
@@ -309,8 +309,8 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
                 self.assertNotIn("tags", fields, fields["id"])
 
     def test_media_models_take_image_input_without_tags(self) -> None:
-        edit, edit_manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset"}}, "outputs": {"image": {"media_type": "image/png"}}})
-        i2v, i2v_manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
+        edit, edit_manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"image": {"media_type": "image/png"}}})
+        i2v, i2v_manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         sources = mm.MetadataSources(manifest={**edit_manifests, **i2v_manifests}.get)
         out = _annotated([edit, i2v, {"id": "image-edit", "azizam_resolves_to": {"image_edits": "edit"}}], sources)
         for model_id in ("edit", "i2v", "image-edit"):
@@ -319,7 +319,7 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
                 self.assertNotIn("tags", out[model_id])
 
     def test_declared_tags_on_media_models_are_dropped(self) -> None:
-        entry, manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset"}}, "outputs": {}})
+        entry, manifests = _workflow("edit", "image.edit", {"inputs": {"prompt": {"type": "string"}, "image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"image": {"media_type": "image/png"}}})
         sources = mm.MetadataSources(manifest=manifests.get, declared={"edit": {"tags": ["vision", "tool-use"]}}.get)
         fields = _annotated([entry], sources)["edit"]
         self.assertNotIn("tags", fields)

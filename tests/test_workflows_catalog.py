@@ -19,6 +19,7 @@ from gateway.capabilities import Capability, unavailable_capability
 from gateway.discovery import WorkflowRegistry
 from gateway.user_runtime import UserPortalError
 from gateway.workflow_openapi import augment_openapi
+from tests.support.registry_provider import provider_of
 from tests.support.workflow_docs import STANDARD_FACTS
 from gateway.workflows_catalog import (
     _workflow_description,
@@ -769,7 +770,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
                  patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
                  patch.dict(proxy.LIVE_PROBES, {}, clear=True), \
                  patch.object(proxy, "_public_base_url", return_value="http://testserver"), \
-                 patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", _registry()):
+                 patch.object(proxy, "GATEWAY_REGISTRY_PROVIDER", provider_of(_registry())):
                 app = FastAPI()
                 app.include_router(create_workflows_catalog_router(proxy._user_workflows_catalog_payload))
                 response = TestClient(app).get("/me/api/workflows")
@@ -817,7 +818,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
                  patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
                  patch.dict(proxy.LIVE_PROBES, {}, clear=True), \
                  patch.object(proxy, "_public_base_url", return_value="http://testserver"), \
-                 patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", _registry()):
+                 patch.object(proxy, "GATEWAY_REGISTRY_PROVIDER", provider_of(_registry())):
                 app = FastAPI()
                 app.include_router(create_workflows_catalog_router(proxy._user_workflows_catalog_payload))
                 response = TestClient(app).get("/me/api/workflows")

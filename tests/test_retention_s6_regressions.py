@@ -12,6 +12,7 @@ from gateway import admin_store, media_jobs, receipt_store, retention_facts
 from gateway.admin_api import AdminContext
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt, serialize_receipt_for_audience
 from gateway.runtime_auth import RuntimeIdentity
+from tests.support.registry_provider import provider_of
 
 
 @pytest.fixture
@@ -77,7 +78,7 @@ def test_owner_app_key_cannot_read_real_rest_or_mcp_ledger(stores, monkeypatch, 
         async def identity(request, call_next):
             request.scope["auth_context"] = auth
             return await call_next(request)
-        app.include_router(create_gateway_router(WorkflowRegistry()))
+        app.include_router(create_gateway_router(provider_of(WorkflowRegistry())))
         app.include_router(create_request_retention_router(ledger_provider=proxy._gateway_retention_ledger))
         client = TestClient(app)
         assert client.get("/admin/api/me/retention/ledger").status_code == 403

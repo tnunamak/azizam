@@ -1,6 +1,8 @@
 """The policy facts of a workflow record (CODE_TO_DATA_S3, D2): who may run it and at what cost.
 
-A workflow document never holds these (``exposure``, ``trust_tier``, ``resource_tier``, ``tags``). They are record data. The
+A workflow document never holds these (``exposure``, ``trust_tier``, ``resource_tier``, ``resource_class``, ``tags``). They are
+record data. ``resource_class`` is the admission and queue class (CODE_TO_DATA_S4_S8, S5): it replaces the intent-keyed table
+that admission read before. The
 release ships them in ``registry/workflow_policy.yml``, keyed by workflow id; an owner changes them as a patch on the
 record. **There are no defaults.** A record that states no facts is "needs configuration": every reader treats it as
 closed, and a run sends nothing to any engine. This is the plan's rule that a missing authorization or resource
@@ -16,10 +18,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import json
+
 import yaml
 
 POLICY_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow_policy.yml"
-FACT_NAMES = ("exposure", "trust_tier", "resource_tier", "tags")
+FACT_NAMES = ("exposure", "trust_tier", "resource_tier", "resource_class", "tags")
+RESOURCE_CLASS_DATA_PATH = Path(__file__).resolve().parent / "migration_data" / "workflow_resource_class.json"
 BUNDLED_PACKAGES_DIR = Path(__file__).resolve().parent.parent / "extensions" / "bundled"
 PACKAGE_KEY = "package"  # an optional key of a policy row: the id of the one package the row was written for
 NEEDS_CONFIGURATION_CODE = "needs_configuration"
@@ -42,31 +47,54 @@ class NeedsConfiguration(Exception):
 
 @dataclass(frozen=True)
 class PolicyFacts:
-    """The four facts of one record. All are stated: a record that cannot state them has no ``PolicyFacts`` at all."""
+    """The five facts of one record. All are stated: a record that cannot state them has no ``PolicyFacts`` at all."""
 
     exposure: str
     trust_tier: str
     resource_tier: str
+    resource_class: str
     tags: tuple[str, ...] = ()
 
 
 def facts_from_mapping(raw: Any) -> PolicyFacts | None:
-    """The facts a mapping states, or ``None`` when it does not state all four (or any is malformed). It never fills one in."""
+    """The facts a mapping states, or ``None`` when it does not state all five (or any is malformed). It never fills one in."""
     if not isinstance(raw, Mapping) or any(name not in raw for name in FACT_NAMES):
         return None
-    texts = [raw[name] for name in ("exposure", "trust_tier", "resource_tier")]
+    texts = [raw[name] for name in ("exposure", "trust_tier", "resource_tier", "resource_class")]
     tags = raw["tags"]
     if not all(isinstance(text, str) and text.strip() for text in texts):
         return None
     if not isinstance(tags, (list, tuple)) or not all(isinstance(tag, str) and tag.strip() for tag in tags) \
             or len(set(tags)) != len(tags):
         return None
-    return PolicyFacts(exposure=texts[0], trust_tier=texts[1], resource_tier=texts[2], tags=tuple(tags))
+    return PolicyFacts(exposure=texts[0], trust_tier=texts[1], resource_tier=texts[2], resource_class=texts[3],
+                       tags=tuple(tags))
+
+
+@lru_cache(maxsize=1)
+def _resource_class_data() -> tuple[dict[str, str], str]:
+    document = json.loads(RESOURCE_CLASS_DATA_PATH.read_text(encoding="utf-8"))
+    return dict(document["by_intent"]), str(document["default"])
+
+
+def resource_class_for_intent(intent: Any) -> str:
+    """The class admission assumed for an intent before the fact was record data (the migration's only source)."""
+    by_intent, default = _resource_class_data()
+    return by_intent.get(intent, default) if isinstance(intent, str) else default
+
+
+def stored_facts(raw: Any, intent: Any) -> PolicyFacts | None:
+    """The facts a stored record states. A block written before ``resource_class`` existed states the other four and
+    not that one: it is completed once, from the class its intent had (data, ``workflow_resource_class.json``), so what
+    admission does for it does not change. A block that lacks any other fact, or holds a malformed one, is not completed."""
+    if isinstance(raw, Mapping) and "resource_class" not in raw:
+        raw = {**raw, "resource_class": resource_class_for_intent(intent)}
+    return facts_from_mapping(raw)
 
 
 def parse_policy_rows(text: str, source: str = "workflow_policy.yml") -> tuple[dict[str, PolicyFacts], dict[str, str]]:
     """``({workflow id: facts}, {workflow id: package id})`` from the text of a release policy file. Every row must state all
-    four facts and may name one ``package``; the file holds only ``schema_version`` and ``workflows``. A row with a package
+    five facts and may name one ``package``; the file holds only ``schema_version`` and ``workflows``. A row with a package
     belongs to the workflows of that package alone; a row without one belongs to the workflows the release itself holds."""
     try:
         document = yaml.safe_load(text)

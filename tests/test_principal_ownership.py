@@ -22,6 +22,7 @@ from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from gateway.voice_audio import SampleLimits
 from gateway import request_source
+from tests.support.registry_provider import provider_of
 
 
 @pytest.fixture
@@ -156,7 +157,7 @@ def test_rotation_media_and_record_http_scopes(owners, monkeypatch):
     async def auth(request, call_next):
         request.scope["auth_context"] = active[0]
         return await call_next(request)
-    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db, receipt_store_path=receipts,
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry()), media_job_store_path=db, receipt_store_path=receipts,
         record_scope_provider=proxy._gateway_record_scope, record_authorizer=proxy._gateway_record_authorizer))
     client = TestClient(app)
     # The App's job, made by a request its credential authenticated, reads through the rotated key. The legacy job has

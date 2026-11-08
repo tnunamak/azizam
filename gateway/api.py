@@ -52,7 +52,9 @@ from gateway import media_jobs as _media_jobs
 from gateway import result_bundle as _result_bundle
 from gateway import receipts as _receipts
 from gateway.capabilities import Capability, summarize_capabilities
-from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
+from gateway.discovery import VALID_AUDIENCES
+from gateway.registry_snapshot import Provider as SnapshotProvider, snapshot_of
+from gateway.workflow_projections import SnapshotRegistry
 from gateway.extension_catalog import (
     summarize_extensions,
     summarize_model_capabilities,
@@ -337,7 +339,7 @@ def _build_media_job_providers(
 
 
 def create_gateway_router(
-    registry: WorkflowRegistry,
+    provider: SnapshotProvider,
     *,
     audience_resolver: AudienceResolver | None = None,
     capabilities_provider: CapabilitiesProvider | None = None,
@@ -474,11 +476,16 @@ def create_gateway_router(
             content=_error_payload("media_job_not_found", f"media job {job_id!r} not found"),
         )
 
+    def _registry_of(request: Request, audience: str) -> SnapshotRegistry:
+        """The registry this request reads: the one snapshot it took first, whole. An unpublished workflow is the
+        owner's alone (5.9): the client audience does not see it."""
+        return SnapshotRegistry(snapshot_of(request, provider), published_only=audience == "client")
+
     @router.get("/workflows")
     def list_workflows(request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
-            catalog = registry.summarize_catalog(audience=audience)
+            catalog = _registry_of(request, audience).summarize_catalog(audience=audience)
             if entry_visible is not None:
                 catalog["workflows"] = [row for row in catalog["workflows"] if entry_visible(request, row)]
         except Exception as exc:  # noqa: BLE001 — translate to protocol error
@@ -489,7 +496,7 @@ def create_gateway_router(
     def get_workflow(workflow_id: str, request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
-            summary = registry.summarize_workflow(workflow_id, audience=audience)
+            summary = _registry_of(request, audience).summarize_workflow(workflow_id, audience=audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         # A workflow the caller cannot see is as absent as one that does not exist.
@@ -563,7 +570,7 @@ def create_gateway_router(
     def list_extensions(request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
-            catalog = summarize_extensions(registry, audience=audience)
+            catalog = summarize_extensions(_registry_of(request, audience), audience=audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
