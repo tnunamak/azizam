@@ -392,6 +392,8 @@ class RunRequest:
     idempotency_key: str | None = None
     wait_s: float = 0.0
     frontend_id: str = "workflows"
+    # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
+    request_id: str | None = None
     # Transport options the caller chose on the wire that change what the engine is asked for (S7 parity M2): the count,
     # size, output format and the like. The shape fills it; it is part of run identity and travels to the adapter in the
     # flat body under ``options``. An answer form that only changes rendering is not an option.
