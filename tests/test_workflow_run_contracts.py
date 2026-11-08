@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 import proxy
-from gateway import discovery, media_jobs, receipt_store, request_spool, service_registry
+from gateway import workflow_run, discovery, media_jobs, receipt_store, request_spool, service_registry
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol.node_graph import compile_workflow
 from gateway.job_envelope import canonical_bytes
@@ -248,7 +248,9 @@ def test_a_finished_run_names_the_contract_binding_and_template_it_ran(  # W5: t
     assert response.status_code == 200 and view["status"] == "succeeded", response.text
     store = DefinitionStore(world.media)
     envelope = store.envelope(view["job_id"])
-    contract = {key: manifest[key] for key in ("schema_version", "id", "intent", "inputs", "outputs") if key in manifest}
+    served = proxy.WORKFLOW_SNAPSHOTS.current().get(workflow_id)          # what the gateway served when the run was made
+    contract = workflow_run.plain(served.contract)
+    assert (contract["id"], contract["intent"]) == (manifest["id"], manifest["intent"])
     template_file = (discovery_root() / manifest["bindings"]["comfyui"]["workflow"]).read_bytes()
     assert envelope.source_id == workflow_id and envelope.binding_key == "comfyui"
     assert envelope.contract == digest(canonical_bytes(contract))
