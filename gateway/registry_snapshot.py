@@ -392,10 +392,10 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
     ``model_aliases`` is the ``model_aliases`` config section (the dynamic aliases), when the caller has it."""
     release = bundled if isinstance(bundled, BundledRelease) else BundledRelease(bundled, load_frontend_rows())
     document = document or {}
-    stored = document.get("workflows") or {}
+    stored = document.get("workflows", {})
     if not isinstance(stored, Mapping):
         raise SnapshotBuildError([_problem(("workflows",), "section", "the workflows section is a mapping")])
-    services = document.get("services") or {}
+    services = document.get("services", {})
     if not isinstance(services, Mapping):
         raise SnapshotBuildError([_problem(("services",), "section", "the services section is a mapping")])
     entries: dict[str, WorkflowEntry] = {wid: _bundled_entry(record, generation) for wid, record in release.workflows.items()}
