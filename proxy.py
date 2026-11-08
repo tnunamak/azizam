@@ -118,6 +118,7 @@ from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
 from gateway import pinned_runtime, request_spool, workflow_run
+from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.engine_protocol.types import ResultContext
@@ -8170,13 +8171,7 @@ def has_vision_content(messages) -> bool:
     return False
 
 
-def _says_out_of_memory(text: str, *, plain: bool = False) -> bool:
-    """Whether an engine's error text reports that it ran out of memory (the text decides a retry; it is never passed on).
-
-    ``plain`` leaves out the bare ``oom`` marker (it is in "boom"): the retry accepts it, the sentence to the caller does not.
-    """
-    lowered = str(text or "").lower()
-    return any(marker in lowered for marker in ("cuda out of memory", "cuda oom", "out of memory", *(() if plain else ("oom",))))
+_says_out_of_memory = graph_round.says_out_of_memory
 
 
 def _graph_error_message(job: Mapping[str, Any] | None, graph: Mapping[str, Any] | None = None) -> str | None:
@@ -8430,113 +8425,57 @@ async def _graph_run_round(
     adapter = _graph_adapter()
     graph = _graph(client)
     engine = adapter.label
-    prompt_id: Optional[str] = None
     try:
-        try:
-            ref = await adapter.submit(
-                graph.conn, "graph.submit",
-                AdapterRequest(op="graph.submit", body=_build_graph_submit_payload(workflow), headers=headers,
-                               params={"session": graph}),
-            )
-        except TransportFailure as e:
-            if e.kind == "timeout":
-                return Response(
-                    content=json.dumps({"error": {"message": f"{engine} request timeout", "type": "api_error"}}),
-                    status_code=504,
-                    media_type="application/json",
-                ), []
-            if e.kind == "unreachable":
-                return Response(
-                    content=json.dumps({"error": {"message": adapter.unavailable_message(graph.conn), "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json",
-                ), []
-            # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
-            return Response(
-                content=json.dumps({"error": {"message": "Image backend connection dropped", "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json",
-            ), []
-        except ProtocolUpstreamError as e:
-            # What the engine said decides whether to free its memory and retry; it is never passed on (decision D44).
-            if _says_out_of_memory(e.excerpt, plain=True):
-                refused = client_errors.client_error(502, "upstream_out_of_memory", error_type="api_error", subject=engine)
-            else:
-                refused = client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=engine)
-            refused.out_of_memory = _says_out_of_memory(e.excerpt)  # type: ignore[attr-defined]
-            return refused, []
-        except ProtocolMalformedResponse:
-            return Response(
-                content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json",
-            ), []
-
-        prompt_id = ref.id
-        print(f"[proxy] {engine} {label} submitted: {prompt_id}", flush=True)
-
-        # Keep the original total sleep budget; history request time was never
-        # charged against it. Check immediately, then back off to the old cadence.
-        remaining_wait_s = float(max_wait_s or DERIVED.COMFY_TIMEOUT)
-        poll_delay_s = 0.0
-        finished = None
-        while remaining_wait_s > 0:
-            if await _request_is_disconnected(request):
-                await _graph_cancel(client, prompt_id, headers, reason="client disconnect")
-                return _image_client_disconnected_response(prompt_id), []
-            if poll_delay_s:
-                await asyncio.sleep(poll_delay_s)
-                remaining_wait_s -= poll_delay_s
-            poll_delay_s = min(
-                poll_delay_s * 2 if poll_delay_s else 0.05,
-                0.5,
-                remaining_wait_s,
-            )
-            try:
-                status = await adapter.poll(graph.conn, ref, headers=headers, session=graph, graph=workflow)
-            except (TransportFailure, ProtocolUpstreamError):
-                continue
-            if status.state is JobState.failed:
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": status.detail,
-                            "type": "api_error",
-                        }
-                    }),
-                    status_code=502,
-                    media_type="application/json",
-                ), []
-            if status.state is JobState.succeeded:
-                finished = status
-                break
-
-        if finished is None:
-            queue_position = await _graph_queue_position(client, prompt_id, headers)
-            await _graph_cancel(client, prompt_id, headers, reason="image timeout")
-            return _image_generation_timeout_response(queue_position), []
-
-        # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6
-        # limits. A run with no file for the selector answers as an empty round always has; any other refusal says so.
-        try:
-            picked = await adapter.fetch_selected(
-                graph.conn, finished, binding or {}, contract_outputs or {result_bundle.DEFAULT_NAME: {}},
-                limits=result_bundle.limits_from_config(runtime().config),
-                headers=headers, session=graph,
-            )
-        except node_graph.SelectionRefused as refusal:
-            if refusal.code != "result_missing":
-                return _result_refusal_response(refusal.code, _refused_result_status(refusal.code)), []
-            picked = {}
-        images = _SelectedImages(raw for files in picked.values() for raw in files)
-        images.result_name = next(iter(picked)) if len(picked) == 1 else None
-        return None, images
-    except asyncio.CancelledError:
-        if prompt_id:
-            await _graph_cancel(client, prompt_id, headers, reason="request cancellation")
-        raise
+        result = await graph_round.run_round(
+            adapter, graph, _build_graph_submit_payload(workflow), headers,
+            graph=workflow, label=label, max_wait_s=float(max_wait_s or DERIVED.COMFY_TIMEOUT),
+            control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=_graph_connection,
+            is_disconnected=lambda: _request_is_disconnected(request),
+            binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
+            limits=result_bundle.limits_from_config(runtime().config),
+            say=lambda text: print(f"[proxy] {text}", flush=True))
+    except graph_round.RoundFailure as failed:
+        return _round_failure_response(failed, adapter, graph), []
     finally:
         await _finalize_probe()
+    # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6 limits.
+    images = _SelectedImages(raw for files in result.files.values() for raw in files)
+    images.result_name = next(iter(result.files)) if len(result.files) == 1 else None
+    return None, images
+
+
+def _round_failure_response(failed: "graph_round.RoundFailure", adapter: Any, graph: Any) -> Response:
+    """The answer a caller of an old route gets for a round that produced no files."""
+    engine = adapter.label
+
+    def plain(message: str, status: int) -> Response:
+        return Response(content=json.dumps({"error": {"message": message, "type": "api_error"}}), status_code=status,
+                        media_type="application/json")
+
+    kind = failed.kind
+    if kind == graph_round.SUBMIT_TIMEOUT:
+        return plain(f"{engine} request timeout", 504)
+    if kind == graph_round.UNREACHABLE:
+        return plain(adapter.unavailable_message(graph.conn), 502)
+    if kind == graph_round.DROPPED:
+        return plain("Image backend connection dropped", 502)
+    if kind == graph_round.REFUSED:
+        # What the engine said decides whether to free its memory and retry; it is never passed on (decision D44).
+        if graph_round.says_out_of_memory(failed.excerpt, plain=True):
+            refused = client_errors.client_error(502, "upstream_out_of_memory", error_type="api_error", subject=engine)
+        else:
+            refused = client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=engine)
+        refused.out_of_memory = failed.out_of_memory  # type: ignore[attr-defined]
+        return refused
+    if kind == graph_round.NO_PROMPT_ID:
+        return plain("No prompt_id returned", 502)
+    if kind == graph_round.EXECUTION_FAILED:
+        return plain(failed.detail, 502)
+    if kind == graph_round.WAIT_EXCEEDED:
+        return _image_generation_timeout_response(failed.queue_position)
+    if kind == graph_round.DISCONNECTED:
+        return _image_client_disconnected_response(failed.prompt_id or "")
+    return _result_refusal_response(failed.code, _refused_result_status(failed.code))
 
 
 def _build_image_response_payload(
