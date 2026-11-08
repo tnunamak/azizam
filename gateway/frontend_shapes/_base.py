@@ -99,6 +99,9 @@ class Shape:
     wire_codes: ClassVar[frozenset[str] | None] = None
     # Whether a workflow this shape refuses is refused at save, when no other row serves it (a single-purpose wire).
     save_gate: ClassVar[bool] = False
+    # The answer forms the wire lets a caller ask for, and the wire field that carries the choice. None: no choice.
+    answer_forms: ClassVar[frozenset[str]] = frozenset()
+    answer_field: ClassVar[str] = ""
 
     def __init__(self, *, wait_s: float = 300.0) -> None:
         self.wait_s = wait_s
@@ -151,6 +154,8 @@ class Shape:
         if isinstance(read_wire, Response):
             return read_wire
         options, answer = read_wire
+        if row.default_answer and not answer.get(self.answer_field):
+            answer = {**answer, self.answer_field: row.default_answer}
         request.state.answer_form = answer
         target = _wire.pop_str(fields, "model") or self.default_target()
         servable = lambda entry: not self.profile(entry.contract)  # noqa: E731

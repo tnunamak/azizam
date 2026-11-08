@@ -25,11 +25,11 @@ from gateway.workflow_runtime_types import (
     WorkflowEntry,
 )
 
+ANSWER_FORMS = ("b64_json", "url")
 AssetUrl = Callable[[ResultRef, CallerContext], str]
 # The deployment's default workflow for a wire, by shape id: installed at start by the main module from its
 # configuration (a shape holds no deployment setting). A shape with no entry has no default.
 DEFAULT_WORKFLOWS: dict[str, Callable[[], str | None]] = {}
-ANSWER_FORMS = ("b64_json", "url")
 MAX_IMAGES = 10                 # the public range of ``n``: one request returns at most this many pictures
 _SIZE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
 
@@ -42,6 +42,8 @@ class OpenAIImagesJson(Shape):
     output_prefix = "image/"
     timeout_code = "image_generation_timeout"
     wire_codes = frozenset({timeout_code, "image_client_disconnected"})
+    answer_forms = frozenset(ANSWER_FORMS)
+    answer_field = "response_format"
     # Wire fields that shape the picture or its encoding, not the workflow's inputs: the answer's encoding and size are
     # read from the wire request when it is rendered.
     transport_fields = Shape.transport_fields | frozenset({

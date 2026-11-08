@@ -59,7 +59,7 @@ def test_image_wire_options_are_checked(payload, param) -> None:
 def test_image_answer_form_is_read_from_each_wire_request() -> None:
     snap = snapshot("flux2-klein")
     core, jobs = FakeRunCore(), None
-    for form, expected in (("b64_json", "b64_json"), ("url", "url"), (None, "url")):  # none asked: the deployment's renderer
+    for form, expected in (("b64_json", "b64_json"), ("url", "url"), (None, "b64_json")):  # none asked: the row's default_answer
         body = {"prompt": "p", **({"response_format": form} if form else {})}
         request = json_request(body)
         run = run_request_with(request, snap)
@@ -102,3 +102,34 @@ def test_optional_asset_files_each_at_limit_are_accepted(tmp_path) -> None:
     run = asyncio.run(shape_of("images-edits").to_run_request(request, ROWS["images-edits"], snap, spool=spool))
     assert not isinstance(run, Response), getattr(run, "status_code", None)
     assert set(run.media) == {"source_image", "mask"}
+
+
+def test_default_answer_is_route_data_checked_at_load() -> None:
+    from dataclasses import replace
+    from gateway.frontend_shapes import RowError, parse_rows
+    snap = snapshot("flux2-klein")
+    assert ROWS["images-generations"].default_answer == "b64_json"
+    # A row that declares one answers b64_json to a request that names none, with a URL renderer configured.
+    request = json_request({"prompt": "p"})
+    run = run_request_with(request, snap)
+    core = FakeRunCore()
+    view = submit(core, run, snap)
+    finish(core, view.job_id, "image", "image/png", b"\x89PNG")
+    answer = asyncio.run(shape_of("images-generations", asset_url=lambda ref, caller: "https://x/").to_response(
+        core.jobs[view.job_id], ROWS["images-generations"], jobs=FakeJobService(core), caller=CALLER, request=request))
+    item = json.loads(answer.body)["data"][0]
+    assert "b64_json" in item and "url" not in item
+    # A row that declares none keeps the shape's rule: the renderer's URL.
+    bare = replace(ROWS["images-generations"], default_answer=None)
+    request = json_request({"prompt": "p"})
+    asyncio.run(shape_of("images-generations", asset_url=lambda ref, caller: "u").to_run_request(
+        request, bare, snap, spool=__import__("tests.test_frontend_shapes", fromlist=["FakeSpool"]).FakeSpool()))
+    assert request.state.answer_form == {"response_format": None}
+    # A form the shape does not accept is refused at load, and so is a value on a shape with no answer forms.
+    good = {"id": "r", "shape": "openai.images.json", "mode": "sync", "selects": {"ids": ["a"]},
+            "routes": [{"methods": ["POST"], "canonical": "/v1/x", "runtime_policy": {"default_answer": "url"}}]}
+    assert parse_rows({"frontends": [good]})[0].default_answer == "url"
+    for shape, form in (("openai.images.json", "gif"), ("openai.audio.json", "url")):
+        bad = {**good, "shape": shape, "routes": [{**good["routes"][0], "runtime_policy": {"default_answer": form}}]}
+        with pytest.raises(RowError):
+            parse_rows({"frontends": [bad]})

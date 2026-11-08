@@ -579,6 +579,9 @@ class FrontendRow:
     # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits
     # on the answer gets the first failure). Data of the row (``runtime_policy.job_retries``).
     job_retries: Literal["binding", "none"] = "binding"
+    # The answer form a request that names none gets (``runtime_policy.default_answer``); one of the forms the row's shape
+    # accepts. None: the shape's own rule.
+    default_answer: str | None = None
 
 
 class FrontendShape(Protocol):
