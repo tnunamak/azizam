@@ -121,7 +121,7 @@ from gateway import pinned_runtime, request_spool, workflow_run
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.engine_protocol.types import ResultContext
-from gateway.workflow_runtime_types import JobNotFound, MediaRef, RunRefused
+from gateway.workflow_runtime_types import JobNotFound, MediaRef, ResultUnavailable, RunRefused
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -26047,17 +26047,19 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
-def _run_job_content(job: Mapping[str, Any]) -> Response | None:
-    """A finished run's content, when it has exactly one result, is that result in its own media type; else None."""
-    assets = [a for a in job.get("assets") or [] if isinstance(a, Mapping) and isinstance(a.get("asset_id"), str)]
-    if len(assets) != 1:
+def _run_job_content(job_id: str, caller: Any) -> Response | None:
+    """A finished run's content, when it has exactly one file result, is that file in its own media type; else None."""
+    service = _workflow_job_service()
+    view = service.get(job_id, caller) if service is not None else None
+    refs = [ref for ref in (view.results or ()) if ref.asset_id is not None] if view is not None else []
+    if len(refs) != 1:
         return None
-    path = asset_cache_path(assets[0]["asset_id"])
-    if path is None:
+    try:
+        content = service.open_result(job_id, refs[0], caller)
+    except (JobNotFound, ResultUnavailable):
         return JSONResponse({"error": {"message": "media job has no result file", "type": "api_error",
                                        "code": "media_job_assets_missing"}}, status_code=502)
-    return FileResponse(path, media_type=str(assets[0].get("media_type") or "application/octet-stream"),
-                        headers={"x-asset-id": assets[0]["asset_id"]})
+    return Response(content=content.body, media_type=content.media_type, headers={"x-asset-id": str(refs[0].asset_id)})
 
 
 async def gateway_media_job_content(job_id: str, request: Request):
@@ -26132,7 +26134,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
     if intent == mesh_api.MESH_INTENT:
         return _mesh_job_content(job)  # the plan was checked above, with the other kinds
     if intent == workflow_run.RUN_INTENT:
-        single = _run_job_content(job)
+        single = await asyncio.to_thread(_run_job_content, job_id, auth_context)
         if single is not None:
             return single
     if intent == "image.generate":
