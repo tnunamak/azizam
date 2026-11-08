@@ -454,3 +454,32 @@ def test_a_release_that_takes_an_owner_workflow_name_holds_that_workflow_out_and
     gone = newer.delete("/admin/api/workflows/owner.held.demo", headers={"If-Match": os_n(newer)})
     assert gone.status_code == 200, gone.text
     assert newer.get("/admin/api/workflows").json()["held_out"] == []
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_the_detail_of_a_held_out_owner_workflow_is_its_stored_contract_with_the_hold_problems(api):
+    # c2d-held-clash-review-1108 (2): "not serving" is not "not stored". The owner needs the document to repair it.
+    assert create(api, owner_contract("owner.held.demo", display_name="Mine"), facts=FACTS_BODY).status_code == 201
+    newer = _restarted(api, {BUNDLED_ID: lambda manifest: {**manifest, "aliases": ["Owner-Held-Demo"]}})
+    response = newer.get("/admin/api/workflows/owner.held.demo")
+    assert response.status_code == 200, response.text
+    body = response.json()["workflow"]
+    assert body["id"] == "owner.held.demo" and body["held_out"] is True
+    assert body["contract"]["display_name"] == "Mine"
+    assert {problem["code"] for problem in body["hold_problems"]} == {"id_clash"}
+    assert body["serving"] is None
+    assert newer.get("/admin/api/workflows/owner.nowhere.demo").status_code == 404
+
+
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_the_detail_of_a_held_out_override_is_the_stored_contract_and_the_serving_bundled_one_is_named_apart(api):
+    other = "image.edit.flux2-klein-4b"
+    edited = {**_detail(api)["contract"], "display_name": "Mine", "aliases": ["mine-alias"]}
+    assert create(api, edited, overrides=BUNDLED_ID).status_code == 201
+    newer = _restarted(api, {other: lambda manifest: {**manifest, "aliases": ["mine-alias"]}})
+    body = _detail(newer)
+    assert body["held_out"] is True and body["contract"]["display_name"] == "Mine"
+    assert {problem["code"] for problem in body["hold_problems"]} == {"id_clash"}
+    assert body["serving"]["incarnation"] == "bundled" and body["serving"]["contract"]["display_name"] != "Mine"
