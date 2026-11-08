@@ -43,7 +43,9 @@ NEVER = s7.NEVER_HISTORY
 # ------------------------------------------------------------------------------------------------ scenarios
 def pair(tmp_path, path, request, setup, **kw):
     """The same request on the old route and on its row."""
-    return (observe(tmp_path, path, request, setup, row=False, **kw), observe(tmp_path, path, request, setup, row=True, **kw))
+    old = observe(tmp_path, path, request, setup, row=False, **kw)
+    assert "exception" not in old.extra, f"the old route crashed: the scenario is wrong ({old.extra['exception']})"
+    return old, observe(tmp_path, path, request, setup, row=True, **kw)
 
 
 def ok(rig, n=1, **kw):
@@ -290,7 +292,7 @@ def test_images_24_transient_history_errors_are_retried(tmp_path):
 def test_images_25_view_missing_fails_the_round(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
-            exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1)]))
+            exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an error", (status(old) or 0) >= 400)
     assert_same(old, row, status, failure, engine_without_probes)
@@ -509,7 +511,7 @@ def test_images_E13_refused_image(tmp_path):
 
 def _upload_refused(rig, response=None):
     base._comfy(rig, comfy_exchanges(strict=False, extra=[
-        exchange("upload-refused", "POST", "/upload/image", response or {"status": 500, "json": {"error": "disk full"}}, times=1)]))
+        exchange("upload-refused", "POST", "/upload/image", response or {"status": 500, "json": {"error": "disk full"}}, times=1, required=False)]))
 
 
 def test_images_E14_image_upload_refused_502(tmp_path):
@@ -527,7 +529,7 @@ def test_images_E15_upload_without_filename_502(tmp_path):
 def test_images_E16_mask_upload_failure_502(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(strict=False, extra=[
-            exchange("mask-upload-refused", "POST", "/upload/image", {"status": 500, "json": {"error": "disk full"}}, times=1)]))
+            exchange("mask-upload-refused", "POST", "/upload/image", {"status": 500, "json": {"error": "disk full"}}, times=1, required=False)]))
     old, row = pair(tmp_path, EDIT, edit_masked(), setup)
     old_has(old, "an answer", status(old))
     _edit_compare(old, row)
@@ -849,7 +851,7 @@ def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
 def test_images_J22_oom_retries_with_events(tmp_path):
     def inner(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png((60, 160, 120)), "image/png")], strict=False, extra=[
-            exchange("prompt-oom", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=1)]))
+            exchange("prompt-oom", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=1, required=False)]))
     old, row = job_pair(tmp_path, job_body(), job_setup(inner), after=job_get("/events"))
     old_has(old, "a retry", any(path == "/free" for _m, path in engine(old)))
     assert_same(old, row, engine_without_probes, sleeps, ("jobs", lambda o: [j["status"] for j in media_jobs(o)]), ("events", lambda o: doc(o, 1)))
@@ -1047,7 +1049,7 @@ def test_images_F05_timeout(tmp_path):
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(strict=False, extra=[
-            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True)]))
+            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an error", (status(old) or 0) >= 500)
     assert_same(old, row, status, failure, engine_without_probes)
@@ -1056,7 +1058,7 @@ def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
 def test_images_F07_view_missing(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
-            exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1)]))
+            exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an error", (status(old) or 0) >= 400)
     assert_same(old, row, status, failure)
