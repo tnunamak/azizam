@@ -92,6 +92,8 @@ def _cancel(harness: AsyncHarness, job_id: str) -> dict[str, Any]:
     proxy.media_jobs.DB_PATH = harness.jobs
     try:
         done = proxy._cancel_media_job(job_id, audience="client")  # the cancel route's own function
+    except ValueError as error:                                    # a finished job refuses the cancel
+        return {"refused": str(error)}
     finally:
         proxy.media_jobs.DB_PATH = saved
     return {"status": done["status"], "cancel_requested": done.get("cancel_requested")}
