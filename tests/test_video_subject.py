@@ -12,6 +12,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import yaml  # noqa: E402
+
 import proxy  # noqa: E402
 from gateway import video_inputs, video_subject as vs  # noqa: E402
 from test_video_remix_replace import NEW_ID, NEW_PROMPT_ID, NS, PNG, SOURCE_ID, RemixReplaceBase  # noqa: E402
@@ -19,55 +21,73 @@ from test_video_remix_replace import NEW_ID, NEW_PROMPT_ID, NS, PNG, SOURCE_ID, 
 TRACK_REPR = "{'packed_masks': tensor([[0, 0]], dtype=torch.uint8), 'n_frames': 81, 'scores': %s, 'orig_size': (448, 832)}"
 
 
+ROLES = yaml.safe_load((ROOT / "registry/defaults/videos.yml").read_text())["workflows"]["video-scail-2-replace"]["node_roles"]
+FIRST_FRAME, TRACK, COLOR_MASK, PROBE = (ROLES[k] for k in ("first_frame_node", "track_node", "color_mask_node", "probe_node"))
+POINT_DETECT, FIT_CANVAS, REF_RAW = ROLES["point_detect_node"], ROLES["fit_canvas_node"], ROLES["reference_raw_node"]
+REF_DETECT = ROLES["reference_detect_node"]
+
+
 def _graph() -> dict:
-    g = json.loads((ROOT / "workflows/videos/video-scail-2-replace.json").read_text())
-    g.pop("_meta")
-    return g
+    return json.loads((ROOT / "workflows/videos/video-scail-2-replace.json").read_text())
 
 
 class SubjectHelperTests(unittest.TestCase):
+    def test_shipped_roles_fit_the_shipped_graph(self) -> None:
+        vs.check_roles(ROLES, _graph())
+
+    def test_a_missing_role_is_a_template_problem(self) -> None:
+        roles = {k: v for k, v in ROLES.items() if k != "track_node"}
+        with self.assertRaisesRegex(vs.SubjectRoleError, "track_node"):
+            vs.check_roles(roles, _graph())
+
+    def test_a_role_naming_no_node_or_an_existing_added_node_is_refused(self) -> None:
+        with self.assertRaisesRegex(vs.SubjectRoleError, "color_mask_node"):
+            vs.check_roles({**ROLES, "color_mask_node": "9999"}, _graph())
+        with self.assertRaisesRegex(vs.SubjectRoleError, "fit_canvas_node"):
+            vs.check_roles({**ROLES, "fit_canvas_node": TRACK}, _graph())
+
     def test_workflow_selects_the_largest_person_and_masks_the_reference(self) -> None:
         g = _graph()
-        mask = g[vs.COLOR_MASK_NODE]["inputs"]
+        mask = g[COLOR_MASK]["inputs"]
         self.assertEqual((mask["object_indices"], mask["sort_by"]), ("0", "area"))
         # The reference is a plain mask, so an index above 0 never empties it.
         self.assertEqual(g["19"]["class_type"], "SAM3_Detect")
         self.assertEqual(mask["ref_track_data"], ["19", 0])
-        self.assertEqual(g[vs.PROBE_NODE]["class_type"], "PreviewAny")
-        self.assertEqual(g[vs.PROBE_NODE]["inputs"]["source"], [vs.TRACK_NODE, 0])
+        self.assertEqual(g[PROBE]["class_type"], "PreviewAny")
+        self.assertEqual(g[PROBE]["inputs"]["source"], [TRACK, 0])
 
     def test_point_rewires_tracking_to_one_person(self) -> None:
         g = _graph()
-        self.assertTrue(vs.apply_point(g, {"source_point_x": 0.5, "source_point_y": 0.25}, 832, 448))
-        coords = json.loads(g[vs.POINT_DETECT_NODE]["inputs"]["positive_coords"])
+        self.assertTrue(vs.apply_point(g, {"source_point_x": 0.5, "source_point_y": 0.25}, 832, 448, ROLES))
+        coords = json.loads(g[POINT_DETECT]["inputs"]["positive_coords"])
         self.assertEqual(coords, [{"x": 416, "y": 112}])
-        track = g[vs.TRACK_NODE]["inputs"]
+        track = g[TRACK]["inputs"]
         self.assertNotIn("conditioning", track)
-        self.assertEqual(track["initial_mask"], [vs.POINT_DETECT_NODE, 0])
+        self.assertEqual(track["initial_mask"], [POINT_DETECT, 0])
         self.assertEqual(track["max_objects"], 1)
-        self.assertEqual(g[vs.COLOR_MASK_NODE]["inputs"]["object_indices"], "0")
+        self.assertEqual(g[COLOR_MASK]["inputs"]["object_indices"], "0")
 
     def test_no_point_leaves_the_graph_alone(self) -> None:
         g = _graph()
         before = json.dumps(g, sort_keys=True)
-        self.assertFalse(vs.apply_point(g, {"subject_index": "1"}, 832, 448))
+        self.assertFalse(vs.apply_point(g, {"subject_index": "1"}, 832, 448, ROLES))
         self.assertEqual(json.dumps(g, sort_keys=True), before)
 
     def test_bad_points(self) -> None:
         for block in ({"source_point_x": 0.5}, {"source_point_x": 2, "source_point_y": 0.5},
                       {"source_point_x": "a", "source_point_y": 0.5}, {"source_point_x": True, "source_point_y": 0.5}):
             with self.assertRaises(vs.SubjectError, msg=block):
-                vs.apply_point(_graph(), block, 832, 448)
+                vs.apply_point(_graph(), block, 832, 448, ROLES)
 
     def test_reference_fit_replaces_the_cropped_reference_everywhere(self) -> None:
         g = _graph()
-        vs.add_reference_fit(g)
-        canvas = [vs.FIT_CANVAS_NODE, 0]
+        vs.add_reference_fit(g, ROLES)
+        canvas = [FIT_CANVAS, 0]
         self.assertEqual(g["14"]["inputs"]["image"], canvas)  # CLIP vision
         self.assertEqual(g["28"]["inputs"]["reference_image"], canvas)
-        self.assertEqual(g[vs.REF_DETECT_NODE]["inputs"]["image"], canvas)  # reference mask
+        self.assertEqual(g[REF_DETECT]["inputs"]["image"], canvas)  # reference mask
         # the cut-out starts from the FULL reference, not the centre-cropped one
-        self.assertEqual(g["90"]["inputs"]["image"], [vs.REF_RAW_NODE, 0])
+        self.assertEqual(g["90"]["inputs"]["image"], [REF_RAW, 0])
         for node_id, node in g.items():
             for value in node["inputs"].values():
                 if isinstance(value, list) and len(value) == 2 and isinstance(value[0], str):
@@ -75,22 +95,22 @@ class SubjectHelperTests(unittest.TestCase):
 
     def test_reference_fit_uses_the_same_person_selection(self) -> None:
         g = _graph()
-        vs.apply_point(g, {"source_point_x": 0.5, "source_point_y": 0.5}, 832, 448)
-        g[vs.COLOR_MASK_NODE]["inputs"]["object_indices"] = "2"
-        vs.add_reference_fit(g)
+        vs.apply_point(g, {"source_point_x": 0.5, "source_point_y": 0.5}, 832, 448, ROLES)
+        g[COLOR_MASK]["inputs"]["object_indices"] = "2"
+        vs.add_reference_fit(g, ROLES)
         self.assertEqual(g["95"]["inputs"]["object_indices"], "2")
-        self.assertEqual(g["95"]["inputs"]["driving_track_data"], [vs.TRACK_NODE, 0])
+        self.assertEqual(g["95"]["inputs"]["driving_track_data"], [TRACK, 0])
         # scaled to the person's height (node 99 = exact mask box), keeping aspect (width 0)
         self.assertEqual(g["101"]["inputs"]["height"], ["99", 3])
         self.assertEqual(g["101"]["inputs"]["width"], 0)
-        self.assertEqual(g[vs.FIT_CANVAS_NODE]["inputs"]["y"], ["99", 1])
+        self.assertEqual(g[FIT_CANVAS]["inputs"]["y"], ["99", 1])
 
     def test_tracked_count_reads_the_scores(self) -> None:
-        out = {vs.PROBE_NODE: {"text": [TRACK_REPR % "[0.97, 0.96, 0.92, 0.91]"]}}
-        self.assertEqual(vs.tracked_count(out), 4)
-        self.assertEqual(vs.tracked_count({vs.PROBE_NODE: {"text": [TRACK_REPR % "[]"]}}), 0)
-        self.assertIsNone(vs.tracked_count({}))
-        self.assertIsNone(vs.tracked_count({vs.PROBE_NODE: {"text": ["garbage"]}}))
+        out = {PROBE: {"text": [TRACK_REPR % "[0.97, 0.96, 0.92, 0.91]"]}}
+        self.assertEqual(vs.tracked_count(out, PROBE), 4)
+        self.assertEqual(vs.tracked_count({PROBE: {"text": [TRACK_REPR % "[]"]}}, PROBE), 0)
+        self.assertIsNone(vs.tracked_count({}, PROBE))
+        self.assertIsNone(vs.tracked_count({PROBE: {"text": ["garbage"]}}, PROBE))
 
     def test_warning_rules(self) -> None:
         self.assertEqual(vs.warnings_for(1, explicit=False, subject="person"), [])
@@ -121,11 +141,11 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
 
     def test_reference_fit_is_on_by_default_and_can_be_turned_off(self) -> None:
         self.assertEqual(self._create().status_code, 200)
-        self.assertEqual(self.graph["28"]["inputs"]["reference_image"], [vs.FIT_CANVAS_NODE, 0])
+        self.assertEqual(self.graph["28"]["inputs"]["reference_image"], [FIT_CANVAS, 0])
         self.comfy.submitted.clear()
         self.assertEqual(self._create(reference_fit=False).status_code, 200)
         self.assertEqual(self.graph["28"]["inputs"]["reference_image"], ["6", 0])
-        self.assertNotIn(vs.FIT_CANVAS_NODE, self.graph)
+        self.assertNotIn(FIT_CANVAS, self.graph)
 
     def test_selection_reaches_the_fit_nodes(self) -> None:
         self._create(subject_index="1")
@@ -133,20 +153,20 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
 
     def test_default_replaces_the_largest_person(self) -> None:
         self.assertEqual(self._create().status_code, 200)
-        self.assertEqual(self.graph[vs.COLOR_MASK_NODE]["inputs"]["object_indices"], "0")
+        self.assertEqual(self.graph[COLOR_MASK]["inputs"]["object_indices"], "0")
         self.assertFalse(proxy._video_job_records[NEW_PROMPT_ID]["subject"]["explicit"])
 
     def test_subject_index_is_bound(self) -> None:
         self.assertEqual(self._create(subject_index="1").status_code, 200)
-        self.assertEqual(self.graph[vs.COLOR_MASK_NODE]["inputs"]["object_indices"], "1")
+        self.assertEqual(self.graph[COLOR_MASK]["inputs"]["object_indices"], "1")
         self.assertTrue(proxy._video_job_records[NEW_PROMPT_ID]["subject"]["explicit"])
 
     def test_point_uses_the_output_size(self) -> None:
         r = self._create(source_point_x=0.5, source_point_y=0.5)
         self.assertEqual(r.status_code, 200, r.text)
-        coords = json.loads(self.graph[vs.POINT_DETECT_NODE]["inputs"]["positive_coords"])
+        coords = json.loads(self.graph[POINT_DETECT]["inputs"]["positive_coords"])
         self.assertEqual(coords, [{"x": 416, "y": 224}])
-        self.assertEqual(self.graph[vs.TRACK_NODE]["inputs"]["max_objects"], 1)
+        self.assertEqual(self.graph[TRACK]["inputs"]["max_objects"], 1)
 
     def test_form_strings_are_converted(self) -> None:
         r = self.client.post("/v1/videos", data={
@@ -155,7 +175,7 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
             f"extensions[{NS}][reference_image]": "data:image/png;base64," + base64.b64encode(PNG).decode(),
             f"extensions[{NS}][source_point_x]": "0.25", f"extensions[{NS}][source_point_y]": "0.75"})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(json.loads(self.graph[vs.POINT_DETECT_NODE]["inputs"]["positive_coords"]),
+        self.assertEqual(json.loads(self.graph[POINT_DETECT]["inputs"]["positive_coords"]),
                          [{"x": 208, "y": 335}])
 
     def test_invalid_selection_is_a_400_with_the_param(self) -> None:
@@ -202,7 +222,7 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         self.comfy.history[NEW_PROMPT_ID] = {
             "status": {"completed": True, "status_str": "success", "messages": []},
             "outputs": {"60": {"videos": [{"filename": "x.mp4", "subfolder": "video", "type": "output"}]},
-                        vs.PROBE_NODE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
+                        PROBE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
         status = self.client.get(f"/v1/videos/{NEW_ID}").json()
         self.assertEqual(status["status"], "completed")
         self.assertEqual(len(status["azizam_warnings"]), 1)
@@ -212,7 +232,7 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
         self._create(subject_index="1")
         self.comfy.history[NEW_PROMPT_ID] = {
             "status": {"completed": True, "status_str": "success", "messages": []},
-            "outputs": {vs.PROBE_NODE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
+            "outputs": {PROBE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
         self.assertNotIn("azizam_warnings", self.client.get(f"/v1/videos/{NEW_ID}").json())
 
 

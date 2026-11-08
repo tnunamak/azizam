@@ -1,34 +1,4 @@
 {
- "_meta": {
-  "name": "video-ltx-2.5-keyframes",
-  "description": "LTX-2.5 22B distilled image-to-video that starts on the first picture and ends on the last picture. Same two-stage graph as video-ltx-2.5-i2v; the last picture is pinned as a guide on the final frame at both sampling stages (strength in the last-frame strength node) and the guide frames are cropped away after each stage. Width/height MUST be multiples of 64.",
-  "model_file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
-  "frame_rate": 24,
-  "default_steps": 8,
-  "max_seconds": 10,
-  "default_size": "960x512",
-  "prompt_node": "5",
-  "negative_prompt_node": "6",
-  "size_node": [
-   "20",
-   "21"
-  ],
-  "length_nodes": [
-   "22"
-  ],
-  "frame_rate_nodes": [
-   "23"
-  ],
-  "seed_nodes": [
-   "30",
-   "31"
-  ],
-  "save_node": "60",
-  "image_node": "70",
-  "image_strength_node": "79",
-  "max_size": "1280x704",
-  "image_strength_default": 0.7
- },
  "1": {
   "class_type": "UNETLoader",
   "inputs": {

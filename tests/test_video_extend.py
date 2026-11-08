@@ -33,28 +33,29 @@ from test_video_remix_replace import (  # noqa: E402
 )
 
 FPS = 24.0
+LTX = ve.engine_for("ltx25_chain")
 
 
 def _spec(segments, *, source=None, ctx=3, **kw):
     return ve.ChainSpec(segments=segments, width=960, height=512, fps=FPS, seed=10,
-                        context_frames_latents=ctx, source=source, **kw)
+                        context_frames=8 * ctx + 1, source=source, **kw)
 
 
 class PlanTests(unittest.TestCase):
     def test_first_segment_is_8a_plus_1(self) -> None:
         for seconds in (1, 3, 8, 8.4):
-            self.assertEqual((ve.first_segment_frames(seconds, FPS) - 1) % 8, 0, seconds)
-        self.assertEqual(ve.first_segment_frames(8, FPS), 193)
+            self.assertEqual((LTX.first_segment_frames(seconds, FPS) - 1) % 8, 0, seconds)
+        self.assertEqual(LTX.first_segment_frames(8, FPS), 193)
 
     def test_plain_seconds_split_into_a_first_and_added_segments(self) -> None:
-        segs = ve.plan_segments([("walk", 20)], fps=FPS, has_source=False)
+        segs = LTX.plan_segments([("walk", 20)], fps=FPS, has_source=False)
         self.assertEqual([s.frames for s in segs], [193, 144, 144])
         self.assertAlmostEqual(sum(s.frames for s in segs) / FPS, 20, delta=0.1)
         self.assertTrue(all(s.shot == 0 for s in segs))
 
     def test_every_added_segment_is_a_multiple_of_8_and_within_the_cap(self) -> None:
         for seconds in (1.0, 2.5, 8, 9, 16, 24, 31.3, 40):
-            segs = ve.plan_segments([("x", seconds)], fps=FPS, has_source=False)
+            segs = LTX.plan_segments([("x", seconds)], fps=FPS, has_source=False)
             self.assertEqual((segs[0].frames - 1) % 8, 0)
             for s in segs[1:]:
                 self.assertEqual(s.frames % 8, 0, seconds)
@@ -62,21 +63,21 @@ class PlanTests(unittest.TestCase):
             self.assertAlmostEqual(sum(s.frames for s in segs) / FPS, seconds, delta=0.4, msg=seconds)
 
     def test_shots_keep_their_own_prompt_and_index(self) -> None:
-        segs = ve.plan_segments([("a", 5), ("b", 12), ("c", 3)], fps=FPS, has_source=False)
+        segs = LTX.plan_segments([("a", 5), ("b", 12), ("c", 3)], fps=FPS, has_source=False)
         self.assertEqual([s.shot for s in segs], [0, 1, 1, 2])
         self.assertEqual([s.prompt for s in segs], ["a", "b", "b", "c"])
 
     def test_extension_has_no_first_segment(self) -> None:
-        segs = ve.plan_segments([("more", 6)], fps=FPS, has_source=True)
+        segs = LTX.plan_segments([("more", 6)], fps=FPS, has_source=True)
         self.assertEqual([s.frames for s in segs], [144])
 
     def test_state_ledger_is_prepended_to_every_segment(self) -> None:
-        segs = ve.plan_segments([("a", 20)], fps=FPS, has_source=False, state_ledger="Red jacket, left of frame.")
+        segs = LTX.plan_segments([("a", 20)], fps=FPS, has_source=False, state_ledger="Red jacket, left of frame.")
         self.assertTrue(all(s.prompt.startswith("Red jacket, left of frame.\n\na") for s in segs))
 
     def test_empty_shots_are_an_error_with_a_code(self) -> None:
         with self.assertRaises(ve.PlanError) as ctx:
-            ve.plan_segments([], fps=FPS, has_source=False)
+            LTX.plan_segments([], fps=FPS, has_source=False)
         self.assertEqual(ctx.exception.code, "invalid_shots")
 
 
@@ -89,8 +90,8 @@ def _check_refs(test: unittest.TestCase, graph: dict) -> None:
 
 class GraphTests(unittest.TestCase):
     def test_graph_refs_resolve_and_only_ltx25_models_are_loaded(self) -> None:
-        segs = ve.plan_segments([("a", 20)], fps=FPS, has_source=False)
-        built = ve.build_chain_graph(_spec(segs))
+        segs = LTX.plan_segments([("a", 20)], fps=FPS, has_source=False)
+        built = LTX.build(_spec(segs))
         _check_refs(self, built.graph)
         files = {v for n in built.graph.values() for v in n["inputs"].values()
                  if isinstance(v, str) and v.endswith(".safetensors")}
@@ -100,7 +101,7 @@ class GraphTests(unittest.TestCase):
 
     def test_added_segment_conditions_on_the_last_frames_not_one_frame(self) -> None:
         segs = [ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)]
-        g = ve.build_chain_graph(_spec(segs, ctx=3)).graph
+        g = LTX.build(_spec(segs, ctx=3)).graph
         tail = g["s1_tail"]["inputs"]
         self.assertEqual(tail["length"], 25)  # 8*3+1 frames of real context
         self.assertEqual(tail["batch_index"], 193 - 25)
@@ -112,13 +113,13 @@ class GraphTests(unittest.TestCase):
 
     def test_each_segment_has_its_own_prompt_and_seed(self) -> None:
         segs = [ve.Segment("first", 193, 0), ve.Segment("second", 96, 1), ve.Segment("third", 96, 2)]
-        g = ve.build_chain_graph(_spec(segs)).graph
+        g = LTX.build(_spec(segs)).graph
         self.assertEqual([g[f"s{i}_text"]["inputs"]["text"] for i in range(3)], ["first", "second", "third"])
         self.assertEqual([g[f"s{i}_noise"]["inputs"]["noise_seed"] for i in range(3)], [10, 11, 12])
 
     def test_audio_length_equals_video_length(self) -> None:
         segs = [ve.Segment("a", 193, 0), ve.Segment("b", 96, 1), ve.Segment("c", 144, 2)]
-        built = ve.build_chain_graph(_spec(segs))
+        built = LTX.build(_spec(segs))
         g = built.graph
         audio = 193 / FPS + sum(g[k]["inputs"]["duration"] for k in g if k.endswith("_atrim"))
         self.assertAlmostEqual(audio, built.total_frames / FPS, places=6)
@@ -126,7 +127,7 @@ class GraphTests(unittest.TestCase):
 
     def test_source_video_is_loaded_continued_and_counted(self) -> None:
         src = ve.SourceVideo("src.mp4", 193, FPS, 960, 512, True)
-        g = ve.build_chain_graph(_spec([ve.Segment("more", 96, 0)], source=src)).graph
+        g = LTX.build(_spec([ve.Segment("more", 96, 0)], source=src)).graph
         self.assertEqual(g["src_file"]["inputs"]["file"], "src.mp4")
         self.assertEqual(g["s0_tail"]["inputs"]["batch_index"], 193 - 25)
         self.assertNotIn("src_scale", g)
@@ -135,24 +136,24 @@ class GraphTests(unittest.TestCase):
 
     def test_source_of_another_size_is_scaled_to_the_output_size(self) -> None:
         src = ve.SourceVideo("src.mp4", 193, FPS, 832, 480, True)
-        g = ve.build_chain_graph(_spec([ve.Segment("more", 96, 0)], source=src)).graph
+        g = LTX.build(_spec([ve.Segment("more", 96, 0)], source=src)).graph
         self.assertEqual((g["src_scale"]["inputs"]["width"], g["src_scale"]["inputs"]["height"]), (960, 512))
 
     def test_silent_source_gives_a_silent_result(self) -> None:
         src = ve.SourceVideo("src.mp4", 193, FPS, 960, 512, False)
-        g = ve.build_chain_graph(_spec([ve.Segment("more", 96, 0)], source=src)).graph
+        g = LTX.build(_spec([ve.Segment("more", 96, 0)], source=src)).graph
         self.assertNotIn("audio", g["create"]["inputs"])
         self.assertNotIn("src_audio", g)
 
     def test_first_frame_image_pins_the_first_segment_only(self) -> None:
-        g = ve.build_chain_graph(_spec([ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)],
+        g = LTX.build(_spec([ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)],
                                        first_frame_image="ref.png", first_frame_strength=0.8)).graph
         self.assertEqual(g["s0_image"]["inputs"]["image"], "ref.png")
         self.assertEqual(g["s0_i2v"]["inputs"]["strength"], 0.8)
         self.assertNotIn("s1_image", g)
 
     def test_segment_of_node_maps_progress_nodes(self) -> None:
-        built = ve.build_chain_graph(_spec([ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)]))
+        built = LTX.build(_spec([ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)]))
         self.assertEqual(ve.segment_of_node(built.units, "s1_sample"), 1)
         self.assertEqual(ve.segment_of_node(built.units, "s0_decode"), 0)
         self.assertIsNone(ve.segment_of_node(built.units, "unet"))
@@ -160,7 +161,7 @@ class GraphTests(unittest.TestCase):
 
 class ProgressTests(unittest.TestCase):
     def test_progress_spans_all_segments_and_never_runs_backwards(self) -> None:
-        built = ve.build_chain_graph(_spec([ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)]))
+        built = LTX.build(_spec([ve.Segment("a", 193, 0), ve.Segment("b", 96, 1)]))
         with patch.dict(proxy._video_chain_units, {"p": built.units}):
             first = proxy._video_percent("p", "s0_sample", "sampling", 1.0)
             second_start = proxy._video_percent("p", "s1_sample", "sampling", 0.0)

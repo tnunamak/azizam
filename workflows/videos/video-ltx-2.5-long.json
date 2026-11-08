@@ -219,10 +219,5 @@
       "format": "mp4",
       "codec": "auto"
     }
-  },
-  "_meta": {
-    "name": "video-ltx-2.5-long",
-    "description": "Single-segment (8 s) reference graph of the LTX-2.5 long-video chain, for manifest runs. /v1/videos builds the real multi-segment graph in code (gateway/video_extend.py); a test keeps this file in sync with the builder.",
-    "frame_rate": 24
   }
 }

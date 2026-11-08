@@ -40,9 +40,11 @@ ENTRIES_CHANGED_ON_PURPOSE = {
     # section: the deployment's block is the same, a first run gains the empty release section. routing was read by no
     # code and is gone. admin.brand.product is the instance section's name, not a startup key. workflow_execution
     # (tracked and live_like) lost compile_from_pin and shows the release defaults of the S4 to S8 train (I7).
-    "tracked": {"models", "routing", "admin", "workflow_execution"},
-    "live_like": {"models", "routing", "admin", "workflow_execution"},
-    "first_run": {"models", "workflow_execution"},
+    # videos: each workflow entry gained its node_roles (S7 parity M9, builder V2), the roles that were the graph file's
+    # _meta block before.
+    "tracked": {"models", "routing", "admin", "workflow_execution", "videos"},
+    "live_like": {"models", "routing", "admin", "workflow_execution", "videos"},
+    "first_run": {"models", "workflow_execution", "videos"},
 }
 
 
