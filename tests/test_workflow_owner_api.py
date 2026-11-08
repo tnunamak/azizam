@@ -546,3 +546,117 @@ def test_restoring_a_patch_over_an_owner_contract_of_a_removed_bundled_id_is_ref
                           headers={"If-Match": os_n(newer)})
     assert response.status_code == 409 and response.json()["error"]["code"] == "bundled_workflow_removed"
     assert _detail(newer)["contract"]["display_name"] == "Mine"
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_run_control_patch_then_contract_override_then_delete_serves_the_current_release(api):
+    before = _detail(api)
+    assert _post(api, "publish", {"published": False}).status_code == 200
+    assert _post(api, "state", {"state": "disabled"}).status_code == 200
+    edited = {**before["contract"], "display_name": "Owner override after run control"}
+    saved = create(api, edited, overrides=BUNDLED_ID)
+    assert saved.status_code == 201, saved.text
+    overridden = _detail(api)
+    assert overridden["contract"] == edited
+    assert overridden["overrides"] == BUNDLED_ID
+    assert overridden["provenance"]["trusted"] is False
+
+    newer = _restarted(api, {BUNDLED_ID: _renamed("Release after the override")})
+    assert _detail(newer)["contract"] == edited
+    reverted = newer.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(newer)})
+    assert reverted.status_code == 200, reverted.text
+    after = _detail(newer)
+    assert after["contract"] == {**before["contract"], "display_name": "Release after the override"}
+    assert (after["facts"], after["published"], after["state"], after["provenance"], after["incarnation"]) == \
+        (before["facts"], before["published"], before["state"], before["provenance"], before["incarnation"])
+    again = newer.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(newer)})
+    assert again.status_code == 409 and again.json()["error"]["code"] == "id_is_bundled"
+
+
+@pytest.mark.skip(reason="_restarted replaces manifests but preserves every bundled id; it cannot remove a workflow")
+def test_a_run_control_patch_is_inert_when_the_next_release_removes_its_bundled_id():
+    # Passing None or deleting a manifest's id would make an invalid manifest, not remove the release mapping's key.
+    # The requested helper cannot model this release transition. Do not claim coverage with a different scenario.
+    pass
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+@pytest.mark.parametrize("restore_index", [0, 1, 2, 3], ids=["unpublished", "disabled", "published", "active"])
+def test_bundled_history_lists_each_run_control_patch_and_restores_it(api, restore_index):
+    before = _detail(api)
+    revisions = []
+    expected = []
+    for path, body in (("publish", {"published": False}), ("state", {"state": "disabled"}),
+                       ("publish", {"published": True}), ("state", {"state": "active"})):
+        response = _post(api, path, body)
+        assert response.status_code == 200, response.text
+        revision = response.json()["commit"]["record_revision"]
+        revisions.append(revision)
+        detail = _detail(api)
+        assert detail["record_revision"] == revision
+        expected.append((detail["published"], detail["state"]))
+        assert [row["record_revision"] for row in detail["history"]] == list(reversed(revisions))
+
+    # Restore replays publication but intentionally keeps the current state and incarnation (the store's contract).
+    # Pick a current state different from the saved revision so an accidental historical-state restore is caught.
+    published, historical_state = expected[restore_index]
+    current_state = "disabled" if historical_state == "active" else "active"
+    changed = _post(api, "state", {"state": current_state})
+    assert changed.status_code == 200, changed.text
+    current = _detail(api)
+    restored = _post(api, "restore", {"record_revision": revisions[restore_index]})
+    assert restored.status_code == 200, restored.text
+    commit = restored.json()["commit"]
+    assert commit["record_revision"] == current["record_revision"] + 1
+    after = _detail(api)
+    assert (after["published"], after["state"], after["incarnation"]) == \
+        (published, current_state, current["incarnation"])
+    assert (after["contract"], after["facts"], after["provenance"]) == \
+        (before["contract"], before["facts"], before["provenance"])
+    assert after["record_revision"] == commit["record_revision"]
+    assert [row["record_revision"] for row in after["history"]] == \
+        [commit["record_revision"], current["record_revision"], *reversed(revisions)]
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_list_and_detail_agree_after_each_bundled_run_control_patch(api):
+    for path, body, expected in (("publish", {"published": False}, (False, "active")),
+                                 ("state", {"state": "disabled"}, (False, "disabled")),
+                                 ("publish", {"published": True}, (True, "disabled")),
+                                 ("state", {"state": "active"}, (True, "active"))):
+        written = _post(api, path, body)
+        assert written.status_code == 200, written.text
+        listed = api.get("/admin/api/workflows")
+        detailed = api.get(f"/admin/api/workflows/{BUNDLED_ID}")
+        assert listed.status_code == detailed.status_code == 200
+        rows = [row for row in listed.json()["workflows"] if row["id"] == BUNDLED_ID]
+        assert len(rows) == 1
+        row, detail = rows[0], detailed.json()["workflow"]
+        assert (row["published"], row["state"]) == (detail["published"], detail["state"]) == expected
+        assert row["record_revision"] == detail["record_revision"] == written.json()["commit"]["record_revision"]
+        assert listed.headers["etag"] == detailed.headers["etag"] == written.headers["etag"] == os_n(api)
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_every_bundled_run_control_patch_write_returns_a_new_etag(api):
+    previous = os_n(api)
+    seen = {previous}
+    record_revision = _detail(api)["record_revision"]
+    # Repeating the same value still writes a new patch revision and must invalidate the previous ETag.
+    for path, body in (("publish", {"published": False}), ("publish", {"published": False}),
+                       ("state", {"state": "disabled"}), ("state", {"state": "disabled"}),
+                       ("publish", {"published": True}), ("state", {"state": "active"})):
+        written = api.post(f"/admin/api/workflows/{BUNDLED_ID}/{path}", json=body,
+                           headers={"If-Match": previous})
+        assert written.status_code == 200, written.text
+        commit = written.json()["commit"]
+        current = written.headers["etag"]
+        assert current == os_n(api) == f'"os-{commit["revision"]}"'
+        assert current not in seen
+        assert commit["record_revision"] == record_revision + 1
+        listed = api.get("/admin/api/workflows")
+        detailed = api.get(f"/admin/api/workflows/{BUNDLED_ID}")
+        assert listed.status_code == detailed.status_code == 200
+        assert listed.headers["etag"] == detailed.headers["etag"] == current
+        seen.add(current)
+        previous, record_revision = current, commit["record_revision"]
