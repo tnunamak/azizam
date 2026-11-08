@@ -104,8 +104,6 @@ CALLER_UNAVAILABLE = "caller_unavailable"
 BINDING_UNAVAILABLE = "binding_unavailable"
 INTERNAL_ERROR = "internal_error"
 FAILED_FALLBACK = "The job failed."
-UPSTREAM_FAILURE_COPY = "Media generation failed (upstream HTTP {status})."
-TIMEOUT_FAILURE_COPY = "The backend did not finish this job in time."
 
 # What a restart says about a job it cannot finish (S7 parity M12), keyed by the reason. One table for every kind of job.
 RESTART_PAYLOAD_MISSING = "Image media job payload missing after proxy restart"
@@ -799,7 +797,7 @@ class WorkflowRunCore:
         category = category if category in media_jobs.ERROR_CATEGORIES else "internal"
         try:
             media_jobs.update_status(
-                job_id, media_jobs.STATUS_FAILED, error=_stored_failure_text(category, message, upstream_status), path=self._path,
+                job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
                 error_info={"error_code": code, "error_category": category, "retryable": retryable,
                             "upstream_http_status": upstream_status})
         except ValueError:
@@ -916,16 +914,6 @@ def _client_message(exc: BaseException) -> str:
     if not isinstance(message, str) or not message.strip():
         return FAILED_FALLBACK
     return log_scrub.scrub(message, limit=2000)
-
-
-def _stored_failure_text(category: str, message: str, upstream_status: int | None) -> str:
-    """The sentence a failed job stores. An engine's own words may echo a prompt, so an upstream failure or a timeout is
-    stored as the fixed copy the media jobs always used; the caller still gets the adapter's words on the sync answer."""
-    if category == "upstream":
-        return UPSTREAM_FAILURE_COPY.format(status=upstream_status or 502)
-    if category == "timeout":
-        return TIMEOUT_FAILURE_COPY
-    return message
 
 
 def _upstream_status(exc: BaseException) -> int | None:
