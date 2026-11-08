@@ -129,11 +129,17 @@ for (const width of [1440, 390]) {
       await expect(page.getByText("Sign-in session settings saved")).toBeVisible();
       await expect(idle).toHaveValue("31");
 
-      // The session is now fresh: the next save does not ask again.
+      // The session is now fresh: the next save does not ask again. The first toast can still be on screen,
+      // so the save is proved by its response and the newest toast, not by a single matching toast.
       await idle.fill("32");
+      const resaved = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" && new URL(response.url()).pathname === "/admin/api/settings/sessions",
+      );
       await save.click();
+      expect((await resaved).status()).toBe(200);
       await expect(dialog).toBeHidden();
-      await expect(page.getByText("Sign-in session settings saved")).toBeVisible();
+      await expect(page.getByText("Sign-in session settings saved").last()).toBeVisible();
       await expect(idle).toHaveValue("32");
       // The fixture guard puts the setting back.
     } finally {

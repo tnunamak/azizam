@@ -213,7 +213,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # ``prompt`` input (the route sends the prompt to ``tags`` when no tags are given), so its input schema and its
         # sync and async field maps lost ``prompt``; nothing else in the document moved (tests/fixtures/headless_openapi.json
         # shows the same three removals). Before it the digest was 2b97a3fb9cf8d5b3f2f00b03b90cd8b5420b422d1d569ed85c4623239d711272.
-        assert route_graph.openapi_digest(proxy.app) == "7477383af059713a1d122d88f92404d7d99fd15096a742415ac3ebf954dfce77"
+        # Re-captured 2026-11-07 for the optional ``available`` query parameter of GET /v1/models and /openai/v1/models;
+        # only those two operations gained it (tests/fixtures/headless_openapi.json shows the same two additions).
+        # Before it the digest was 7477383af059713a1d122d88f92404d7d99fd15096a742415ac3ebf954dfce77.
+        assert route_graph.openapi_digest(proxy.app) == "c04460c153937fb6b086116d42f692ec19787ae0bc3582e798ca1586d07dab66"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -242,4 +245,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # legacy-import path left. Before it the frozen digest was adbd04be5b8d22f93a3ba68925b5f7716b17268dcb8066cae31bf0fcf80c8202.
     # Re-captured 2026-11-07 for S3.5a: the same three ace-step prompt removals. Before it the frozen digest was
     # e782277147ec386ed5430f191856ffd940638666bc1e32d1a1a0cc0451d9ef46.
+    # Re-captured 2026-11-07 for the ``available`` query parameter of GET /v1/models and /openai/v1/models: only those two
+    # operations differ. Before it the frozen digest was 393a003ccd60cc336183786a350a2267d28d806460d04d5e38639471bcd80b6c.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
