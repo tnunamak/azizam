@@ -70,15 +70,25 @@ def test_an_unpublished_workflow_is_absent_from_app_views_and_present_after_publ
         proxy.app.openapi_schema = None
 
 
-def test_the_owner_still_sees_an_unpublished_workflow_in_discovery(gateway, monkeypatch):  # noqa: F811
-    try:
-        _swap(monkeypatch, published=False)
-        assert WORKFLOW_ID in _gateway_ids(cookies=gateway["cookies"], headers={"x-test": "1"}) or True
-        owner = _get("/gateway/v1/workflows", cookies=gateway["cookies"])
-        if owner.status_code == 200:
-            assert WORKFLOW_ID in {row["id"] for row in owner.json()["workflows"]}
-    finally:
-        proxy.app.openapi_schema = None
+def test_the_owner_audience_sees_an_unpublished_workflow_and_the_client_audience_does_not():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from gateway.api import create_gateway_router
+
+    release = rs.bundled_release()
+    manifest = dict(release.workflows[WORKFLOW_ID].manifest)
+    record = {"id": WORKFLOW_ID, "manifest": manifest, "published": False, "overrides": WORKFLOW_ID, "policy": {
+        "exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media", "tags": []}}
+    provider = rs.Provider(rs.build({"workflows": {WORKFLOW_ID: record}}, release, generation=2))
+    seen = {}
+    for audience in ("client", "admin"):
+        app = FastAPI()
+        app.include_router(create_gateway_router(provider, audience_resolver=lambda _r, a=audience: a))
+        client = TestClient(app)
+        seen[audience] = (client.get("/gateway/v1/workflows").json()["workflows"], client.get(f"/gateway/v1/workflows/{WORKFLOW_ID}").status_code)
+    assert WORKFLOW_ID not in {row["id"] for row in seen["client"][0]} and seen["client"][1] == 404
+    assert WORKFLOW_ID in {row["id"] for row in seen["admin"][0]} and seen["admin"][1] == 200
 
 
 def test_a_workflow_edit_changes_the_openapi_document(gateway, monkeypatch):  # noqa: F811
@@ -102,7 +112,6 @@ def test_a_cached_document_is_rebuilt_when_only_the_snapshot_digest_changes(gate
         second = _swap(monkeypatch, published=True, services=alias_only)
         assert second.digest != first.digest
         proxy.app.openapi_schema = built      # a document cached for the old digest
-        proxy._OPENAPI_INPUTS[0] = proxy._OPENAPI_INPUTS[0]
         assert proxy.app.openapi() is not built
     finally:
         proxy.app.openapi_schema = None
