@@ -260,7 +260,7 @@
             },
             "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
           },
-          "envelope_version": 1,
+          "envelope_version": 2,
           "executor": {
             "adapter_id": "node-graph",
             "interface_version": 2
@@ -275,8 +275,11 @@
             "bundle": "bundle:<job:1>:1"
           },
           "source": {
+            "binding_key": "untracked",
             "id": "audio.generate.tangoflux",
+            "incarnation": "untracked",
             "kind": "workflow",
+            "record_revision": null,
             "revision": "sha256:46137a258d809cbaf6a8fa10d8251d5d50f05d95cf4589cb9b9817e1b435e3af"
           },
           "upstream": {

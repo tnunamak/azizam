@@ -493,6 +493,7 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     conn.executescript(media_input_leases.DDL)  # leases and ingest markers (gateway/media_input_leases.py)
+    conn.executescript(RUN_CLAIM_DDL)
     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
     previous_version = int(row[0]) if row is not None else None
     if row is None:
@@ -761,6 +762,118 @@ def _receipt_link_candidate(data: Mapping[str, Any]) -> str | None:
     return None
 
 
+RUN_CLAIM_DDL = """CREATE TABLE IF NOT EXISTS workflow_run_claim (
+  owner_scope TEXT NOT NULL,
+  maker TEXT NOT NULL,
+  idem_key TEXT NOT NULL,
+  identity TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  job_id TEXT,
+  claimed_at REAL NOT NULL,
+  PRIMARY KEY (owner_scope, maker, idem_key)
+);
+CREATE INDEX IF NOT EXISTS workflow_run_claim_job ON workflow_run_claim(job_id)"""
+
+
+@dataclass(frozen=True)
+class RunClaimFence:
+    """The claim a fenced ``create`` must still hold: it is checked, and then set to name the job, inside the write
+    transaction that inserts the job (CODE_TO_DATA_S4_S8 section 7.2)."""
+
+    owner_scope: str
+    maker: str
+    key: str
+    holder: str
+
+
+@dataclass(frozen=True)
+class RunClaim:
+    """What ``claim_run_key`` found. ``held``: this holder owns an undecided claim. ``replay``: the key names ``job_id``.
+    ``conflict``: another identity owns the key. ``busy``: the same identity is held by a live holder."""
+
+    outcome: Literal["held", "replay", "conflict", "busy"]
+    job_id: str | None = None
+
+
+class ClaimLost(RuntimeError):
+    """The fenced ``create`` found the claim taken over or decided. Nothing was drawn, adopted or stored."""
+
+
+def claim_run_key(
+    *, owner_scope: str, maker: str, key: str, identity: str, holder: str, lease_s: float,
+    now: float | None = None, path: Path = DB_PATH,
+) -> RunClaim:
+    """Claim an idempotency key in one write transaction (section 7.2, step 1). A claim that names a job that is gone
+    or past the replay window is stale and is replaced. An undecided claim older than ``lease_s`` is taken over by
+    rewriting its ``holder``; the old holder's fence then matches nothing."""
+    stamp = time.time() if now is None else now
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT identity, holder, job_id, claimed_at FROM workflow_run_claim "
+                "WHERE owner_scope=? AND maker=? AND idem_key=?", (owner_scope, maker, key)).fetchone()
+            if row is None:
+                conn.execute("INSERT INTO workflow_run_claim VALUES (?,?,?,?,?,NULL,?)",
+                             (owner_scope, maker, key, identity, holder, stamp))
+                conn.commit()
+                return RunClaim("held")
+            known_identity, old_holder, job_id, claimed_at = row
+            take_over = False
+            if job_id is not None:
+                job = conn.execute("SELECT status, updated_at FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
+                if job is None or not _replays(job[0], job[1]):
+                    take_over = True  # the job is gone or past the replay window: the key is free again
+                elif known_identity != identity:
+                    conn.rollback()
+                    return RunClaim("conflict")
+                else:
+                    conn.rollback()
+                    return RunClaim("replay", job_id)
+            else:
+                expired = stamp - claimed_at > lease_s
+                if known_identity != identity and not expired:
+                    conn.rollback()
+                    return RunClaim("conflict")
+                if not expired:
+                    conn.rollback()
+                    return RunClaim("busy")
+                take_over = True
+            if take_over:
+                moved = conn.execute(
+                    "UPDATE workflow_run_claim SET identity=?, holder=?, job_id=NULL, claimed_at=? "
+                    "WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? AND job_id IS ?",
+                    (identity, holder, stamp, owner_scope, maker, key, old_holder, job_id)).rowcount
+                if moved != 1:
+                    conn.rollback()
+                    return RunClaim("busy")
+            conn.commit()
+            return RunClaim("held")
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+
+
+def get_run_claim(*, owner_scope: str, maker: str, key: str, path: Path = DB_PATH) -> tuple[str, str | None] | None:
+    """The (holder, job_id) of a claim, or None when it is gone. The wait in step 1 polls this."""
+    with _conn(path) as conn:
+        row = conn.execute("SELECT holder, job_id FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=?",
+                           (owner_scope, maker, key)).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def release_run_claim(fence: RunClaimFence, *, path: Path = DB_PATH) -> bool:
+    """Drop this holder's undecided claim (step 7). A claim another holder took over, or one that names a job, stays."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        gone = conn.execute(
+            "DELETE FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? AND job_id IS NULL",
+            (fence.owner_scope, fence.maker, fence.key, fence.holder)).rowcount
+        conn.commit()
+    return gone == 1
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
@@ -770,6 +883,8 @@ def create(
     maker_from_request: bool = True,
     envelope: JobEnvelope | None = None,
     require_envelope: bool = False,
+    claim: RunClaimFence | None = None,
+    prepare: Callable[[MediaJob], JobEnvelope | None] | None = None,
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
 
@@ -797,6 +912,12 @@ def create(
     route whose jobs run from their pin passes ``require_envelope=True``: a missing envelope or a failed write raises
     ``EnvelopeNotRecorded`` (the cause is chained), the whole transaction rolls back and no job row is left. A replay
     of an existing job records nothing.
+
+    ``claim`` fences the create (section 7.2): in the write transaction, before anything else, the claim row must
+    still hold this holder and name no job, else ``ClaimLost`` is raised and nothing is stored. ``prepare(record)``
+    runs after that check, in the same transaction, and returns the envelope: it draws generated values and adopts
+    staged files, so a holder that lost its claim draws and adopts nothing. When the job row is written the claim is set
+    to name it; the claim and the job commit together.
     """
     record = _coerce_to_job(job)
     # Auth-disabled submissions still record an explicit scope. Missing scope
@@ -810,6 +931,20 @@ def create(
             request_source.job_maker(record.app_id))
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if claim is not None:
+            held = conn.execute(
+                "SELECT 1 FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? "
+                "AND job_id IS NULL", (claim.owner_scope, claim.maker, claim.key, claim.holder)).fetchone()
+            if held is None:
+                conn.rollback()
+                raise ClaimLost("the idempotency claim is no longer held by this request")
+        if prepare is not None:
+            try:
+                envelope = prepare(record)
+            except BaseException:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
         if record.request_id:
             existing = conn.execute(
                 "SELECT job_json, status, updated_at, job_id FROM media_jobs WHERE request_id = ?",
@@ -873,6 +1008,13 @@ def create(
                 if conn.in_transaction:
                     conn.rollback()
                 raise
+        if claim is not None:
+            named = conn.execute(
+                "UPDATE workflow_run_claim SET job_id=? WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? "
+                "AND job_id IS NULL", (record.job_id, claim.owner_scope, claim.maker, claim.key, claim.holder)).rowcount
+            if named != 1:
+                conn.rollback()
+                raise ClaimLost("the idempotency claim could not name the job")
         conn.commit()
     return record
 
@@ -1033,6 +1175,7 @@ def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> N
 
     for job_id in job_ids:
         media_input_leases.release_job_in(conn, job_id)  # a job row deleted: its input leases end with it
+        conn.execute("DELETE FROM workflow_run_claim WHERE job_id=?", (job_id,))  # and so does its idempotency claim
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
         return
     for job_id in job_ids:
@@ -2020,6 +2163,12 @@ __all__ = [
     "is_terminal",
     "holds_resources",
     "IdempotencyConflict",
+    "RunClaim",
+    "RunClaimFence",
+    "ClaimLost",
+    "claim_run_key",
+    "get_run_claim",
+    "release_run_claim",
     "CLIENT_VISIBLE_FIELDS",
     "ADMIN_ONLY_FIELDS",
     "INTERNAL_ONLY_FIELDS",

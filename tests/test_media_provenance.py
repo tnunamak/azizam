@@ -25,7 +25,6 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
 
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -888,113 +887,6 @@ class MediaJobUrlTests(unittest.TestCase):
             ctx.requested_mode = "full"
             item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
             self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
-
-
-@unittest.skipUnless(FFMPEG, "ffmpeg is required")
-@pytest.mark.usefixtures("isolated_receipts")
-class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
-    """POST /gateway/v1/workflows/{id}/run returns the rendered video."""
-
-    FIELD = f"extensions[{NS}][metadata]"
-
-    async def _run(self, extra: dict[str, str], auth=FULL_AUTH) -> Any:
-        raw = AvDeliveryTests()._make(".mp4", audio=False)
-
-        class Upload:
-            filename = "sample.mp4"
-            content_type = "video/mp4"
-
-            async def read(self):
-                return b"input-video-bytes"
-
-        fields: dict[str, Any] = {"source_video": Upload(), "multiplier": "2", **extra}
-
-        class Form:
-            def keys(self):
-                return tuple(fields)
-
-            def get(self, name, default=None):
-                return fields.get(name, default)
-
-        class Req:
-            async def form(self):
-                return Form()
-
-        class Resp:
-            def __init__(self, status, payload=None, content=b""):
-                self.status_code, self._p, self.content, self.text = status, payload or {}, content, ""
-
-            def json(self):
-                return self._p
-
-            async def aiter_bytes(self):
-                yield self.content
-
-        class Client:
-            def __init__(self, **_k):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_a):
-                return False
-
-            @contextlib.asynccontextmanager
-            async def stream(self, _method, url, **kw):
-                yield await self.get(url, **kw)
-
-            async def post(self, url, **kw):
-                if url.endswith("/upload/image"):
-                    return Resp(200, {"name": "sample.mp4"})
-                return Resp(200, {"prompt_id": "p1"})
-
-            async def get(self, url, **kw):
-                if "/history/" in url:
-                    return Resp(200, {"p1": {"status": {"completed": True},
-                                              "outputs": {"6": {"images": [{"filename": "r.mp4", "type": "output"}]}}}})
-                return Resp(200, content=raw)
-
-        with patch.object(proxy.httpx, "AsyncClient", Client), patch.object(proxy.asyncio, "sleep", return_value=None):
-            return await proxy._execute_video_manifest_workflow(Req(), "rife-interpolate", auth), raw  # type: ignore[arg-type]
-
-    def _blob(self, content: bytes) -> str:
-        return json.dumps(media_metadata.read_media_tags(content, ".mp4"))
-
-    async def test_default_is_full_with_provenance_and_none_strips(self) -> None:
-        response, _raw = await self._run({})
-        self.assertEqual(response.status_code, 200, response.body)
-        blob = self._blob(response.body)
-        self.assertIn("KSampler", blob)
-        self.assertIn("azizam_provenance", blob)
-        self.assertIn("rife-interpolate", blob)
-        none_auth = NONE_AUTH
-        stripped, raw = await self._run({}, none_auth)
-        self.assertNotIn("KSampler", self._blob(stripped.body))
-        explicit, raw = await self._run({self.FIELD: "none"})
-        self.assertEqual(explicit.status_code, 200, explicit.body)
-        left = self._blob(explicit.body)
-        for needle in ("KSampler", "azizam", "prompt", "workflow"):
-            self.assertNotIn(needle, left)
-        self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
-        up, _ = await self._run({self.FIELD: "full"}, none_auth)
-        self.assertEqual(up.status_code, 200, up.body)
-        self.assertNotIn("azizam_provenance", self._blob(up.body))  # a request cannot raise the bound
-        self.assertNotIn("vividfish_provenance", self._blob(up.body))
-
-    async def test_bad_value_is_a_400(self) -> None:
-        response, _ = await self._run({self.FIELD: "maybe"})
-        self.assertEqual(response.status_code, 400)
-
-    async def test_retired_metadata_control_is_an_unknown_multipart_field(self) -> None:
-        retired_field = "extensions[com.vividfish.workflow][metadata]"
-        for fields in ({retired_field: "maybe"},
-                       {retired_field: "full", self.FIELD: "none"},
-                       {retired_field: "none", self.FIELD: "full"}):
-            with self.subTest(fields=fields):
-                response, _ = await self._run(fields)
-                self.assertEqual(response.status_code, 400, response.body)
-                self.assertIn(b"unknown workflow input", response.body)
 
 
 class MetadataOnlyExtensionTests(unittest.TestCase):

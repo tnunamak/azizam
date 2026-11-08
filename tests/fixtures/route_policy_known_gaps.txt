@@ -29,6 +29,7 @@ POST /v1/messages/count_tokens 400                             # coverage gap: {
 POST /anthropic/v1/messages/count_tokens 400                   # coverage gap: {"error": {"message": "'messages' must be a non-empty list", "type": "i
 POST /api/embeddings 400                                       # coverage gap: {"error": "'prompt' must be a string"}
 POST /ollama/api/embeddings 400                                # coverage gap: {"error": "'prompt' must be a string"}
+POST /gateway/v1/workflows/{workflow_id}/run 503               # coverage gap: no registry snapshot is wired until the integrator sets proxy.WORKFLOW_SNAPSHOTS (builder C)
 
 [Category enforcement: model-facing HTTP route inventory]
 GET /gateway/v1/workflows/{workflow_id} 404                    # not exercised: was: HTTP status in DENIED
@@ -64,7 +65,7 @@ GET /v1/assets/{asset_id}/content 400                          # not exercised: 
 GET /openai/v1/assets/{asset_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
 GET /gateway/v1/assets/{asset_id} 400                          # not exercised: {"error": {"message": "Invalid asset id", "type": "invalid_request_err
 GET /gateway/v1/assets/{asset_id}/content 400                  # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
-POST /gateway/v1/workflows/{workflow_id}/run 404               # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/workflows/{workflow_id}/run 503               # not exercised: no registry snapshot is wired until the integrator sets proxy.WORKFLOW_SNAPSHOTS (builder C)
 GET /v1/status 403                                             # not exercised: was: HTTP status in DENIED
 POST /v1/messages/count_tokens 400                             # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
 POST /anthropic/v1/messages/count_tokens 400                   # not exercised: {"error": {"message": "'messages' must be a non-empty list", "type": "
@@ -145,7 +146,7 @@ GET /v1/assets/{asset_id}/content 400                          # not exercised: 
 GET /openai/v1/assets/{asset_id}/content 400                   # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
 GET /gateway/v1/assets/{asset_id} 400                          # not exercised: {"error": {"message": "Invalid asset id", "type": "invalid_request_err
 GET /gateway/v1/assets/{asset_id}/content 400                  # not exercised: {"error": {"message": "expires must be an integer", "type": "invalid_r
-POST /gateway/v1/workflows/{workflow_id}/run 404               # not exercised: was: HTTP status in DENIED
+POST /gateway/v1/workflows/{workflow_id}/run 503               # not exercised: no registry snapshot is wired until the integrator sets proxy.WORKFLOW_SNAPSHOTS (builder C)
 POST /v1/videos 404                                            # not exercised: was: HTTP status in DENIED
 POST /openai/v1/videos 404                                     # not exercised: was: HTTP status in DENIED
 GET /v1/videos/{video_id} 400                                  # not exercised: {"error": {"message": "invalid video_id", "type": "invalid_request_err

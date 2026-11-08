@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-ENVELOPE_VERSION = 1
+ENVELOPE_VERSION = 2          # the version the writer writes
+SUPPORTED_VERSIONS = (1, 2)   # the versions the reader accepts (docs/design/CODE_TO_DATA_S4_S8.md, 5.4 and 7.4)
 
 SOURCE_KINDS = ("workflow", "offering")
 # How a reviewed generator's value persists: kept, kept as a digest, or not kept at all.
@@ -47,6 +48,11 @@ class Envelope:
     # copies what it is given and hands out read-only views, so a held Envelope cannot change after it is checked.
     generated: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     bundle: str | None = None
+    # Version 2 (section 7.4). A version 1 envelope has none of the three: ``incarnation`` and ``binding_key`` are None,
+    # and nothing fills them from the live registry. ``record_revision`` is audit only; execution never reads it.
+    incarnation: str | None = None
+    binding_key: str | None = None
+    record_revision: int | None = None
 
     def __post_init__(self) -> None:
         frozen = MappingProxyType({name: MappingProxyType(dict(entry)) for name, entry in self.generated.items()})
@@ -57,9 +63,14 @@ class Envelope:
         if self.template is not None:
             definitions["template"] = self.template
         definitions["protocol"] = {"id": self.protocol_id, "revision": self.protocol_revision}
+        source: dict[str, Any] = {"kind": self.source_kind, "id": self.source_id, "revision": self.source_revision}
+        if self.envelope_version >= 2:
+            source["incarnation"] = self.incarnation
+            source["binding_key"] = self.binding_key
+            source["record_revision"] = self.record_revision
         return {
             "envelope_version": self.envelope_version,
-            "source": {"kind": self.source_kind, "id": self.source_id, "revision": self.source_revision},
+            "source": source,
             "definitions": definitions,
             "executor": {"adapter_id": self.adapter_id, "interface_version": self.interface_version},
             "upstream": {"service_id": self.service_id, "origin_digest": self.origin_digest},
@@ -168,10 +179,14 @@ def parse_envelope(data: Mapping[str, Any], generators: Mapping[str, str] | None
         {"envelope_version", "source", "definitions", "executor", "upstream", "generated", "results"},
     )
     version = _integer(top["envelope_version"], "envelope_version")
-    if version != ENVELOPE_VERSION:
-        raise ValueError(f"envelope_version: expected {ENVELOPE_VERSION}, got {version}")
+    if version not in SUPPORTED_VERSIONS:
+        raise ValueError(f"envelope_version: expected one of {', '.join(str(v) for v in SUPPORTED_VERSIONS)}, got {version}")
 
-    source = _mapping(top["source"], "source", {"kind", "id", "revision"})
+    if version == 1:
+        source = _mapping(top["source"], "source", {"kind", "id", "revision"})
+    else:
+        source = _mapping(top["source"], "source", {"kind", "id", "revision", "incarnation", "binding_key", "record_revision"},
+                          frozenset({"record_revision"}))
     kind = source["kind"]
     if kind not in SOURCE_KINDS:
         raise ValueError(f"source.kind: expected one of {', '.join(SOURCE_KINDS)}")
@@ -203,6 +218,10 @@ def parse_envelope(data: Mapping[str, Any], generators: Mapping[str, str] | None
         origin_digest=_digest(upstream["origin_digest"], "upstream.origin_digest"),
         generated=_generated(top["generated"], generators),
         bundle=bundle,
+        incarnation=_text(source["incarnation"], "source.incarnation") if version >= 2 else None,
+        binding_key=_text(source["binding_key"], "source.binding_key") if version >= 2 else None,
+        record_revision=(_integer(source["record_revision"], "source.record_revision", minimum=0)
+                         if version >= 2 and source.get("record_revision") is not None else None),
     )
 
 

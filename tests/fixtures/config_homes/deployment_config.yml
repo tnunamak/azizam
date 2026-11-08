@@ -1192,11 +1192,6 @@ videos:
     video-ltx-2.3-long: video-ltx-2.5-long
     character-replace: video-scail-2-replace
     scail-2: video-scail-2-replace
-# Routes whose jobs compile from the definitions they pinned at accept, not from the live workflow file
-# (docs/design/CODE_TO_DATA_S2.md, D2). Keyed by the route's capability. Read on every job.
-workflow_execution:
-  compile_from_pin:
-    audio.generate: true
 audio:
   default_workflow: ace-step-1.5-xl-turbo
   workflows_dir: ./workflows/audio

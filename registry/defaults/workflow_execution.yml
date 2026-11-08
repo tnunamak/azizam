@@ -1,4 +1,10 @@
-# Release defaults of the workflow_execution section (docs/design/CONFIG_HOMES.md, C10). Read-only; an owner's value is
-# an override. Empty on purpose: no route compiles from its pinned definitions, the old output collection stays on, and
-# every result limit keeps the ceiling in gateway/result_bundle.py (ResultLimits).
-{}
+# Release defaults of the workflow_execution section (docs/design/CONFIG_HOMES.md, C10; docs/design/CODE_TO_DATA_S4_S8.md,
+# I7). Read-only; an owner's value is an override. The code holds the ceiling of each key, so a value above it is cut to
+# it. The old output collection stays on, and every result limit keeps the ceiling in gateway/result_bundle.py
+# (ResultLimits).
+max_wait_s: 60
+history_depth: 20
+bounds:
+  max_template_bytes: 524288
+  max_nodes: 2000
+  max_depth: 32

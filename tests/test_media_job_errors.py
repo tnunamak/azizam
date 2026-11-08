@@ -202,7 +202,6 @@ class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         sync = None
         with derived_patch("COMFY_ENABLED", True), patch.multiple(
             proxy,
-            _compile_from_pin=lambda _capability: False,
             _dispatch_admission_response=lambda *a, **kw: None,
             _service_availability_response=lambda *a, **kw: None,
             _resolve_audio_workflow=lambda model: ("fake-audio", {"min_seconds": 5, "max_seconds": 30}),

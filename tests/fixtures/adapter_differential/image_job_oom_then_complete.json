@@ -400,7 +400,7 @@
             },
             "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
           },
-          "envelope_version": 1,
+          "envelope_version": 2,
           "executor": {
             "adapter_id": "node-graph",
             "interface_version": 2
@@ -415,8 +415,11 @@
             "bundle": "bundle:<job:1>:1"
           },
           "source": {
+            "binding_key": "untracked",
             "id": "image.generate.krea2-turbo",
+            "incarnation": "untracked",
             "kind": "workflow",
+            "record_revision": null,
             "revision": "sha256:a3d6d0f01a20c911696822bd8cb584d0a5bd909104e0fd4fc4fbf2dfd73452c7"
           },
           "upstream": {
