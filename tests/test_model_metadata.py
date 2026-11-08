@@ -92,7 +92,7 @@ class DerivationTableTests(unittest.TestCase):
         for workflow_id, inputs in expected.items():
             with self.subTest(workflow=workflow_id):
                 manifest = yaml.safe_load((ROOT / "manifests" / "workflows" / f"{workflow_id}.yml").read_text(encoding="utf-8"))
-                derived = mm.from_intent(manifest["intent"], manifest)
+                derived = mm.from_contract(manifest)
                 assert derived is not None
                 self.assertEqual(list(derived.input_modalities), inputs)
                 for name, spec in manifest["inputs"].items():

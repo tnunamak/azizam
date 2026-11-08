@@ -78,30 +78,6 @@ def _md(type_: str, inputs: Iterable[str], outputs: Iterable[str]) -> ModelMetad
     return ModelMetadata(type_, _ordered(inputs, INPUT_MODALITIES), _ordered(outputs, OUTPUT_MODALITIES))
 
 
-# Workflow manifest intent -> default metadata. Manifest I/O refines it below.
-_INTENTS: dict[str, ModelMetadata] = {
-    "image.generate": _md("image", ["text"], ["image"]),
-    "image.edit": _md("image", ["text", "image"], ["image"]),
-    "image.analyze": _md("image", ["image"], ["text"]),
-    "video.generate": _md("video", ["text"], ["video"]),
-    "video.edit": _md("video", ["text", "video"], ["video"]),
-    "audio.generate": _md("audio", ["text"], ["audio"]),
-    "text.embeddings": _md("embedding", ["text"], ["embedding"]),
-}
-
-# Media an intent's asset inputs carry unless the manifest declares a
-# `media_type` on the input. A generator's asset is its conditioning image; an
-# editor's is the medium it edits. Manifests with mixed assets (a reference
-# image plus a source video) must declare each input's `media_type`.
-_INTENT_ASSET_MODALITY: dict[str, str] = {
-    "image.generate": "image",
-    "image.edit": "image",
-    "image.analyze": "image",
-    "video.generate": "image",
-    "video.edit": "video",
-    "audio.generate": "audio",
-}
-
 # Stable-alias operation (gateway/stable_aliases.OPERATIONS) -> metadata.
 _OPERATIONS: dict[str, ModelMetadata] = {
     "chat": _md("language", ["text"], ["text"]),
@@ -129,48 +105,52 @@ _SERVICE_CAPABILITIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("decisions", _DECISION),
 )
 
-# Gateway capability intents (gateway/capabilities.Capability.intent) that are
-# not workflow intents. Families match by prefix when no exact intent does;
-# the capability's own declared modalities then refine the defaults.
+# Gateway operation capabilities whose modalities do not say what they are: a text answer is a language model, a
+# reranker or a decision runtime alike. Every other capability is typed from its declared modalities (``type_of``).
 _CAPABILITY_INTENTS: dict[str, ModelMetadata] = {
-    **_INTENTS,
     "chat.completions": _LANGUAGE,
     "text.completions": _LANGUAGE,
     "text.rerank": _OPERATIONS["rerank"],
-    "speech.synthesis": _OPERATIONS["speech"],
-    "speech.transcription": _OPERATIONS["transcriptions"],
-    "speech.translation": _OPERATIONS["transcriptions"],
 }
 _CAPABILITY_INTENT_FAMILIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("chat.", _LANGUAGE),
     ("responses.", _LANGUAGE),
     ("decision.", _DECISION),
-    ("image.", _INTENTS["image.generate"]),
-    ("video.", _INTENTS["video.generate"]),
-    ("speech.", _OPERATIONS["speech"]),
-    ("audio.", _INTENTS["audio.generate"]),
 )
 
 # Major media type of a manifest output -> output modality.
 _MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio", "text": "text"}
 
 
-def from_intent(intent: str | None, manifest: Mapping[str, Any] | None = None) -> ModelMetadata | None:
-    """Metadata for a workflow from its intent, refined by the manifest's real I/O."""
-    base = _INTENTS.get(str(intent or ""))
-    if base is None:
-        return None
+def type_of(input_modalities: Iterable[str], output_modalities: Iterable[str]) -> str | None:
+    """The model type the modalities say. A media output is that medium; embeddings are embeddings; a text answer from
+    some other medium (a transcript, a description) is typed by that input medium; plain text to text is a language
+    model. None when nothing is declared."""
+    inputs, outputs = set(input_modalities), set(output_modalities)
+    produced = [m for m in OUTPUT_MODALITIES if m in outputs and m != INPUT_MODALITIES[0]]
+    if produced:
+        return produced[0]
+    if INPUT_MODALITIES[0] in outputs:
+        taken = [m for m in INPUT_MODALITIES[1:] if m in inputs and m in MODEL_TYPES]
+        return taken[0] if taken else _LANGUAGE.type
+    return None
+
+
+def from_contract(manifest: Mapping[str, Any] | None) -> ModelMetadata | None:
+    """Metadata for a workflow from its contract's real inputs and outputs. The document says what it takes (the media
+    types its asset inputs accept, a text input) and what it makes (its outputs' media types); nothing is assumed."""
     if not isinstance(manifest, Mapping):
-        return base
-    inputs = list(base.input_modalities)
-    default_asset = _INTENT_ASSET_MODALITY.get(str(intent))
-    inputs.extend(_asset_input_modality(spec, default=default_asset) or "" for spec in _asset_inputs(manifest))
-    outputs = _manifest_output_modalities(manifest) or list(base.output_modalities)
-    return replace(
-        base,
-        input_modalities=_ordered(inputs, INPUT_MODALITIES),
-        output_modalities=_ordered(outputs, OUTPUT_MODALITIES),
-    )
+        return None
+    inputs: list[str] = []
+    declared = manifest.get("inputs")
+    if isinstance(declared, Mapping):
+        if any(isinstance(spec, Mapping) and spec.get("type") != "asset" for spec in declared.values()):
+            inputs.append(INPUT_MODALITIES[0])
+    inputs.extend(_asset_input_modality(spec) or "" for spec in _asset_inputs(manifest))
+    outputs = _manifest_output_modalities(manifest)
+    ordered_in, ordered_out = _ordered(inputs, INPUT_MODALITIES), _ordered(outputs, OUTPUT_MODALITIES)
+    type_ = type_of(ordered_in, ordered_out)
+    return None if type_ is None else ModelMetadata(type_, ordered_in, ordered_out)
 
 
 def from_capability(
@@ -183,13 +163,11 @@ def from_capability(
     base = _CAPABILITY_INTENTS.get(intent) or next(
         (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES if intent.startswith(prefix)), None
     )
+    inputs, outputs = _ordered(input_modalities, INPUT_MODALITIES), _ordered(output_modalities, OUTPUT_MODALITIES)
     if base is None:
-        return None
-    return replace(
-        base,
-        input_modalities=_ordered(input_modalities, INPUT_MODALITIES) or base.input_modalities,
-        output_modalities=_ordered(output_modalities, OUTPUT_MODALITIES) or base.output_modalities,
-    )
+        type_ = type_of(inputs, outputs)
+        return None if type_ is None else ModelMetadata(type_, inputs, outputs)
+    return replace(base, input_modalities=inputs or base.input_modalities, output_modalities=outputs or base.output_modalities)
 
 
 def from_fields(fields: Mapping[str, Any] | None) -> ModelMetadata | None:
@@ -365,7 +343,7 @@ def base_metadata(entry: Mapping[str, Any], sources: MetadataSources) -> ModelMe
     intent = entry.get("azizam_intent")
     derived = None
     if intent:
-        derived = from_intent(intent, sources.manifest(str(entry.get("azizam_workflow_id") or "")))
+        derived = from_contract(sources.manifest(str(entry.get("azizam_workflow_id") or "")))
     if derived is None and sources.origins.get(model_id) == ORIGIN_DECISION:
         derived = _DECISION
     if derived is None:
@@ -446,7 +424,7 @@ def _workflow_target(model_id: str, sources: MetadataSources) -> ModelMetadata |
     manifest = sources.workflow_for_model(model_id)
     if not isinstance(manifest, Mapping):
         return None
-    return apply_declared(from_intent(manifest.get("intent"), manifest), sources.declared(model_id))
+    return apply_declared(from_contract(manifest), sources.declared(model_id))
 
 
 def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -456,26 +434,25 @@ def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [leaf for spec in inputs.values() for leaf in asset_leaf_specs(spec)]
 
 
-def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> str | None:
+def _asset_input_modality(spec: Mapping[str, Any]) -> str | None:
     """The modality an asset input accepts: the shared kind of its ``accepts`` list (a schema 1 ``media_type`` counts as a
-    one-item list), else the intent's default."""
+    one-item list). None when it names no single kind."""
     accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
     majors = {str(item).split("/", 1)[0].strip().lower() for item in accepted if str(item).strip()}
     major = next(iter(majors)) if len(majors) == 1 else ""
-    return major if major in INPUT_MODALITIES else default
+    return major if major in INPUT_MODALITIES else None
 
 
-def asset_media_type(intent: str | None, spec: Mapping[str, Any]) -> str | None:
+def asset_media_type(spec: Mapping[str, Any]) -> str | None:
     """Media kind of one asset input, as ``image/*``. The document says it by what the input accepts: one type as it is,
-    several as their shared kind; an input that accepts nothing it can name falls back to its intent's default."""
+    several as their shared kind; an input that accepts nothing it can name has no media type."""
     accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
     if len(accepted) == 1:
         return accepted[0]
     majors = {item.split("/", 1)[0].lower() for item in accepted}
     if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
         return f"{next(iter(majors))}/*"
-    major = _INTENT_ASSET_MODALITY.get(str(intent or ""))
-    return f"{major}/*" if major else None
+    return None
 
 
 def _manifest_output_modalities(manifest: Mapping[str, Any]) -> list[str]:
