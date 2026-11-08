@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import copy
 import threading
-from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -17,7 +16,7 @@ from gateway.workflow_registry_store import (
     template_depth,
 )
 from gateway.workflow_runtime_types import (
-    BOUND_EXCEEDED, ID_CLASH, KEEP, WORKFLOW_EXISTS, Actor, NameOwner, RegistryConflict, RegistryRefused, WorkflowFacts,
+    BOUND_EXCEEDED, ID_CLASH, WORKFLOW_EXISTS, Actor, RegistryConflict, RegistryRefused, WorkflowFacts,
 )
 from tests.registry_test_helpers import write_service_registry_for_test
 from tests.workflow_runtime_fakes import FakeSnapshot, entry
