@@ -56,6 +56,12 @@ IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"    # the key's first request
 JOB_NOT_FOUND = "job_not_found"                        # absent, or not readable by this caller (the same answer)
 RESULT_UNAVAILABLE = "result_unavailable"              # erased, expired, not yet published, or not the caller's to read
 MEDIA_PATH_UNSUPPORTED = "media_path_unsupported"      # a file part addressed below a top-level input name
+# Reasons ``AdapterAvailability.binding_problem`` may return for the live state of the service behind a binding (S7 parity
+# M4). ``target_gate`` turns each into a 503 ``RunRefused`` before a job exists; ``binding_retry_after_s`` gives the delay.
+SERVICE_DISABLED = "service_disabled"
+SERVICE_UNHEALTHY = "service_unhealthy"
+SERVICE_NOT_ADMITTING = "service_not_admitting"
+SERVICE_REASONS = frozenset({SERVICE_DISABLED, SERVICE_UNHEALTHY, SERVICE_NOT_ADMITTING})
 
 
 # ---------------------------------------------------------------------------------------------------------- I1
@@ -312,6 +318,10 @@ class AdapterAvailability(Protocol):
     needs is present (S3). Supplied by the run core's port (the binding registry); projections only read it."""
 
     def binding_problem(self, binding: BindingDef) -> str | None: ...    # a stable reason code, or None when runnable
+    def binding_retry_after_s(self, binding: BindingDef) -> int | None:
+        """Seconds a caller should wait before retrying after ``binding_problem`` answered a ``SERVICE_*`` reason
+        (``service_not_admitting`` has one); None when there is no advice."""
+        ...
 
 
 class Projections(Protocol):
@@ -382,6 +392,10 @@ class RunRequest:
     idempotency_key: str | None = None
     wait_s: float = 0.0
     frontend_id: str = "workflows"
+    # Transport options the caller chose on the wire that change what the engine is asked for (S7 parity M2): the count,
+    # size, output format and the like. The shape fills it; it is part of run identity and travels to the adapter in the
+    # flat body under ``options``. An answer form that only changes rendering is not an option.
+    options: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -448,6 +462,9 @@ class RunJobView:
     updated_at_s: int
     failure: RunFailure | None = None
     results: tuple[ResultRef, ...] | None = None     # set once the result bundle is published; references only
+    # Facts the adapter returned with its result (S7 parity M5): a plain mapping the core stores on the job and never
+    # interprets. Shapes render headers from it and the receipt writer copies fields from it. Empty until the job succeeds.
+    result_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -529,6 +546,9 @@ class FrontendRow:
     receipt_protocol: str
     strictness: Literal["exact", "lenient"] = "exact"
     lists_as_model: bool = False
+    # Where the receipt opens (S7 parity M1): "before_policy" leaves a closed ``rejected`` receipt when the route policy
+    # denies the request; "after_policy" (default) leaves none.
+    receipt_opens: Literal["before_policy", "after_policy"] = "after_policy"
 
 
 class FrontendShape(Protocol):
