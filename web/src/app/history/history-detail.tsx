@@ -61,6 +61,13 @@ export function HistoryDetail({
     queryFn: () => accountApi.receiptRetention(requestId ?? ""),
     enabled: requestId !== null,
     retry: false,
+    // History is committed before its receipt entry. Re-read that brief empty/error window,
+    // but never poll a terminal decision or turn a missing receipt into an unbounded loop.
+    refetchInterval: (query) =>
+      query.state.data?.retention?.some((entry) => entry.kind === "request_history") ||
+      query.state.dataUpdateCount + query.state.errorUpdateCount >= 15
+        ? false
+        : 500,
   });
   const sentence = keptSentence(
     receiptData?.retention?.find((entry) => entry.kind === "request_history"),
