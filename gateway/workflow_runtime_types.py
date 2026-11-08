@@ -8,19 +8,20 @@ announced to every builder.
 I1 RegistrySnapshot / WorkflowEntry / NameView / SnapshotProvider   the immutable view of what can run, one per request
 I2 RegistryStore / Commit / HistoryEntry / RegistryConflict ...     edits, checks, history (S4, builder A)
 I3 Projections / ExecutionProfile / OutputShape / ReceiptIdentity   pure functions of a snapshot (S5, builder B)
-I4 RunRequest / MediaRef / RunJobView / RunRefused / RunCore /      the run core and the job reads (S6, builder C)
-   JobService / RecoveryReport
-I5 FrontendRow / FrontendShape / WorkflowSelector / RouteSpec       routes are rows over reviewed wire shapes (S7, D)
+I4 RunRequest / MediaRef / RequestSpool / RunJobView / ResultRef /  the run core and the job reads (S6, builder C)
+   RunRefused / RunCore / JobService / RecoveryReport
+I5 FrontendRow / FrontendShape / RouteSpec                          routes are rows over reviewed wire shapes (S7, D)
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gateway.manifests import ContractError, Provenance
+from gateway.result_bundle import ResultLimits
 from gateway.workflow_contract import Report
 
 if TYPE_CHECKING:  # the HTTP types are only named, never constructed here
@@ -50,7 +51,11 @@ SPOOL_MISSING = "spool_missing"
 PIN_NOT_RECORDED = "pin_not_recorded"
 SUBMISSION_UNKNOWN = "submission_unknown"
 ENVELOPE_VERSION_UNSUPPORTED = "envelope_version_unsupported"
-IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+IDEMPOTENCY_CONFLICT = "idempotency_conflict"          # the key was used for a different request identity (409)
+IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"    # the key's first request has not finished deciding (409, retry)
+JOB_NOT_FOUND = "job_not_found"                        # absent, or not readable by this caller (the same answer)
+RESULT_UNAVAILABLE = "result_unavailable"              # erased, expired, not yet published, or not the caller's to read
+MEDIA_PATH_UNSUPPORTED = "media_path_unsupported"      # a file part addressed below a top-level input name
 
 
 # ---------------------------------------------------------------------------------------------------------- I1
@@ -109,6 +114,10 @@ class WorkflowEntry:
     record_revision: int
     overrides: str | None = None
 
+    # A v1 job (queued before this train) carries no incarnation: dispatch check 2 compares presence only, so a delete and
+    # a create of the same id between its queueing and its dispatch is not detected. The deploy refuses to start while a
+    # v1 workflow job is queued (section 5.5), so the exception is closed operationally, not by this type.
+
     @property
     def intent(self) -> str:
         """For display, listings and receipts only. Core never branches on it."""
@@ -122,8 +131,14 @@ class WorkflowEntry:
 
 @dataclass(frozen=True)
 class NameOwner:
+    """Who holds a name. ``kind`` is how the name addresses its owner; ``id`` is the owning entity's id (for an alias,
+    the workflow or model it names). Two names with one owner never clash: ``workflow_kernel.owner_entity`` maps
+    ``workflow_alias`` to ``workflow`` and ``model_alias`` to ``model``. A name that must reach several workflows (an
+    alias that picks among them by the caller's inputs) is a frontend row's id or route, owned by that row, never an alias
+    with several owners."""
+
     kind: NameKind
-    id: str            # the workflow, model, frontend or route that holds the name
+    id: str
 
 
 class NameView(Protocol):
@@ -132,9 +147,16 @@ class NameView(Protocol):
     route paths (method and canonical path) and the generated OpenAPI operation and component names. Built from the
     same service-registry document as the workflows, so it has the same revision."""
 
-    def owner(self, kind: NameKind, name: str) -> NameOwner | None: ...
-    def owners(self, name: str) -> tuple[NameOwner, ...]: ...
-    def items(self) -> tuple[tuple[str, NameOwner], ...]: ...
+    def owner(self, kind: NameKind, name: str) -> NameOwner | None:
+        """The owner of ``name`` (any spelling with the same canonical token) among names of this kind."""
+        ...
+    def owners(self, name: str) -> tuple[NameOwner, ...]:
+        """Every (kind, owner) holding the canonical token of ``name``, across kinds. In a valid revision the target
+        kinds name at most one owning entity."""
+        ...
+    def items(self) -> tuple[tuple[str, NameOwner], ...]:
+        """Every (name as written, owner) pair; ``workflow_kernel.name_clashes`` over these is empty."""
+        ...
 
 
 class RegistrySnapshot(Protocol):
@@ -250,6 +272,9 @@ class MediaAccept:
 
 @dataclass(frozen=True)
 class OutputShape:
+    """An output's count is resolved: a contract that declares no count gets S3's ``effective_count`` (min 1, max the
+    ``limits.max_assets`` passed to ``execution_profile``)."""
+
     kind: OutputKind
     media_type: str
     min_items: int
@@ -267,11 +292,21 @@ class ExecutionProfile:
 
 @dataclass(frozen=True)
 class ReceiptIdentity:
+    """``record_revision`` and ``binding_key`` are None for a v1 job (no such fields in its envelope); a receipt shows
+    them as unknown and never fills them from the live registry."""
+
     workflow_id: str
-    record_revision: int
+    record_revision: int | None
     contract_digest: str
-    binding_key: str
+    binding_key: str | None
     intent: str
+
+
+class AdapterAvailability(Protocol):
+    """Whether this deployment can run one binding: its adapter is registered and every reviewed role the binding
+    needs is present (S3). Supplied by the run core's port (the binding registry); projections only read it."""
+
+    def binding_problem(self, binding: BindingDef) -> str | None: ...    # a stable reason code, or None when runnable
 
 
 class Projections(Protocol):
@@ -279,12 +314,18 @@ class Projections(Protocol):
     Viewer-specific and live data (authorization, availability, recent activity, base URL) are applied by the caller
     after the static projection, never folded into it."""
 
-    def execution_profile(self, entry: WorkflowEntry, binding_key: str) -> ExecutionProfile: ...
+    def execution_profile(self, entry: WorkflowEntry, binding_key: str, *, limits: ResultLimits) -> ExecutionProfile:
+        """``limits`` is the deployment's effective result limits (``result_bundle.ResultLimits``), passed in by the
+        caller from its snapshot of the config, so an absent output count resolves the same way in B and C."""
+        ...
     def receipt_identity(self, entry: WorkflowEntry, binding_key: str) -> ReceiptIdentity: ...
-    def entry_problems(self, entry: WorkflowEntry, adapter_ids: frozenset[str]) -> tuple[str, ...]:
-        """Stable reason codes why an entry cannot run here: ``needs_policy`` (no facts), ``adapter_missing`` (a
-        binding's adapter has no registered implementation), and the like. Empty means runnable as far as the registry
-        knows. Display and the run core both use it; an entry with problems never runs."""
+    def entry_problems(self, entry: WorkflowEntry, available: AdapterAvailability) -> tuple[str, ...]:
+        """For listings and new submissions: ``needs_policy`` (no facts), then the ``binding_problem`` of the binding a
+        new run would use (the request's, or the default). Empty means a new run can start."""
+        ...
+    def binding_problems(self, binding: BindingDef, available: AdapterAvailability) -> tuple[str, ...]:
+        """For dispatch of a queued job: only the PINNED binding's availability (dispatch check 5). A later change of
+        the live entry's bindings never decides whether a pinned job can run."""
         ...
     def catalog_static(self, snapshot: RegistrySnapshot) -> tuple[Mapping[str, Any], ...]: ...
     def openapi_paths(self, snapshot: RegistrySnapshot) -> Mapping[str, Any]: ...
@@ -297,16 +338,32 @@ class Projections(Protocol):
 @dataclass(frozen=True)
 class MediaRef:
     """One media input. Exactly one of ``asset_id`` (a library asset the caller may read) or ``spool_key`` (an upload
-    the frontend staged in this request's spool) is set. ``submit_run`` adopts staged uploads into the new job's spool
-    in the same step that creates the job; staged files that no job adopted are deleted when the request ends. A
-    replay adopts nothing."""
+    staged in this request's ``RequestSpool``) is set. ``media_type`` is measured from the bytes and is what validation
+    uses; ``wire_media_type`` is the type the caller declared or the route fixes, kept only so an adapter can send the
+    established wire shape (S2.6b). Request identity (``workflow_kernel.run_identity``) uses ``digest`` and never
+    ``spool_key``."""
 
     digest: str
     media_type: str
     size: int
     filename: str | None = None
+    wire_media_type: str | None = None
     asset_id: str | None = None
     spool_key: str | None = None
+
+
+class RequestSpool(Protocol):
+    """The uploads of one request (builder C writes it; the request-scope hook creates one per request and releases
+    it when the request ends). A frontend stages each top-level file input here; ``submit_run`` adopts the staged files
+    of a NEW job into that job's spool before the job row commits, and deletes the job spool again if the commit fails.
+    A refusal, a replay or an error adopts nothing, and ``release`` deletes every file not adopted. A file part
+    addressed below a top-level input name is refused by the shape with ``media_path_unsupported``."""
+
+    async def stage(self, input_name: str, chunks: AsyncIterator[bytes], *, filename: str | None,
+                    wire_media_type: str | None) -> MediaRef | RunRefused:
+        """Stream one file in; measures type, size and digest. Refuses (413 or 415) without keeping the bytes."""
+        ...
+    def release(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -331,12 +388,45 @@ class RunFailure:
 
 
 @dataclass(frozen=True)
-class ResultItem:
+class ResultRef:
+    """One published result item, by reference. A job view never carries a JSON value or bytes: S2 keeps a JSON
+    result private to its owner and maker, so reading content is ``JobService.open_result``, which applies the stronger
+    result-reader rule."""
+
     output: str
+    index: int
     media_type: str
     size: int | None = None
     asset_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ResultContent:
+    media_type: str
     value: Any = None             # the JSON value, for a json output
+    body: bytes | None = None     # the bytes, for an asset output
+
+
+@dataclass(frozen=True)
+class JobEvent:
+    id: int
+    sequence: int
+    type: str
+    at_s: int
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+
+class JobNotFound(Exception):
+    """``job_not_found`` (404): absent, or not readable by this caller. One answer for both, so ids do not leak."""
+
+
+class ResultUnavailable(Exception):
+    """``result_unavailable`` (404 or 410 by ``reason``): not yet published, erased, expired, or not the caller's to
+    read under the result-reader rule."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -345,12 +435,12 @@ class RunJobView:
     status: JobStatus
     disposition: Disposition
     workflow_id: str
-    record_revision: int
-    binding_key: str | None
+    record_revision: int | None                      # None for a v1 job: unknown, never filled from the live registry
+    binding_key: str | None                          # None for a v1 job
     created_at_s: int
     updated_at_s: int
     failure: RunFailure | None = None
-    results: tuple[ResultItem, ...] | None = None    # set once the result bundle is published
+    results: tuple[ResultRef, ...] | None = None     # set once the result bundle is published; references only
 
 
 @dataclass(frozen=True)
@@ -376,7 +466,12 @@ class RecoveryReport:
 
 class RunCore(Protocol):
     async def submit_run(self, req: RunRequest, caller: CallerContext, *,
-                         snapshot: RegistrySnapshot) -> RunJobView | RunRefused: ...
+                         snapshot: RegistrySnapshot) -> RunJobView | RunRefused:
+        """Section 7.2. With an idempotency key the FIRST step claims the key for ``run_identity`` in one transaction;
+        only the claim holder validates, admits, draws and creates. A refusal releases the claim. A second request with
+        the same identity replays the job the claim names, or answers 409 ``idempotency_in_progress`` with
+        ``retry_after_s`` while the claim is undecided; another identity is 409 ``idempotency_conflict``."""
+        ...
     async def execute_run(self, job_id: str) -> None: ...
     def recover_runs(self, now_s: int) -> RecoveryReport: ...
 
@@ -385,10 +480,20 @@ class JobService(Protocol):
     """Reads and controls one workflow job for its caller (the existing media-jobs rules decide who may read and
     cancel). Frontends and the media-jobs routes use it; they never read the job store directly."""
 
-    def get(self, job_id: str, caller: CallerContext) -> RunJobView | None: ...
-    async def wait(self, job_id: str, caller: CallerContext, timeout_s: float) -> RunJobView: ...
-    def cancel(self, job_id: str, caller: CallerContext) -> RunJobView: ...
-    def open_result(self, job_id: str, item: ResultItem, caller: CallerContext) -> bytes: ...
+    def get(self, job_id: str, caller: CallerContext) -> RunJobView | None: ...     # None: JOB_NOT_FOUND
+    async def wait(self, job_id: str, caller: CallerContext, timeout_s: float) -> RunJobView:
+        """The view when the job is terminal or ``timeout_s`` passed (status then queued or running). JobNotFound."""
+        ...
+    def cancel(self, job_id: str, caller: CallerContext) -> RunJobView:
+        """Today's rules: the caller who made it or the owner; a terminal job is answered unchanged. JobNotFound."""
+        ...
+    def events(self, job_id: str, caller: CallerContext, *, limit: int, after_id: int | None = None,
+               after_sequence: int | None = None) -> tuple[JobEvent, ...]:
+        """The existing event list and its cursors (media_jobs.events). JobNotFound."""
+        ...
+    def open_result(self, job_id: str, ref: ResultRef, caller: CallerContext) -> ResultContent:
+        """The content under the result-reader rule. JobNotFound, ResultUnavailable."""
+        ...
 
 
 # ---------------------------------------------------------------------------------------------------------- I5
@@ -403,20 +508,13 @@ class RouteSpec:
 
 
 @dataclass(frozen=True)
-class WorkflowSelector:
-    """Explicit ids, or a match in the closed selector schema (``workflow_kernel.selector_matches``): required input
-    names with their type or media type, and output kinds with their media type. Never an intent word."""
-
-    ids: tuple[str, ...] = ()
-    match: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True)
 class FrontendRow:
     id: str
     shape: str
     routes: tuple[RouteSpec, ...]
-    selects: WorkflowSelector
+    # The kernel's closed selector schema, as read from the row: {"ids": [...]} or {"match": {...}}. One representation:
+    # rows are validated with ``workflow_kernel.selector_problems`` at load and matched with ``selector_matches``.
+    selects: Mapping[str, Any]
     mode: Literal["sync", "job"]
     receipt_protocol: str
     strictness: Literal["exact", "lenient"] = "exact"
@@ -426,12 +524,12 @@ class FrontendRow:
 class FrontendShape(Protocol):
     """A reviewed wire shape (code). It turns its wire request into a ``RunRequest`` (staging uploads through the
     request spool) and renders a job view or a refusal in its own vocabulary; for ``mode: sync`` it waits through
-    ``JobService.wait`` first. Authentication and the runtime route policy run before ``to_run_request``."""
+    ``JobService.wait`` and reads content through ``JobService.open_result`` with the caller. Authentication and the runtime route policy run before ``to_run_request``."""
 
     shape_id: str
 
     def profile(self, contract: Mapping[str, Any]) -> tuple[str, ...]: ...      # reasons it cannot serve the contract
-    async def to_run_request(self, request: Request, row: FrontendRow,
-                             snapshot: RegistrySnapshot) -> RunRequest | Response: ...
+    async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
+                             spool: RequestSpool) -> RunRequest | Response: ...
     async def to_response(self, outcome: RunJobView | RunRefused, row: FrontendRow, *, jobs: JobService,
                           caller: CallerContext) -> Response: ...

@@ -1,6 +1,6 @@
 # Code to data, slices S4 to S8: one design
 
-Status: draft 2, 2026-11-08 (answers the freeze review; section 13). Owner: the Azizam thread. This document replaces the per-slice S4 to S8 rows of
+Status: draft 3, 2026-11-08 (answers the freeze review and its re-review; section 13). Owner: the Azizam thread. This document replaces the per-slice S4 to S8 rows of
 [CODE_TO_DATA.md](CODE_TO_DATA.md) with one design, so that the five slices can be built in parallel against frozen
 interfaces and land as one train.
 
@@ -74,8 +74,9 @@ The contracts every builder codes against are code on the design branch, frozen 
   `tests/test_workflow_runtime_types.py` proving that they do.
 
 A builder that needs a change stops that part and asks the design owner; the change is made in those files and
-announced to every builder. Draft 2 (this one) answers the dot's freeze review `azizam-c2d-s4s8-design-review-1108`
-(six P1 and four P2 findings); section 13 lists each finding and where it is answered.
+announced to every builder. Draft 2 answered the dot's freeze review `azizam-c2d-s4s8-design-review-1108` (six P1 and
+four P2 findings). Draft 3 (this one) answers its re-review `azizam-c2d-s4s8-design-rereview-1108` (two P1 and seven P2
+findings). Section 13 lists every finding of both and where it is answered.
 
 ### 3.0 The kernel: rules that must not be written twice
 
@@ -84,9 +85,12 @@ announced to every builder. Draft 2 (this one) answers the dot's freeze review `
 | `canonical_token(name)` | lower case, every run of characters other than `a-z0-9` becomes `_`, trimmed. `A.b-C`, `a b_c` and `a.b.c` are one name. | A (clash check), B (name view, OpenAPI), D (model and target resolution) |
 | `generated_names(workflow_id)` | the OpenAPI operation id `run_<token>` and the component name `<token>`. The OpenAPI builder emits no other derived name. | A, B |
 | `route_key(method, path)` | `POST /v1/images`: upper method, lower segments, no trailing slash. | A, D |
-| `name_clashes(pairs)` | over the whole prospective revision. Workflow ids and aliases, model ids and model aliases, and frontend ids share one token space (a request can name any of them as a target); operation names, component names and routes each have their own. One owner may hold a token many times; two owners of one token are a clash (`id_clash`, naming both). | A (every write of the registry document) |
-| `execution_digest(contract)` | the digest of the contract without `annotations` at the root, in input specs (with their nested `properties` and `items`) and in output specs. S3: annotations never execute, so they never change what a job pins. | A, B, C |
-| `selector_problems`, `selector_matches` | the closed selector schema: `{ids: [...]}` or `{match: {inputs: {<name>: {type} or {media_type}}, outputs: {kind, media_type}}}`; `media_type` may be a family wildcard (`image/*`). No expression language, no intent word. | A (save check), D (row validation and routing) |
+| `owner_entity(owner)` | the entity that owns a name: `workflow_alias` maps to `workflow` and `model_alias` to `model`, with the same id. A workflow's id and its alias are one owner. | A, B (via `name_clashes`) |
+| `name_clashes(pairs)` | over the whole prospective revision. Workflow ids and aliases, model ids and model aliases, and frontend ids share one token space (a request can name any of them as a target); operation names, component names and routes each have their own. One owning entity may hold a token many times; two owning entities of one token are a clash (`id_clash`, naming both). Generated names derive from the id's token, so two workflows whose generated names collide already clash as targets. | A (every write of the registry document) |
+| `execution_contract`, `execution_digest(contract)` | the contract without `annotations` at the root, in input specs (with their nested `properties` and `items`), in output specs and in an output's JSON `schema` (with its nesting). Values (`default`, `enum`, `const`) are data and are kept even when they hold a key named `annotations`. S3: annotations never execute, so they never change what a job pins. | A, B, C |
+| `digest(value)` | `sha256:` over `job_envelope.canonical_bytes` (sorted keys, no spaces, ASCII escapes, no NaN), the bytes the definition store already keys blobs by. The execution digest of a contract is the key of its contract blob; C writes and reads blobs through these functions, so no second encoding exists. | A, B, C |
+| `run_identity(owner_scope, maker, req)` | what an idempotency key binds: owner scope, maker, workflow id, binding key, inputs, and each media input's item digests in order. Never a spool key, a file name, a wait or a frontend id. | C (claim and replay), the fakes |
+| `selector_problems`, `selector_matches` | the closed selector schema: `{ids: [non-empty list]}` or `{match: {inputs?, outputs?}}` with at least one section, each section non-empty. An input predicate is exactly one of `type` (an input type of `workflow.schema.json`) or `media_type` (`type/subtype` or `family/*`); outputs hold `kind` (`json` or `assets`) and/or `media_type`. Every value is checked, so the matcher is total over every accepted selector. Inputs match by AND; outputs match when any output fits. No expression language, no intent word. A row's `selects` is this mapping as written; no second representation exists. | A (save check), D (row validation and routing) |
 
 Short ids (`short_id`, the id without its intent prefix) stop being addresses: the generic route and the MCP target
 use full ids and declared aliases only. Two workflows of different intents with the same suffix no longer collide.
@@ -99,14 +103,20 @@ use full ids and declared aliases only. Two workflows of different intents with 
   ids and aliases, model ids and model aliases from the services section and the dynamic aliases, frontend ids, route
   keys, generated operation and component names. Engine offerings stay in the services section (they are not folded
   into `WorkflowEntry`); the name view is the small read-only part of them that the clash check and target resolution
-  need.
+  need. Every lookup goes by canonical token. `NameOwner.id` is the owning entity (for an alias, what it names). A name
+  that must reach several workflows (today's MCP alias that picks a generate or an edit workflow by the caller's
+  inputs) is a frontend row's id or route, owned by that row; an alias never has two owners.
+- Frontend rows are release data in this train (`registry/protocol_frontends.yml`; there is no owner route to edit
+  them). The snapshot carries them so a release change shows in its digest, and the shapes' profile check reads the
+  same bundled rows.
 - `digest` covers the workflows (by `record_digest`), the frontend rows and the name view. A frontend-only or
   alias-only edit changes it.
 - `WorkflowEntry.contract_digest` is the execution digest (kernel); `record_digest` is the digest of the whole stored
   record (contract with annotations, facts, state, published, overrides). `incarnation` is set when an id is created
   and kept by every later change; delete and create again gives a new one (section 5.2).
-- `needs_configuration` means the facts are missing. Whether an adapter exists for a binding is a separate projection
-  (`entry_problems`, I3). An entry with any problem never runs.
+- `needs_configuration` means the facts are missing. Whether this deployment can run a binding is a separate projection
+  over `AdapterAvailability` (I3): `entry_problems` for listings and new runs, `binding_problems` for the pinned binding
+  of a queued job.
 - **One snapshot per request.** `SnapshotProvider.current()` is the only way code reaches the registry. A request-scope
   hook takes it once and stores it on `request.state`; every read in that request uses it. No module keeps a registry
   in a closure or a global: `gateway/api.py` today captures the registry in closures (around lines 339 and 481-492);
@@ -123,9 +133,10 @@ use full ids and declared aliases only. Two workflows of different intents with 
   prospective revision's names and refuse a write that `name_clashes` refuses. A model alias added after a workflow
   is refused the same way as a workflow added after a model.
 - `check(doc, facts=..., overrides=...)` runs the whole existing save pipeline, not a reduced one: `enforce_contract`
-  (validation, `check_contract`, the binding-closure and output-selector checks of `manifests.py`), the frontend
-  shape profiles for every row whose selector would select the workflow, the bundled-id rule (`overrides`), the name
-  check, the bounds of section 5.7 and `check_for_save`. It returns every problem with its path. `check_contract` gets
+  (validation, `check_contract`, the binding-closure and output-selector checks of `manifests.py`, and
+  `frontend_profiles.check`, whose body D replaces with the shape profiles of the rows that select the workflow; the
+  call stays where it is), the bundled-id rule (`overrides`), the name check, the bounds of section 5.7 and
+  `check_for_save`. It returns every problem with its path. `check_contract` gets
   no new mode in this train: the save and pin calls are the existing ones.
 - `facts`: `KEEP` (the default) keeps the stored facts, `None` clears them (the workflow needs configuration), a
   `WorkflowFacts` sets them. `overrides` is explicit on the call and in the owner body.
@@ -142,12 +153,18 @@ use full ids and declared aliases only. Two workflows of different intents with 
 
 - `Projections` is pure: it reads only its arguments. Viewer-specific and live data (authorization, availability,
   recent activity, base URL) are applied by the caller after the static projection.
-- `execution_profile(entry, binding_key)`: `adapter_id`, `adapter_facet` (declared by the binding, never derived from
-  an intent or a capability word), `resource_class` (a policy fact), `accepts` (per media input: types, size,
-  `min_items`/`max_items`) and `produces` (per output: `kind` json or assets from the media type, the media type, and
-  the S3 D5 count as `min_items`/`max_items`).
-- `entry_problems(entry, adapter_ids)`: stable reason codes (`needs_policy`, `adapter_missing`, ...). The owner view,
-  the catalog and the run core all use it.
+- `execution_profile(entry, binding_key, *, limits)`: `adapter_id`, `adapter_facet` (declared by the binding, never
+  derived from an intent or a capability word), `resource_class` (a policy fact), `accepts` (per media input: types,
+  size, `min_items`/`max_items`) and `produces` (per output: `kind` json or assets from the media type, the media type,
+  and the S3 D5 count as `min_items`/`max_items`). `limits` is the deployment's `result_bundle.ResultLimits`, which the
+  caller reads from its config snapshot; an output that declares no count resolves to S3's `effective_count` (min 1,
+  max `limits.max_assets`), the same in B and C.
+- `AdapterAvailability.binding_problem(binding)`: whether this deployment can run one binding (its adapter registered
+  and every reviewed role it needs present, S3). C's port supplies it from the binding registry; projections only read
+  it.
+- `entry_problems(entry, available)`: for listings and new runs: `needs_policy`, then the problem of the binding a new
+  run would use. `binding_problems(binding, available)`: for a queued job, only its PINNED binding (dispatch check 5).
+  A later change of the live entry's bindings never decides whether a pinned job runs.
 - `catalog_static`, `openapi_paths` and `input_form` are the static projections; the OpenAPI builder uses only the
   kernel's generated names. **No projection cache in this train**: projections are measured uncached first (the
   catalog is already built per request). The one cache that exists, the OpenAPI document, gains `snapshot.digest` in
@@ -160,12 +177,22 @@ use full ids and declared aliases only. Two workflows of different intents with 
 - `RunJobView` is the one job shape every frontend renders: `job_id`, `status` (the job store's spelling:
   `canceled`), `disposition` (`new` or `replay`), `workflow_id`, `record_revision`, `binding_key`, `created_at_s`,
   `updated_at_s`, `failure` (`code`, `category`, `message`, `retryable`, `upstream_status`, `problems`) and `results`
-  (one `ResultItem` per published output item).
-- Media inputs are `MediaRef`s, a tuple per input name (multiplicity). Each holds `digest`, `media_type`, `size`,
-  `filename`, and exactly one of `asset_id` (a library asset the caller may read) or `spool_key` (an upload staged in
-  the request spool). See section 7.1 for ownership.
-- `JobService` (`get`, `wait`, `cancel`, `open_result`) reads and controls one job for its caller under the existing
-  media-jobs rules. Frontends and the media-jobs routes use it and never read the job store.
+  (one `ResultRef` per published output item: output name, index, media type, size, asset id). **A job view never
+  carries a JSON value or bytes.** S2 keeps a JSON result private to its owner and maker, and the status routes add
+  summaries only (`api.py` `with_results`); content is read only through `JobService.open_result`, which applies the
+  existing result-reader rule (`result_reader_resolver`, then `read_json`).
+- `record_revision` and `binding_key` are None for a v1 job (its envelope has neither); receipts show them as unknown
+  and never fill them from the live registry. `ReceiptIdentity` has the same two nullable fields.
+- Media inputs are `MediaRef`s, a tuple per input name (multiplicity). Each holds `digest`, `media_type` (measured from
+  the bytes; validation uses it), `size`, `filename`, `wire_media_type` (the type the caller declared or the route
+  fixes, kept only so an adapter sends the established wire shape, S2.6b), and exactly one of `asset_id` or
+  `spool_key`. The `RequestSpool` (section 7.1) is the C to D handoff for uploads.
+- `JobService` reads and controls one job for its caller under the existing media-jobs rules: `get` (None when absent
+  or not readable, one answer for both), `wait`, `cancel`, `events` (the existing `media_jobs.events` list and its
+  `after_id`/`after_sequence` cursors) and `open_result`. `wait`, `cancel`, `events` and `open_result` raise
+  `JobNotFound` (404 `job_not_found`) for an absent or unreadable job; `open_result` raises `ResultUnavailable` (not yet
+  published, erased, expired, or not the caller's to read). Frontends and the media-jobs routes use it and never read
+  the job store.
 - `recover_runs(now_s) -> RecoveryReport`: counts per outcome of the S2 D3 classifier (section 5.4), and the ids it
   failed.
 - How the core reaches the main module (caller rebuild, admission, generated values, adapters, scheduling) is C's
@@ -179,10 +206,12 @@ use full ids and declared aliases only. Two workflows of different intents with 
   is a match or an id list, never the intent word.
 - `profile(contract)` returns the reasons a shape cannot serve a contract; the store calls it at save for every row
   whose selector selects the workflow.
-- `to_run_request` stages uploads through the request spool and returns a `RunRequest` (or its own error response for a
-  malformed wire request). `to_response(outcome, row, jobs=..., caller=...)` is async: for `mode: sync` it waits through
-  `JobService.wait`, reads results through `open_result`, and renders success, failure, refusal, wait timeout and
-  replay in its own vocabulary.
+- `to_run_request(request, row, snapshot, *, spool)` stages uploads through the `RequestSpool` it is given and returns
+  a `RunRequest` (or its own error response for a malformed wire request). `to_response(outcome, row, jobs=...,
+  caller=...)` is async: for `mode: sync` it waits through `JobService.wait`, reads content through
+  `JobService.open_result` with the caller, and renders success, failure, refusal, wait timeout and replay in its own
+  vocabulary.
+- `selects` is the selector mapping as the row file writes it; rows are checked with `selector_problems` at load.
 - Route aliases (`RouteSpec.aliases`) are path aliases. Model aliases are names in the name view; resolving a model
   field to a workflow is the name view's job, not a route alias.
 
@@ -205,10 +234,12 @@ in a later train (cut, section 12): they add no rule and the oracle does not nee
 
 ### I7. Defaults (S8)
 
-Only the defaults S4 to S7 actually read move in this train, each to a `registry/defaults/<section>.yml` file with its
-schema, read through the config-homes reader: `workflow_execution.max_wait_s` (60), `workflow_execution.history_depth`
-(20), `workflow_bounds.{max_template_bytes, max_nodes, max_depth}` (section 5.7). `workflow_execution.compile_from_pin`
-is deleted. Other literal defaults stay where they are.
+Only the defaults S4 to S7 actually read move in this train, all in the existing `workflow_execution` section
+(`registry/defaults/workflow_execution.yml` and its schema), read through the config-homes reader with the code's value
+as the ceiling, as `result_limits` is read today: `workflow_execution.max_wait_s` (60),
+`workflow_execution.history_depth` (20), `workflow_execution.bounds.{max_template_bytes, max_nodes, max_depth}`
+(section 5.7). `workflow_execution.compile_from_pin` is deleted. Builder C owns the section's schema and file and adds
+all four keys; A reads `history_depth` and `bounds` by these names. Other literal defaults stay where they are.
 
 ## 4. Prior art
 
@@ -255,11 +286,12 @@ a Lambda durable execution stays on its version when the alias moves (section 4)
 
 ### 5.2 Update, disable and delete while queued or running
 
-**The first-effect boundary.** A job is *running* from the moment the worker commits status `running` in the job
-store. The worker does, in this order: commit `running`; then the dispatch checks below, against the provider's
-current snapshot and the current caller; then the first effect (adapter submit). A change committed after the checks
-pass is a change *while running*. A change committed before them is a change *while queued*. There is no window in
-which a job is neither.
+**The dispatch point.** Two things are separate: the job's observable status and the point that decides which owner
+changes it obeys. The worker does, in this order: commit status `running`; take the provider's current snapshot (the
+**dispatch snapshot**); run the dispatch checks below against it and the current caller; then the first effect
+(adapter submit). An owner change that is visible in the dispatch snapshot applies to the job as to a *queued* job,
+even though its status already reads `running`. A change that is not in it (committed later) applies as to a
+*dispatched* job. The table's two columns are these two cases, so every change falls in exactly one.
 
 **The dispatch checks** (once, in this order; a failure fails the job with its code and makes no engine call):
 1. Rebuild the caller from the spool (`_auth_context_from_image_job_payload`): a revoked key, App, person or MCP
@@ -271,12 +303,12 @@ which a job is neither.
 4. Its current facts and the current caller pass the workflow target policy (exposure, plan), as revocation does; no
    facts fails closed (`needs_policy`). The current `published` flag is **not** re-checked: unpublish controls new
    submissions and visibility, not admitted work.
-5. `entry_problems` is empty for the pinned binding's adapter.
+5. `binding_problems` is empty for the PINNED binding (I3), whatever the live entry's bindings are now.
 6. Re-admission (no queue count).
 
 The pinned contract, binding and template are what runs; the live entry supplies only these checks.
 
-| Owner action | Queued job | Running job |
+| Owner action | Not yet dispatched (the change is in the dispatch snapshot) | Dispatched (the change is not) |
 |---|---|---|
 | Update (contract, binding, facts) | Runs its pinned definitions; current facts are re-checked (check 4). | Finishes on its pin. |
 | Disable | Fails at dispatch with `workflow_disabled` if the workflow is still disabled then. Disable then enable before dispatch: the job runs. | Finishes. The owner can cancel it. |
@@ -317,14 +349,19 @@ from a pin; it fails with `pin_not_recorded` (a new failure code; the existing 5
 first; there are usually none, because routes that generate values already require an envelope.
 
 A job whose envelope does not parse (an unknown `envelope_version`) fails with `envelope_version_unsupported` and is
-counted. Restart after a crash uses the pin. "Run again" (an owner or App asking for a finished job to be repeated) is
+counted. When a job is not resumed or replayed, recovery uses `binding_problems` on the PINNED binding, never the live
+entry's bindings. Restart after a crash uses the pin. "Run again" (an owner or App asking for a finished job to be repeated) is
 a new `submit_run` against the current definition, a new job with a new pin, and says so in its receipt. There is no
 "rerun on the old definition" in this train: an owner who wants that restores the old version first (5.5).
 
 **Envelope versions.** Envelope v2 adds `source.incarnation` and `source.binding_key` (section 7.4). The new build
 reads v1 and v2 and writes v2. A v1 job (queued before the train) has no incarnation and no binding key: dispatch check
-2 compares only presence, and the receipt names the binding as unknown. Nothing rewrites an old pin from the live
-registry.
+2 compares only presence, and its job view and receipt show `record_revision` and `binding_key` as unknown (None).
+Nothing rewrites an old pin from the live registry, and nothing invents a revision for it. **The v1 exception:** a
+delete and a create of the same id between a v1 job's queueing and its dispatch is not detected. The train closes the
+exception operationally: its deploy refuses to start while any workflow job without a v2 envelope is queued (a
+pre-deploy query, listed in the deploy log), so no v1 job reaches the new build's dispatch in practice. The v1 reader
+stays for robustness (a job queued during the deploy window by the old build).
 
 ### 5.5 Rollback
 
@@ -333,7 +370,9 @@ registry.
   `scripts/safe-restart` drains running async media jobs before it restarts, so there is no mixed fleet and no
   running v2 engine job is left to an older build. Queued v2 jobs are the exposure: the previous build reads only v1
   and fails them as `definition_unavailable` (its existing parse failure), with no engine call. The train's rollback
-  note says so and lists the queued workflow jobs at rollback time. Stored workflow records stay readable by the
+  note says so and lists the queued workflow jobs at rollback time. The single-instance and drain claims are verified
+  on the real rollback path before the train ships (a rehearsal with a queued and a running job), not assumed from
+  this design. Stored workflow records stay readable by the
   previous build only if their schema step is one it knows; the schema step of section I2 (published and state) is
   additive, so the previous build ignores the new keys.
 
@@ -351,7 +390,7 @@ workflow by inputs is a frontend selection over declared ids, not a name clash; 
 
 A stored workflow may carry its template inline (`bindings.<key>.template: {inline: {...}}`). Bounds, checked at save
 and again at pin: template bytes (canonical JSON) at most 512 KiB, nodes at most 2,000, nesting depth at most 32. The
-limits are deployment data (`workflow_bounds`, I7). A bundled workflow keeps its template path; the loader reads it
+limits are deployment data (`workflow_execution.bounds`, I7). A bundled workflow keeps its template path; the loader reads it
 into a blob at load, so the job pins the same digest either way.
 
 ### 5.8 Cache invalidation
@@ -395,7 +434,9 @@ which revision ran.
 | `frontend_profiles` (keyed by intent) | `FrontendShape.profile` (I5), run for the rows whose selector selects the workflow |
 
 A builder that finds another table keyed by an intent, capability word, model or engine adds it here in the same
-commit. The final review greps for dict literals keyed by intent strings.
+commit. The final review audits every form, not only dict literals: comparisons, `startswith`/`endswith`, set
+membership and imported tables (the freeze review's readable-site inventory is the starting list). Reviewed adapter,
+wire and security sites stay, each listed with its reason; a security check is never removed to lower the count.
 
 ## 7. S6: the generic run route
 
@@ -406,32 +447,51 @@ multipart with a JSON part `inputs` and file parts named by input (repeat a name
 input may instead be a library asset reference `{"asset_id": "..."}` in `inputs` (the shared library input, per the
 Library pick rule). The `Idempotency-Key` header is the idempotency key.
 
-Uploads: the frontend shape streams each file part into the **request spool** (sniffed type, size, digest, original
-filename) and passes `MediaRef(spool_key=...)`. `submit_run` adopts the staged files into the new job's spool in the
-step that creates the job, so a queued job owns its inputs before it is visible. Staged files no job adopted (a
-refusal, a replay, an error) are deleted when the request ends. Library assets are checked for the caller at submit
-and again at dispatch (check 1 of 5.2 covers the caller; the asset read is the existing ownership rule). Peak memory
-stays bounded by streaming to the spool, as the audio job route does today.
+Uploads: the frontend shape streams each file part into the **request spool** and passes the `MediaRef` it gets back.
+The spool is the C to D handoff (`RequestSpool` in I4); C writes it:
+- **Holder.** The request-scope hook creates one spool per request, stores it on `request.state`, and calls `release`
+  when the request ends, on every path.
+- **Stage.** `stage(input_name, chunks, filename=, wire_media_type=)` streams one file in and measures its type, size
+  and digest; it refuses over-size (413) or an unknown type (415) without keeping the bytes. It returns the `MediaRef`
+  with `spool_key`, the measured `media_type` and the caller's `wire_media_type`.
+- **Adopt.** `submit_run` adopts the staged files of a NEW job into that job's spool before the job row commits (a
+  move in one filesystem). If the commit fails, C deletes the job spool, and the request answers the failure. A
+  refusal, a replay or an error adopts nothing.
+- **Release.** `release` deletes every staged file that no job adopted.
+- **Addressing.** A multipart file part is named by a top-level input name; a repeated name is a multi-item input. A
+  part addressed below a top-level name (a nested path) is refused by the shape with `media_path_unsupported` (422).
+Library assets are checked for the caller at submit and again at dispatch (check 1 of 5.2 covers the caller; the asset
+read is the existing ownership rule). Peak memory stays bounded by streaming to the spool, as the audio job route does
+today.
 
 ### 7.2 Submit order: replay first
 
 `submit_run` does, in this order:
-1. **Replay.** With an idempotency key, compute the request identity (owner scope, maker, workflow id, binding key,
-   inputs, media digests) and look the key up (`media_jobs`' existing replay rule: same owner scope, maker and input
-   hash, within the replay window). A match returns that job's view with `disposition: replay` and adopts nothing,
-   draws nothing, admits nothing, validates nothing against the current contract. A key with a different identity is
-   `idempotency_conflict` (409).
+1. **Claim the key.** With an idempotency key, compute `run_identity(owner scope, maker, req)` (kernel) and, in one
+   `BEGIN IMMEDIATE` transaction on the media-jobs database, read or insert the key's **claim** row (owner scope, maker,
+   key, identity, `job_id` null, `claimed_at`), scoped as `media_jobs`' replay rule is (same owner scope and maker,
+   within the replay window). Then:
+   - the claim exists with another identity: 409 `idempotency_conflict`;
+   - it exists with this identity and names a job: answer that job's view with `disposition: replay` (nothing staged
+     is adopted, nothing drawn, admitted or validated against the current contract);
+   - it exists with this identity and names no job yet (another request holds it): wait up to a short bound (2 s) for
+     it to name a job or be released; then replay, or answer 409 `idempotency_in_progress` with `retry_after_s`;
+   - it was inserted now: this request holds the claim and continues. A claim older than the request timeout with no
+     job is stale and is taken over in the same transaction.
+   Only the claim holder does steps 2 to 6, so a same-key contender never draws, never meets an admission limit the
+   winner filled, and never validates against a contract edited in between (S3's "same-key replay draws nothing" holds
+   without exception).
 2. Resolve the entry in the request's snapshot; the workflow target policy (exposure, `published`, plan);
    `entry_problems` empty.
 3. Validate inputs against the current contract (`validate_inputs`) and media against `ExecutionProfile.accepts`
    (types, size, item counts); every problem at once (422).
 4. Admission (`resource_class` from the profile).
 5. Generated values, once (S2).
-6. Build the v2 envelope and `media_jobs.create(..., envelope=..., require_envelope=True)` with the adopted spool. The
-   create keeps its own replay check under `BEGIN IMMEDIATE`: if a concurrent request with the same key won, create
-   returns that job, this request returns it as a replay, and its own generated values are discarded unseen. So a
-   replay never shows a second draw, and the race is safe without a separate unchecked read.
-7. Schedule. Answer `RunJobView` with `disposition: new`.
+6. Build the v2 envelope; adopt the staged files; `media_jobs.create(..., envelope=..., require_envelope=True)` and set
+   the claim's `job_id`, in one transaction. Schedule. Answer `RunJobView` with `disposition: new`.
+7. A refusal in steps 2 to 6, or an error, **releases the claim** (deletes the row) before answering, so a retry with
+   the same key is evaluated again. This is Stripe's rule: a request that fails before it starts work saves no result
+   for its key. Requests without a key skip steps 1 and 7.
 
 ### 7.3 Always a job, with a bounded wait
 
@@ -487,26 +547,38 @@ the goldens decide (S7).
 
 ### 10.1 Children and file ownership
 
-| Child | Slice | Owns (writes) | Reads | Route |
+Every file the train touches has one owner. The design owner (this thread) is the integrator: it merges the branches
+on `release/c2d-int`, resolves `tests/budgets.toml` and frozen-snapshot conflicts, and owns the interface files.
+
+| Owner | Slice | Owns (writes) | Reads | Route |
 |---|---|---|---|---|
-| A | S4 store | `gateway/workflow_registry_store.py` (new), `gateway/service_registry.py` workflow section and the name check on every document write, `gateway/admin_store.py` holders, `gateway/definition_store.py` holders, the owner routes in `gateway/admin_api.py` (and the whole-document PUT's name check) | I1, I2, I6, kernel | Sonnet child |
-| B | S5 snapshot and projections | `gateway/registry_snapshot.py` (new: the snapshot and name-view builder, the `SnapshotProvider`, the request-scope hook), `gateway/workflow_projections.py` (new), `gateway/workflow_policy.py` (the `resource_class` fact: parser, schema and data migration in one commit), `registry/workflow_policy.yml`, `gateway/workflow_openapi.py`, `gateway/workflows_catalog.py`, `gateway/model_metadata.py`, `gateway/local_capabilities.py`, `gateway/api.py` (registry reads move to the provider) | I1, I3, kernel | Sonnet child |
-| C | S6 run core | `gateway/workflow_run.py` (new: `RunCore`, `JobService`, its port to the main module), the generic route row, `gateway/workflow_envelope.py` v2 (read 1 and 2), `gateway/job_envelope.py`, the request spool and adoption, recovery wiring | I1, I3, I4, kernel | Sonnet child |
-| D | S7 frontends | `gateway/frontend_shapes/` (new), `registry/protocol_frontends.yml`, the modality route handlers in the main module, templates for chain, subject-select and identity | I4, I5, kernel | Sonnet child; golden test design on the dot |
-| E | S8 | `registry/defaults/*` (the I7 keys only), the web Workflows owner view | I6, I7 | the dot |
+| Design owner | interfaces | `gateway/workflow_runtime_types.py`, `gateway/workflow_kernel.py`, `tests/workflow_runtime_fakes.py`, `tests/test_workflow_runtime_types.py`, this document; integration merges | all | this thread |
+| A | S4 store | `gateway/workflow_registry_store.py` (new); `gateway/service_registry.py` (the workflow section, the record schema step, and one name-check function every document writer calls); `gateway/admin_store.py` (registry writers call the name check; history holders); `gateway/definition_store.py` (holders); `gateway/admin_api.py` (the I6 routes and the whole-document PUT's name check) | I1, I2, I6, kernel | Sonnet child |
+| B | S5 snapshot and projections | `gateway/registry_snapshot.py` (new: builder, name view, `SnapshotProvider`); `gateway/workflow_projections.py` (new); `gateway/workflow_policy.py` and `registry/workflow_policy.yml` (the `resource_class` fact, parser, schema and data in one commit); `gateway/workflow_openapi.py`; `gateway/workflows_catalog.py`; `gateway/model_metadata.py`; `gateway/local_capabilities.py`; in `gateway/api.py` only `create_gateway_router`'s registry reads: `list_workflows`, `get_workflow`, `list_capabilities`, `list_aliases`, `resolve_alias_dry_run`, `list_extensions`, `get_model_capabilities` | I1, I3, kernel | Sonnet child |
+| C | S6 run core | `gateway/workflow_run.py` (new: `RunCore`, `JobService`, `AdapterAvailability`, its port); `gateway/request_spool.py` (new: `RequestSpool` and the request-scope hook); `gateway/media_jobs.py` (the claim table and adoption in create); `gateway/workflow_envelope.py` and `gateway/job_envelope.py` (v2, read 1 and 2; blob bytes through the kernel); `gateway/pinned_definitions.py`; `registry/defaults/workflow_execution.yml` and its schema (I7); in `gateway/api.py` the media-job providers and routes: `store_creator`, `with_results`, `store_getter`, `store_many`, `store_lister`, `store_event_appender`, `store_event_lister`, `store_canceler`, `create_media_job`, `list_media_jobs`, `get_media_job`, `get_media_job_result`, `list_media_job_events` and the cancel route | I1, I3, I4, kernel | Sonnet child |
+| D | S7 frontends | `gateway/frontend_shapes/` (new); `registry/protocol_frontends.yml` (every row; the generic run route is C's code route, not a row); `gateway/frontend_profiles.py` (its `check` body becomes the shape profiles over the bundled rows; its callers in `manifests.py`, `service_registry.py` and `extension_packages.py` do not change); the profile registration in `gateway/mesh_api.py`; the bundled templates for chain, subject-select and identity; the golden fixtures and scenarios under `tests/fixtures/adapter_differential/` and `tests/support/adapter_differential*.py` | I4, I5, kernel | Sonnet child; golden test design on the dot |
+| E | S8 owner view | the web Workflows owner view under `web/src` (list, detail with history and restore, editor with check problems at their paths, publish and state toggles with the ETag) | I6 | the dot |
+
+**Main-module functions, by owner** (one owner each; a child that needs another function stops and asks):
+- A: none (the I6 routes live in `admin_api.py`; if their router needs registering, the design owner adds the line).
+- B: the request-scope hook registration (one middleware line) and the snapshot swap inside `reload_runtime_config`.
+- C: `run_video_manifest_workflow` and its operation-table entry (the generic route on the same path, section 7.6),
+  `_recover_media_jobs` (calls `recover_runs`), the worker scheduling for `workflow.run` jobs, and every read of
+  `_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT` outside the modality handlers.
+- D: the handler bodies of the operations `images.generate`, `images.edit`, `images.variations`, `audio.generate`,
+  `videos.create`, `videos.edit`, `videos.remix`, `videos.extend`, the mesh routes, and
+  `/gateway/v1/media/jobs/image-generations`; `_run_image_media_job` and `_schedule_image_media_job` go when the image
+  jobs route moves; the intent tables of 6.3 that those handlers read.
+- Tests: each child writes the tests of the files it owns, and refreshes a frozen snapshot only for its own change.
 
 The snapshot builder's signature, which A calls and B writes: `registry_snapshot.build(document, bundled, *,
 generation) -> RegistrySnapshot`, where `document` is the service-registry document at generation `generation` and
 `bundled` is the bundled release. Until B lands, A uses `tests/workflow_runtime_fakes.FakeSnapshot`.
 
-The main module is edited by A (owner route registration only), B (the request-scope hook registration), C (route row
-wiring, worker and recovery calls) and D (handler bodies). Each child keeps its main-module edits to the functions its
-brief names and lists them in its report.
-
 ### 10.2 What forces an order
 
 1. **The interfaces and the kernel, first.** `gateway/workflow_runtime_types.py`, `gateway/workflow_kernel.py`, the
-   fakes and this document are frozen (draft 2 plus its re-review) before any child starts. The kernel removes the
+   fakes and this document are frozen (draft 3 and its review) before any child starts. The kernel removes the
    semantic dependencies the review found between A, B and D (names, generated names, selectors, digests): each of them
    calls the same code instead of matching a description.
 2. **Fakes, not waits.** Each child builds against the fakes of the interfaces it reads. The fakes keep the contracts,
@@ -537,10 +609,10 @@ deploy lists them.
 | 5 | Delete while queued: `workflow_deleted`, no engine call. | |
 | 6 | Revoke the caller's key while queued: the job fails, no engine call. | revocation at run |
 | 7 | Two edits with the same `If-Match`: the second gets 412. | CAS |
-| 8 | Save with an id whose token equals a listed model alias, a frontend id, or another workflow's generated name: each 422 `id_clash`. | clash refusal |
+| 8 | Save with an id whose token equals a listed model alias, a frontend id, or another workflow's id or alias: each 422 `id_clash`. A workflow's own alias with its id's token is not a clash. | clash refusal |
 | 9 | Save an inline template over each bound (bytes, nodes, depth): 422 with the bound. | bounds |
 | 10 | Restart with a queued job of each capability: each resumes from its pin; an unfinished job without an envelope fails `pin_not_recorded`. | restart |
-| 11 | Restore an old record revision: a new revision with the old record digest. | rollback |
+| 11 | Restore an old record revision: a new revision whose contract, facts, published flag and overrides equal the old record's, and whose state and incarnation are the current ones (its record digest equals the old one only when the state is unchanged). | rollback |
 | 12 | OpenAPI before and after a workflow edit differ in that workflow's schema. | cache key |
 | 13 | Every modality golden is byte-identical (or structure-identical where it holds ids and times). | frontends preserve behaviour |
 | 14 | The core module has zero domain literals; the ratchet is under the target with every remaining site listed. | the rule |
@@ -548,7 +620,7 @@ deploy lists them.
 | 16 | Queue a job, delete the workflow, create the same id again, dispatch: `workflow_deleted`, no engine call. | incarnation |
 | 17 | Queue, disable, enable, dispatch: the job runs. Queue, disable, dispatch: `workflow_disabled`. | the stated disable rule |
 | 18 | Submit with a key, add a required input to the workflow, submit the same request with the same key: the first job, `disposition: replay`, no second generated value. The same key with other inputs: 409 `idempotency_conflict`. | replay first |
-| 19 | Two concurrent submits with one key: one job; both answers name it. | race-safe create |
+| 19 | Two concurrent submits with one key and one identity: one job and one generated draw. The second answer names the job (replay), or is 409 `idempotency_in_progress` and a retry names it. A first submit refused at admission releases the claim: a retry is evaluated again. | race-safe claim |
 | 20 | Edit only a frontend row or only a model alias: the snapshot digest changes and OpenAPI is rebuilt. | snapshot identity |
 | 21 | Two saves that differ only in annotations: two history rows, the same `contract_digest`; restore of the first gives the first record's annotations. | history identity |
 | 22 | Add a model alias whose token equals a workflow id (whole-document PUT): 422 `id_clash`. Save workflows `x.a-b` and `x.a.b`: the second is refused. | names in both directions |
@@ -556,6 +628,9 @@ deploy lists them.
 | 24 | A v1 envelope queued before the train runs on the new build. | v1 read |
 | 25 | A refused multipart submit leaves no staged file; an accepted one moves its files into the job spool. | media ownership |
 | 26 | Cancel a queued job, cancel a finished job, cancel racing completion: each ends in one committed state and the job service answers it. | cancel |
+| 27 | A JSON-result job: its status (`get`, `wait`, the job routes) holds result references and no value; `open_result` returns the value to the maker and refuses another reader of the job with `result_unavailable`. | result privacy |
+| 28 | Queue a job on binding A, change the workflow to binding B whose adapter is missing, dispatch: the job runs on A. Queue on A, remove A's adapter, dispatch: the job fails with A's problem and no engine call. | pinned availability |
+| 29 | An upload whose declared type differs from its measured type: validation uses the measured type, the adapter sends the declared one (as today). A file part addressed below an input name: 422 `media_path_unsupported`. | media handoff |
 
 ## 12. Open questions and cuts
 
@@ -571,7 +646,7 @@ deploy lists them.
 6. **Cut from this train** (the oracle does not need them): the projection cache (5.8), the MCP owner tools and the
    owner CLI (I6), defaults outside the I7 keys, an expression language for selectors.
 
-## 13. Draft 2: the freeze review and where each finding is answered
+## 13. The freeze reviews and where each finding is answered
 
 | Review finding (dot, `azizam-c2d-s4s8-design-review-1108`) | Answer |
 |---|---|
@@ -585,3 +660,18 @@ deploy lists them.
 | P2 execution digest versus history identity; refs released too early | I1 (`record_digest`), I2 (restore by record revision), 3.0 (`execution_digest`), 5.1 (refs until envelope deletion); matrix 21 |
 | P2 fakes teach wrong semantics | the fakes rewritten; `tests/test_workflow_runtime_types.py` proves missing facts, kept state, incarnation, annotation-only restore, read-only views, listener isolation, replay |
 | Cuts | section 12 item 6 |
+
+### 13.1 Draft 3: the re-review and where each finding is answered
+
+| Re-review finding (dot, `azizam-c2d-s4s8-design-rereview-1108`) | Answer |
+|---|---|
+| P1 replay not resolved before validation and admission; a loser could draw | 7.2: a per-key claim before any rejectable work; only the holder validates, admits, draws and creates; a refusal releases the claim; an undecided claim answers 409 `idempotency_in_progress`. Kernel `run_identity` (digests, never spool keys). Fake binds the key to `run_identity` and keeps terminal jobs terminal. Matrix 19 |
+| P1 a JSON value on the common job view bypasses the result-reader rule | I4: `ResultRef` only on `RunJobView`; content only through `JobService.open_result` (`ResultContent`, `ResultUnavailable`). Matrix 27 |
+| P2 no C to D spool interface; caller wire type lost | I4 `RequestSpool` (holder, stage, adopt, release, nested-path refusal), `MediaRef.wire_media_type`; 7.1. Matrix 25, 29 |
+| P2 availability judged on live bindings; output limits missing; dispatch cutoff ambiguous | I3: `AdapterAvailability`, `entry_problems` for new runs, `binding_problems` for the pinned binding; `execution_profile(..., limits=ResultLimits)` with S3's `effective_count`; 5.2 the dispatch snapshot decides, the table's columns say so. Matrix 28 |
+| P2 selector validator accepts values the matcher cannot decide; two representations | 3.0 and the kernel: every value checked, non-empty sections, a total matcher; `FrontendRow.selects` is the mapping; `WorkflowSelector` removed |
+| P2 owner identity, canonical lookup, fake names, matrix 8 | kernel `owner_entity`; `NameOwner.id` is the owning entity; a multi-target name is a frontend row; `FakeNames` looks up by token and holds frontends and routes; the fake save runs its check over the public `NameView`; matrix 8 reworded |
+| P2 output-schema annotations change the digest | kernel strips annotations in output `schema` too, never in values; the digest is over `job_envelope.canonical_bytes`, so the definition store keys and the kernel agree |
+| P2 v1 provenance and the incarnation exception | I4: `record_revision` and `binding_key` nullable on the job view and the receipt identity; 5.4 states the v1 exception and closes it at deploy (no queued job without a v2 envelope) |
+| P2 `JobService` events and errors; file ownership | I4: `events`, `JobNotFound`, `ResultUnavailable`; 10.1: one owner per file, `api.py` and the main module split by named function, the generic route is C's code route, `frontend_profiles.check` keeps its callers, C owns `media_jobs.py`, the spool and the I7 keys, the design owner integrates |
+| After freeze (accepted as work, not blockers) | matrix 11 reworded; the rollback rehearsal (5.5); the all-forms literal audit (6.3); measure uncached projections and sync-over-job latency (section 12) |

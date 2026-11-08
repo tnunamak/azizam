@@ -2,25 +2,36 @@
 
 More than one builder must apply each rule here the same way, so each is written once: the canonical name token and the
 names a workflow id generates (the store's clash check and the OpenAPI builder), the name-clash rule over a whole
-prospective revision, the execution digest (annotations never change what runs), and the closed selector schema
-(frontend rows and the store's save check). No I/O, no globals, no domain words.
+prospective revision, the execution digest (annotations never change what runs) and its byte encoding, the identity of
+a run request for idempotent replay, and the closed selector schema (frontend rows and the store's save check). No I/O,
+no globals, no domain words.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from gateway.job_envelope import canonical_bytes
 from gateway.manifests import ContractError
 from gateway.workflow_runtime_types import ID_CLASH, NameOwner
+
+if TYPE_CHECKING:
+    from gateway.workflow_runtime_types import RunRequest
 
 _NON_TOKEN = re.compile(r"[^a-z0-9]+")
 # Kinds that share one address space: a request can name any of them where it names a target (a model field, an MCP
 # target, a route segment). Routes have their own space (method and canonical path).
 TARGET_KINDS = frozenset({"workflow", "workflow_alias", "model", "model_alias", "frontend"})
+# An alias addresses the entity it names: a workflow and its alias, or a model and its alias, are one owner.
+_ENTITY_OF = {"workflow_alias": "workflow", "model_alias": "model"}
+
+
+def owner_entity(owner: NameOwner) -> tuple[str, str]:
+    """The owning entity of a name: (entity kind, id). Two names with one owning entity never clash."""
+    return _ENTITY_OF.get(owner.kind, owner.kind), owner.id
 
 
 def canonical_token(name: str) -> str:
@@ -47,13 +58,15 @@ def name_clashes(names: Iterable[tuple[str, NameOwner]]) -> tuple[ContractError,
     workflow its id, its declared aliases and its ``generated_names`` (owner kind ``operation`` and ``component`` with
     the workflow id); model ids and model aliases; frontend ids; route keys (``route_key``, owner kind ``route``).
 
-    Target kinds share one token space; operation, component and route names each have their own. One owner may hold a
-    name many times (a workflow's id and its component share a token). Two different owners of one token clash."""
+    Target kinds share one token space; operation, component and route names each have their own. One owning entity
+    (``owner_entity``) may hold a token many times: a workflow's id and its alias, or its id and its component name. Two
+    different owning entities of one token clash. Because operation and component names derive from the id's token, two
+    workflows whose generated names collide already clash in the target space."""
     spaces: dict[tuple[str, str], dict[tuple[str, str], str]] = {}
     for name, owner in names:
         space = "target" if owner.kind in TARGET_KINDS else owner.kind
         token = name if owner.kind == "route" else canonical_token(name)
-        holder = (owner.kind, owner.id)
+        holder = owner_entity(owner)
         spaces.setdefault((space, token), {}).setdefault(holder, name)
     problems = []
     for (space, token), holders in sorted(spaces.items()):
@@ -64,6 +77,9 @@ def name_clashes(names: Iterable[tuple[str, NameOwner]]) -> tuple[ContractError,
 
 
 def _strip_spec(spec: Any) -> Any:
+    """One schema node without ``annotations``, recursing only where the grammar nests schema nodes (``properties``
+    and ``items``). Values (``default``, ``enum``, ``const``, examples) are data and are never touched, even when they hold
+    a key named ``annotations``."""
     if not isinstance(spec, Mapping):
         return spec
     out = {key: value for key, value in spec.items() if key != "annotations"}
@@ -74,40 +90,69 @@ def _strip_spec(spec: Any) -> Any:
     return out
 
 
-def execution_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
-    """The contract without its annotations (root, input specs and their nested properties and items, output specs):
-    S3 says annotations never execute, so they never change the execution digest."""
-    out = {key: value for key, value in contract.items() if key != "annotations"}
-    for section in ("inputs", "outputs"):
-        if isinstance(out.get(section), Mapping):
-            out[section] = {name: _strip_spec(spec) for name, spec in out[section].items()}
+def _strip_output(spec: Any) -> Any:
+    """An output spec without ``annotations``, and its JSON ``schema`` (S3 D5: the input grammar) stripped the same
+    way as an input spec."""
+    out = _strip_spec(spec)
+    if isinstance(out, Mapping) and "schema" in out:
+        out = {**out, "schema": _strip_spec(out["schema"])}
     return out
 
 
-def _plain(value: Any) -> Any:
-    """Read-only views (the snapshot's mappings) digest as the dicts they show."""
+def execution_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
+    """The contract without its annotations: root, input specs (with nested properties and items), output specs and
+    their JSON output schemas. S3 says annotations never execute, so they never change the execution digest."""
+    out = {key: value for key, value in contract.items() if key != "annotations"}
+    if isinstance(out.get("inputs"), Mapping):
+        out["inputs"] = {name: _strip_spec(spec) for name, spec in out["inputs"].items()}
+    if isinstance(out.get("outputs"), Mapping):
+        out["outputs"] = {name: _strip_output(spec) for name, spec in out["outputs"].items()}
+    return out
+
+
+def _thaw(value: Any) -> Any:
+    """Read-only views (the snapshot's mappings and tuples) as the plain JSON values they show."""
     if isinstance(value, Mapping):
-        return dict(value)
-    raise TypeError(f"{type(value).__name__} is not canonical JSON")
+        return {str(key): _thaw(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw(child) for child in value]
+    return value
 
 
 def digest(value: Any) -> str:
-    """``sha256:<hex>`` of canonical JSON (sorted keys, no spaces, UTF-8)."""
-    body = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                      default=_plain).encode("utf-8")
-    return "sha256:" + hashlib.sha256(body).hexdigest()
+    """``sha256:<hex>`` of ``job_envelope.canonical_bytes`` (sorted keys, no spaces, ASCII escapes, no NaN): the bytes
+    the definition store already keys blobs by, so a digest computed here names the blob a job pinned."""
+    return "sha256:" + hashlib.sha256(canonical_bytes({"v": _thaw(value)})).hexdigest()
 
 
 def execution_digest(contract: Mapping[str, Any]) -> str:
-    return digest(execution_contract(contract))
+    """The digest of ``execution_contract``. The definition store keys the contract blob by
+    ``canonical_bytes(execution_contract(contract))``; builder C writes and reads it with this module's functions."""
+    return "sha256:" + hashlib.sha256(canonical_bytes(_thaw(execution_contract(contract)))).hexdigest()
+
+
+def run_identity(owner_scope: str, maker: str, req: RunRequest) -> str:
+    """What an idempotency key is bound to: owner scope, maker, workflow id, binding key, the inputs, and each media
+    input's item digests in order. Never a spool key, a file name, a wait or a frontend: two requests that stage the same
+    bytes are one request."""
+    media = {name: [ref.digest for ref in refs] for name, refs in sorted(req.media.items())}
+    return digest({"owner_scope": owner_scope, "maker": maker, "workflow_id": req.workflow_id,
+                   "binding_key": req.binding_key, "inputs": req.inputs, "media": media})
 
 
 # The closed selector schema. A row selects explicit ids, or every workflow whose contract matches:
-#   {"inputs": {<name>: {"type": <json type>} | {"media_type": <type or family/*>}},
+#   {"inputs": {<name>: {"type": <input type>} | {"media_type": <type or family/*>}},
 #    "outputs": {"kind": "json" | "assets", "media_type": <type or family/*>}}
-# Every key is optional; an empty match selects nothing.
+# ``match`` holds at least one of inputs and outputs, each present section holds at least one predicate, and every value
+# is checked here, so ``selector_matches`` is total over every selector that ``selector_problems`` accepts.
 _INPUT_KEYS = frozenset({"type", "media_type"})
 _OUTPUT_KEYS = frozenset({"kind", "media_type"})
+INPUT_TYPES = frozenset({"string", "integer", "number", "boolean", "asset", "object", "array"})   # workflow.schema.json
+_MEDIA_TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/([a-z0-9][a-z0-9.+-]*|\*)$")
+
+
+def _media_type_ok(value: Any) -> bool:
+    return isinstance(value, str) and bool(_MEDIA_TYPE.match(value))
 
 
 def selector_problems(selector: Mapping[str, Any]) -> tuple[ContractError, ...]:
@@ -127,16 +172,23 @@ def selector_problems(selector: Mapping[str, Any]) -> tuple[ContractError, ...]:
             problems.append(ContractError(("selects", "match"), "selector_match",
                                           "match holds inputs and/or outputs, and is not empty"))
         else:
-            inputs = match.get("inputs", {})
-            if not isinstance(inputs, Mapping) or not all(
-                    isinstance(v, Mapping) and len(v) == 1 and set(v) <= _INPUT_KEYS for v in inputs.values()):
-                problems.append(ContractError(("selects", "match", "inputs"), "selector_match",
-                                              "each input holds exactly one of type or media_type"))
-            outputs = match.get("outputs", {})
-            if not isinstance(outputs, Mapping) or set(outputs) - _OUTPUT_KEYS \
-                    or outputs.get("kind", "json") not in ("json", "assets"):
-                problems.append(ContractError(("selects", "match", "outputs"), "selector_match",
-                                              "outputs holds kind (json or assets) and/or media_type"))
+            if "inputs" in match:
+                inputs = match["inputs"]
+                if not isinstance(inputs, Mapping) or not inputs or not all(
+                        isinstance(name, str) and name and isinstance(v, Mapping) and len(v) == 1
+                        and set(v) <= _INPUT_KEYS
+                        and (v.get("type") in INPUT_TYPES if "type" in v else _media_type_ok(v.get("media_type")))
+                        for name, v in inputs.items()):
+                    problems.append(ContractError(("selects", "match", "inputs"), "selector_match",
+                                                  "inputs names at least one input, each with exactly one of type (an "
+                                                  "input type) or media_type (type/subtype or family/*)"))
+            if "outputs" in match:
+                outputs = match["outputs"]
+                if not isinstance(outputs, Mapping) or not outputs or set(outputs) - _OUTPUT_KEYS \
+                        or ("kind" in outputs and outputs["kind"] not in ("json", "assets")) \
+                        or ("media_type" in outputs and not _media_type_ok(outputs["media_type"])):
+                    problems.append(ContractError(("selects", "match", "outputs"), "selector_match",
+                                                  "outputs holds kind (json or assets) and/or media_type, at least one"))
     return tuple(problems)
 
 
@@ -155,7 +207,8 @@ def _input_fits(wanted: str, spec: Mapping[str, Any]) -> bool:
 
 
 def selector_matches(selector: Mapping[str, Any], workflow_id: str, contract: Mapping[str, Any]) -> bool:
-    """Whether a valid selector (``selector_problems`` is empty) selects this workflow."""
+    """Whether a valid selector (``selector_problems`` is empty) selects this workflow. Inputs must all match (AND);
+    outputs match when any one output fits."""
     if "ids" in selector:
         return workflow_id in selector["ids"]
     match = selector["match"]

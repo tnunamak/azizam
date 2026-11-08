@@ -1,7 +1,9 @@
 """In-memory fakes of the S4-S8 interfaces (gateway/workflow_runtime_types.py), for builders that code against an
 interface another builder owns. They hold data and record calls, and they keep the contracts the real modules keep
 (fail-closed facts, state kept across edits, annotation-free execution digests, read-only views, listener isolation,
-replay by idempotency key). They decide no policy and run nothing."""
+canonical name lookup, the name check on save, replay by request identity, terminal jobs stay terminal). They decide no
+policy and run nothing: FakeStore.check runs only the name rule, and FakeRunCore admits every workflow the snapshot
+holds and refuses nothing else."""
 
 from __future__ import annotations
 
@@ -14,11 +16,14 @@ from typing import Any
 
 from gateway.manifests import BUNDLED_PROVENANCE, ContractError
 from gateway.workflow_contract import Report
-from gateway.workflow_kernel import digest, execution_digest, generated_names, name_clashes
+from gateway.workflow_kernel import (
+    canonical_token, digest, execution_digest, generated_names, name_clashes, route_key, run_identity,
+)
 from gateway.workflow_runtime_types import (
-    KEEP, Actor, BindingDef, Commit, EntryState, FrontendRow, HistoryEntry, Keep, NameKind, NameOwner,
-    RegistryConflict, RegistryRefused, ResultItem, RunJobView, RunRefused, RunRequest, WorkflowEntry, WorkflowFacts,
-    WORKFLOW_EXISTS, WORKFLOW_NOT_FOUND,
+    IDEMPOTENCY_CONFLICT, KEEP, Actor, BindingDef, Commit, EntryState, FrontendRow, HistoryEntry, JobEvent,
+    JobNotFound, Keep, NameKind, NameOwner, RecoveryReport, RegistryConflict, RegistryRefused, ResultContent,
+    ResultRef, ResultUnavailable, RunJobView, RunRefused, RunRequest, WorkflowEntry, WorkflowFacts, WORKFLOW_EXISTS,
+    WORKFLOW_NOT_FOUND,
 )
 
 log = logging.getLogger(__name__)
@@ -46,26 +51,51 @@ def entry(contract: Mapping[str, Any], *, revision: int = 1, state: EntryState =
                          record_revision=revision, overrides=overrides)
 
 
+def _token(kind: str, name: str) -> str:
+    return name if kind == "route" else canonical_token(name)
+
+
 @dataclass(frozen=True)
 class FakeNames:
+    """A NameView: lookups go by canonical token (route keys are already canonical)."""
+
     pairs: tuple[tuple[str, NameOwner], ...] = ()
 
     def owner(self, kind: NameKind, name: str) -> NameOwner | None:
-        return next((o for n, o in self.pairs if o.kind == kind and n == name), None)
+        token = _token(kind, name)
+        return next((o for n, o in self.pairs if o.kind == kind and _token(o.kind, n) == token), None)
 
     def owners(self, name: str) -> tuple[NameOwner, ...]:
-        return tuple(o for n, o in self.pairs if n == name)
+        token = canonical_token(name)
+        return tuple(dict.fromkeys(o for n, o in self.pairs if o.kind != "route" and canonical_token(n) == token))
 
     def items(self) -> tuple[tuple[str, NameOwner], ...]:
         return self.pairs
 
 
-def names_of(workflows: Mapping[str, WorkflowEntry], extra: tuple[tuple[str, NameOwner], ...] = ()) -> FakeNames:
+def workflow_names(e: WorkflowEntry) -> list[tuple[str, NameOwner]]:
+    pairs = [(e.id, NameOwner("workflow", e.id))]
+    pairs += [(str(alias), NameOwner("workflow_alias", e.id)) for alias in (e.contract.get("aliases") or ())]
+    pairs += [(name, NameOwner(kind, e.id)) for kind, name in generated_names(e.id).items()]
+    return pairs
+
+
+def frontend_names(row: FrontendRow) -> list[tuple[str, NameOwner]]:
+    pairs = [(row.id, NameOwner("frontend", row.id))]
+    for spec in row.routes:
+        for path in (spec.canonical, *spec.aliases):
+            pairs += [(route_key(method, path), NameOwner("route", row.id)) for method in spec.methods]
+    return pairs
+
+
+def names_of(workflows: Mapping[str, WorkflowEntry], frontends: Mapping[str, FrontendRow] = MappingProxyType({}),
+             extra: tuple[tuple[str, NameOwner], ...] = ()) -> FakeNames:
+    """The whole revision's names: ``extra`` holds model ids and model aliases (the services section)."""
     pairs = list(extra)
     for e in workflows.values():
-        pairs.append((e.id, NameOwner("workflow", e.id)))
-        for kind, name in generated_names(e.id).items():
-            pairs.append((name, NameOwner(kind, e.id)))
+        pairs += workflow_names(e)
+    for row in frontends.values():
+        pairs += frontend_names(row)
     return FakeNames(tuple(pairs))
 
 
@@ -73,12 +103,12 @@ def names_of(workflows: Mapping[str, WorkflowEntry], extra: tuple[tuple[str, Nam
 class FakeSnapshot:
     revision: int
     workflows: Mapping[str, WorkflowEntry]
-    frontends: Mapping[str, FrontendRow] = field(default_factory=dict)
-    models: tuple[tuple[str, NameOwner], ...] = ()      # model ids and aliases, as the name view holds them
+    frontends: Mapping[str, FrontendRow] = field(default_factory=lambda: MappingProxyType({}))
+    models: tuple[tuple[str, NameOwner], ...] = ()      # construction input only; readers use ``names``
 
     @property
     def names(self) -> FakeNames:
-        return names_of(self.workflows, self.models)
+        return names_of(self.workflows, self.frontends, self.models)
 
     @property
     def digest(self) -> str:
@@ -97,8 +127,9 @@ class FakeStore:
     """A RegistryStore over a dict: compare-and-swap on one revision, full-record history, isolated listeners."""
 
     def __init__(self, entries: Mapping[str, WorkflowEntry] = (), revision: int = 1,
-                 models: tuple[tuple[str, NameOwner], ...] = ()) -> None:
-        self._snap = FakeSnapshot(revision, MappingProxyType(dict(entries)), models=models)
+                 models: tuple[tuple[str, NameOwner], ...] = (),
+                 frontends: Mapping[str, FrontendRow] = MappingProxyType({})) -> None:
+        self._snap = FakeSnapshot(revision, MappingProxyType(dict(entries)), MappingProxyType(dict(frontends)), models)
         self._history: dict[str, list[tuple[HistoryEntry, WorkflowEntry]]] = {}
         self._listeners: list[Callable[[Any, Any], None]] = []
 
@@ -107,10 +138,13 @@ class FakeStore:
 
     def check(self, doc: Mapping[str, Any], *, workflow_id: str | None, facts: Any = KEEP,
               overrides: str | None = None, snapshot: Any) -> Report:
-        """Only the name rule; the real store runs every save check."""
+        """Only the name rule, over the public NameView: the revision's names without the saved workflow's own, plus
+        the names the document would hold. The real store runs every save check."""
         wid = str(doc.get("id"))
-        others = {k: v for k, v in snapshot.workflows.items() if k != wid}
-        problems = name_clashes(names_of({**others, wid: entry(doc)}, snapshot.models).items())
+        current = snapshot.get(wid)
+        own = set(workflow_names(current)) if current is not None else set()
+        pairs = [p for p in snapshot.names.items() if p not in own] + workflow_names(entry(doc))
+        problems = name_clashes(pairs)
         return Report(errors=problems, primary=problems[0] if problems else None)
 
     def _commit(self, workflows: dict[str, WorkflowEntry], workflow_id: str, actor: Actor, change: str) -> Commit:
@@ -150,6 +184,9 @@ class FakeStore:
         else:
             self._match(if_match)
             self._existing(wid)
+        report = self.check(doc, workflow_id=wid, facts=facts, overrides=overrides, snapshot=self._snap)
+        if report.errors:
+            raise RegistryRefused(tuple(report.errors))
         kept = (old.facts if old else None) if facts is KEEP else facts
         new = entry(doc, facts=kept, state=old.state if old else "active",
                     published=old.published if old else False,
@@ -195,19 +232,25 @@ class FakeStore:
 
 
 class FakeRunCore:
-    """Records submits. A new key makes a queued job; the same key and the same request replay it; execute_run marks
-    it succeeded with one fixed JSON result. A workflow the snapshot does not hold is refused."""
+    """Records submits. The key is bound to ``workflow_kernel.run_identity`` (the caller is the owner scope and maker):
+    the same identity replays, another identity is ``idempotency_conflict``. A refusal binds nothing. execute_run marks a
+    queued or running job succeeded with one fixed JSON result; a terminal job stays as it is. Sequential only: the
+    real core's claim (section 7.2) is what makes concurrent submits safe."""
 
     def __init__(self) -> None:
         self.submitted: list[RunRequest] = []
         self.jobs: dict[str, RunJobView] = {}
-        self._keys: dict[str, tuple[str, RunRequest]] = {}
+        self.contents: dict[tuple[str, str, int], ResultContent] = {}
+        self._keys: dict[tuple[str, str], tuple[str, str]] = {}
 
     async def submit_run(self, req: RunRequest, caller: Any, *, snapshot: Any) -> RunJobView | RunRefused:
-        if req.idempotency_key and req.idempotency_key in self._keys:
-            job_id, first = self._keys[req.idempotency_key]
-            if first != replace(req, wait_s=first.wait_s):
-                return RunRefused(409, "idempotency_conflict", "the key names another request")
+        scope = str(caller)
+        identity = run_identity(scope, scope, req)
+        claim = (scope, req.idempotency_key) if req.idempotency_key else None
+        if claim and claim in self._keys:
+            job_id, first = self._keys[claim]
+            if first != identity:
+                return RunRefused(409, IDEMPOTENCY_CONFLICT, "the key names another request")
             return replace(self.jobs[job_id], disposition="replay")
         e = snapshot.get(req.workflow_id)
         if e is None:
@@ -217,16 +260,18 @@ class FakeRunCore:
         view = RunJobView(job_id, "queued", "new", req.workflow_id, e.record_revision,
                           req.binding_key or next(iter(e.bindings), None), 0, 0)
         self.jobs[job_id] = view
-        if req.idempotency_key:
-            self._keys[req.idempotency_key] = (job_id, req)
+        if claim:
+            self._keys[claim] = (job_id, identity)
         return view
 
     async def execute_run(self, job_id: str) -> None:
-        self.jobs[job_id] = replace(self.jobs[job_id], status="succeeded",
-                                    results=(ResultItem("result", "application/json", value={"ok": True}),))
+        view = self.jobs[job_id]
+        if view.status not in ("queued", "running"):
+            return
+        self.contents[(job_id, "result", 0)] = ResultContent("application/json", value={"ok": True})
+        self.jobs[job_id] = replace(view, status="succeeded", results=(ResultRef("result", 0, "application/json"),))
 
-    def recover_runs(self, now_s: int) -> Any:
-        from gateway.workflow_runtime_types import RecoveryReport
+    def recover_runs(self, now_s: int) -> RecoveryReport:
         return RecoveryReport({})
 
 
@@ -236,18 +281,33 @@ class FakeJobService:
     def __init__(self, core: FakeRunCore) -> None:
         self.core = core
 
+    def _view(self, job_id: str) -> RunJobView:
+        view = self.core.jobs.get(job_id)
+        if view is None:
+            raise JobNotFound(job_id)
+        return view
+
     def get(self, job_id: str, caller: Any) -> RunJobView | None:
         return self.core.jobs.get(job_id)
 
     async def wait(self, job_id: str, caller: Any, timeout_s: float) -> RunJobView:
-        return self.core.jobs[job_id]
+        return self._view(job_id)
 
     def cancel(self, job_id: str, caller: Any) -> RunJobView:
-        view = self.core.jobs[job_id]
+        view = self._view(job_id)
         if view.status in ("queued", "running"):
             view = replace(view, status="canceled")
             self.core.jobs[job_id] = view
         return view
 
-    def open_result(self, job_id: str, item: ResultItem, caller: Any) -> bytes:
-        return repr(item.value).encode()
+    def events(self, job_id: str, caller: Any, *, limit: int, after_id: int | None = None,
+               after_sequence: int | None = None) -> tuple[JobEvent, ...]:
+        self._view(job_id)
+        return ()
+
+    def open_result(self, job_id: str, ref: ResultRef, caller: Any) -> ResultContent:
+        self._view(job_id)
+        content = self.core.contents.get((job_id, ref.output, ref.index))
+        if content is None:
+            raise ResultUnavailable("not_published")
+        return content
