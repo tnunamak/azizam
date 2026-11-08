@@ -941,7 +941,7 @@ def test_images_J20_failure_records_error_and_event(tmp_path):
 
 
 @pytest.mark.parametrize("name,setup", [
-    ("execution", EXEC_ERROR), pytest.param("unreachable", UNREACHABLE, marks=ROW_PENDING),
+    ("execution", EXEC_ERROR), ("unreachable", UNREACHABLE),
     ("http_500", HTTP_500), pytest.param("timeout", timeout, marks=ROW_PENDING)])
 def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
     old, row = job_pair(tmp_path, job_body(), job_setup(setup), after=job_get())
