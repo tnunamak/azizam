@@ -571,6 +571,45 @@ watch_litellm_config
     assert len((tmp_path / "polls").read_text().splitlines()) == 3
 
 
+def test_a_new_watcher_removes_launch_files_left_by_earlier_runs(tmp_path):
+    # Catch one leaked LiteLLM launch file per gateway restart when the old watcher was killed before its trap ran.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_inputs() {")
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
+    for name in ("selected.yaml", "selected.yaml.launch.AAAAAAAA", "selected.yaml.launch.BBBBBBBB",
+                 "selected.yaml.launch", "selected.yaml.launch.short", "selected.yaml.launched.CCCCCCCC"):
+        (tmp_path / name).write_text("x")
+    script = """
+set -e
+WORK=$1
+LITELLM_CONFIG_PATH=$WORK/selected.yaml
+AZIZAM_ADMIN_DB_PATH=$WORK/admin.db
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+LITELLM_PID=""
+POLL=0
+start_litellm() {
+    LITELLM_LAUNCH_CONFIG_PATH="$(mktemp "${LITELLM_CONFIG_PATH}.launch.XXXXXXXX")"
+    echo h1 > "$LITELLM_RUNTIME_HASH_FILE"
+    LITELLM_PID=$$
+}
+sleep() {
+    POLL=$((POLL + 1))
+    if [ "$POLL" -eq 2 ]; then ls "$WORK" > "$WORK/while-running"; trap - EXIT INT TERM; exit 0; fi
+}
+""" + source[start:end] + """
+litellm_runtime_hash() { echo h1; }
+watch_litellm_config
+"""
+    subprocess.run(["bash", "-c", script, "sweep", str(tmp_path)],
+                   capture_output=True, text=True, check=True, timeout=10)
+    listing = (tmp_path / "while-running").read_text().split()
+    launch_files = [n for n in listing if n.startswith("selected.yaml.launch.") and len(n) == len("selected.yaml.launch.") + 8]
+    assert "selected.yaml.launch.AAAAAAAA" not in listing and "selected.yaml.launch.BBBBBBBB" not in listing
+    assert len(launch_files) == 1 and launch_files[0] not in ("selected.yaml.launched.CCCCCCCC",)
+    for kept in ("selected.yaml", "selected.yaml.launch", "selected.yaml.launch.short", "selected.yaml.launched.CCCCCCCC"):
+        assert kept in listing
+
+
 @pytest.mark.parametrize("setting, bound", [("2", 2), ("", 120), ("oops", 120), ("0", 120),
                                             ("-1", 120), ("007", 120), ("1.5", 120), ("999999999", 120)])
 def test_start_litellm_bounds_missing_receipt_and_validates_timeout(tmp_path, setting, bound):
