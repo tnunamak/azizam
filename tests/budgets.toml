@@ -652,8 +652,8 @@
 # Train 32 current-metadata inheritance: +3 net (selector-based inheritance cases, loaded-ids metadata cases removed); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22142.
 # Then +6 (inheritance on every route, a selector failure, a non-path service, identical served ids, a current-fast-only plan, the member catalog); measured: 22148.
 # Then +4 (a path backend never matches by served name; a gone loaded path; a non-path backend's served id with a distractor record; the deployment-name default); measured: 22152.
-# Code to data S4-S8 interfaces (2026-11-08): +20 cases in test_workflow_runtime_types.py (the frozen interface file, the kernel and the fakes' contracts).
-pytest = 22172
+# Code to data S4-S8 interfaces (2026-11-08): +21 cases in test_workflow_runtime_types.py (the frozen interface file, the kernel and the fakes' contracts).
+pytest = 22173
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

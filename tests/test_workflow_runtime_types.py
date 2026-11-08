@@ -7,7 +7,7 @@ import unittest
 
 from gateway.job_envelope import canonical_bytes
 from gateway.workflow_kernel import (
-    canonical_token, execution_contract, execution_digest, generated_names, name_clashes, route_key, run_identity,
+    canonical_token, digest, execution_contract, execution_digest, generated_names, name_clashes, route_key, run_identity,
     selector_matches, selector_problems,
 )
 from gateway.workflow_runtime_types import (
@@ -63,6 +63,10 @@ class KernelRules(unittest.TestCase):
         body = canonical_bytes(execution_contract(doc))
         self.assertEqual(execution_digest(doc), "sha256:" + hashlib.sha256(body).hexdigest())
 
+    def test_digest_is_the_hash_of_the_blob_bytes_of_the_mapping_itself(self):
+        body = {"adapter": "x", "title": "Café ☕"}
+        self.assertEqual(digest(body), "sha256:" + hashlib.sha256(canonical_bytes(body)).hexdigest())
+
     def test_run_identity_ignores_spool_keys_and_filenames_but_not_bytes(self):
         a = RunRequest("w", {"t": "x"}, media={"photo": (MediaRef("sha256:1", "image/png", 3, "a.png", spool_key="s1"),)})
         b = RunRequest("w", {"t": "x"}, media={"photo": (MediaRef("sha256:1", "image/png", 3, "b.png", spool_key="s2"),)},
@@ -91,6 +95,7 @@ class KernelRules(unittest.TestCase):
     def test_the_selector_validator_accepts_only_selectors_the_matcher_can_decide(self):
         refused = [{"match": {"inputs": {"photo": {"media_type": 7}}}}, {"match": {"inputs": {}}},
                    {"match": {"outputs": {}}}, {"match": {"inputs": {"photo": {"type": "png"}}}},
+                   {"match": {"inputs": {"photo": {"type": []}}}}, {"match": {"inputs": {"photo": {"type": {}}}}},
                    {"match": {"outputs": {"media_type": "image"}}}, {"ids": []}, {"ids": ["a"], "extra": 1}]
         for selector in refused:
             with self.subTest(selector=selector):

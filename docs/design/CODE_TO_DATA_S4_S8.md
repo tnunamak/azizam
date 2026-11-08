@@ -1,6 +1,6 @@
 # Code to data, slices S4 to S8: one design
 
-Status: draft 3, 2026-11-08 (answers the freeze review and its re-review; section 13). Owner: the Azizam thread. This document replaces the per-slice S4 to S8 rows of
+Status: FROZEN, 2026-11-08 (draft 3 plus the third check; sections 13.1 and 13.2). Owner: the Azizam thread. This document replaces the per-slice S4 to S8 rows of
 [CODE_TO_DATA.md](CODE_TO_DATA.md) with one design, so that the five slices can be built in parallel against frozen
 interfaces and land as one train.
 
@@ -162,8 +162,9 @@ use full ids and declared aliases only. Two workflows of different intents with 
 - `AdapterAvailability.binding_problem(binding)`: whether this deployment can run one binding (its adapter registered
   and every reviewed role it needs present, S3). C's port supplies it from the binding registry; projections only read
   it.
-- `entry_problems(entry, available)`: for listings and new runs: `needs_policy`, then the problem of the binding a new
-  run would use. `binding_problems(binding, available)`: for a queued job, only its PINNED binding (dispatch check 5).
+- `entry_problems(entry, available, *, binding_key=None)`: for listings and new runs: `needs_policy`, then the problem
+  of the selected binding (the request's `binding_key` at submit; the default binding when None, as a listing calls
+  it; an unknown key is `binding_unknown`). `binding_problems(binding, available)`: for a queued job, only its PINNED binding (dispatch check 5).
   A later change of the live entry's bindings never decides whether a pinned job runs.
 - `catalog_static`, `openapi_paths` and `input_form` are the static projections; the OpenAPI builder uses only the
   kernel's generated names. **No projection cache in this train**: projections are measured uncached first (the
@@ -469,29 +470,43 @@ today.
 `submit_run` does, in this order:
 1. **Claim the key.** With an idempotency key, compute `run_identity(owner scope, maker, req)` (kernel) and, in one
    `BEGIN IMMEDIATE` transaction on the media-jobs database, read or insert the key's **claim** row (owner scope, maker,
-   key, identity, `job_id` null, `claimed_at`), scoped as `media_jobs`' replay rule is (same owner scope and maker,
-   within the replay window). Then:
+   key, identity, `holder`, `job_id` null, `claimed_at`), scoped as `media_jobs`' replay rule is (same owner scope and
+   maker, within the replay window). `holder` is a fresh random token for this request. Then:
    - the claim exists with another identity: 409 `idempotency_conflict`;
    - it exists with this identity and names a job: answer that job's view with `disposition: replay` (nothing staged
      is adopted, nothing drawn, admitted or validated against the current contract);
-   - it exists with this identity and names no job yet (another request holds it): wait up to a short bound (2 s) for
-     it to name a job or be released; then replay, or answer 409 `idempotency_in_progress` with `retry_after_s`;
-   - it was inserted now: this request holds the claim and continues. A claim older than the request timeout with no
-     job is stale and is taken over in the same transaction.
-   Only the claim holder does steps 2 to 6, so a same-key contender never draws, never meets an admission limit the
-   winner filled, and never validates against a contract edited in between (S3's "same-key replay draws nothing" holds
-   without exception).
+   - it exists with this identity, names no job, and is younger than the lease (below): another request holds it.
+     Wait up to 2 s for it to name a job or be released; then replay, or answer 409 `idempotency_in_progress` with
+     `retry_after_s`;
+   - it exists with this identity, names no job, and is older than the lease: take it over in the same transaction by
+     writing this request's `holder` and `claimed_at` (`UPDATE ... WHERE holder = <old token> AND job_id IS NULL`);
+   - it was inserted now: this request holds the claim.
+   The lease is the request timeout plus a margin; it only decides when a takeover may happen. Correctness does not
+   rest on it: the token fences the old holder (step 6 and step 7 match nothing after a takeover).
 2. Resolve the entry in the request's snapshot; the workflow target policy (exposure, `published`, plan);
-   `entry_problems` empty.
+   `entry_problems(entry, available, binding_key=req.binding_key)` empty.
 3. Validate inputs against the current contract (`validate_inputs`) and media against `ExecutionProfile.accepts`
    (types, size, item counts); every problem at once (422).
-4. Admission (`resource_class` from the profile).
-5. Generated values, once (S2).
-6. Build the v2 envelope; adopt the staged files; `media_jobs.create(..., envelope=..., require_envelope=True)` and set
-   the claim's `job_id`, in one transaction. Schedule. Answer `RunJobView` with `disposition: new`.
-7. A refusal in steps 2 to 6, or an error, **releases the claim** (deletes the row) before answering, so a retry with
-   the same key is evaluated again. This is Stripe's rule: a request that fails before it starts work saves no result
-   for its key. Requests without a key skip steps 1 and 7.
+4. Admission (`resource_class` from the profile). Admission is a check against the job store's counts, not a
+   reservation, so a holder that loses its claim holds nothing to give back but its staged files.
+5. and 6. **Draw and create in one fenced transaction.** `BEGIN IMMEDIATE`; confirm the claim row still has this
+   request's `holder` and a null `job_id` (if not: roll back, draw nothing, answer as a replay or 409
+   `idempotency_in_progress` per step 1, and let the request scope release the staged files); draw the generated
+   values (S2, once); build the v2 envelope; adopt the staged files; `media_jobs.create(..., envelope=...,
+   require_envelope=True)`; set the claim's `job_id`; COMMIT. The write lock is held from the check to the commit, so no
+   takeover can come between them and no request draws twice for one key. Requests without a key do the same
+   transaction without the claim check.
+   After COMMIT the job and its claim mapping are final: schedule, then answer `RunJobView` with `disposition: new`.
+   A scheduling or answer error after COMMIT never deletes the claim or the job; the job is `queued`, recovery (5.4)
+   schedules it, and a retry with the key replays it.
+7. A refusal or error in steps 2 to 6 before COMMIT **releases this holder's claim**:
+   `DELETE ... WHERE holder = <this token> AND job_id IS NULL`, so a retry with the same key is evaluated again and an
+   old holder never deletes a replacement's claim. This is Stripe's rule: a request that fails before it starts work
+   saves no result for its key. Requests without a key skip steps 1 and 7.
+
+Contract tests for this protocol (builder C, matrix row 19): two real submits racing on one key; a holder that
+pauses past the lease is taken over, then resumes and creates no job and draws nothing; that holder's release leaves
+the new holder's claim; a scheduling error after COMMIT keeps the job and the claim, and a retry replays it.
 
 ### 7.3 Always a job, with a bounded wait
 
@@ -675,3 +690,16 @@ deploy lists them.
 | P2 v1 provenance and the incarnation exception | I4: `record_revision` and `binding_key` nullable on the job view and the receipt identity; 5.4 states the v1 exception and closes it at deploy (no queued job without a v2 envelope) |
 | P2 `JobService` events and errors; file ownership | I4: `events`, `JobNotFound`, `ResultUnavailable`; 10.1: one owner per file, `api.py` and the main module split by named function, the generic route is C's code route, `frontend_profiles.check` keeps its callers, C owns `media_jobs.py`, the spool and the I7 keys, the design owner integrates |
 | After freeze (accepted as work, not blockers) | matrix 11 reworded; the rollback rehearsal (5.5); the all-forms literal audit (6.3); measure uncached projections and sync-over-job latency (section 12) |
+
+### 13.2 Third check (the last design round) and the freeze
+
+| Finding | Answer |
+|---|---|
+| P1 claim takeover and release after commit | 7.2: a `holder` token on the claim; takeover rewrites it; draw and create run in one fenced `BEGIN IMMEDIATE` transaction; release deletes only this holder's undecided claim; nothing after COMMIT deletes the job or its claim. Contract tests listed under 7.2 (C) |
+| P2 `entry_problems` cannot see the selected binding | I3: `entry_problems(entry, available, *, binding_key=None)`; submit passes `req.binding_key`; a listing passes None for the default binding |
+| P2 selector `type` list or object raises | kernel: the type must be a string before set membership; tests cover `[]` and `{}` |
+| P2 `digest` wraps the value | kernel: `digest(mapping)` hashes `canonical_bytes(mapping)` with no wrapper; a test pins the blob bytes |
+
+The interfaces are frozen at this commit. A later finding becomes a contract test that the owning builder makes pass,
+not a design round.
+

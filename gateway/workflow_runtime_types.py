@@ -319,9 +319,11 @@ class Projections(Protocol):
         caller from its snapshot of the config, so an absent output count resolves the same way in B and C."""
         ...
     def receipt_identity(self, entry: WorkflowEntry, binding_key: str) -> ReceiptIdentity: ...
-    def entry_problems(self, entry: WorkflowEntry, available: AdapterAvailability) -> tuple[str, ...]:
-        """For listings and new submissions: ``needs_policy`` (no facts), then the ``binding_problem`` of the binding a
-        new run would use (the request's, or the default). Empty means a new run can start."""
+    def entry_problems(self, entry: WorkflowEntry, available: AdapterAvailability, *,
+                       binding_key: str | None = None) -> tuple[str, ...]:
+        """For listings and new submissions: ``needs_policy`` (no facts), then the ``binding_problem`` of the selected
+        binding: ``binding_key`` (``RunRequest.binding_key`` at submit), or the entry's default binding when None (a
+        listing). An unknown key is ``binding_unknown``. Empty means a new run on that binding can start."""
         ...
     def binding_problems(self, binding: BindingDef, available: AdapterAvailability) -> tuple[str, ...]:
         """For dispatch of a queued job: only the PINNED binding's availability (dispatch check 5). A later change of
@@ -468,7 +470,10 @@ class RunCore(Protocol):
     async def submit_run(self, req: RunRequest, caller: CallerContext, *,
                          snapshot: RegistrySnapshot) -> RunJobView | RunRefused:
         """Section 7.2. With an idempotency key the FIRST step claims the key for ``run_identity`` in one transaction;
-        only the claim holder validates, admits, draws and creates. A refusal releases the claim. A second request with
+        only the claim holder validates, admits, draws and creates. The claim row carries a random ``holder`` token;
+        every later transition is conditional on that token and on ``job_id`` being null (7.2): takeover replaces the
+        token, so an old holder's draw-and-create transaction and its release both match nothing. A refusal releases
+        only this holder's undecided claim; a committed job mapping is never released. A second request with
         the same identity replays the job the claim names, or answers 409 ``idempotency_in_progress`` with
         ``retry_after_s`` while the claim is undecided; another identity is 409 ``idempotency_conflict``."""
         ...

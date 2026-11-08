@@ -119,10 +119,11 @@ def _thaw(value: Any) -> Any:
     return value
 
 
-def digest(value: Any) -> str:
+def digest(value: Mapping[str, Any]) -> str:
     """``sha256:<hex>`` of ``job_envelope.canonical_bytes`` (sorted keys, no spaces, ASCII escapes, no NaN): the bytes
-    the definition store already keys blobs by, so a digest computed here names the blob a job pinned."""
-    return "sha256:" + hashlib.sha256(canonical_bytes({"v": _thaw(value)})).hexdigest()
+    the definition store already keys blobs by, so a digest computed here names the blob a job pinned. No wrapper: a binding body or a stored record is hashed as
+    exactly the mapping the store writes."""
+    return "sha256:" + hashlib.sha256(canonical_bytes(_thaw(value))).hexdigest()
 
 
 def execution_digest(contract: Mapping[str, Any]) -> str:
@@ -177,7 +178,7 @@ def selector_problems(selector: Mapping[str, Any]) -> tuple[ContractError, ...]:
                 if not isinstance(inputs, Mapping) or not inputs or not all(
                         isinstance(name, str) and name and isinstance(v, Mapping) and len(v) == 1
                         and set(v) <= _INPUT_KEYS
-                        and (v.get("type") in INPUT_TYPES if "type" in v else _media_type_ok(v.get("media_type")))
+                        and (isinstance(v.get("type"), str) and v["type"] in INPUT_TYPES if "type" in v else _media_type_ok(v.get("media_type")))
                         for name, v in inputs.items()):
                     problems.append(ContractError(("selects", "match", "inputs"), "selector_match",
                                                   "inputs names at least one input, each with exactly one of type (an "
