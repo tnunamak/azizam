@@ -649,7 +649,8 @@
 # Train 30: 22103 (main) + reload-after-boot tests + e2e order hardening + App asset delete; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22110.
 # Train 31: 22110 (main) + current route failover; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22119.
 # Train 32: 22119 (main) + servable LLM selector + shared asset delete + loaded Ollama summaries; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22139.
-pytest = 22139
+# Train 32 current-metadata inheritance: +3 net (selector-based inheritance cases, loaded-ids metadata cases removed); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22142.
+pytest = 22142
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
