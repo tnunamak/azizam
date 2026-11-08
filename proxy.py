@@ -26581,6 +26581,17 @@ def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDeci
         available_label="available workflow ids", empty_label="no available workflow was reported")
 
 
+def _graph_wait_s() -> float:
+    """The longest a run waits on the graph engine: queue time included."""
+    return float(DERIVED.COMFY_TIMEOUT)
+
+
+def _graph_service_connection(record: Mapping[str, Any]) -> AdapterConnection:
+    """The connection to one graph service's address, with the run's wait as its read bound."""
+    return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
+        connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
+
+
 class _WorkflowRunPort:
     """``workflow_run.RunPort`` over this module's helpers."""
 
@@ -26714,12 +26725,11 @@ class _WorkflowRunPort:
 
         def connection() -> AdapterConnection:
             _require_egress_lease(service_id)
-            return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
-                connect_s=10, first_byte_s=DERIVED.COMFY_TIMEOUT, total_s=DERIVED.COMFY_TIMEOUT))
+            return _graph_service_connection(record)
 
         runtime_ = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
-            timing=(2.0, float(DERIVED.COMFY_TIMEOUT)), jobs_path=media_jobs.DB_PATH,
+            timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
             context=ResultContext(self.result_limits()))
         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
         # it. No operation of the protocol is picked by position.
@@ -26833,8 +26843,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
 
     def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
         _require_egress_lease(service_id)
-        return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
-            connect_s=10, first_byte_s=DERIVED.COMFY_TIMEOUT, total_s=DERIVED.COMFY_TIMEOUT))
+        return _graph_service_connection(record)
 
     def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
         found = _workflow_engine(binding.adapter_id)
@@ -26849,17 +26858,18 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         engine=_workflow_engine, identity=identity,
         problem=lambda binding: None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE,
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
-        max_wait_s=lambda: float(DERIVED.COMFY_TIMEOUT), control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+        max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True))
 
 
 def _register_graph_runner() -> None:
+    """One runner for the bindings of each protocol description the node-graph adapter serves."""
     from gateway.engine_protocol import description as protocol_description
-    node_graph_description = protocol_description.get_description("node-graph")
-    if node_graph_description is not None:
-        workflow_adapters.register(node_graph_runner.NodeGraphRunner(
-            node_graph_description.binding, pinned_runtime.adapter_identity(node_graph_description), _graph_runner_host()))
+    for doc in protocol_description.load_registry().values():
+        if doc.executor == f"adapter:{node_graph.ADAPTER_ID}":
+            workflow_adapters.register(node_graph_runner.NodeGraphRunner(
+                doc.binding, pinned_runtime.adapter_identity(doc), _graph_runner_host()))
 
 
 _register_graph_runner()
