@@ -554,6 +554,20 @@ def match_alias_target(
     return None
 
 
+def _alias_match_rank(resolves_to: str, record: WorkflowRecord) -> int | None:
+    """0 when the target names the workflow (its short id, with or without the kind prefix), 1 when it does so only after
+    a trailing ``-edit`` is dropped, None when it does not name it."""
+    short = short_id(record)
+    if match_alias_target(resolves_to, record.intent, {short}) is None:
+        return None
+    return 0 if _names_exactly(resolves_to, record.intent, short) else 1
+
+
+def _names_exactly(resolves_to: str, intent: str, short: str) -> bool:
+    kind = intent.split(".")[0]
+    return resolves_to == short or resolves_to == f"{kind}-{short}"
+
+
 def aliases_by_workflow(
     records: Iterable[WorkflowRecord], aliases: Mapping[str, Any] | None
 ) -> dict[str, list[str]]:
@@ -566,8 +580,12 @@ def aliases_by_workflow(
             target, alias = entry.get("resolves_to"), entry.get("alias")
             if not target or not alias:
                 continue
-            for record in records:
-                if match_alias_target(str(target), record.intent, {short_id(record)}):
+            # A target that names a workflow exactly beats one that matches only after its "-edit" is dropped.
+            hits = [(record, _alias_match_rank(str(target), record)) for record in records]
+            hits = [(record, rank) for record, rank in hits if rank is not None]
+            best = min((rank for _, rank in hits), default=None)
+            for record, rank in hits:
+                if rank == best:
                     names = out.setdefault(record.id, [])
                     if alias not in names:
                         names.append(str(alias))
