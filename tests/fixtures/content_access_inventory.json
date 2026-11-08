@@ -136,9 +136,17 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_create",
-      "source_sha256": "887a08c1dd6a7f72b761b52f86b09da29789d97ee0651c7e5622bbc0bbf201ff",
+      "source_sha256": "452b51d3eb7ef6f626f143009545d1230daf07f614ce61e006673347dff63620",
       "call": "append_event",
       "event": "'queued'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_before_retry",
+      "source_sha256": "bb5891170237a75e17dc4034aa6ae0f26817d586635d9550e68aefb6ed176884",
+      "call": "append_event",
+      "event": "'retry'",
       "access": "content:job:read"
     },
     {
