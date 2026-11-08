@@ -34,7 +34,7 @@ from gateway.definition_store import DefinitionStore
 from gateway.job_envelope import canonical_bytes
 from gateway.manifests import ContractError, ContractErrors, ManifestError
 from gateway.workflow_contract import Report, check_contract
-from gateway.workflow_kernel import _thaw, name_clashes
+from gateway.workflow_kernel import name_clashes
 from gateway.workflow_policy import facts_from_mapping
 from gateway.workflow_runtime_types import (
     BOUND_EXCEEDED, KEEP, WORKFLOW_EXISTS, WORKFLOW_NOT_FOUND, Actor, Commit, EntryState, HistoryEntry, Keep,
