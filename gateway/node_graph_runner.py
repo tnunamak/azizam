@@ -268,6 +268,9 @@ class NodeGraphRunner:
                 control_timeout=host.control_timeout(), cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say)
         except graph_round.RoundFailure as failed:
+            # The submit marker only means "a submit may be in flight": a round that ended in failure leaves none.
+            media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": False},
+                                     path=media_jobs.DB_PATH)
             if failed.kind == graph_round.DISCONNECTED:
                 raise media_jobs.CancellationPending() from failed
             if (batching is not None and failed.out_of_memory and not retry_freed()
