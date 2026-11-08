@@ -141,7 +141,6 @@ def test_images_03_body_not_object_400(tmp_path):
     assert_same(old, row, status, failure, engine)
 
 
-@NEEDS_RH
 def test_images_04_unknown_field_refused(tmp_path):
     old, row = pair(tmp_path, GEN, body(not_a_field=1), ok)
     assert_same(old, row, status, failure, engine, ("accepted_inputs", lambda o: receipt_fields(o, "accepted_inputs", "rejected_inputs", "ignored_inputs")))
@@ -169,7 +168,6 @@ def test_images_06_missing_prompt_400(tmp_path):
     assert_same(old, row, status, failure, engine)
 
 
-@NEEDS_RH
 def test_images_07_policy_denial_403_with_plan_details(tmp_path):
     old, row = pair(tmp_path, GEN, body(), denied)
     old_has(old, "403", status(old) == 403)
@@ -182,7 +180,6 @@ def test_images_08_admission_refusal_response(tmp_path):
     assert_same(old, row, status, failure, ("retry-after", lambda o: header(o, "retry-after")), engine)
 
 
-@NEEDS_RH
 def test_images_09_model_resolves_to_a_workflow_on_the_receipt(tmp_path):
     old, row = pair(tmp_path, GEN, body(model="krea2-turbo"), ok)
     old_has(old, "a receipt", receipt_row(old))
@@ -438,7 +435,6 @@ def test_images_37_response_headers(tmp_path):
     assert_same(old, row, ("headers", lambda o: headers_with(o, "x-image", "x-proxy", "x-comfyui", "x-azizam")))
 
 
-@NEEDS_RH
 def test_images_38_sync_route_keeps_no_job_row(tmp_path):
     old, row = pair(tmp_path, GEN, body(), ok)
     assert_same(old, row, ("job rows", lambda o: [(j["intent"], j["status"]) for j in media_jobs(o)]), ("retention", retention_destinations))
