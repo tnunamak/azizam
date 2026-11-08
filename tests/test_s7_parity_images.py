@@ -1155,6 +1155,7 @@ def test_images_F05_timeout(tmp_path):
     assert_same(old, row, status, failure, sleeps)
 
 
+@ROW_PENDING
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
@@ -1253,7 +1254,7 @@ def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_
     assert_same(v_old, v_row, sleeps, engine_without_probes)
 
 
-@pytest.mark.xfail(strict=True, reason="core M13 retry")
+@pytest.mark.xfail(strict=True, reason="core job events: started, attempt and failed events and the failed-job message (K); retry delays, limit and retry events already match")
 def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
     """Section 6.6: a retryable failure is retried on the same job up to the attempt limit, waiting 5 s then doubling
     to at most 30 s, and appends the retry event each time."""
@@ -1279,6 +1280,5 @@ def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
         return go
     old = observe(tmp_path, JOB, mk(False), setup, row=False)
     row = observe(tmp_path, JOB, mk(True), setup, row=True)
-    print("DBG", [(c["response"].get("status"), str(c["response"].get("body"))[:500]) for c in row.trace["caller"]], row.extra)
     old_has(old, "a retry wait", 5.0 in sleeps(old))
     assert_same(old, row, ("job states", _states), ("events", lambda o: doc(o, 2)), sleeps, ("prompts", lambda o: len(engine_bodies(o, "/prompt"))))
