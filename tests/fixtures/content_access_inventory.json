@@ -136,7 +136,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "fe2edf609690092e55d8c20dc272ffde7090757af32436b4e62f8dcc777077ea",
+      "source_sha256": "397422050c2e810dba9c5eea635793a4cf15fa48f3d078c1a069401558871bc4",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -152,7 +152,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "6b64cb27316e1248289c7dedf8f86e364e6cda9b26e40dce913b014c5b9852a1",
+      "source_sha256": "4cb22f1c1ce939ce4c7a9bc69fa6db937a67cbaf3e33b9fdd215f8717f913fe4",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
