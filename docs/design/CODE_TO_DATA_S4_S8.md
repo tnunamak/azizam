@@ -558,6 +558,8 @@ the goldens decide (S7).
   bundled template; `_meta` leaves image and video.
 - **What stays code:** the wire shapes, their error vocabularies, the adapters' internals, the security limits. Each
   remaining domain literal is listed in the ratchet's reviewed-site list with its reason.
+- **Parity addendum:** the image, audio and video routes move under `CODE_TO_DATA_S7_PARITY.md`: every listed
+  behaviour of the old route is a parity test first, and its mechanisms (M1-M12) say where each behaviour lives.
 
 ## 9. S8: defaults, config and the owner UI
 

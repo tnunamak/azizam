@@ -134,11 +134,14 @@ def execution_digest(contract: Mapping[str, Any]) -> str:
 
 def run_identity(owner_scope: str, maker: str, req: RunRequest) -> str:
     """What an idempotency key is bound to: owner scope, maker, workflow id, binding key, the inputs, and each media
-    input's item digests in order. Never a spool key, a file name, a wait or a frontend: two requests that stage the same
+    input's item digests in order, plus the wire options when there are any. Never a spool key, a file name, a wait or a frontend: two requests that stage the same
     bytes are one request."""
     media = {name: [ref.digest for ref in refs] for name, refs in sorted(req.media.items())}
-    return digest({"owner_scope": owner_scope, "maker": maker, "workflow_id": req.workflow_id,
-                   "binding_key": req.binding_key, "inputs": req.inputs, "media": media})
+    identity: dict[str, Any] = {"owner_scope": owner_scope, "maker": maker, "workflow_id": req.workflow_id,
+                                "binding_key": req.binding_key, "inputs": req.inputs, "media": media}
+    if req.options:      # wire options are part of the request; an empty set keeps the identity it always had
+        identity["options"] = req.options
+    return digest(identity)
 
 
 # The closed selector schema. A row selects explicit ids, or every workflow whose contract matches:
