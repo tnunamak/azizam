@@ -12,6 +12,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
 import proxy
+from gateway import generated_defaults
 from tests.support.config_snapshot import derived_patch
 import pytest
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
@@ -96,7 +97,9 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                         draws = itertools.count(901)
                     else:
                         draws = iter([seed, seed + 1])
-                    with patch.object(proxy.random, "randint", side_effect=lambda *_: next(draws)):
+                    # The manifest path draws once for the request and offsets it per round; the contract-less path draws per round.
+                    with patch.object(proxy.random, "randint", side_effect=lambda *_: next(draws)), patch.object(
+                            generated_defaults, "secure_source", return_value=101 if seed is None else 901):
                         results.append(await self.submitted(
                             proxy.proxy_graph_image_request, request, with_manifest=with_manifest,
                             manifest_id="image.generate.flux2-klein"))
@@ -117,7 +120,8 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
                         ("size", "768x512"),
                         ("image", _MultipartUpload("source.png", _png_bytes((1, 2, 3, 255)))),
                     ]
-                    with patch.object(proxy.random, "randint", side_effect=[101, 102]):
+                    with patch.object(proxy.random, "randint", side_effect=[101, 102]), patch.object(
+                            generated_defaults, "secure_source", return_value=101):
                         results.append(await self.submitted(
                             proxy.proxy_graph_image_edit_request, _MultipartRequest(items),
                             with_manifest=with_manifest, manifest_id="image.edit.flux2-klein"))

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from openai import AsyncOpenAI
 import proxy
+from gateway import generated_defaults
 from tests.support.config_snapshot import derived_patch
 from tests.support.audio_workflow import audio_manifest
 from tests.support.access import access_context  # noqa: E402
@@ -170,7 +171,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_http3_08_invalid_explicit_seed_is_not_randomized(self):
         for value in ("abc", None, True, 1.5, "1", -1, 2**32, float("inf")):
-            with self.subTest(seed=value), patch.object(proxy.random, "randint") as randomize:
+            with self.subTest(seed=value), patch.object(generated_defaults, "secure_source") as randomize:
                 await self.assert_audio_invalid("seed", value)
                 randomize.assert_not_called()
 
@@ -180,7 +181,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             proxy.asyncio, "sleep", AsyncMock(),
         ), patch.object(proxy.media_delivery, "attach_provenance", side_effect=lambda data, *a, **kw: data), patch.object(
             proxy.media_delivery, "deliver_bytes", side_effect=lambda data, *a, **kw: data,
-        ), patch.object(proxy.random, "randint", return_value=123) as randomize:
+        ), patch.object(generated_defaults, "secure_source", return_value=123) as randomize:
             for audio_type in ("music", "sfx", "ambient"):
                 for seed in (0, 2**32 - 1):
                     response = await self.audio(type=audio_type, seed=seed, response_format="native")

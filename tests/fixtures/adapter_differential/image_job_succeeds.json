@@ -422,7 +422,12 @@
             "adapter_id": "node-graph",
             "interface_version": 2
           },
-          "generated": {},
+          "generated": {
+            "seed": {
+              "generator": "random_integer",
+              "value": 192058881
+            }
+          },
           "results": {
             "bundle": "bundle:<job:1>:1"
           },

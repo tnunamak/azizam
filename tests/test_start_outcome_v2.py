@@ -409,9 +409,13 @@ def test_a_refused_result_publishes_nothing_and_leaves_the_marker(fake_upstreams
     assert result_bundle.bundle_summary(job_id, path=rig.db) is None
     assert result_bundle.read_json(job_id, rig.names.json_result, rig.reader(), path=rig.db) is None
     assert rig.job(job_id)["status"] == media_jobs.STATUS_RUNNING
+    assert result_bundle.results_view([job_id], path=rig.db) == {}, "a refused file was listed as a result"
+    assert not rig.job(job_id).get("assets"), "a refused file was linked to the job"
     with media_jobs.connection(rig.db) as conn:
         states = {row[0] for row in conn.execute("SELECT state FROM result_stage WHERE job_id = ?", (job_id,))}
-    assert states <= {"aborted"}, "a staged result was left readable"
+    # JSON size is checked before its stage insert, and a failed staging transaction is rolled back,
+    # so no stage row is left at all (an aborted row would also mean the rollback did not happen).
+    assert states == set(), "a refused staging transaction left a stage row behind"
     assert rig.job(job_id)["metadata"]["protocol_submitting"] is True
 
 
@@ -972,9 +976,15 @@ def test_a_late_schema_refusal_publishes_nothing_on_either_engine(engine, fake_u
     assert refused.value.code == "result_schema"
     assert result_bundle.bundle_summary(job_id, path=rig.db) is None
     assert result_bundle.read_json(job_id, names.json_result, rig.reader(), path=rig.db) is None
+    # Both adapters save the file before the schema refusal, but neither returns a bundle to stage.
+    # The count proves this test reaches the saved-file path. Nothing removes those bytes on refusal
+    # yet; a change that adds that cleanup updates this count.
+    assert rig.store.count() == 1, "the refusal did not exercise the already-saved-file path"
+    assert result_bundle.results_view([job_id], path=rig.db) == {}, "a refused file was listed as a result"
+    assert not rig.job(job_id).get("assets"), "a refused file was linked to the job"
     with media_jobs.connection(rig.db) as conn:
         states = {row[0] for row in conn.execute("SELECT state FROM result_stage WHERE job_id = ?", (job_id,))}
-    assert states <= {"aborted"}, "a staged result was left readable"
+    assert states == set(), "an adapter schema refusal left a stage row"
     if engine == "http":
         assert rig.job(job_id)["metadata"]["protocol_submitting"] is True
 

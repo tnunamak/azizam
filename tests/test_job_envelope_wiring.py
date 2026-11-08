@@ -76,8 +76,8 @@ def test_jobs_that_pin_the_same_definitions_share_blobs(db: Path):
 def test_the_envelope_and_the_job_share_one_transaction(db: Path, monkeypatch: pytest.MonkeyPatch):
     real = media_jobs._record_envelope
 
-    def record_then_fail(conn, job_id, envelope, *, require):
-        real(conn, job_id, envelope, require=require)
+    def record_then_fail(conn, job_id, envelope, **kwargs):
+        real(conn, job_id, envelope, **kwargs)
         assert rows_in(conn, "job_envelope") == 1, "the envelope row is written before the commit"
         raise RuntimeError("the process stops before the commit")
 

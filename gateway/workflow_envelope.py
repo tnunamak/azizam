@@ -42,7 +42,8 @@ class Envelope:
     interface_version: int
     service_id: str
     origin_digest: str
-    # {input name: {"generator": id, "value": ...}}; a "none" generator has no "value" key. Read-only: the envelope
+    # {input name: {"generator": id, "value": ...}}; a "none" generator has no "value" key, and an erased entry has
+    # {"generator": id, "erased": True} in its place. Read-only: the envelope
     # copies what it is given and hands out read-only views, so a held Envelope cannot change after it is checked.
     generated: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     bundle: str | None = None
@@ -123,7 +124,7 @@ def _generated(value: Any, generators: Mapping[str, str]) -> dict[str, dict[str,
         entry_path = f"{path}.{name}"
         if not isinstance(name, str) or not name:
             raise ValueError(f"{path}: input names must be non-empty strings")
-        entry = _mapping(entry, entry_path, {"generator", "value"}, frozenset({"value"}))
+        entry = _mapping(entry, entry_path, {"generator", "value", "erased"}, frozenset({"value", "erased"}))
         generator = _text(entry["generator"], f"{entry_path}.generator")
         persistence = generators.get(generator)
         if persistence is None:
@@ -134,6 +135,11 @@ def _generated(value: Any, generators: Mapping[str, str]) -> dict[str, dict[str,
             if entry.get("value") is not None:
                 raise ValueError(f"{entry_path}.value: a generator with persistence 'none' keeps no value")
             parsed[name] = {"generator": generator}
+        elif "erased" in entry:
+            # Erasure emptied the value and left this mark, so a later read can tell it from a job that kept none.
+            if entry["erased"] is not True or "value" in entry:
+                raise ValueError(f"{entry_path}.erased: expected true, with no value")
+            parsed[name] = {"generator": generator, "erased": True}
         elif persistence == "digest":
             if "value" not in entry:
                 raise ValueError(f"{entry_path}.value: required")

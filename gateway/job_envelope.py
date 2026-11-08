@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from gateway import generated_defaults
 from gateway.workflow_envelope import ENVELOPE_VERSION, Envelope, parse_envelope
 
 # The engine protocol descriptions carry no revision field yet (S2 design, D9). Until they do, the envelope records
@@ -62,9 +63,12 @@ def build_job_envelope(
     interface_version: int,
     service_id: str,
     origin: str,
+    generated: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> JobEnvelope:
     """The envelope for one job. ``source_revision`` is the digest of the contract and binding together, so it
-    changes when either does. ``origin`` is digested, never stored. Raises ``ValueError`` if the grammar refuses it."""
+    changes when either does. ``origin`` is digested, never stored. ``generated`` is the block ``resolve_generated`` made
+    for this job (input name to generator id and value); it is checked against the reviewed generators. Raises
+    ``ValueError`` if the grammar refuses it."""
     contract_body = canonical_bytes(contract)
     binding_body = canonical_bytes(binding)
     blobs = [contract_body, binding_body]
@@ -84,8 +88,9 @@ def build_job_envelope(
             "definitions": definitions,
             "executor": {"adapter_id": adapter_id, "interface_version": interface_version},
             "upstream": {"service_id": service_id, "origin_digest": origin_digest(origin)},
-            "generated": {},
+            "generated": {name: dict(entry) for name, entry in (generated or {}).items()},
             "results": {"bundle": None},
-        }
+        },
+        generators=generated_defaults.persistence(),
     )
     return JobEnvelope(envelope=envelope, blobs=tuple(blobs))

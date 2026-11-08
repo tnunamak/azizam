@@ -134,7 +134,7 @@ GATEWAY_CODES = frozenset({
     "builtin_disabled", "canceled", "cannot_start_model", "client_disconnected", "csrf_required", "current_model_unavailable",
     "cursor_not_found", "custom_voice_engine_unsupported", "decision_backend_error", "definition_unavailable", "engine_address_needs_confirmation",
     "engine_credential_origin_mismatch", "engine_credential_unavailable", "engine_protocol_unavailable", "export_failed",
-    "face_too_small", "gpu_memory_unavailable", "hosted_tool_not_supported", "idempotency_conflict", "image_client_disconnected",
+    "face_too_small", "generated_value_unavailable", "gpu_memory_unavailable", "hosted_tool_not_supported", "idempotency_conflict", "image_client_disconnected",
     "image_generation_timeout", "image_post_processing_failed", "incomplete_rule", "invalid_client", "invalid_connection",
     "invalid_cursor", "invalid_decision", "invalid_defaults", "invalid_engine_connection", "invalid_extension",
     "invalid_gateway_extensions", "invalid_instance", "invalid_mask_dimensions", "invalid_native_path", "invalid_prompt_memory",

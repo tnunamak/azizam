@@ -18,13 +18,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import random
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from gateway import generated_defaults
 from gateway.engine_protocol import description, jobs, node_graph
 from gateway.engine_protocol.assets import MemoryAssetStore
 from gateway.engine_protocol.audio_graph import AudioLimits, InvalidAudioRequest, effective_manifest, manifest_inputs
@@ -158,7 +158,7 @@ def test_an_unset_seed_is_drawn_at_the_route_edge_only_when_the_manifest_declare
         drawn.append((low, high))
         return 777
 
-    monkeypatch.setattr(random, "randint", fixed)
+    monkeypatch.setattr(generated_defaults, "secure_source", fixed)
     manifest = _manifest("tangoflux")
     assert manifest_inputs({"prompt": "x", "duration": 4}, manifest=effective_manifest(manifest, LIMITS))["seed"] == 777
     assert drawn == [(0, 2**32 - 1)]

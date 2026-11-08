@@ -112,7 +112,7 @@ from gateway import asset_types, media_delivery, media_fetch, media_metadata, pr
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
-from gateway import definition_store, job_envelope, output_selectors, pinned_definitions, result_bundle
+from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -343,7 +343,7 @@ from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.app_key_openapi import augment_app_key_openapi
 from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
-from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
+from gateway.workflow_openapi import VIDEO_REFERENCE_INPUT, advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
     build_llms_txt,
@@ -384,12 +384,14 @@ from gateway.litellm_substrate import (
     router_reply_timeout,
     litellm_public_model_records,
     litellm_public_model_service_ids,
+    serving_service_id,
     set_own_listen_port,
 )
 from gateway.manifests import (
     ManifestError,
     ManifestIdentity,
     Provenance,
+    accepts_of,
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
@@ -6375,14 +6377,15 @@ def _resolve_package_artifact_path(record: Any, relative: str) -> Path:
 
 def _graph_job_envelope(
     capability: str, *, source_id: str, contract: Mapping[str, Any], binding: Mapping[str, Any], artifact: Any,
-    record: Any = None,
+    record: Any = None, generated: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> job_envelope.JobEnvelope | None:
     """What a graph-backed job pins: the definitions it compiles from, never the caller's request (CODE_TO_DATA_S2 D1).
 
     Recording is alongside today's flow, so any failure (an unreadable graph file, a refused grammar) is logged and the
     job is created without an envelope, as it was before. ``capability`` selects the adapter and protocol
     description, the same way ``_graph_adapter`` does. ``record`` is the workflow's registry record, so a graph path
-    relative to its package resolves as it does when the job runs.
+    relative to its package resolves as it does when the job runs. ``generated`` is the job's generated-input block
+    (``gateway/generated_defaults.py``), kept with the pins.
     """
     try:
         backend = (config.get("backends") or {}).get(_GRAPH_BACKEND_ID) or {}
@@ -6394,11 +6397,62 @@ def _graph_job_envelope(
             source_kind="workflow", source_id=source_id, contract=contract, binding=binding, template=template,
             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=protocol.adapter_id or "",
             interface_version=_graph_adapter(capability).interface_version,
-            service_id=_GRAPH_BACKEND_ID, origin=_graph_connection().address,
+            service_id=_GRAPH_BACKEND_ID, origin=_graph_connection().address, generated=generated,
         )
     except Exception as exc:  # noqa: BLE001
         _MEDIA_JOB_LOG.warning("no envelope for %s: %s", source_id, log_scrub.describe_error(exc))
         return None
+
+
+# The generated-input block the running job kept in its envelope. A job runner sets it around the route call, so the
+# route reads the value a retry or a restart must reuse instead of drawing another (gateway/generated_defaults.py).
+_JOB_GENERATED: contextvars.ContextVar[Mapping[str, Mapping[str, Any]] | None] = contextvars.ContextVar(
+    "job_generated", default=None)
+
+
+def _stored_generated(job_id: str) -> dict[str, dict[str, Any]]:
+    """The generated block the job's envelope holds. A job with no envelope (made before envelopes) has an empty block.
+
+    A stored envelope that cannot be read raises ``GeneratedValueUnavailable``: the job fails and never draws a value in
+    its place. So does an erased entry: the value the job was accepted with is gone, and the job must not run."""
+    try:
+        envelope = definition_store.DefinitionStore(media_jobs.DB_PATH).envelope(job_id)
+    except definition_store.DefinitionUnavailable as exc:
+        _MEDIA_JOB_LOG.warning("job %s: the stored generated values were not read: %s", job_id, log_scrub.describe_error(exc))
+        raise generated_defaults.GeneratedValueUnavailable(
+            "the generated values stored for this job cannot be read", erased=False) from exc
+    block = {name: dict(entry) for name, entry in envelope.generated.items()} if envelope is not None else {}
+    if any(entry.get(generated_defaults.ERASED) is True for entry in block.values()):
+        raise generated_defaults.GeneratedValueUnavailable(
+            "the generated values stored for this job were erased", erased=True)
+    return block
+
+
+def _accepted_generated(inputs: Mapping[str, Any], given: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """The generated block to keep for a job being accepted: each generated input the caller left empty, drawn once.
+
+    A generator that cannot serve its input, or a drawn value the input refuses, is the document's fault: the
+    ``ManifestError`` goes to the route, which answers 500 and creates nothing."""
+    return generated_defaults.resolve_generated(inputs, given)
+
+
+_GENERATED_UNAVAILABLE_MESSAGE = {
+    True: "The values the gateway generated for this job were erased, so it was not run.",
+    False: "The values the gateway generated for this job cannot be read, so it was not run.",
+}
+_GENERATED_UNAVAILABLE_INFO = {"error_code": "generated_value_unavailable", "error_category": "internal", "retryable": False}
+
+
+def _generated_value_fault_response(exc: Exception) -> Response:
+    """The 500 for a workflow whose generator cannot give its input a value: the document is at fault, not the caller."""
+    _MEDIA_JOB_LOG.warning("a generated value could not be made: %s", log_scrub.describe_error(exc))
+    return Response(
+        content=json.dumps({"error": {
+            "message": "The workflow could not make a value for one of its generated inputs.",
+            "type": "api_error", "code": "generated_value_unavailable",
+        }}),
+        status_code=500, media_type="application/json",
+    )
 
 
 def _video_job_envelope(workflow_name: str) -> job_envelope.JobEnvelope | None:
@@ -6434,7 +6488,16 @@ def _pin_not_recorded_response() -> Response:
     )
 
 
-def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) -> job_envelope.JobEnvelope | None:
+def _manifest_has_pin(manifest: Mapping[str, Any] | None) -> bool:
+    """Whether a job for ``manifest`` can be pinned: its workflow has a graph binding. A workflow with another binding
+    (for example a gateway composition) has no envelope to build, so a job for it is never refused for lacking one."""
+    bindings = manifest.get("bindings") if isinstance(manifest, Mapping) else None
+    return isinstance(bindings, Mapping) and isinstance(bindings.get(DERIVED._GRAPH_BINDING), Mapping)
+
+
+def _manifest_job_envelope(
+    manifest: Mapping[str, Any] | None, capability: str, generated: Mapping[str, Mapping[str, Any]] | None = None,
+) -> job_envelope.JobEnvelope | None:
     """``_graph_job_envelope`` for a job whose workflow has a manifest: its inputs and outputs, and its graph binding."""
     if not isinstance(manifest, Mapping):
         return None
@@ -6447,6 +6510,7 @@ def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) 
         capability, source_id=source_id,
         contract={key: manifest[key] for key in _PINNED_MANIFEST_FIELDS if key in manifest},
         binding=binding, artifact=binding.get("workflow"), record=GATEWAY_WORKFLOW_REGISTRY.get(source_id),
+        generated=generated,
     )
 
 
@@ -8600,18 +8664,23 @@ async def _generate_images_with_adaptive_batching(
     image_transform: Optional[Callable[[bytes], bytes]] = None,
     image_response_headers: Optional[dict[str, str]] = None,
     fixed_seed: Optional[int] = None,
+    generated_values: Mapping[str, int] | None = None,
     auth_context: AuthContext | None = None,
     output_format: str = "png",
     output_compression: Optional[int] = None,
     output_background: Optional[str] = None,
     output_quality: Optional[str] = None,
     output_size: Optional[str] = None,
-    legacy_seed_field: str = "seed",
+    legacy_seed_field: str | None = None,
     made_from: tuple[asset_types.OutputInput, ...] = (),
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
 
     ``made_from`` is the files the caller gave the workflow; each stored image keeps them as its sources.
+
+    ``generated_values`` holds the value of each generated input of the workflow's contract (the caller's own, or the
+    one ``resolve_generated`` made once for the request). Each round binds them plus the number of images already made,
+    so rounds differ. ``fixed_seed`` is for a workflow with no contract (the legacy graph metadata path), which still draws.
 
     On the first round (when no VRAM estimate exists), force batch_size=1 and
     measure the per-image VRAM cost so subsequent rounds (and subsequent
@@ -8693,12 +8762,17 @@ async def _generate_images_with_adaptive_batching(
         # produce different images instead of the same image repeated.
         round_workflow = copy.deepcopy(base_workflow)
         round_offset = len(images_collected) if manifest is None else seed_offset
+        round_values = generated_defaults.offset_values((manifest or {}).get("inputs") or {}, generated_values or {}, round_offset)
         try:
-            round_workflow, round_seed = _reseed_image_workflow(
-                round_workflow, manifest, workflow_name,
-                fixed_seed + round_offset if fixed_seed is not None else None,
-                meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
-            )
+            if manifest is None:
+                round_workflow, round_seed = _reseed_image_workflow(
+                    round_workflow, manifest, workflow_name,
+                    fixed_seed + round_offset if fixed_seed is not None else None,
+                    meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
+                )
+            else:
+                round_workflow, round_seed = _bind_generated_image_inputs(
+                    round_workflow, manifest, workflow_name, round_values, identity=identity)
         except ManifestError:
             return _image_workflow_configuration_error(manifest, workflow_name)
 
@@ -8738,10 +8812,14 @@ async def _generate_images_with_adaptive_batching(
                 models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
                     round_workflow = copy.deepcopy(base_workflow)
-                    round_workflow, _ = _reseed_image_workflow(
-                        round_workflow, manifest, workflow_name, round_seed,
-                        meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
-                    )
+                    if manifest is None:
+                        round_workflow, _ = _reseed_image_workflow(
+                            round_workflow, manifest, workflow_name, round_seed,
+                            meta=meta, legacy_seed_field=legacy_seed_field, identity=identity,
+                        )
+                    else:
+                        round_workflow, _ = _bind_generated_image_inputs(
+                            round_workflow, manifest, workflow_name, round_values, identity=identity)
                     apply_batch_size(round_workflow, meta, 1)
                     err, round_images = await _graph_run_round(
                         client, round_workflow, headers,
@@ -8797,6 +8875,7 @@ async def _generate_images_with_adaptive_batching(
                     image_transform=image_transform,
                     image_response_headers=image_response_headers,
                     fixed_seed=fixed_seed,
+                    generated_values=generated_values,
                     legacy_seed_field=legacy_seed_field,
                     auth_context=auth_context,
                     output_format=output_format,
@@ -9196,7 +9275,10 @@ async def proxy_graph_image_request(
     )
     if extension_response is not None:
         return extension_response
-    fixed_seed = _workflow_extension_integer(body, "seed")
+    try:
+        generated_values = _image_generated_values(manifest, body)
+    except ManifestError as exc:
+        return _generated_value_fault_response(exc)
 
     fallback_workflow = copy.deepcopy(workflow)
     set_workflow_background_removal(fallback_workflow, meta, False)
@@ -9263,7 +9345,8 @@ async def proxy_graph_image_request(
                 background_removal_decision=background_decision,
                 fallback_workflow=fallback_workflow,
                 fallback_workflow_name=workflow_name,
-                fixed_seed=fixed_seed,
+                fixed_seed=_legacy_fixed_seed(body) if manifest is None else None,
+                generated_values=generated_values,
                 auth_context=auth_context,
                 output_format=output_format,
                 output_compression=output_compression,
@@ -9675,12 +9758,14 @@ async def proxy_graph_image_edit_request(
             resolver = _media_input_resolver()
             edit_destination = _media_input_destination(_GRAPH_BACKEND_ID)
             try:
-                for content in uploaded_contents:
+                for part_accepts, content in zip(_edit_part_accepts(manifest, len(uploaded_contents)), uploaded_contents):
                     await asyncio.to_thread(
                         resolver.check_upload, auth_context, content, destination=edit_destination,
-                        accepts=_MEDIA_INPUT_IMAGE)
+                        accepts=part_accepts)
             except media_inputs.MediaInputError as exc:
                 return _refuse_edit_image(receipt, exc)
+            except _InputReferenceError as exc:
+                return _refuse_edit_image(receipt, media_inputs.MediaInputError(media_inputs.INVALID, str(exc)))
             image_content = uploaded_contents[0]
             # What the caller gave the workflow, before any mask is applied: the result keeps these as its sources.
             made_from = [_upload_as_output_input(image_file, image_content)]
@@ -9896,6 +9981,10 @@ async def proxy_graph_image_edit_request(
             )
             if admission is not None:
                 return admission
+            try:
+                generated_values = _image_generated_values(manifest, form_dict)
+            except ManifestError as exc:
+                return _generated_value_fault_response(exc)
             _mark_backend_started(receipt)
             return await _generate_images_with_adaptive_batching(
                 request=request,
@@ -9903,10 +9992,7 @@ async def proxy_graph_image_edit_request(
                 base_workflow=workflow,
                 meta=meta,
                 manifest=manifest,
-                legacy_seed_field=(
-                    "noise_seed" if "noise_seed" in workflow.get(meta.get("seed_node"), {}).get("inputs", {})
-                    else "seed"
-                ),
+                legacy_seed_field=_legacy_seed_field(workflow, meta),
                 workflow_name=workflow_name_for_batching,
                 width=img_width,
                 height=img_height,
@@ -9924,7 +10010,8 @@ async def proxy_graph_image_edit_request(
                 output_background="transparent" if background_decision.remove_background else "opaque",
                 output_quality=quality,
                 output_size=effective_size,
-                fixed_seed=_workflow_extension_integer(form_dict, "seed"),
+                fixed_seed=_legacy_fixed_seed(form_dict) if manifest is None else None,
+                generated_values=generated_values,
                 made_from=tuple(made_from),
             )
 
@@ -11106,7 +11193,35 @@ def _resolve_cached_image_asset(
     return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none"), f"{asset_id}{path.suffix or '.png'}"
 
 
-_MEDIA_INPUT_IMAGE = ("image/*",)
+# What the OpenAI-shaped image and video fields (``image[]``, ``input_reference``) accept when the workflow's contract
+# declares no input for the picture: the wire carries pictures. A contract that declares the input decides instead.
+_IMAGE_WIRE_ACCEPTS = ("image/*",)
+
+
+def _edit_part_accepts(manifest: Mapping[str, Any] | None, count: int) -> list[tuple[str, ...]]:
+    """What each ``image[]`` part of an edit request accepts, in submission order: the first part is the contract's
+    ``source_image``, and each later part is the next input the binding marks ``route_bound_inputs``, in the order the
+    contract lists its inputs (the order the OpenAPI projection advertises). A part with no input of its own takes the wire's."""
+    bound = set(_manifest_required_route_bound_inputs(manifest, DERIVED._GRAPH_BINDING))
+    inputs = (manifest or {}).get("inputs") or {}
+    names = ["source_image"] + [
+        name for name, spec in inputs.items()
+        if name in bound and name != "source_image" and isinstance(spec, Mapping) and spec.get("type") == "asset"]
+    return [_input_accepts(manifest, names[index]) if index < len(names) else _IMAGE_WIRE_ACCEPTS for index in range(count)]
+
+
+def _input_accepts(manifest: Mapping[str, Any] | None, input_name: str) -> tuple[str, ...]:
+    """The media types the contract's asset input ``input_name`` accepts. The contract is the one source: nothing here
+    guesses a type for an input it declares. Only an input the contract does not declare at all takes the wire's own, a picture;
+    one declared with another shape is refused."""
+    inputs = (manifest or {}).get("inputs") or {}
+    if input_name not in inputs:
+        return _IMAGE_WIRE_ACCEPTS
+    spec = inputs[input_name]
+    if not isinstance(spec, Mapping) or spec.get("type") != "asset":
+        # Declared, but not as a picture the wire can carry: the contract decides, so this field is refused.
+        raise _InputReferenceError(f"{input_name} is not declared as an asset input in this workflow")
+    return accepts_of(spec)
 
 
 def _end_request_media_inputs(holder: media_inputs.Holder) -> None:
@@ -11125,21 +11240,24 @@ async def _with_request_media_inputs(run: Callable[[media_inputs.Holder], Awaita
         await asyncio.to_thread(_end_request_media_inputs, holder)
 
 
-def _resolve_reference_upload(data: bytes, auth_context: AuthContext | None, holder: media_inputs.Holder) -> bytes:
+def _resolve_reference_upload(
+    data: bytes, auth_context: AuthContext | None, holder: media_inputs.Holder, accepts: tuple[str, ...],
+) -> bytes:
     """Bytes the caller sent as an input_reference (a data: URI, base64 or an uploaded part), through the resolver."""
     try:
         return _media_input_resolver().resolve_upload(
             auth_context, data, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
-            accepts=_MEDIA_INPUT_IMAGE,
+            accepts=accepts,
         ).data
     except media_inputs.MediaInputError as exc:
         raise _InputReferenceError(exc.message) from exc
 
 
 async def _resolve_reference_asset(
-    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder,
+    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder, accepts: tuple[str, ...],
 ) -> tuple[bytes, str]:
-    data, filename, _media_type = await asyncio.to_thread(_resolve_image_extension_asset, asset_id, auth_context, holder)
+    data, filename, _media_type = await asyncio.to_thread(
+        _resolve_image_extension_asset, asset_id, auth_context, holder, accepts)
     return data, filename
 
 
@@ -11149,10 +11267,11 @@ async def _resolve_input_reference(
     *,
     request: Request | None = None,
     holder: media_inputs.Holder | None = None,
+    accepts: tuple[str, ...],
 ) -> tuple[bytes, str]:
     """Resolve an OpenAI-shaped input_reference into (bytes, filename).
 
-    Every kind goes through the media input resolver (S2.6b): it measures the bytes, refuses what is not an image,
+    Every kind goes through the media input resolver (S2.6b): it measures the bytes, refuses what ``accepts`` does not list,
     runs the read and disclosure checks, and holds a lease for ``holder`` (a request holder the caller releases when
     its request ends). Without a holder the lease lasts only for this call.
 
@@ -11168,7 +11287,7 @@ async def _resolve_input_reference(
     """
     if holder is None:
         return await _with_request_media_inputs(
-            lambda own: _resolve_input_reference(value, auth_context, request=request, holder=own))
+            lambda own: _resolve_input_reference(value, auth_context, request=request, holder=own, accepts=accepts))
     if value is None:
         raise _InputReferenceError("input_reference is empty")
 
@@ -11177,13 +11296,13 @@ async def _resolve_input_reference(
     if isinstance(value, dict):
         asset_id = value.get("asset_id")
         if isinstance(asset_id, str):
-            return await _resolve_reference_asset(asset_id.strip(), auth_context, holder)
+            return await _resolve_reference_asset(asset_id.strip(), auth_context, holder, accepts)
         for key in ("image_url", "url", "input_image"):
             inner = value.get(key)
             if isinstance(inner, dict):
                 inner = inner.get("url") or inner.get("image_url")
             if isinstance(inner, str):
-                return await _resolve_input_reference(inner, auth_context, request=request, holder=holder)
+                return await _resolve_input_reference(inner, auth_context, request=request, holder=holder, accepts=accepts)
         raise _InputReferenceError(
             "input_reference dict missing a recognizable image_url/url field"
         )
@@ -11196,9 +11315,9 @@ async def _resolve_input_reference(
         raise _InputReferenceError("input_reference is empty")
 
     if s.startswith("asset:"):
-        return await _resolve_reference_asset(s[len("asset:"):].strip(), auth_context, holder)
+        return await _resolve_reference_asset(s[len("asset:"):].strip(), auth_context, holder, accepts)
     if s.startswith("img_"):
-        return await _resolve_reference_asset(s, auth_context, holder)
+        return await _resolve_reference_asset(s, auth_context, holder, accepts)
 
     # HTTP(S) URL: fetched by the gateway's media ingestion, which the resolver is given and calls.
     if s.startswith(("http://", "https://")):
@@ -11212,7 +11331,7 @@ async def _resolve_input_reference(
         try:
             resolved = await _media_input_resolver(fetch=fetch).resolve_url(
                 auth_context, s, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
-                accepts=_MEDIA_INPUT_IMAGE,
+                accepts=accepts,
             )
         except media_inputs.MediaInputError as exc:
             if exc.code == media_inputs.FETCH_FAILED and exc.__cause__ is not None:
@@ -11236,7 +11355,7 @@ async def _resolve_input_reference(
                     ext = "jpg" if mime == "jpeg" else mime
         except Exception as e:
             raise _InputReferenceError(f"failed to decode data: URI: {e}") from e
-        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder), f"input_reference.{ext}"
+        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder, accepts), f"input_reference.{ext}"
 
     # Raw base64 fallback. Only accept if it decodes to non-trivial bytes.
     try:
@@ -11244,7 +11363,7 @@ async def _resolve_input_reference(
     except Exception:
         data = b""
     if len(data) >= 64:  # Heuristic: any image is bigger than 64 bytes.
-        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder), "input_reference.png"
+        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder, accepts), "input_reference.png"
 
     # Check after base64: JPEG base64 commonly starts with '/'. No branch
     # treats a public string as a local filename or opens the supplied path.
@@ -11421,8 +11540,10 @@ async def _resolve_video_workflow_asset(
     auth_context: AuthContext | None,
     request: Request | None = None,
     holder: media_inputs.Holder | None = None,
+    accepts: tuple[str, ...] = (),
 ) -> tuple[bytes, str, str]:
-    """Resolve one workflow asset to (bytes, filename, content_type).
+    """Resolve one workflow asset to (bytes, filename, content_type). ``accepts`` is the contract input's list for a
+    picture; a video is not yet measured by the resolver, so it does not use it.
 
     Accepted values: a gateway video id (`video_...` or `{"video_id": ...}`,
     video inputs only), an `asset_id` (images only), an http(s) URL, a data:
@@ -11461,7 +11582,7 @@ async def _resolve_video_workflow_asset(
         mime = fetched.content_type if fetched.content_type != "application/octet-stream" else "video/mp4"
         return fetched.data, f"source{video_inputs.suffix_for_video(fetched.filename, mime)}", mime
     try:
-        data, name = await _resolve_input_reference(value, auth_context, request=request, holder=holder)
+        data, name = await _resolve_input_reference(value, auth_context, request=request, holder=holder, accepts=accepts)
     except _InputReferenceError as exc:
         raise _VideoAssetError(f"{param}: {exc}", param=param, echoes_input=True) from exc
     suffix = Path(name).suffix.lower()
@@ -11520,7 +11641,7 @@ async def _resolve_video_workflow_assets(
         kind = "video" if name == source_input else "image"
         data, filename, mime = await _resolve_video_workflow_asset(
             value, kind=kind, param=f"{ext_param}.{name}", auth_context=auth_context, request=request,
-            holder=holder,
+            holder=holder, accepts=accepts_of(spec),
         )
         if not data:
             raise _VideoAssetError(f"{name} is empty", param=f"{ext_param}.{name}")
@@ -12345,6 +12466,7 @@ async def _proxy_graph_video_create(
                 auth_context,
                 request=request,
                 holder=media_holder,
+                accepts=_input_accepts(video_manifest, VIDEO_REFERENCE_INPUT),
             )
         except _InputReferenceError as e:
             return Response(
@@ -12789,7 +12911,8 @@ async def _submit_video_chain(
         if body.get("input_reference"):
             try:
                 image_bytes, image_name = await _resolve_input_reference(
-                    body["input_reference"], auth_context, request=request, holder=media_holder)
+                    body["input_reference"], auth_context, request=request, holder=media_holder,
+                    accepts=_input_accepts(_find_video_manifest(workflow_name, workflow_cfg), VIDEO_REFERENCE_INPUT))
             except _InputReferenceError as exc:
                 return _json_error(400, str(exc), param="input_reference")
             first_frame_image = await _upload_graph_input(image_bytes, image_name, "image/png", auth_context)
@@ -21382,6 +21505,54 @@ def _image_workflow_configuration_error(manifest, workflow_name: str) -> Respons
     )
 
 
+def _legacy_fixed_seed(body: Mapping[str, Any]) -> Optional[int]:
+    """The caller's number for a workflow with no contract (the graph-metadata path), which names its input itself."""
+    return _workflow_extension_integer(body, "seed")
+
+
+def _legacy_seed_field(workflow: Mapping[str, Any], meta: Mapping[str, Any]) -> str:
+    """The input a legacy graph's seed node takes: ``noise_seed`` where the node has it, else ``seed``."""
+    return "noise_seed" if "noise_seed" in workflow.get(meta.get("seed_node"), {}).get("inputs", {}) else "seed"
+
+
+def _image_generated_values(manifest: Mapping[str, Any] | None, body: Mapping[str, Any]) -> dict[str, int]:
+    """The value of each generated input of the workflow's contract for this request (gateway/generated_defaults.py).
+
+    The caller names one in the workflow extension block, by the input's own name; one it leaves empty is drawn once
+    here, unless the job this request runs for already kept one (``_JOB_GENERATED``). A workflow with no contract has
+    none. Raises ``ManifestError`` when a generator cannot serve its input."""
+    if manifest is None:
+        return {}
+    inputs = manifest.get("inputs") or {}
+    given = {name: value for name in generated_defaults.generated_inputs(inputs)
+             if (value := _workflow_extension_integer(body, name)) is not None}
+    return generated_defaults.resolved_values(inputs, given, stored=_JOB_GENERATED.get())
+
+
+def _bind_generated_image_inputs(
+    workflow: dict[str, Any],
+    manifest: Mapping[str, Any],
+    workflow_name: str,
+    values: Mapping[str, int],
+    *,
+    identity: ManifestIdentity | None = None,
+) -> tuple[dict[str, Any], int | None]:
+    """Bind the generated inputs the manifest's graph binding maps. Returns the graph and the value to record in the
+    result's provenance (the first bound generated input), or None when nothing is bound."""
+    binding = ((manifest or {}).get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
+    mapping = binding.get("map") or {}
+    bound = {name: int(value) for name, value in values.items() if mapping.get(name)}
+    if not bound:
+        name = workflow_name.removesuffix("+rmbg")
+        if name not in _image_reseed_unavailable:
+            _image_reseed_unavailable.add(name)
+            print(f"[proxy] workflow '{name}': reseeding unavailable (no generated input is bound); "
+                  "using template inputs", flush=True)
+        return workflow, None
+    request = bind_backend_request(dict(manifest), DERIVED._GRAPH_BINDING, workflow, bound, identity=identity).request
+    return request, generated_defaults.first_value(manifest.get("inputs") or {}, bound)
+
+
 def _reseed_image_workflow(
     workflow: dict[str, Any],
     manifest: Mapping[str, Any] | None,
@@ -21389,7 +21560,7 @@ def _reseed_image_workflow(
     seed: int | None,
     *,
     meta: Mapping[str, Any] | None = None,
-    legacy_seed_field: str = "seed",
+    legacy_seed_field: str | None = None,
     identity: ManifestIdentity | None = None,
 ) -> tuple[dict[str, Any], int | None]:
     """Use manifest bindings, or the legacy metadata path for graphs without one."""
@@ -21398,7 +21569,7 @@ def _reseed_image_workflow(
         if node and node in workflow:
             if seed is None:
                 seed = random.randint(0, 2**32 - 1)
-            workflow[node].get("inputs", {})[legacy_seed_field] = int(seed)
+            workflow[node].get("inputs", {})[legacy_seed_field or "seed"] = int(seed)
             return workflow, int(seed)
     binding = ((manifest or {}).get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
     mapping = binding.get("map") or {}
@@ -22246,7 +22417,7 @@ _IMAGE_ASSET_REFUSALS = {
 
 
 def _resolve_image_extension_asset(
-    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder,
+    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder, accepts: tuple[str, ...],
 ) -> tuple[bytes, str, str]:
     """An image extension input named by asset id, through the media input resolver: the caller's read access, the
     measured type, the disclosure check for the engine, and a lease. Returns (bytes, filename, media type)."""
@@ -22256,7 +22427,7 @@ def _resolve_image_extension_asset(
     try:
         resolved = _media_input_resolver().resolve_asset(
             auth_context, asset_id, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
-            accepts=("image/*",),
+            accepts=accepts,
         )
     except media_inputs.MediaInputError as exc:
         raise _InputReferenceError(_IMAGE_ASSET_REFUSALS.get(exc.code, exc.message)) from exc
@@ -22308,84 +22479,93 @@ async def _upload_image_workflow_extension_assets(
         return updated, allow_error
     next_block = dict(block)
     uploaded_any = False
+    # Every supplied input is read and checked (syntax, ownership, disclosure, size, measured type against its accepts)
+    # before the first one goes to the engine, so a refused input leaves no upload behind for the others.
+    pending: list[tuple[str, str | None, bytes, str, str]] = []
+    made_upload = False  # an uploaded file was measured and may have made a stored copy
     holder = media_inputs.Holder("request", getattr(receipt, "request_id", None) or f"req_{uuid.uuid4().hex}")
-    for input_name, value in block.items():
-        field_name = _extension_asset_multipart_field(value)
-        asset_id = _extension_asset_id(value)
-        if field_name is None and asset_id is None:
-            continue
+    try:
+        for input_name, value in block.items():
+            field_name = _extension_asset_multipart_field(value)
+            asset_id = _extension_asset_id(value)
+            if field_name is None and asset_id is None:
+                continue
 
-        input_key = str(input_name)
-        spec = inputs.get(input_key)
-        if field_name is not None and field_name not in allowed_fields:
-            continue
-        if input_key not in supported or not isinstance(spec, Mapping):
-            return updated, _image_extension_error_response(
-                receipt,
-                f"{input_key} is not a supported asset extension input",
-                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
-            )
-        if spec.get("type") != "asset":
-            return updated, _image_extension_error_response(
-                receipt,
-                f"{input_key} is not an asset extension input",
-                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
-            )
-
-        if asset_id is not None:
-            try:
-                content, filename, content_type = await asyncio.to_thread(
-                    _resolve_image_extension_asset, asset_id, auth_context, holder)
-            except _InputReferenceError as exc:
+            input_key = str(input_name)
+            spec = inputs.get(input_key)
+            if field_name is not None and field_name not in allowed_fields:
+                continue
+            if input_key not in supported or not isinstance(spec, Mapping):
                 return updated, _image_extension_error_response(
                     receipt,
-                    str(exc),
+                    f"{input_key} is not a supported asset extension input",
                     param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
                 )
-        else:
-            upload = form.get(field_name)
-            read = getattr(upload, "read", None)
-            if upload is None or not callable(read):
+            if spec.get("type") != "asset":
                 return updated, _image_extension_error_response(
                     receipt,
-                    f"multipart field {field_name!r} is required for {input_key}",
+                    f"{input_key} is not an asset extension input",
                     param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
                 )
 
-            try:
-                content = await read()
-            except Exception as exc:  # noqa: BLE001
-                return updated, _image_extension_error_response(
-                    receipt,
-                    f"could not read multipart field {field_name!r}: {exc}",
-                    param=field_name,
-                )
+            if asset_id is not None:
+                try:
+                    content, filename, content_type = await asyncio.to_thread(
+                        _resolve_image_extension_asset, asset_id, auth_context, holder, accepts_of(spec))
+                except _InputReferenceError as exc:
+                    return updated, _image_extension_error_response(
+                        receipt,
+                        str(exc),
+                        param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+                    )
+            else:
+                upload = form.get(field_name)
+                read = getattr(upload, "read", None)
+                if upload is None or not callable(read):
+                    return updated, _image_extension_error_response(
+                        receipt,
+                        f"multipart field {field_name!r} is required for {input_key}",
+                        param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+                    )
 
-            # The bytes are measured and checked by the resolver; the name and type that came with them are only what
-            # the engine is told, as before.
-            try:
-                content = (await asyncio.to_thread(
-                    _media_input_resolver().resolve_upload, auth_context, content, holder=holder,
-                    destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=_MEDIA_INPUT_IMAGE)).data
-            except media_inputs.MediaInputError as exc:
-                return updated, _image_extension_error_response(receipt, exc.message, param=field_name)
-            filename = getattr(upload, "filename", None) or f"{field_name}.png"
-            content_type = getattr(upload, "content_type", None) or "image/png"
-        try:
+                try:
+                    content = await read()
+                except Exception as exc:  # noqa: BLE001
+                    return updated, _image_extension_error_response(
+                        receipt,
+                        f"could not read multipart field {field_name!r}: {exc}",
+                        param=field_name,
+                    )
+
+                # The bytes are measured and checked by the resolver; the name and type that came with them are only what
+                # the engine is told, as before.
+                try:
+                    made_upload = True
+                    content = (await asyncio.to_thread(
+                        _media_input_resolver().resolve_upload, auth_context, content, holder=holder,
+                        destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts_of(spec))).data
+                except media_inputs.MediaInputError as exc:
+                    return updated, _image_extension_error_response(receipt, exc.message, param=field_name)
+                filename = getattr(upload, "filename", None) or f"{field_name}.png"
+                content_type = getattr(upload, "content_type", None) or "image/png"
+            pending.append((input_key, field_name, content, filename, content_type))
+
+        for input_key, field_name, content, filename, content_type in pending:
             uploaded_filename, upload_error = await _upload_graph_image_bytes(
                 client, headers, content, filename=filename, media_type=content_type,
             )
-        finally:
-            # The engine has the bytes, or the run is over. A file an upload made goes with its lease.
-            await asyncio.to_thread(
-                _media_input_resolver().release if asset_id is not None else _end_request_media_inputs, holder)
-        if upload_error is not None:
-            return updated, upload_error
+            if upload_error is not None:
+                return updated, upload_error
 
-        next_block[input_key] = str(uploaded_filename)
-        uploaded_any = True
-        if field_name is not None:
-            _record_image_input(receipt, field_name)
+            next_block[input_key] = str(uploaded_filename)
+            uploaded_any = True
+            if field_name is not None:
+                _record_image_input(receipt, field_name)
+    finally:
+        # The engine has the bytes, or the run is over. A stored asset's lease is released; a file an upload made
+        # goes with its lease.
+        end = _end_request_media_inputs if made_upload else _media_input_resolver().release
+        await asyncio.to_thread(end, holder)
 
     if uploaded_any:
         next_extensions = dict(extensions)
@@ -23840,6 +24020,8 @@ async def _run_image_media_job(job_id: str) -> None:
                 # Retry the same request, including its original retention clock.
                 # Deletion fences must survive copied bodies and worker retries.
                 token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or job["created_at"]))
+                stored_generated = await asyncio.to_thread(_stored_generated, job_id)
+                generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     worker_token = _ADMISSION_WORKER.set(True)
                     try:
@@ -23847,6 +24029,7 @@ async def _run_image_media_job(job_id: str) -> None:
                     finally:
                         _ADMISSION_WORKER.reset(worker_token)
                 finally:
+                    _JOB_GENERATED.reset(generated_token)
                     _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
                 await run_receipt_write(finish_image_route_receipt, receipt, response)
             except asyncio.CancelledError:
@@ -23856,6 +24039,12 @@ async def _run_image_media_job(job_id: str) -> None:
             except media_jobs.CancellationPending:
                 await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
                 raise
+            except generated_defaults.GeneratedValueUnavailable as exc:
+                # The job's stored value is erased or unreadable: it never runs, and no retry draws another.
+                await run_receipt_write(finish_image_route_receipt, receipt, _generated_value_fault_response(exc))
+                _mark_image_media_job_failed(job_id, _GENERATED_UNAVAILABLE_MESSAGE[exc.erased],
+                                             http_status=500, error_info=_GENERATED_UNAVAILABLE_INFO)
+                return
             except Exception as exc:  # noqa: BLE001
                 await run_receipt_write(finish_image_route_receipt,
                     receipt,
@@ -24546,6 +24735,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 },
                 path=media_jobs.DB_PATH,
             )
+            stored_generated = await asyncio.to_thread(_stored_generated, job_id)  # raises when it cannot be read
             worker_token = _ADMISSION_WORKER.set(True)
             try:
                 from gateway import media_ingestion
@@ -24553,17 +24743,25 @@ async def _run_audio_media_job(job_id: str) -> None:
                     request_shim, auth_context, intent=str(job.get("intent") or "audio.generate"), protocol="openai.audio",
                     request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                 )
+                generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     response = await proxy_audio_generate(
                         request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
+                finally:
+                    _JOB_GENERATED.reset(generated_token)
                 await run_receipt_write(media_ingestion.finish_response, receipt, response)
             finally:
                 _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
             raise
+        except generated_defaults.GeneratedValueUnavailable as exc:
+            # The job's stored value is erased or unreadable: it never runs, and nothing draws another.
+            _mark_audio_media_job_failed(job_id, _GENERATED_UNAVAILABLE_MESSAGE[exc.erased], http_status=500,
+                                         error_info=_GENERATED_UNAVAILABLE_INFO)
+            return
         except Exception as exc:  # noqa: BLE001
             _mark_audio_media_job_failed(
                 job_id,
@@ -24765,9 +24963,22 @@ async def _submit_audio_media_job(
     metadata = dict(job.metadata or {})
     metadata["mode"] = "async_audio_generation"
     job.metadata = metadata
-    envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY)
+    generated: dict[str, dict[str, Any]] = {}
+    if manifest is not None:
+        try:
+            generated = audio_graph.generated_block(body, manifest=audio_graph.effective_manifest(
+                manifest, audio_graph.AudioLimits(
+                    default_duration=_workflow_cfg.get("default_duration"),
+                    min_seconds=_workflow_cfg.get("min_seconds"), max_seconds=_workflow_cfg.get("max_seconds"))))
+        except ManifestError as exc:  # the manifest and the deployment's limits disagree, or a generator cannot serve its input
+            return _generated_value_fault_response(exc)
+    envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
     compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
-    if envelope is None and compiles_from_pin:
+    # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
+    # the envelope is required for it whether or not the route compiles from its pin. A workflow whose binding has no
+    # pin (no graph binding) has no envelope to build; it keeps the old behaviour and draws at run, as before S3.6.
+    needs_envelope = compiles_from_pin or (bool(generated) and _manifest_has_pin(manifest))
+    if envelope is None and needs_envelope:
         # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
         return _pin_not_recorded_response()
 
@@ -24782,7 +24993,7 @@ async def _submit_audio_media_job(
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(
             job, input_data=body, path=media_jobs.DB_PATH, envelope=envelope,
-            require_envelope=compiles_from_pin,
+            require_envelope=needs_envelope,
         )
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
@@ -25682,6 +25893,20 @@ async def gateway_image_generations_media_job(request: Request):
         ),
     )
 
+    # Idempotency was resolved above, so this is the one place a value is drawn for the job: the caller's retry, a restart
+    # and a replay read it from the envelope. It is drawn before the payload is written, so a refusal leaves nothing.
+    # A concurrent request with the same key that passed the check above also draws here, but only the request whose job
+    # row wins keeps its envelope; the loser answers the winner's job below and its value goes nowhere: not into a
+    # receipt, a log, a submission or the response (tests/test_generated_defaults.py, the same-key race test).
+    try:
+        generated = _accepted_generated(
+            (manifest or {}).get("inputs") or {},
+            {name: value for name in generated_defaults.generated_inputs((manifest or {}).get("inputs") or {})
+             if (value := _workflow_extension_integer(body, name)) is not None})
+    except ManifestError as exc:
+        response = _generated_value_fault_response(exc)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
     try:
         _persist_image_media_job_payload(
             job.job_id,
@@ -25691,11 +25916,21 @@ async def gateway_image_generations_media_job(request: Request):
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
+        # A job that holds a generated value must have it stored before it is scheduled: without it a retry would draw
+        # another. So the envelope is required, whether or not the route compiles from its pin. A workflow whose binding
+        # has no pin (a gateway composition) has no envelope to build and keeps the old behaviour: it draws at run.
         created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH,
-                                    envelope=_manifest_job_envelope(manifest, _GRAPH_CAPABILITY))
+                                    envelope=_manifest_job_envelope(manifest, _GRAPH_CAPABILITY, generated),
+                                    require_envelope=bool(generated) and _manifest_has_pin(manifest))
     except EphemeralMediaPayloadCapacityError:
         _delete_image_media_job_payload(job.job_id)
         response = _ephemeral_media_payload_busy_response()
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
+    except media_jobs.EnvelopeNotRecorded as exc:
+        _delete_image_media_job_payload(job.job_id)
+        _MEDIA_JOB_LOG.warning("image job %s: the generated value was not recorded: %s", job.job_id, log_scrub.describe_error(exc))
+        response = _pin_not_recorded_response()
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     except Exception as exc:  # noqa: BLE001
@@ -26821,7 +27056,7 @@ async def proxy_audio_generate(
         print(f"[proxy] audio workflow {workflow_name} limits do not fit its manifest: {error}", flush=True)
         return client_errors.client_error(500, "audio_failed", error_type="api_error")
     try:
-        inputs = audio_graph.manifest_inputs(body, manifest=effective)
+        inputs = audio_graph.manifest_inputs(body, manifest=effective, stored=_JOB_GENERATED.get())
     except audio_graph.InvalidAudioRequest as error:
         return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
     except ManifestError as error:
@@ -26829,7 +27064,7 @@ async def proxy_audio_generate(
         return openai_error_response(f"Workflow manifest for {workflow_name} cannot serve this request",
                                      status_code=500, error_type="api_error")
     duration_value = inputs.get("duration")
-    seed_val = inputs.get("seed")
+    seed_val = generated_defaults.first_value(effective["inputs"], inputs)
     # The template is the one the manifest's binding names, so the map and the graph it writes come from one place.
     graph_binding = (manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
     workflow = pinned_graph if pinned is not None else _load_audio_workflow_file({"file": graph_binding.get("workflow")})
@@ -27925,10 +28160,19 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
         # already maps. Its raw upstream names would attach it to an unrelated local entry of the same name.
         if not isinstance(service_cfg, Mapping) or service_registry.is_remote_provider_config(service_cfg):
             continue
+        enabled = service_cfg.get("enabled", True) is not False
+        model_id = str(service_cfg.get("model_id") or "")
+        model_id_served = False
         for record in _service_model_records(service_cfg):
-            for key in ("id", "model_group", "public_name"):
-                add(str(record.get(key) or ""), str(service_id))
-        add(str(service_cfg.get("model_id") or ""), str(service_id))
+            # A lifecycle-routed record is answered by its lifecycle backend, as in the LiteLLM part above.
+            serving = serving_service_id(str(service_id), service_cfg, record) if enabled else str(service_id)
+            names = [str(record.get(key) or "") for key in ("id", "model_group", "public_name")]
+            for name in names:
+                add(name, serving)
+            model_id_served = model_id_served or normalize_model_id(model_id) in {normalize_model_id(n) for n in names}
+        # The service's own model name, unless one of its records already names it (and so says who answers it).
+        if not model_id_served:
+            add(model_id, str(service_id))
     return index
 
 
@@ -27957,13 +28201,13 @@ def _model_entry_availability(
         return model_availability(service_ids, service_records=service_records, evidence=evidence,
                                   require_all=require_all, services=services, projected=projected)
 
-    def by_workflow(workflow_id: str) -> dict[str, str] | None:
-        record = workflows.get(workflow_id)
-        if record is None:
-            return None
-        requirements = requirements_of(record.contract)
-        if not isinstance(requirements, Mapping):
-            return judge(list(record.supported_backends))
+    registry_services = service_records.get("services") if isinstance(service_records.get("services"), Mapping) else {}
+
+    def by_backend(backend: str | None, requirements: Mapping[str, Any]) -> dict[str, str] | None:
+        # One way to run the workflow: its engine, when that is a registry service (the gateway composing it itself is
+        # none), and every service it requires, all at once. A known-down part decides, even when another requirement
+        # cannot be resolved.
+        engine = judge([backend]) if backend is not None and backend in registry_services else None
         needed = [str(service) for service in requirements.get("services") or ()]
         unresolved = False
         for required_id in requirements.get("workflows") or ():
@@ -27972,11 +28216,38 @@ def _model_entry_availability(
                 unresolved = True
                 continue
             needed.append(required.supported_backends[0])
-        # A known-down requirement decides the entry even when another requirement cannot be resolved.
-        judged = judge(needed, require_all=True)
-        if unresolved and (judged is None or judged["state"] != "unavailable"):
+        judged = [state for state in (engine, judge(needed, require_all=True)) if state is not None]
+        down = next((state for state in judged if state["state"] == "unavailable"), None)
+        if down is not None:
+            return down
+        if unresolved:
             return {"state": "unknown"}
-        return judged
+        if not judged:
+            return None
+        return {"state": "available"} if all(state["state"] == "available" for state in judged) else {"state": "unknown"}
+
+    def by_workflow(workflow_id: str) -> dict[str, str] | None:
+        record = workflows.get(workflow_id)
+        if record is None:
+            return None
+        # Any one of its backends can run the workflow, each with the requirements its own binding declares (all of
+        # them, when no binding is named after the backend).
+        bindings = record.contract.get("bindings") if isinstance(record.contract.get("bindings"), Mapping) else {}
+        backends = [str(backend) for backend in record.supported_backends] or [None]
+        states = []
+        for backend in backends:
+            own = bindings.get(backend) if backend is not None else None
+            requirements = requirements_of({"bindings": {backend: own}} if isinstance(own, Mapping) else record.contract)
+            states.append(by_backend(backend, requirements or {}))
+        if all(state is None for state in states):
+            return None
+        # A backend nothing can be judged for counts as unknown beside the others.
+        states = [state or {"state": "unknown"} for state in states]
+        if any(state["state"] == "available" for state in states):
+            return {"state": "available"}
+        if all(state["state"] == "unavailable" for state in states):
+            return states[0]
+        return {"state": "unknown"}
 
     def by_name_or_workflow(name: str) -> dict[str, str] | None:
         workflow_id = workflow_ids_by_model.get(name)
@@ -28004,7 +28275,9 @@ def _model_entry_availability(
     return by_name_or_workflow(model_id)
 
 
-def _annotate_model_availability(data: list[Any], *, only_available: bool) -> list[Any]:
+def _annotate_model_availability(
+    data: list[Any], *, only_available: bool, status_payload: Mapping[str, Any] | None = None,
+) -> list[Any]:
     """Set `azizam_availability` on each mappable entry and remove a stale one from each entry that maps to no service;
     with `only_available`, drop the `unavailable` ones.
 
@@ -28013,9 +28286,14 @@ def _annotate_model_availability(data: list[Any], *, only_available: bool) -> li
     try:
         registry = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
+        # Nothing can be judged: a reused entry must not keep the state an earlier request gave it.
+        for item in data:
+            if isinstance(item, dict):
+                item.pop("azizam_availability", None)
         return data
     service_records = _workflow_availability_services(registry)
-    status_payload = _cached_status_payload_for_availability()
+    if status_payload is None:
+        status_payload = _cached_status_payload_for_availability()
     snapshot_fresh = bool(status_payload)
     evidence: dict[str, dict[str, Any]] = {}
     if snapshot_fresh:
@@ -28224,9 +28502,12 @@ async def list_models(request: Request):
     model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
 
     # After the profile filter: `?available=true` hides only entries known to be down. Everything else stays.
+    # The snapshot is read here, on the event loop: only a read on the loop restarts a stopped status refresher, so
+    # a client that only lists models still gets fresh states after an idle spell.
     data = await asyncio.to_thread(
         _annotate_model_availability, data,
         only_available=request.query_params.get("available") == "true",
+        status_payload=_cached_status_payload_for_availability(),
     )
 
     # Resolve metadata against the full catalog, then hide target IDs that the

@@ -202,7 +202,9 @@ def test_a_route_that_compiles_from_the_pin_refuses_a_job_it_cannot_pin(rig: Gat
     async def both() -> tuple[int, int]:
         return await submit(False), await submit(True)
 
-    assert run(both()) == (202, 503), "with the flag off a job without a pin is accepted as it always was"
+    # The flag decides only whether a job with nothing to store may go without a pin; this job holds a generated value,
+    # which must be stored before it is scheduled, so it is refused with the flag off too (CODE_TO_DATA_S3 D6).
+    assert run(both()) == (503, 503), "a job that holds a generated value is refused without a pin, flag on or off"
 
 
 def job_count() -> int:
@@ -213,7 +215,8 @@ def job_count() -> int:
 def test_a_route_that_compiles_from_the_pin_refuses_a_job_whose_pin_cannot_be_written(
         rig: GatewayRig, monkeypatch: pytest.MonkeyPatch):
     """The envelope builds, the store then refuses it (here: raises). With the flag on that is a 503 and no job row,
-    not a 202 for a job that would fail ``definition_unavailable`` later; with the flag off it is the old best effort."""
+    not a 202 for a job that would fail ``definition_unavailable`` later. This job holds a generated value, which must be
+    stored before the job is scheduled, so the flag off refuses it too (CODE_TO_DATA_S3 D6)."""
     def refuse(*_args: Any, **_kwargs: Any) -> None:
         raise ValueError("the store refused the envelope")
 
@@ -234,8 +237,8 @@ def test_a_route_that_compiles_from_the_pin_refuses_a_job_whose_pin_cannot_be_wr
 
     on, rows_after_refusal, off = run(both())
     assert (on, rows_after_refusal) == (503, 0), "the refused job left no row"
-    assert off == 202 and job_count() == 1, "with the flag off a failed envelope write is still best effort"
-    assert len(rig.scheduled) == 1, "only the accepted job was scheduled"
+    assert off == 503 and job_count() == 0, "with the flag off a job holding a generated value is refused as well"
+    assert rig.scheduled == [], "nothing was scheduled"
 
 
 def set_audio_workflows(rig: GatewayRig, table: dict) -> None:
