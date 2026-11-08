@@ -105,6 +105,7 @@ class FakeSnapshot:
     workflows: Mapping[str, WorkflowEntry]
     frontends: Mapping[str, FrontendRow] = field(default_factory=lambda: MappingProxyType({}))
     models: tuple[tuple[str, NameOwner], ...] = ()      # construction input only; readers use ``names``
+    held_out: Mapping[str, tuple[Any, ...]] = field(default_factory=lambda: MappingProxyType({}))
 
     @property
     def names(self) -> FakeNames:

@@ -169,6 +169,8 @@ class RegistrySnapshot(Protocol):
     workflows: Mapping[str, WorkflowEntry]
     frontends: Mapping[str, FrontendRow]
     names: NameView
+    # Stored workflows left out because their names clash with names the document already held, with the clashes.
+    held_out: Mapping[str, tuple[Any, ...]]
 
     def get(self, workflow_id: str) -> WorkflowEntry | None: ...
     def by_intent(self, intent: str) -> tuple[WorkflowEntry, ...]: ...   # listings a frontend declares; never dispatch

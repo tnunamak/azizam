@@ -545,6 +545,8 @@ class WorkflowRegistryStore:
                 except Exception as error:   # noqa: BLE001 - a revision the builder refuses is never stored
                     raise RegistryRefused((ContractError((), SNAPSHOT_REFUSED,
                                                          f"the registry would not build: {type(error).__name__}"),)) from error
+                if record is not None and wid in prospective.held_out:   # a save never stores a workflow that cannot serve
+                    raise RegistryRefused(prospective.held_out[wid])
                 entry = prospective.get(wid)
                 commit = Commit(revision=expected + 1, workflow_id=wid,
                                 record_revision=record["record_revision"] if record else 0,

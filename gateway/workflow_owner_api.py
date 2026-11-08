@@ -176,7 +176,10 @@ def register_workflow_owner_routes(
             return ctx
         snapshot = await asyncio.to_thread(store.snapshot)
         rows = [entry_view(entry, problems_of(entry)) for _id, entry in sorted(snapshot.workflows.items())]
-        return _plain({"workflows": rows, "revision": snapshot.revision,
+        # Stored workflows that do not serve because their names clash with names the registry already held.
+        held_out = [{"id": wid, "problems": [_with_clean(problem.as_dict()) for problem in problems]}
+                    for wid, problems in snapshot.held_out.items()]
+        return _plain({"workflows": rows, "held_out": held_out, "revision": snapshot.revision,
                        "choices": fact_choices(snapshot.workflows.values())}, etag=snapshot.revision)
 
     @router.post("/workflows/check")

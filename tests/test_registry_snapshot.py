@@ -219,26 +219,52 @@ def test_frontend_ids_and_route_keys_are_names():
     assert names.owner("route", "POST /v1/things") == NameOwner("route", "front")
 
 
-def test_a_name_two_owners_hold_is_refused_whole_revision():
+def test_a_stored_workflow_that_takes_a_held_name_is_held_out_and_the_rest_serves():
+    # A clash the stored document already holds (a new release took a name an owner workflow had) never stops the
+    # revision: the writers refuse a new clash, and Kubernetes ratcheting validation (KEP-4008) keeps existing data
+    # serving. The stored workflow that holds the clashing name is held out, named with its problems; the rest serves.
     other = contract("other.thing", aliases=["poster-generate-demo"])
+    snap = build({"workflows": {"other.thing": {**stored("other.thing"), "manifest": other}, "mine.two": stored("mine.two")}})
+    assert snap.get("other.thing") is None
+    assert snap.get("mine.two") is not None and snap.get(CONTRACT["id"]) is not None
+    assert list(snap.held_out) == ["other.thing"]
+    assert [p.code for p in snap.held_out["other.thing"]] == [ID_CLASH]
+    assert snap.names.owner("workflow_alias", "poster-generate-demo") is None
+
+
+def test_a_held_out_override_of_a_bundled_id_leaves_the_bundled_workflow_serving():
+    clashing = contract(CONTRACT["id"], aliases=["taken-name"])
+    services = {"svc": {"config": {"models": [{"id": "taken-name"}]}}}
+    snap = build({"services": services, "workflows": {
+        CONTRACT["id"]: {**stored(CONTRACT["id"], overrides=CONTRACT["id"]), "manifest": clashing}, "mine.two": stored("mine.two")}})
+    assert list(snap.held_out) == [CONTRACT["id"]]
+    assert snap.get(CONTRACT["id"]).incarnation == "bundled" and snap.get("mine.two") is not None
+
+
+def test_a_clash_no_stored_workflow_holds_is_refused_whole_revision():
+    services = {"svc": {"config": {"models": [{"id": "poster-generate-demo"}]}}}
     with pytest.raises(rs.SnapshotBuildError) as caught:
-        build({"workflows": {"other.thing": {**stored("other.thing"), "manifest": other}}})
-    assert [p.code for p in caught.value.problems] == [ID_CLASH]
+        build({"services": services, "workflows": {"mine.two": stored("mine.two")}})
+    assert ID_CLASH in [p.code for p in caught.value.problems]
+
+
+def test_a_revision_without_a_clash_holds_nothing_out():
+    assert dict(build({"workflows": {"mine.two": stored("mine.two")}}).held_out) == {}
 
 
 @pytest.mark.parametrize("name", ["Friendly", "run_poster_generate_demo-ish", "front"])
-def test_a_model_alias_a_frontend_or_an_id_with_the_token_of_another_owner_is_refused(name):
+def test_a_stored_id_with_the_token_of_a_model_alias_or_a_frontend_is_held_out(name):
     release = rs.BundledRelease(bundled_of(CONTRACT).workflows, (row("front", "/v1/things"),))
-    services = {"svc": {"config": {"models": [{"id": name, "base_model_id": "base"}, {"id": "base"}]}}}
+    services = {"svc": {"config": {"models": [{"id": name, "base_model_id": "base"}, {"id": "base"}]}}} if name == "Friendly" else {}
     if name == "run_poster_generate_demo-ish":
         return   # that token is an operation name, which has its own space
-    with pytest.raises(rs.SnapshotBuildError):
-        rs.build({"services": services, "workflows": {name: stored(name)}}, release, generation=1)
+    snap = rs.build({"services": services, "workflows": {name: stored(name)}}, release, generation=1)
+    assert snap.get(name) is None and list(snap.held_out) == [name]
 
 
-def test_two_workflows_whose_generated_names_collide_are_refused():
-    with pytest.raises(rs.SnapshotBuildError):
-        build({"workflows": {"x.a-b": stored("x.a-b"), "x.a.b": stored("x.a.b")}})
+def test_two_stored_workflows_whose_generated_names_collide_are_both_held_out():
+    snap = build({"workflows": {"x.a-b": stored("x.a-b"), "x.a.b": stored("x.a.b"), "mine.two": stored("mine.two")}})
+    assert sorted(snap.held_out) == ["x.a-b", "x.a.b"] and snap.get("mine.two") is not None
 
 
 def test_a_workflow_own_alias_with_its_id_token_is_not_a_clash():

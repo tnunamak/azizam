@@ -439,6 +439,8 @@ class Snapshot:
     frontends: Mapping[str, FrontendRow]
     names: SnapshotNames
     _intents: Mapping[str, tuple[WorkflowEntry, ...]] = field(repr=False, compare=False, default_factory=dict)
+    # Each stored workflow left out because its names clash with names the revision already held, with the clashes.
+    held_out: Mapping[str, tuple[ContractError, ...]] = field(default_factory=lambda: MappingProxyType({}))
     # Where a bundled workflow was loaded from, for the admin view only; never part of the digest or a decision.
     source_paths: Mapping[str, str] = field(repr=False, compare=False, default_factory=dict)
 
@@ -449,12 +451,45 @@ class Snapshot:
         return self._intents.get(intent, ())
 
 
+def _hold_out_clashing(entries: dict[str, WorkflowEntry], owned: set[str], fixed: list[tuple[str, NameOwner]],
+                       release: BundledRelease, generation: int) -> dict[str, tuple[ContractError, ...]]:
+    """Leave out each stored workflow whose names clash, and return them with their clashes. Edits ``entries``.
+
+    The writers refuse a new clash (``service_registry.refuse_new_name_clashes``), so a clash here is one the document
+    already held: a release took a name an owner workflow had, or the document predates the check. As in ratcheting
+    validation (Kubernetes KEP-4008), data that was accepted keeps the rest serving: the stored workflow that holds the
+    clashing name is left out, and the bundled workflow of its id, if any, serves. A clash no stored workflow takes part
+    in is left for ``build`` to refuse."""
+    def clashes(ids: Iterable[str]) -> tuple[ContractError, ...]:
+        return name_clashes([pair for wid in ids for pair in workflow_names(entries[wid])] + fixed)
+
+    def key(problem: ContractError) -> tuple[str, str]:
+        return problem.code, problem.message
+
+    found = clashes(entries)
+    if not found:
+        return {}
+    held: dict[str, tuple[ContractError, ...]] = {}
+    for wid in sorted(owned):
+        remaining = {key(problem) for problem in clashes(other for other in entries if other != wid)}
+        mine = tuple(problem for problem in found if key(problem) not in remaining)
+        if mine:
+            held[wid] = mine
+    for wid in held:
+        if wid in release.workflows:
+            entries[wid] = _bundled_entry(release.workflows[wid], generation)
+        else:
+            del entries[wid]
+    return held
+
+
 def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[str, WorkflowRecord], *, generation: int,
           model_aliases: Mapping[str, Any] | None = None) -> Snapshot:
     """The snapshot of ``document`` (the service-registry document at ``generation``) over the bundled release.
 
-    A stored workflow replaces the bundled one of its id; the replaced entry's names leave the view. Strict: a record that
-    is not a record, a frontend row that does not load, or a name two owning entities hold raises ``SnapshotBuildError``.
+    A stored workflow replaces the bundled one of its id; the replaced entry's names leave the view. A stored workflow whose
+    names clash is held out (``Snapshot.held_out``, see ``_hold_out_clashing``). Strict otherwise: a record that is not a
+    record, a frontend row that does not load, or a name two other owners hold raises ``SnapshotBuildError``.
     ``model_aliases`` is the ``model_aliases`` config section (the dynamic aliases), when the caller has it."""
     release = bundled if isinstance(bundled, BundledRelease) else BundledRelease(bundled, load_frontend_rows())
     document = document or {}
@@ -465,6 +500,7 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
     if not isinstance(services, Mapping):
         raise SnapshotBuildError([_problem(("services",), "section", "the services section is a mapping")])
     entries: dict[str, WorkflowEntry] = {wid: _bundled_entry(record, generation) for wid, record in release.workflows.items()}
+    owned: set[str] = set()   # the ids whose entry is the owner's stored record (not bundled, not a run-control patch)
     for workflow_id, record in stored.items():
         if not isinstance(record, Mapping):
             raise SnapshotBuildError([_problem(("workflows", str(workflow_id)), "record", "a stored workflow is an object")])
@@ -475,16 +511,17 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
                 entries[str(workflow_id)] = _patched_entry(release.workflows[str(workflow_id)], record, generation)
             continue
         entries[str(workflow_id)] = _stored_entry(str(workflow_id), record, generation, release.workflows)
+        owned.add(str(workflow_id))
     frontends = {row.id: row for row in release.frontends}
     if len(frontends) != len(release.frontends):
         raise SnapshotBuildError([_problem(("frontends",), "frontend_id", "two frontend rows share an id")])
-    pairs: list[tuple[str, NameOwner]] = []
-    for entry in entries.values():
-        pairs += workflow_names(entry)
+    fixed: list[tuple[str, NameOwner]] = []
     for row in frontends.values():
-        pairs += frontend_names(row)
-    pairs += service_model_names(services)
-    pairs += dynamic_alias_names(model_aliases, services)
+        fixed += frontend_names(row)
+    fixed += service_model_names(services)
+    fixed += dynamic_alias_names(model_aliases, services)
+    held_out = _hold_out_clashing(entries, owned, fixed, release, generation)
+    pairs = [pair for entry in entries.values() for pair in workflow_names(entry)] + fixed
     problems = name_clashes(pairs)
     if problems:
         raise SnapshotBuildError(problems)
@@ -500,6 +537,7 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
     })
     return Snapshot(revision=generation, digest=snapshot_digest, workflows=ordered, frontends=MappingProxyType(frontends),
                     names=names, _intents=MappingProxyType({k: tuple(v) for k, v in intents.items()}),
+                    held_out=MappingProxyType(dict(sorted(held_out.items()))),
                     source_paths=MappingProxyType({wid: str(release.workflows[wid].source_path) for wid, entry in ordered.items()
                                                    if entry.incarnation == BUNDLED_INCARNATION and wid in release.workflows}))
 

@@ -430,3 +430,27 @@ def test_restore_of_a_run_control_patch_revision_writes_the_patch_and_a_contract
     again = _post(api, "restore", {"record_revision": contract_revision})
     assert again.status_code == 200, again.json()
     assert _detail(api)["contract"]["display_name"] == "Mine"
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_release_that_takes_an_owner_workflow_name_holds_that_workflow_out_and_every_other_write_works(api):
+    # The writers refuse a new clash, but a release can bring one: it gives a bundled workflow an alias with the token of
+    # an owner workflow's id. The registry keeps serving (ratcheting validation, Kubernetes KEP-4008): the owner workflow
+    # is held out and named in the listing, the rest serves, and a write elsewhere is neither refused nor "saved but not
+    # applied". Saving the held-out workflow is refused with the clash; deleting it clears it.
+    assert create(api, owner_contract("owner.held.demo"), facts=FACTS_BODY).status_code == 201
+    assert create(api, owner_contract("owner.other.demo"), facts=FACTS_BODY).status_code == 201
+    newer = _restarted(api, {BUNDLED_ID: lambda manifest: {**manifest, "aliases": ["Owner-Held-Demo"]}})
+    listing = newer.get("/admin/api/workflows").json()
+    ids = {row["id"] for row in listing["workflows"]}
+    assert "owner.other.demo" in ids and BUNDLED_ID in ids and "owner.held.demo" not in ids
+    assert [held["id"] for held in listing["held_out"]] == ["owner.held.demo"]
+    assert {problem["code"] for problem in listing["held_out"][0]["problems"]} == {"id_clash"}
+    assert create(newer, owner_contract("owner.third.demo"), facts=FACTS_BODY).status_code == 201
+    edited = put(newer, owner_contract("owner.other.demo", display_name="Edited"))
+    assert edited.status_code == 200, edited.text
+    refused = put(newer, owner_contract("owner.held.demo", display_name="Still clashing"))
+    assert refused.status_code == 422 and "id_clash" in refused.text
+    gone = newer.delete("/admin/api/workflows/owner.held.demo", headers={"If-Match": os_n(newer)})
+    assert gone.status_code == 200, gone.text
+    assert newer.get("/admin/api/workflows").json()["held_out"] == []

@@ -14467,12 +14467,15 @@ def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict:
     """The registry snapshot of the stored document. A boot keeps the bundled release when the stored one does not build;
     a reload (``strict``) raises instead, so the snapshot that is serving stays."""
     try:
-        return registry_snapshot.load_current(ADMIN_DB_PATH, model_aliases=model_aliases)
+        snapshot = registry_snapshot.load_current(ADMIN_DB_PATH, model_aliases=model_aliases)
     except Exception as e:  # noqa: BLE001
         if strict:
             raise
         print(f"[proxy] Registry snapshot unavailable; the bundled release is kept: {e}", flush=True)
         return registry_snapshot.build({}, registry_snapshot.bundled_release(), generation=0, model_aliases=model_aliases)
+    for workflow_id, problems in snapshot.held_out.items():
+        print(f"[proxy] Stored workflow {workflow_id!r} does not serve: {'; '.join(p.message for p in problems)}", flush=True)
+    return snapshot
 
 
 def _boot_registry_snapshot() -> registry_snapshot.Snapshot:
