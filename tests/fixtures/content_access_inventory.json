@@ -136,7 +136,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_create",
-      "source_sha256": "82427ff4f72ff32dbf41eade3f563e3822b4e36b6259d23fda1bcf7a35091256",
+      "source_sha256": "96ff4c907c63f613950a8ce63787493d9ed851ef2240aa35c724297cf3399f3e",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
