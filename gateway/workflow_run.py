@@ -557,6 +557,7 @@ class WorkflowRunCore:
             with contextlib.suppress(Exception):
                 media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester", path=self._path)
         except Exception as exc:  # noqa: BLE001 - settled as a failure; the text never reaches the job
+            import traceback; traceback.print_exc()  # TMPDBG
             self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
                        "The job failed.", retryable=bool(getattr(exc, "retryable", False)))
             return
