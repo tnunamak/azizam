@@ -114,6 +114,7 @@ BINDING_UNAVAILABLE = "binding_unavailable"
 INTERNAL_ERROR = "internal_error"
 JOB_DELETED = "job_deleted"
 FAILED_FALLBACK = "The job failed."
+CRASH_TEXT = "The job stopped on an internal error."
 
 # What a restart says about a job it cannot finish (S7 parity M12), keyed by the reason. One table for every kind of job.
 RESTART_PAYLOAD_MISSING = "Image media job payload missing after proxy restart"
@@ -397,6 +398,14 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
 # ----------------------------------------------------------------------------------------------------- the core
 
 
+class _AdmissionLost(Exception):
+    """Admission refused the run inside the create transaction. Nothing was stored; the refusal is the answer."""
+
+    def __init__(self, refused: "RunRefused") -> None:
+        super().__init__(refused.code)
+        self.refused = refused
+
+
 class WorkflowRunCore:
     """``RunCore`` over the job store. See the module docstring for what is injected."""
 
@@ -424,15 +433,17 @@ class WorkflowRunCore:
         port = self._port
         scope, maker = port.owner_scope(caller), port.maker(caller)
         fence = None
+        identity = ""
         if req.idempotency_key:
             fence = media_jobs.RunClaimFence(scope, maker, req.idempotency_key, secrets.token_hex(16))
-            decided = await self._claim(fence, run_identity(scope, maker, req))
+            identity = run_identity(scope, maker, req)
+            decided = await self._claim(fence, identity)
             if decided is not None:
                 return decided
         try:
             created = await self._decide_and_create(req, caller, snapshot, fence)
         except media_jobs.ClaimLost:
-            return await self._resolve_lost(fence)
+            return await self._resolve_lost(fence, identity)
         except BaseException:
             if fence is not None:
                 with contextlib.suppress(Exception):
@@ -477,11 +488,14 @@ class WorkflowRunCore:
             return RunRefused(404, JOB_DELETED, "the job for this Idempotency-Key was deleted")
         return job_view(job, self._path, disposition="replay")
 
-    async def _resolve_lost(self, fence: media_jobs.RunClaimFence | None) -> RunJobView | RunRefused:
+    async def _resolve_lost(self, fence: media_jobs.RunClaimFence | None, identity: str) -> RunJobView | RunRefused:
         """This holder's claim was taken over or decided while it worked: it drew and stored nothing. Answer as the new
-        holder's request would be answered, and leave the claim alone."""
+        holder's request would be answered, and leave the claim alone. The winner's identity is compared with this
+        request's own, in the one read of the claim: a different request is a conflict and never replays the winner's job."""
         assert fence is not None
         state = media_jobs.get_run_claim(owner_scope=fence.owner_scope, maker=fence.maker, key=fence.key, path=self._path)
+        if state is not None and state[2] != identity:
+            return RunRefused(409, IDEMPOTENCY_CONFLICT, "this Idempotency-Key was used for a different request")
         if state is not None and state[1] is not None:
             return self._replay(state[1])
         return RunRefused(409, IDEMPOTENCY_IN_PROGRESS, "another request holds this Idempotency-Key; retry",
@@ -532,6 +546,8 @@ class WorkflowRunCore:
             return refused
         try:
             return await asyncio.to_thread(self._create, req, caller, entry, binding_key, profile, fence)
+        except _AdmissionLost as lost:
+            return lost.refused
         except (ManifestError, generated_defaults.GeneratedValueUnavailable) as exc:
             return RunRefused(422, INVALID_INPUTS, "a generated input could not be filled",
                               problems=(ContractError(("inputs",), "generated_value_invalid", str(exc)),))
@@ -588,6 +604,11 @@ class WorkflowRunCore:
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
+            # Admission again, inside the write transaction that inserts the job: a count taken before it can be stale
+            # when two submits race, so the count that decides is the one that includes every committed job.
+            late = port.admission_refusal(profile.resource_class, caller, count_queue=True)
+            if late is not None:
+                raise _AdmissionLost(late)
             contract = plain(entry.contract)
             generated = self._generate(contract.get("inputs") or {}, req.inputs)
             identity = port.adapter_identity(entry, binding_key, binding)
@@ -600,7 +621,8 @@ class WorkflowRunCore:
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
             port.save_payload(record.job_id, {
-                "body": {"inputs": plain(req.inputs), **({"options": plain(req.options)} if req.options else {})}, "auth": port.caller_payload(caller),
+                "body": {"inputs": plain(req.inputs), **({"options": plain(req.options)} if req.options else {}),
+                         **({"extensions": plain(req.extensions)} if req.extensions else {})}, "auth": port.caller_payload(caller),
                 "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()}}, caller)
             return envelope
 
@@ -623,6 +645,11 @@ class WorkflowRunCore:
         then the first effect."""
         try:
             await self._execute(job_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - outside the adapter: settle the row so nothing stays running
+            log.exception("job %s stopped on an error outside its adapter", job_id)
+            self._settle_crash(job_id)
         finally:
             await self.close_receipt(job_id)
 
@@ -637,6 +664,17 @@ class WorkflowRunCore:
             self._fail_at_restart(job_id, action)
         else:
             await self._run(job_id, checks=action == "resume")
+
+    def _settle_crash(self, job_id: str) -> None:
+        """An ordinary exception ended the worker with the job unfinished: fail it with a fixed sentence (the exception
+        text is logged, never stored). A job that recorded its upstream id is left for recovery to poll."""
+        with contextlib.suppress(Exception):
+            job = media_jobs.get(job_id, audience="internal", path=self._path)
+            if job is None or media_jobs.is_terminal(str(job["status"])):
+                return
+            if (job.get("metadata") or {}).get("protocol_job"):
+                return
+            self._fail(job_id, INTERNAL_ERROR, "internal", CRASH_TEXT)
 
     async def close_receipt(self, job_id: str) -> None:
         """When the job is terminal, tell the port to close the request receipt the job carries. A job still running (the
@@ -820,6 +858,7 @@ class WorkflowRunCore:
     def _fail(self, job_id: str, code: str, category: str, message: str, *, retryable: bool = False,
               upstream_status: int | None = None) -> None:
         category = category if category in media_jobs.ERROR_CATEGORIES else "internal"
+        message = log_scrub.scrub(message, limit=2000)      # one door for every stored failure text
         try:
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
@@ -847,11 +886,8 @@ class WorkflowRunCore:
 
     def _finish_from_bundle(self, job_id: str) -> None:
         """Recovery row ``replay``: the bundle is committed; finish the job from it. No engine call."""
-        with contextlib.suppress(ValueError):
-            if (media_jobs.get(job_id, audience="internal", path=self._path) or {}).get("status") == media_jobs.STATUS_QUEUED:
-                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
-                                         path=self._path)
-            media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, progress=100, path=self._path)
+        with contextlib.suppress(ValueError):       # settled by someone else between the read and the write
+            media_jobs.settle_committed(job_id, path=self._path)
         self._settle(job_id)
 
     # ------------------------------------------------------------------------------------------ recovery
@@ -957,6 +993,11 @@ def _code_of(exc: BaseException) -> str:
 # ------------------------------------------------------------------------------------------------- wire bodies
 
 
+def _wire_text(text: str) -> str:
+    """Every message that leaves on the wire has the registered secret values removed from it first."""
+    return log_scrub.scrub(text, limit=2000)
+
+
 def view_body(view: RunJobView) -> dict[str, Any]:
     """The JSON body of a job view: references to results, never a value or bytes."""
     body: dict[str, Any] = {
@@ -965,9 +1006,10 @@ def view_body(view: RunJobView) -> dict[str, Any]:
         "created_at": view.created_at_s, "updated_at": view.updated_at_s}
     if view.failure is not None:
         failure = view.failure
-        body["failure"] = {"code": failure.code, "category": failure.category, "message": failure.message,
+        body["failure"] = {"code": failure.code, "category": failure.category, "message": _wire_text(failure.message),
                            "retryable": failure.retryable, "upstream_status": failure.upstream_status,
-                           "problems": [{"path": e.pointer, "code": e.code, "message": e.message} for e in failure.problems]}
+                           "problems": [{"path": e.pointer, "code": e.code, "message": _wire_text(e.message)}
+                                        for e in failure.problems]}
     if view.results is not None:
         body["results"] = [{"output": r.output, "index": r.index, "media_type": r.media_type, "size": r.size,
                             "asset_id": r.asset_id} for r in view.results]
@@ -976,9 +1018,9 @@ def view_body(view: RunJobView) -> dict[str, Any]:
 
 def refusal_body(refused: RunRefused) -> dict[str, Any]:
     """The JSON body of a refusal (the gateway's error envelope), with every contract problem at its path."""
-    error: dict[str, Any] = {"code": refused.code, "message": refused.message}
+    error: dict[str, Any] = {"code": refused.code, "message": _wire_text(refused.message)}
     if refused.problems:
-        error["problems"] = [{"path": e.pointer, "code": e.code, "message": e.message} for e in refused.problems]
+        error["problems"] = [{"path": e.pointer, "code": e.code, "message": _wire_text(e.message)} for e in refused.problems]
     if refused.retry_after_s is not None:
         error["retry_after_s"] = refused.retry_after_s
     return {"error": error}

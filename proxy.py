@@ -24697,6 +24697,16 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
+        # An audio job runs from what it pinned at accept, or it fails: never from the live file.
+        pinned_args: dict[str, Any] = {}
+        try:
+            pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
+            pinned_args["pinned_workflow"] = job.get("workflow")
+        except definition_store.DefinitionUnavailable as exc:
+            _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
+            _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
+            return
+
         try:
             media_jobs.update_status(
                 job_id,
@@ -24726,7 +24736,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     response = await proxy_audio_generate(
-                        request_shim, auth_context, store_full=True, receipt=receipt)
+                        request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
@@ -24953,12 +24963,10 @@ async def _submit_audio_media_job(
         except ManifestError as exc:  # the manifest and the deployment's limits disagree, or a generator cannot serve its input
             return _generated_value_fault_response(exc)
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
-    # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
-    # the envelope is required for it. A workflow whose binding has no pin (no graph binding) has no envelope to build;
-    # it keeps the old behaviour and draws at run, as before S3.6.
-    needs_envelope = bool(generated) and _manifest_has_pin(manifest)
+    # The worker runs the job from its pin, so a manifest that has a pin needs its envelope at accept: a job that pinned
+    # nothing could never run. A workflow whose binding has no pin (no graph binding) has no envelope to build.
+    needs_envelope = _manifest_has_pin(manifest)
     if envelope is None and needs_envelope:
-        # A job that holds a generated value must not be accepted without the pin that keeps it: a retry would draw another.
         return _pin_not_recorded_response()
 
     try:
@@ -27129,6 +27137,22 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     refused = await asyncio.to_thread(core.target_gate, workflow_id, auth_context, snapshot=snapshot)
     if refused is not None:                     # policy before the body is read or any upload is staged
         return _workflow_run_response(refused)
+    request_id = new_request_id()
+    identity = auth_context.identity
+    # The request receipt opens before the body is read, as a row's does, so a refusal and a forget are both on record.
+    async with _RunReceiptOwner(RouteReceipt(
+            protocol="gateway", intent=workflow_run.RUN_INTENT, path=str(request.url.path), request_id=request_id,
+            app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+            api_key_name=identity.name if identity else None)) as owner:
+        response = await _run_workflow_open(workflow_id, request, auth_context, core, snapshot, owner, request_id, wait_s)
+    response.headers[row_routes.REQUEST_ID_HEADER] = request_id
+    return response
+
+
+async def _run_workflow_open(workflow_id: str, request: Request, auth_context: AuthContext, core: Any, snapshot: Any,
+                             owner: "_RunReceiptOwner", request_id: str, wait_s: float) -> Response:
+    """The steps of the generic run route after its receipt opens. Each exit reports the outcome, or hands the receipt to
+    the run core, which closes it when the job ends."""
     result_limits = _WORKFLOW_RUN_PORT.result_limits()
     spool = request_spool.FileRequestSpool(
         _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
@@ -27137,14 +27161,33 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
             request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),
             idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s)
         if isinstance(run_request, RunRefused):
+            owner.report(status="failed", reason=run_request.code)
             return _workflow_run_response(run_request)
+        if run_request.extensions:
+            # The controls are noted as the other job routes note them: a bad prompt or metadata mode is a 400, and the
+            # prompt-memory control reaches the job's payload through the request (``_spool_media_job_payload``).
+            _begin_media_delivery(auth_context)
+            bad_control = _note_media_metadata_body({"extensions": dict(run_request.extensions)})
+            if bad_control is not None:
+                owner.report(status="failed", reason="invalid_extensions")
+                return bad_control
+        entry = snapshot.get(workflow_id)
+        if entry is not None:
+            _name_row_receipt(owner, entry.id, entry.record_revision, entry.contract_digest)
+        run_request = dataclasses.replace(run_request, request_id=request_id)
         view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
     if isinstance(view, RunRefused):
+        owner.report(status="failed", reason=view.code)
+        return _workflow_run_response(view)
+    if wait_s <= 0 and view.disposition == "new":
+        owner.handoff()                         # nothing may await between this call and leaving the receipt
         return _workflow_run_response(view)
     if wait_s > 0 and view.status in ("queued", "running"):
         with contextlib.suppress(JobNotFound):
             view = dataclasses.replace(await _workflow_job_service().wait(view.job_id, auth_context, wait_s),
                                        disposition=view.disposition)
+    status, reason = row_routes._outcome(view, waited=wait_s > 0)
+    owner.report(status=status, reason=reason)
     return _workflow_run_response(view)
 
 
@@ -27324,6 +27367,15 @@ def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any
     if errors:
         raise definition_store.DefinitionUnavailable(f"the pinned graph is invalid: {'; '.join(errors)}")
     return workflow
+
+
+def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
+    """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
+    before it starts. Raises ``DefinitionUnavailable``."""
+    pinned = pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    pinned.manifest(DERIVED._GRAPH_BINDING)
+    _pinned_graph(pinned)
+    return pinned
 
 
 _AUDIO_SUFFIX_BY_CONTENT_TYPE = {

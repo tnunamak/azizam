@@ -187,3 +187,123 @@ def test_restart_recovery_runs_a_queued_workflow_job_from_its_pin(served, monkey
     assert served.engine_calls == 0
 
 
+
+
+# ---------------------------------------------------------------------------------------------- the request controls
+# The run form takes the controls every job route takes: ``extensions`` as a JSON object (a form part or a JSON body
+# key) and the bracket form ``extensions[<namespace>][<key>]``. The prompt-memory control reaches the job's payload,
+# where the prompt-memory rules decide what is kept; ``x-azizam-prompts: forget`` does the same.
+
+from gateway import prompt_memory  # noqa: E402
+
+SENTINEL = "private sentinel prompt 7f3a"
+FORGET = {prompt_memory.NAMESPACE: {"mode": "forget"}}
+BRACKET_FORGET = f"extensions[{prompt_memory.NAMESPACE}][mode]"
+
+
+def text_parts(**parts: str) -> dict:
+    """A multipart form of text parts only (httpx sends a form as multipart when ``files`` is given)."""
+    return {name: (None, value) for name, value in parts.items()}
+
+
+def forms_of_forget():
+    inputs = json.dumps({"prompt": SENTINEL})
+    return {
+        "json_part": (dict(files=text_parts(inputs=inputs, extensions=json.dumps(FORGET))), {}),
+        "bracket": (dict(files=text_parts(inputs=inputs, **{BRACKET_FORGET: "forget"})), {}),
+        "json_body": (dict(json={"inputs": {"prompt": SENTINEL}, "extensions": FORGET}), {}),
+        "header": (dict(files=text_parts(inputs=inputs)), {"x-azizam-prompts": "forget"}),
+    }
+
+
+def disk_bytes(root) -> bytes:
+    return b"".join(path.read_bytes() for path in root.rglob("*") if path.is_file())
+
+
+@pytest.fixture
+def queued(served, monkeypatch):
+    """The route takes the job and schedules it; the worker does not run, so the payload stays where the route put it."""
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", lambda job_id: None)
+    return served
+
+
+def test_without_a_control_the_prompt_waits_on_disk_with_the_queued_job(queued, tmp_path):
+    response = call("post", ROUTE, files=text_parts(inputs=json.dumps({"prompt": SENTINEL})))
+    assert response.status_code == 202, response.text
+    payload = proxy._load_image_media_job_payload(response.json()["job_id"])
+    assert payload["body"]["inputs"]["prompt"] == SENTINEL
+    assert SENTINEL.encode() in disk_bytes(tmp_path / "payloads"), "positive control: the prompt was not kept"
+
+
+@pytest.mark.parametrize("form", list(forms_of_forget()))
+def test_a_forget_control_in_any_form_keeps_no_prompt_on_disk(queued, tmp_path, form):
+    kwargs, headers = forms_of_forget()[form]
+    response = call("post", ROUTE, headers=headers, **kwargs)
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    payload = proxy._load_image_media_job_payload(job_id)
+    assert payload["body"]["inputs"]["prompt"] == SENTINEL, "the queued job still runs from its payload"
+    assert payload["body"]["extensions"][prompt_memory.NAMESPACE] == {"mode": "forget"}
+    assert SENTINEL.encode() not in disk_bytes(tmp_path), "a forget run wrote its prompt to disk"
+    assert SENTINEL.encode() not in queued.media.read_bytes()
+
+
+@pytest.mark.parametrize("form", list(forms_of_forget()))
+def test_a_finished_forget_run_keeps_no_prompt_anywhere(served, tmp_path, form):
+    kwargs, headers = forms_of_forget()[form]
+    response = call("post", ROUTE, headers={**headers, "Prefer": "wait=10"}, **kwargs)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "succeeded" and served.engine_calls == 1
+    assert SENTINEL not in json.dumps(body)
+    assert SENTINEL.encode() not in disk_bytes(tmp_path)
+    assert SENTINEL.encode() not in served.media.read_bytes()
+
+
+def test_the_json_part_and_the_bracket_form_meet_and_the_bracket_wins(queued):
+    response = call("post", ROUTE, files=text_parts(
+        inputs=json.dumps({"prompt": "hi"}),
+        extensions=json.dumps({prompt_memory.NAMESPACE: {"mode": "remember"}, "com.example.other": {"a": 1}}),
+        **{BRACKET_FORGET: "forget"}))
+    assert response.status_code == 202, response.text
+    extensions = proxy._load_image_media_job_payload(response.json()["job_id"])["body"]["extensions"]
+    assert extensions[prompt_memory.NAMESPACE] == {"mode": "forget"}
+
+
+def test_a_namespace_the_gateway_does_not_know_is_kept_with_the_job_as_on_the_other_job_routes(queued):
+    response = call("post", ROUTE, files=text_parts(
+        inputs=json.dumps({"prompt": "hi"}), extensions=json.dumps({"com.example.other": {"a": 1}})))
+    assert response.status_code == 202, response.text
+    extensions = proxy._load_image_media_job_payload(response.json()["job_id"])["body"]["extensions"]
+    assert extensions == {"com.example.other": {"a": 1}}
+
+
+@pytest.mark.parametrize("extensions", ["not json", "[]", "null-ish", "42"])
+def test_an_extensions_part_that_is_not_a_json_object_is_refused_and_runs_nothing(served, extensions):
+    response = call("post", ROUTE, files=text_parts(inputs=json.dumps({"prompt": "hi"}), extensions=extensions))
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "invalid_extensions"
+    assert served.engine_calls == 0
+
+
+def test_an_extensions_body_key_that_is_not_an_object_is_refused(served):
+    response = call("post", ROUTE, json={"inputs": {"prompt": "hi"}, "extensions": [1]})
+    # An outer layer that reads the same control may refuse first (invalid_prompt_mode); either way nothing runs.
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] in ("invalid_extensions", "invalid_prompt_mode")
+    assert served.engine_calls == 0
+
+
+def test_a_prompt_mode_the_gateway_does_not_know_is_refused_as_on_the_other_job_routes(served):
+    response = call("post", ROUTE, json={"inputs": {"prompt": "hi"},
+                                         "extensions": {prompt_memory.NAMESPACE: {"mode": "bogus"}}})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_prompt_mode"
+    assert served.engine_calls == 0
+
+
+def test_a_control_sent_as_a_file_is_refused(served):
+    response = call("post", ROUTE, files={"inputs": (None, json.dumps({"prompt": "hi"})),
+                                          "extensions": ("e.json", json.dumps(FORGET), "application/json")})
+    assert response.status_code == 422, response.text
+    assert served.engine_calls == 0

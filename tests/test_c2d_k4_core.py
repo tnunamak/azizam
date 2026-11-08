@@ -38,7 +38,6 @@ def marker():
 # ------------------------------------------------------------------------------------------------------ item 1
 
 
-@pytest.mark.xfail(strict=True, reason="K4: a stale key holder replays another request's job")
 def test_an_expired_holder_cannot_replay_a_changed_identity(db, tmp_path):
     snap = snapshot()
     core, port, _ = make_core(db, tmp_path, snap, claim_lease_s=0.0, claim_wait_s=0.0)
@@ -80,7 +79,6 @@ class CountingPort(Port):
         return RunRefused(503, "queue_full", "the queue is full", retry_after_s=1) if held >= self.limit else None
 
 
-@pytest.mark.xfail(strict=True, reason="K4: admission is not serialized with job creation")
 def test_concurrent_submits_respect_a_job_limit_of_one(db, tmp_path):
     snap = snapshot()
     port = CountingPort(db)
@@ -157,7 +155,6 @@ def _break_retry(core, port):
     core._sleep = sleeping
 
 
-@pytest.mark.xfail(strict=True, reason="K4: an exception outside the adapter strands a running job")
 @pytest.mark.parametrize("breaker", [_break_caller, _break_dispatch, _break_retry],
                          ids=["caller_reconstruction", "dispatch", "retry_bookkeeping"])
 def test_an_exception_outside_the_adapter_settles_the_job(db, tmp_path, marker, breaker):
@@ -181,7 +178,6 @@ def test_an_exception_outside_the_adapter_settles_the_job(db, tmp_path, marker, 
 # ------------------------------------------------------------------------------------------------------ item 4
 
 
-@pytest.mark.xfail(strict=True, reason="K4: a pending cancel defeats committed-bundle recovery")
 def test_a_committed_bundle_wins_over_a_pending_cancel_at_recovery(db, tmp_path):
     snap = snapshot()
     core, port, _ = make_core(db, tmp_path, snap)
@@ -217,26 +213,26 @@ def _stored_failure_and_view(db, tmp_path, port_change):
     return json.dumps(stored), json.dumps(view_body(shown))
 
 
-@pytest.mark.xfail(strict=True, reason="K4: failure and refusal text is not scrubbed")
-def test_every_failure_and_refusal_text_is_scrubbed(db, tmp_path, marker):
-    # A dispatch refusal (``_dispatch_problem``) is stored on the job and shown in its view.
+def test_a_dispatch_refusal_message_is_scrubbed(db, tmp_path, marker):
     stored, shown = _stored_failure_and_view(
         db, tmp_path, lambda port: setattr(port, "refusal", RunRefused(503, "queue_full", f"full {MARKER}")))
     assert MARKER not in stored and MARKER not in shown
     assert "queue_full" in stored                                   # the failure is still the dispatch refusal
 
-    # A ContractError message and a refusal message cross the wire through ``refusal_body``.
+
+def test_a_refusal_body_is_scrubbed(marker):
     body = refusal_body(RunRefused(422, "invalid_inputs", f"bad {MARKER}",
                                    problems=(ContractError(("inputs", "prompt"), "value_invalid", f"seen {MARKER}"),)))
     assert MARKER not in json.dumps(body)
     assert body["error"]["code"] == "invalid_inputs"
 
-    # A generated-input exception reaches the caller as a problem message.
+
+def test_a_generated_input_refusal_is_scrubbed(db, tmp_path, marker):
     snap = snapshot()
-    core, _, _ = make_core(db, tmp_path / "gen", snap)
+    core, _, _ = make_core(db, tmp_path, snap)
 
     def unavailable(inputs, given, **kw):
-        raise generated_defaults.GeneratedValueUnavailable(f"cannot draw {MARKER}")
+        raise generated_defaults.GeneratedValueUnavailable(f"cannot draw {MARKER}", erased=False)
 
     core._generate = unavailable
     refused = run(core.submit_run(request(idempotency_key="gen"), Caller(), snapshot=snap))
