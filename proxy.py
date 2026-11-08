@@ -27068,6 +27068,13 @@ def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
                             ignored_reason=(reason or kind) if kind == "ignored" else None)
 
 
+def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
+    for name, value, warning in facts:
+        owner.receipt.metadata[name] = value
+        if warning:
+            owner.receipt.add_warning(warning)
+
+
 def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
                       contract_digest: str | None) -> None:
     receipt = owner.receipt
@@ -27103,6 +27110,11 @@ def _row_route_policy(path: str) -> dict[str, Any] | None:
     return None
 
 
+frontend_wire_shapes.ASSET_URLS.update({
+    "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
+    "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
+})
+
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
 _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     authenticate=lambda request, path: authenticate_request(request, path),
@@ -27118,6 +27130,7 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     name_receipt=_name_row_receipt,
     pinned=_pinned_of_job,
     record_inputs=_record_row_inputs,
+    record_facts=_record_row_facts,
 )
 
 

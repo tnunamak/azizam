@@ -145,6 +145,7 @@ class Shape:
                              spool: RequestSpool) -> RunRequest | Response:
         uploads: list[tuple[str, Any]] = []
         request.state.input_notes = _wire.begin_notes()
+        request.state.receipt_facts = _wire.begin_facts()
         if self.body == "multipart":
             read = await _wire.split_form(request, self.form_limits(row, snapshot, spool), self.unreadable_form)
             if isinstance(read, Response):
@@ -246,7 +247,7 @@ class Shape:
         if view.status != "succeeded":
             return _wire.error_response(504, "The job did not finish in time", kind="api_error", code=self.timeout_code)
         try:
-            answer = getattr(getattr(request, "state", None), "answer_form", None) or {}
+            answer = {**(getattr(getattr(request, "state", None), "answer_form", None) or {}), "request": request}
             return await self.render_success(view, jobs, caller, answer)
         except (JobNotFound, ResultUnavailable):
             return _wire.error_response(404, "The result is not available", code="result_unavailable")

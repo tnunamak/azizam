@@ -45,6 +45,23 @@ def begin_notes() -> list[tuple[str, str, str | None]]:
     return notes
 
 
+_FACTS: contextvars.ContextVar[list[tuple[str, Any, str | None]]] = contextvars.ContextVar("receipt_facts")
+
+
+def begin_facts() -> list[tuple[str, Any, str | None]]:
+    """Start the list of facts this request's shape puts on the receipt (a value to keep, and a warning to raise)."""
+    facts: list[tuple[str, Any, str | None]] = []
+    _FACTS.set(facts)
+    return facts
+
+
+def fact(name: str, value: Any, warning: str | None = None) -> None:
+    """The shape adjusted something the caller asked for: ``name`` holds ``value`` on the receipt, with ``warning`` if any."""
+    facts = _FACTS.get(None)
+    if facts is not None:
+        facts.append((name, value, warning))
+
+
 def note(name: str, *, rejected: str | None = None, ignored: str | None = None) -> None:
     """The shape met input ``name``: accepted, or refused (``rejected`` is the reason), or ignored (``ignored``)."""
     notes = _NOTES.get(None)

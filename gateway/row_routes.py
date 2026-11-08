@@ -70,6 +70,9 @@ class RowRouteDeps:
     # record_inputs(owner, notes): the receipt lists the inputs the shape accepted, ignored or refused, as
     # ``(name, "accepted" | "ignored" | "rejected", reason)`` in the order the shape met them. None: the row's receipt lists none.
     record_inputs: Callable[[Any, Sequence[tuple[str, str, str | None]]], None] | None = None
+    # record_facts(owner, facts): what the shape adjusted, each as (name, value, warning): the receipt keeps the value under
+    # ``metadata[name]`` and raises the warning.
+    record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
 
 
 def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
@@ -223,6 +226,9 @@ def record_inputs(deps: RowRouteDeps, owner: Any, request: Request) -> None:
     notes = getattr(request.state, "input_notes", None)
     if notes and deps.record_inputs is not None:
         deps.record_inputs(owner, notes)
+    facts = getattr(request.state, "receipt_facts", None)
+    if facts and deps.record_facts is not None:
+        deps.record_facts(owner, facts)
 
 
 def _name_pinned(deps: RowRouteDeps, owner: Any, request: Request, view: RunJobView) -> dict[str, str]:

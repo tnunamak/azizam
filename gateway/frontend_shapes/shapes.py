@@ -34,6 +34,10 @@ AssetUrl = Callable[[ResultRef, CallerContext], str]
 DEFAULT_WORKFLOWS: dict[str, Callable[[], str | None]] = {}
 # Inputs a wire sets itself, by shape id: installed by the main module from configuration. Only a declared input is set.
 FIXED_INPUTS: dict[str, Callable[[], Mapping[str, Any]]] = {}
+# The deployment's signed links to a stored picture, by use: "link" is the item's ``url``, "asset" its ``asset_url``. Installed
+# at start by the main module (they sign for the request's host).
+ASSET_URLS: dict[str, Callable[[ResultRef, Any], str]] = {}
+REQUEST_KEY = "request"         # where ``to_response`` hands the request to ``render_success`` in the answer mapping
 MAX_IMAGES = 10                 # the public range of ``n``: one request returns at most this many pictures
 _SIZE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
 
@@ -80,13 +84,18 @@ class OpenAIImagesJson(Shape):
         return _wire.error_response(404, f"Model '{target}' is not available for image generation.", code="model_not_found",
                                     param="model")
 
+    def dimensions(self, text: Any) -> tuple[int, int] | None:
+        """The picture size this request runs at: the text read the way this wire always read it, 1024 square when the text is
+        not a size. None: this wire leaves the size to the workflow."""
+        return old_dimensions(text)
+
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         extensions = wire.get("extensions")
         block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
         if isinstance(block, Mapping):
             inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()})
-        dimensions = read_size(wire.get("size"))
-        if isinstance(dimensions, tuple) and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
+        dimensions = self.dimensions(wire.get("size"))
+        if dimensions is not None and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
             inputs["width"], inputs["height"] = dimensions
         fixed = FIXED_INPUTS.get(self.shape_id)
         for name, value in (fixed().items() if fixed is not None else ()):
@@ -174,30 +183,88 @@ class OpenAIImagesJson(Shape):
                             ("background", background)):
             if sent(name):
                 options[name] = value
-        return options, {"response_format": form}
+        return options, {"response_format": form, **self.echo(fields, output_format, quality, background)}
+
+    def echo(self, fields: Mapping[str, Any], output_format: str, quality: str, background: str | None) -> dict[str, Any]:
+        """What the answer repeats of the request: the output format, the quality unless it is ``auto``, the background when the
+        request settles it (a format with no alpha channel settles it as opaque), and the size the run used, with the note
+        when that is not the size the caller wrote."""
+        echo: dict[str, Any] = {"output_format": output_format}
+        if quality != "auto":
+            echo["quality"] = quality
+        if background in ("transparent", "opaque"):
+            echo["background"] = background
+        elif output_format == "jpeg":
+            echo["background"] = "opaque"
+        size = self.dimensions(fields.get("size"))
+        if size is not None:
+            effective = f"{size[0]}x{size[1]}"
+            echo["size"] = effective
+            requested = str(fields.get("size") or "").strip()
+            if requested and requested != effective:
+                echo["size_adjusted"] = f"{requested}->{effective}"
+                _wire.fact("image_size_adjustment", {"requested": requested, "effective": effective}, f"size_adjusted:{requested}->{effective}")
+        return echo
 
     async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
                              answer: Mapping[str, Any] | None = None) -> Response:
         # An explicit form is what this request asked for; one that was not asked for is the URL when the deployment gives
         # this shape a URL renderer, else the bytes.
-        form = (answer or {}).get("response_format") or ("url" if self.asset_url is not None else "b64_json")
-        if form == "url" and self.asset_url is None:
+        request = (answer or {}).get(REQUEST_KEY)
+        link = self.asset_url or ((lambda ref, _caller: ASSET_URLS["link"](ref, request)) if "link" in ASSET_URLS else None)
+        form = (answer or {}).get("response_format") or ("url" if link is not None else "b64_json")
+        if form == "url" and link is None:
             return _wire.error_response(400, "response_format 'url' is not available on this route", param="response_format")
         items = []
         for ref in self.media_refs(view):
             item: dict[str, Any] = {"asset_id": ref.asset_id, "media_type": ref.media_type}
+            if "asset" in ASSET_URLS:
+                item["asset_url"] = ASSET_URLS["asset"](ref, request)
             if form == "url":
-                item["url"] = self.asset_url(ref, caller)
+                item["url"] = link(ref, caller)
             else:
                 item["b64_json"] = base64.b64encode(self.read(view, ref, jobs, caller)).decode("ascii")
             items.append(item)
-        return JSONResponse({"created": view.created_at_s, "data": items})
+        body: dict[str, Any] = {"created": view.created_at_s, "data": items}
+        body.update({name: value for name, value in (answer or {}).items() if name in ECHOED})
+        return JSONResponse(body, headers=result_headers(view.result_metadata, answer or {}))
+
+
+# The answer fields that repeat the request, and the headers the result's facts become (name: metadata key).
+ECHOED = ("output_format", "background", "quality", "size")
+
+
+def result_headers(metadata: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, str]:
+    """The response headers for the facts the run returned (rounds, files, warnings) and the size note of the request."""
+    headers: dict[str, str] = {}
+    warnings = metadata.get("warnings")
+    if warnings:
+        headers["X-Proxy-Warning"] = "; ".join(str(w) for w in warnings)
+    if "rounds" in metadata:
+        headers["X-Image-Rounds"] = str(metadata["rounds"])
+    if "returned" in metadata:
+        headers["X-Image-Returned"] = str(metadata["returned"])
+    if answer.get("size_adjusted"):
+        headers["X-Azizam-Size-Adjusted"] = str(answer["size_adjusted"])
+    return headers
 
 
 IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
 MASK_PART = "mask"
 SECOND_CHOICE = ".multi_image"                   # DEFAULT_WORKFLOWS key suffix: the default when several pictures arrive
 _DIMENSIONS = re.compile(r"[0-9]+x[0-9]+")
+
+
+def old_dimensions(text: Any) -> tuple[int, int]:
+    """``WIDTHxHEIGHT`` with a lower-case ``x`` and two whole numbers; anything else is 1024 square (what the generation
+    route always did with the text)."""
+    if not isinstance(text, str) or "x" not in text:
+        return 1024, 1024
+    try:
+        width, height = text.lower().split("x")
+        return int(width), int(height)
+    except ValueError:
+        return 1024, 1024
 
 
 def read_size(text: Any) -> tuple[int, int] | None | bool:
@@ -220,6 +287,10 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     files = "any"                  # an edit may take several pictures (a workflow with more than one required asset)
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
     not_object_text = "The request body must be a JSON object"
+
+    def dimensions(self, text: Any) -> tuple[int, int] | None:
+        size = read_size(text)
+        return size if isinstance(size, tuple) else None
 
     def unreadable_form(self) -> Response:
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
