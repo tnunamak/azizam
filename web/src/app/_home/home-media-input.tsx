@@ -97,6 +97,7 @@ function HomeLibraryPicker({ pick }: { pick: HomePick }) {
       types={pick.types}
       currentId={pick.sourceAssetId}
       onPick={(item) => void pick.pickFromLibrary(item)}
+      onChooseFile={pick.openFileDialog}
     />
   );
 }

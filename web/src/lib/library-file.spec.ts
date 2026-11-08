@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { groupLibraryByDay, libraryDayLabel } from "./library-file";
+import { groupLibraryByDay, libraryDayLabel, libraryFullDate } from "./library-file";
 
 const now = new Date(2026, 9, 26, 12);
 const stamp = (day: number, hour = 12) => new Date(2026, 9, day, hour).getTime();
@@ -62,4 +62,8 @@ test("unknown dates form one final Undated group without joining separated dated
   ]);
   expect(groupLibraryByDay([], now)).toEqual([]);
   expect(groupLibraryByDay([{ created_at: null }], now)[0].label).toBe("Undated");
+});
+
+test("a day key reads as a whole date for the heading's tooltip", () => {
+  expect(libraryFullDate("2026-11-06")).toBe("Friday, November 6, 2026");
 });

@@ -788,8 +788,8 @@ pytest = 22139
 # Train 10 (2026-11-06): Library picker polish, picked image pixel size and the Try empty prompt field (+7); measured 3922.
 # Engine readiness (2026-11-07): +1 case in add-engine-dialog.spec.tsx (abilities step with nothing ticked); measured 3921 (vitest list --json --root web).
 # History receipt re-read: +4 cases in history-page.spec.tsx; measured 3926 (vitest list --root web).
-# Library picker day headings: library-file.spec.ts (new) + 3 cases in media-input.spec.tsx; measured 3935 (vitest list --root web).
-vitest = 3935
+# Library picker day headings: library-file.spec.ts (new) + 3 cases in media-input.spec.tsx; measured 3936 (vitest list --root web).
+vitest = 3936
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -866,7 +866,8 @@ vitest = 3935
 # Gate lists: playwright.config.ts 667 + live-data 3 + household 18 = 688 (playwright test --list).
 # Trains r114 and r115 (2026-10-30): Try mesh viewer and App request history cases; the r114 gate counted 694.
 # Library pick everywhere (2026-11-06): +35 Playwright cases (library-pick-everywhere.spec.ts across its projects); playwright test --list rose 679 -> 714.
-playwright = 735
+# Library picker day headings: +3 cases (a pinned day heading; small days share a row at 390 and 1440); playwright.config.ts --list rose 714 -> 717.
+playwright = 738
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

@@ -12,6 +12,12 @@ export interface EmptyStateProps {
    * border of its own.
    */
   inCard?: boolean;
+  /**
+   * Drawn in a region that already pads its content (a dialog body): no
+   * padding or minimum height of its own, so the icon lines up with the
+   * region's title and the region fits the state.
+   */
+  flush?: boolean;
 }
 
 /**
@@ -27,6 +33,7 @@ export function EmptyState({
   action,
   icon: Icon = Inbox,
   inCard = false,
+  flush = false,
 }: EmptyStateProps) {
   const titleId = useId();
   const descriptionId = useId();
@@ -37,8 +44,9 @@ export function EmptyState({
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       className={cn(
-        "flex min-h-40 min-w-0 flex-col items-start justify-center gap-3 p-6 max-sm:p-4",
-        !inCard && "rounded-panel border border-dashed",
+        "flex min-w-0 flex-col items-start gap-3",
+        flush ? "justify-start pt-1 pb-2" : "min-h-40 justify-center p-6 max-sm:p-4",
+        !inCard && !flush && "rounded-panel border border-dashed",
       )}
     >
       <Icon
