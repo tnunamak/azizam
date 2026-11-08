@@ -305,6 +305,12 @@ function engineStateKey(engine: EngineView): CapabilityStateKey {
   return "unknown";
 }
 
+/** An engine that is answering now, idle or working on other requests:
+ * it still serves its capabilities while another engine is down. */
+function servesNow(engine: EngineView): boolean {
+  return ["ready", "busy"].includes(engineStateKey(engine));
+}
+
 function stateWordFor(key: CapabilityStateKey) {
   return { word: STATE_WORDS[key].word, tone: STATE_WORDS[key].tone };
 }
@@ -593,13 +599,13 @@ function engineProblems(
       records,
       new Set(affected.map((engine) => engine.service.id)),
     );
-    // A capability with another ready engine still works: say so, and keep
-    // it out of the verdict.
+    // A capability with another ready or busy engine still works: say so,
+    // and keep it out of the verdict.
     const covered = labels.filter((label) =>
       engines.some(
         (engine) =>
           !affected.includes(engine) &&
-          engineStateKey(engine) === "ready" &&
+          servesNow(engine) &&
           (engine.label ? engine.label.split(", ") : []).includes(label),
       ),
     );
@@ -1210,7 +1216,7 @@ export function StatusClient() {
           const covered = labels.filter((label) =>
             tableEngines.some(
               (engine) =>
-                engineStateKey(engine) === "ready" &&
+                servesNow(engine) &&
                 (engine.label ? engine.label.split(", ") : []).includes(label),
             ),
           );

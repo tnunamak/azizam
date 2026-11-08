@@ -661,6 +661,61 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
   ).toBeVisible();
 });
 
+it("does not call a capability unavailable when another engine is busy serving it", async () => {
+  // Live 2026-11-08: a down test engine said "Chat is unavailable right now"
+  // while the stable chat engine was answering requests (busy).
+  const engine = (id: string, name: string, observation: string, tone: string, lastError: string | null) => ({
+    service_id: id,
+    name: `${name} (chat)`,
+    engine_label: `${name} (chat)`,
+    capability_title: "Chat",
+    capability_labels: ["Chat"],
+    icon_key: "chat",
+    configured: true,
+    enabled: true,
+    role: "standby",
+    routable: true,
+    in_use: true,
+    observation,
+    tone,
+    last_error: lastError,
+  });
+  mount(
+    {
+      generated_at: 1_800_000_000,
+      current_health: {
+        state: "warn",
+        tone: "warn",
+        label: "Needs attention",
+        detail: "Test chat is down.",
+        observation_available: true,
+        services: [
+          engine("chat", "Test chat", "down", "warn", "connect refused"),
+          engine("stable", "Stable chat", "busy", "ok", null),
+        ],
+      },
+      backends: [],
+    } as unknown as StatusPayload,
+    {
+      ...registry,
+      services: {
+        chat: registry.services.chat,
+        stable: { ...registry.services.chat, id: "stable", name: "Stable chat" },
+      },
+    },
+  );
+  const title = await screen.findByRole("heading", {
+    name: "Test chat is not accepting connections",
+  });
+  const card = title.closest("article")!;
+  expect(
+    screen.queryByRole("heading", { name: /Chat is unavailable right now/ }),
+  ).toBeNull();
+  expect(
+    within(card).getByText("Nothing yet: another engine still serves chat."),
+  ).toBeVisible();
+});
+
 it("waits for the status check before drawing engine rows, never a passing Unknown", async () => {
   vi.useFakeTimers();
   vi.spyOn(api.services, "registry").mockResolvedValue(chatRegistry);
