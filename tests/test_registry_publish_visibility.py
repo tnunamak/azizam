@@ -39,7 +39,7 @@ def _swap(monkeypatch, *, published: bool, contract_edit=None, services=None):
     monkeypatch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(snapshot))
     # The cached document and its inputs key belong to this snapshot; the undo hands the next test a cold cache.
     monkeypatch.setattr(proxy.app, "openapi_schema", None)
-    monkeypatch.setitem(proxy._OPENAPI_INPUTS, 0, "")
+    monkeypatch.setattr(proxy, "_OPENAPI_INPUTS", [""])
     return snapshot
 
 
