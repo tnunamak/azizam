@@ -4,6 +4,7 @@ rendering a refusal. Nothing here names an intent, a workflow, a model or an eng
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
@@ -25,6 +26,9 @@ from gateway.workflow_runtime_types import (
 )
 
 CHUNK = 1 << 16
+FORM_MAX_FIELDS = 100               # the text parts of one form; a form with more is refused while it is read
+FORM_PART_BYTES = 1 << 20           # the most one text part may hold (the form parser's own default)
+FORM_PART_HEAD_BYTES = 8 << 10      # the boundary and headers around one part
 WORKFLOW_AMBIGUOUS = "workflow_ambiguous"
 
 
@@ -77,11 +81,51 @@ def nested_part(name: str) -> bool:
     return any(mark in name for mark in ".[]/")
 
 
-async def split_form(request: Request) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
-    """A multipart body as its fields and its file parts (name, upload) in the order received. A file part whose name
-    is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
+@dataclass(frozen=True)
+class FormLimits:
+    """What one multipart form may hold. The body budget follows from the three: every file part at its largest, every
+    text part at its largest, and the framing around each part."""
+
+    max_files: int
+    max_file_bytes: int | None      # None: the shape's spool states no per-file size, so only the counts bound the read
+    max_fields: int = FORM_MAX_FIELDS
+
+    @property
+    def body_budget(self) -> float:
+        files = self.max_files * (self.max_file_bytes + FORM_PART_HEAD_BYTES) if self.max_file_bytes is not None else float("inf")
+        return files + self.max_fields * (FORM_PART_BYTES + FORM_PART_HEAD_BYTES)
+
+
+class _FormTooLarge(Exception):
+    pass
+
+
+def _bounded(request: Request, budget: float) -> Request:
+    """The same request with a body that raises once more than ``budget`` bytes have been taken from the stream.
+    Content-Length is never consulted: a chunked body declares nothing."""
+    taken = 0
+
+    async def receive() -> Any:
+        nonlocal taken
+        message = await request.receive()
+        if message["type"] == "http.request":
+            taken += len(message.get("body", b""))
+            if taken > budget:
+                raise _FormTooLarge
+        return message
+
+    return Request(request.scope, receive)
+
+
+async def split_form(request: Request, limits: FormLimits) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
+    """A multipart body as its fields and its file parts (name, upload) in the order received. The body is bounded
+    while it is read: its bytes by ``limits.body_budget``, its file and text parts by their counts. A file part whose
+    name is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
     try:
-        form = await request.form()
+        form = await _bounded(request, limits.body_budget).form(
+            max_files=limits.max_files, max_fields=limits.max_fields, max_part_size=FORM_PART_BYTES)
+    except _FormTooLarge:
+        return error_response(413, "The request body is larger than this route accepts", code="payload_too_large")
     except (MultiPartException, HTTPException, ValueError):  # the parser's own error is a ValueError
         return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
     fields: dict[str, Any] = {}
