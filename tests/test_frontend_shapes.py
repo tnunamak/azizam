@@ -54,6 +54,12 @@ VIDEO_EDIT = {"id": "video.edit.demo", "version": "1", "intent": "video.edit", "
 ROWS = {row.id: row for row in bundled_rows()}
 
 
+@pytest.fixture(autouse=True)
+def no_deployment_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The main module installs the deployment's default workflow when it loads; these tests read the wire alone."""
+    monkeypatch.setattr(frontend_shapes.shapes, "DEFAULT_WORKFLOWS", {})
+
+
 def make_request(body: bytes = b"", *, headers: dict[str, str] | None = None, content_type: str = "application/json") -> Request:
     sent = False
 
@@ -195,6 +201,35 @@ def test_two_workflows_and_no_model_is_a_400_that_asks_for_a_model() -> None:
     snap = snapshot("flux2-klein", "krea2-turbo")
     response = run_request("images-generations", json_request({"prompt": "a fox"}), snap)
     assert response.status_code == 400 and json.loads(response.body)["error"]["code"] == "workflow_ambiguous"
+
+
+def test_a_workflow_is_addressed_by_its_id_or_by_its_id_without_the_intent() -> None:
+    snap = snapshot("flux2-klein", "krea2-turbo", "qwen-image-2.1-edit")
+    short = run_request("images-generations", json_request({"prompt": "a fox", "model": "krea2-turbo"}), snap)
+    assert short.workflow_id == "image.generate.krea2-turbo"
+    unknown = run_request("images-generations", json_request({"prompt": "a fox", "model": "no-such"}), snap)
+    assert unknown.status_code == 404 and json.loads(unknown.body)["error"]["code"] == "workflow_not_found"
+    wrong_row = run_request("images-generations", json_request({"prompt": "a fox", "model": "qwen-image-2.1-edit"}), snap)
+    assert wrong_row.status_code == 404                 # the row's selection bounds what a short name can reach
+
+
+def test_the_deployment_default_runs_when_no_model_is_named_and_a_named_model_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    snap = snapshot("flux2-klein", "krea2-turbo")
+    resolvers = {frontend_shapes.shapes.OpenAIImagesJson.shape_id: lambda: "krea2-turbo"}
+    monkeypatch.setattr(frontend_shapes.shapes, "DEFAULT_WORKFLOWS", resolvers)
+    assert run_request("images-generations", json_request({"prompt": "a fox"}), snap).workflow_id == "image.generate.krea2-turbo"
+    named = run_request("images-generations", json_request({"prompt": "a fox", "model": "image.generate.flux2-klein"}), snap)
+    assert named.workflow_id == "image.generate.flux2-klein"
+    resolvers.clear()          # no default configured: the wire asks for a model, as before
+    assert run_request("images-generations", json_request({"prompt": "a fox"}), snap).status_code == 400
+
+
+def test_the_picture_encoding_fields_of_the_wire_are_not_workflow_inputs() -> None:
+    snap = snapshot("flux2-klein")
+    body = {"prompt": "a fox", "n": 3, "quality": "high", "background": "opaque", "output_format": "jpeg",
+            "output_compression": 80, "size": "512x512", "response_format": "b64_json"}
+    run = run_request("images-generations", json_request(body), snap)
+    assert run.inputs == {"prompt": "a fox", "width": 512, "height": 512}
 
 
 @pytest.mark.parametrize("payload,status,code", [
