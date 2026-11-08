@@ -27055,7 +27055,7 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     # activity read their capability from it. A route that declares none records the generic run intent.
     owner = _RunReceiptOwner(RouteReceipt(
         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
-        app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
     owner.short_names = row.receipt_names == "short"
     return owner

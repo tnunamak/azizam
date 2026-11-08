@@ -123,6 +123,12 @@ def _outcome(view: RunJobView | None, *, waited: bool = True) -> tuple[str, str]
     return "failed", "wait_timeout"
 
 
+def route_backend(row: FrontendRow, path: str) -> str | None:
+    """The service the matched route declares its receipt files under (``runtime_policy.backend``); None when it declares none."""
+    route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
+    return (route.runtime_policy if route else {}).get("backend") or None
+
+
 def route_intent(row: FrontendRow, path: str) -> str:
     """The intent the matched route declares (``runtime_policy.intent``); the generic run intent when it declares none.
     The request receipt and the job row both file under it."""
