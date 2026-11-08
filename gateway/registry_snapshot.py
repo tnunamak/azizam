@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from gateway.alias_policy import service_model_records
+from gateway.registry_layers import RUN_CONTROL_PATCH_KEY
 from gateway.discovery import WorkflowRecord
 from gateway.manifests import BUNDLED_PROVENANCE, ContractError, Provenance
 from gateway.workflow_kernel import (
@@ -233,6 +234,21 @@ def _bundled_entry(record: WorkflowRecord, generation: int) -> WorkflowEntry:
                   state=BUNDLED_STATE, published=True, incarnation=BUNDLED_INCARNATION, record_revision=generation, overrides=None)
 
 
+def _patched_entry(base: WorkflowRecord, record: Mapping[str, Any], generation: int) -> WorkflowEntry:
+    """The bundled workflow of a run-control patch: the release's contract, facts, provenance and incarnation, with the
+    patch's state and publication over them. Nothing of the contract is stored, so a later release shows through."""
+    state = record.get("state") or BUNDLED_STATE
+    if state not in ("active", "disabled"):
+        raise SnapshotBuildError([_problem(("workflows", base.manifest.get("id", ""), "state"), "record_state",
+                                           "state is active or disabled")])
+    revision = record.get("record_revision")
+    return _entry(base.manifest, facts=_facts_of(base.facts),
+                  provenance=Provenance(base.identity.trusted, base.identity.source) if base.identity else BUNDLED_PROVENANCE,
+                  state=state, published=bool(record.get("published", True)), incarnation=BUNDLED_INCARNATION,
+                  record_revision=revision if isinstance(revision, int) and revision >= 1 else generation,
+                  overrides=str(base.manifest["id"]))   # the owner changed this id: the same marker a contract override has
+
+
 def _stored_facts(raw: Any) -> WorkflowFacts | None:
     from gateway.workflow_policy import facts_from_mapping
 
@@ -261,16 +277,9 @@ def _stored_entry(workflow_id: str, record: Mapping[str, Any], generation: int,
     if facts is None and workflow_id in bundled and record.get("policy") is None:
         facts = _facts_of(bundled[workflow_id].facts)
     overrides = record.get("overrides")
-    stored = Provenance(bool(identity.get("trusted", False)), identity.get("source") or provenance.get("source"))
-    base = bundled.get(workflow_id)
-    if overrides == workflow_id and base is not None and digest(manifest) == digest(base.manifest):
-        # An override whose contract is the bundled file unchanged (a run-control change: state or publication) runs
-        # what the release reviewed, so it has the bundled provenance. Trust comes from that comparison, never from a
-        # stored flag; any contract edit makes the record a stored one again.
-        stored = Provenance(base.identity.trusted, base.identity.source) if base.identity else BUNDLED_PROVENANCE
     return _entry(
         manifest, facts=facts,
-        provenance=stored,
+        provenance=Provenance(bool(identity.get("trusted", False)), identity.get("source") or provenance.get("source")),
         state=state, published=bool(record.get("published", False)),
         incarnation=str(record.get("incarnation") or "stored"),
         record_revision=int(record.get("record_revision") or generation),
@@ -457,6 +466,10 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
         if not isinstance(record, Mapping):
             raise SnapshotBuildError([_problem(("workflows", str(workflow_id)), "record", "a stored workflow is an object")])
         if record.get("migration"):   # a record the schema step quarantined never runs; the bundled version of its id serves
+            continue
+        if record.get(RUN_CONTROL_PATCH_KEY):   # a run-control patch of a bundled id; with no bundled workflow it is inert
+            if str(workflow_id) in release.workflows:
+                entries[str(workflow_id)] = _patched_entry(release.workflows[str(workflow_id)], record, generation)
             continue
         entries[str(workflow_id)] = _stored_entry(str(workflow_id), record, generation, release.workflows)
     frontends = {row.id: row for row in release.frontends}

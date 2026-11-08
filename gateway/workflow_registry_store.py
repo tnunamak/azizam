@@ -34,7 +34,7 @@ from gateway.definition_store import DefinitionStore
 from gateway.job_envelope import canonical_bytes
 from gateway.manifests import ContractError, ContractErrors, ManifestError
 from gateway.workflow_contract import Report, check_contract
-from gateway.workflow_kernel import _thaw, name_clashes
+from gateway.workflow_kernel import name_clashes
 from gateway.workflow_policy import facts_from_mapping
 from gateway.workflow_runtime_types import (
     BOUND_EXCEEDED, KEEP, WORKFLOW_EXISTS, WORKFLOW_NOT_FOUND, Actor, Commit, EntryState, HistoryEntry, Keep,
@@ -341,7 +341,7 @@ class WorkflowRegistryStore:
             old = self._effective_record(stored, wid)
             bundled = wid in self._bundled_ids()
             if if_match is None:
-                if self._stored_has(stored, wid):
+                if self._stored_has(stored, wid) and not service_registry.is_run_control_patch(old):
                     raise RegistryConflict(generation, WORKFLOW_EXISTS)
                 if bundled and overrides != wid:
                     raise WorkflowIdIsBundled(wid, service_registry.bundled_workflow_manifests().get(wid))
@@ -373,10 +373,11 @@ class WorkflowRegistryStore:
 
         def build(stored: Mapping[str, Any], generation: int, base: RegistrySnapshot) -> tuple[dict[str, Any] | None, str]:
             old = self._effective_record(stored, workflow_id)
-            if old is not None:
+            entry = base.get(workflow_id)
+            if old is not None and not service_registry.is_run_control_patch(old):
                 record = self._carry(old, self._stored_has(stored, workflow_id))
-            elif workflow_id in self._bundled_ids() and base.get(workflow_id) is not None:
-                record = self._bundled_override(base.get(workflow_id))
+            elif workflow_id in self._bundled_ids() and entry is not None:
+                record = self._run_control_patch(entry)
             else:
                 raise RegistryRefused((ContractError(("id",), WORKFLOW_NOT_FOUND, f"no workflow {workflow_id}"),))
             record[key] = value
@@ -386,7 +387,7 @@ class WorkflowRegistryStore:
 
     def delete_workflow(self, workflow_id: str, *, if_match: int, actor: Actor) -> Commit:
         def build(stored: Mapping[str, Any], generation: int, base: RegistrySnapshot) -> tuple[dict[str, Any] | None, str]:
-            if workflow_id in self._bundled_ids():
+            if workflow_id in self._bundled_ids() and not self._stored_has(stored, workflow_id):
                 raise WorkflowIdIsBundled(workflow_id, service_registry.bundled_workflow_manifests().get(workflow_id))
             if not self._stored_has(stored, workflow_id):
                 raise RegistryRefused((ContractError(("id",), WORKFLOW_NOT_FOUND, f"no workflow {workflow_id}"),))
@@ -405,6 +406,11 @@ class WorkflowRegistryStore:
                 raise RegistryRefused((ContractError(("record_revision",), REVISION_NOT_FOUND,
                                                      f"there is no saved revision {record_revision} of {workflow_id!r}"),))
             then = past["record"]
+            if service_registry.is_run_control_patch(then):
+                # A past revision that held run control only is written back as that patch.
+                record = self._run_control_patch(base.get(workflow_id))
+                record["published"] = bool(then.get("published", True))
+                return record, "restore"
             manifest = copy.deepcopy(then["manifest"])
             overrides = then.get("overrides")
             report = self.check(manifest, workflow_id=workflow_id, facts=KEEP, overrides=overrides, snapshot=base)
@@ -443,7 +449,7 @@ class WorkflowRegistryStore:
             key: value for key, value in old.items() if key not in service_registry.RUN_CONTROL_KEYS
             and key not in {"editable", "enabled", "identity", "manifest_hash", "migration", "overrides", "policy",
                             "provenance", "registry_source", "source_path", "manifest_path", "summary", "source"}}
-        record: dict[str, Any] = {"manifest": copy.deepcopy(dict(manifest))}
+        record: dict[str, Any] = {} if service_registry.is_run_control_patch(old) else {"manifest": copy.deepcopy(dict(manifest))}
         for key in self._KEPT_BESIDE:
             if key in old:
                 record[key] = copy.deepcopy(old[key])
@@ -459,19 +465,12 @@ class WorkflowRegistryStore:
         return record
 
     @staticmethod
-    def _bundled_override(entry: Any) -> dict[str, Any]:
-        """The first stored record of a bundled workflow whose run control the owner changes: the bundled contract and
-        facts under ``overrides: <id>``, with the bundled entry's state, publication and incarnation, so a queued job of
-        it still passes dispatch check 2 (the bundled release's workflows are not in the release registry layer)."""
-        record: dict[str, Any] = {
-            "manifest": json.loads(json.dumps(_thaw(entry.contract))), "overrides": entry.id,
-            "source": "ui", "editable": True, "enabled": True,
-            "state": entry.state, "published": entry.published, "incarnation": entry.incarnation,
-            "record_revision": entry.record_revision + 1,
-        }
-        if entry.facts is not None:
-            record["policy"] = facts_record(entry.facts)
-        return record
+    def _run_control_patch(entry: Any) -> dict[str, Any]:
+        """The stored record of a bundled workflow whose run control the owner changes: state, publication and revision
+        only, naming the bundled id. It holds no contract and no facts, so a later release shows through; the snapshot
+        builds the entry from the release's own record, with its provenance and incarnation."""
+        return {registry_layers.RUN_CONTROL_PATCH_KEY: entry.id, "state": entry.state, "published": entry.published,
+                "record_revision": entry.record_revision + 1}
 
     def _new_record(self, old: Mapping[str, Any] | None, existed: bool, contract: dict[str, Any],
                     facts: WorkflowFacts | None | Keep, overrides: str | None) -> dict[str, Any]:
