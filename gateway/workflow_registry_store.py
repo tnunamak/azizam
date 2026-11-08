@@ -12,9 +12,10 @@ from the snapshot: this module never computes a second copy.
 
 History: each accepted change writes the whole record as a blob in the definition store, held by the holder
 ``registry:<workflow id>`` for the last ``workflow_execution.history_depth`` changes. The blob holds its own revision,
-digests, actor and kind of change, so the holder is the only index. History is written after the registry commit: a
-crash between the two leaves a change with no history row, never a history row for a change that did not happen.
-Deleting a workflow releases its holder.
+digests, actor and kind of change, so the holder is the only index. The history write is part of the accepted change:
+the holder changes inside the registry transaction (it fails the change if it fails) and is put back if the registry
+commit then fails. The two databases share no transaction, so a crash between them can leave one row for a revision
+that did not happen; the next change drops it. Deleting a workflow releases its holder.
 """
 from __future__ import annotations
 
@@ -233,6 +234,34 @@ def facts_problems(facts: Any) -> list[ContractError]:
         return [ContractError(("facts",), FACTS_INVALID,
                               "each fact is non-empty text, and tags are a list of distinct text")]
     return []
+
+
+class _StagedHistory:
+    """The holder change of one registry commit: ``apply`` makes it (inside the registry transaction), ``undo`` takes it
+    back if the commit does not happen. ``after`` None releases the holder (a delete)."""
+
+    def __init__(self, definitions: DefinitionStore, holder: str, before: tuple[str, ...],
+                 after: tuple[str, ...] | None) -> None:
+        self._definitions, self._holder, self._before, self._after = definitions, holder, before, after
+        self._applied = False
+
+    def apply(self, _conn: Any, _now: int) -> None:
+        self._applied = True
+        if self._after is None:
+            self._definitions.release_holder(self._holder)
+        else:
+            self._definitions.replace_holder(self._holder, list(self._after))
+
+    def undo(self) -> None:
+        if not self._applied:
+            return
+        try:
+            if self._before:
+                self._definitions.replace_holder(self._holder, list(self._before))
+            else:
+                self._definitions.release_holder(self._holder)
+        except Exception:   # noqa: BLE001 - the stale row is dropped by the next change; do not hide the real failure
+            log.exception("a workflow history change could not be taken back")
 
 
 # -- the store -----------------------------------------------------------------------------------------------------------
@@ -497,6 +526,12 @@ class WorkflowRegistryStore:
                 except Exception as error:   # noqa: BLE001 - a revision the builder refuses is never stored
                     raise RegistryRefused((ContractError((), SNAPSHOT_REFUSED,
                                                          f"the registry would not build: {type(error).__name__}"),)) from error
+                entry = prospective.get(wid)
+                commit = Commit(revision=expected + 1, workflow_id=wid,
+                                record_revision=record["record_revision"] if record else 0,
+                                contract_digest=entry.contract_digest if entry is not None else None,
+                                record_digest=entry.record_digest if entry is not None else None)
+                history = self._stage_history(wid, actor, change, record, commit)
                 try:
                     written = admin_store.write_service_registry_with_audit(
                         new_stored,
@@ -513,23 +548,23 @@ class WorkflowRegistryStore:
                         session=None,
                         path=self._path,
                         stored_form=True,
+                        also_in_transaction=history.apply,
                     )
                 except admin_store.OperatorSettingsGenerationConflict:
+                    history.undo()
                     if if_match is not None:
                         raise RegistryConflict(self._read()[1]) from None
                     continue   # a create retries on the new revision
                 except service_registry.NameClash as clash:
+                    history.undo()
                     raise RegistryRefused(tuple(clash.problems)) from None
+                except BaseException:
+                    history.undo()
+                    raise
                 break
             else:
                 raise RegistryConflict(self._read()[1])
             revision = int(written["operator_settings_generation"])
-            entry = prospective.get(wid)
-            commit = Commit(revision=revision, workflow_id=wid,
-                            record_revision=record["record_revision"] if record else 0,
-                            contract_digest=entry.contract_digest if entry is not None else None,
-                            record_digest=entry.record_digest if entry is not None else None)
-            self._keep_history(wid, actor, change, record, commit)
             self._cached = (revision, service_registry.release_digest(), prospective)
             self._publish(base, prospective, commit)
             return commit
@@ -576,23 +611,26 @@ class WorkflowRegistryStore:
     def _history_rows(self, workflow_id: str) -> list[dict[str, Any]]:
         return [row for _sha, row in self._rows_with_sha(workflow_id)]
 
-    def _keep_history(self, workflow_id: str, actor: Actor, change: str, record: Mapping[str, Any] | None,
-                      commit: Commit) -> None:
+    def _stage_history(self, workflow_id: str, actor: Actor, change: str, record: Mapping[str, Any] | None,
+                       commit: Commit) -> _StagedHistory:
+        """The history write of one accepted change, made part of its registry commit. The blob is put first (it holds
+        nothing until the holder names it); ``apply`` runs inside the registry transaction, after the registry write and
+        before its commit, so a history store that fails rolls the change back; ``undo`` puts the holder back when the
+        registry commit then fails. A row left by a crash between the two has a revision the next real change reuses, and
+        that change drops it."""
         holder = self._holder(workflow_id)
-        try:
-            if record is None:
-                self._definitions.release_holder(holder)
-                return
-            body = {"record_revision": commit.record_revision, "record_digest": commit.record_digest,
-                    "contract_digest": commit.contract_digest, "saved_at_s": int(self._clock()),
-                    "actor": {"kind": actor.kind, "id": actor.id, "label": actor.label}, "change": change,
-                    "record": record}
-            sha = self._definitions.put_blob(canonical_bytes(body))
-            depth = history_depth_from_config(self._config())
-            older = [held for held, _row in self._rows_with_sha(workflow_id) if held != sha][: max(depth - 1, 0)]
-            self._definitions.replace_holder(holder, [sha, *older])
-        except Exception:   # noqa: BLE001 - the change is already stored; history is best effort and is logged
-            log.exception("a workflow history row could not be written")
+        before = tuple(self._definitions.holder_shas(holder))
+        if record is None:
+            return _StagedHistory(self._definitions, holder, before, None)
+        body = {"record_revision": commit.record_revision, "record_digest": commit.record_digest,
+                "contract_digest": commit.contract_digest, "saved_at_s": int(self._clock()),
+                "actor": {"kind": actor.kind, "id": actor.id, "label": actor.label}, "change": change,
+                "record": record}
+        sha = self._definitions.put_blob(canonical_bytes(body))
+        depth = history_depth_from_config(self._config())
+        older = [held for held, row in self._rows_with_sha(workflow_id)
+                 if held != sha and row["record_revision"] < commit.record_revision][: max(depth - 1, 0)]
+        return _StagedHistory(self._definitions, holder, before, (sha, *older))
 
     def history(self, workflow_id: str, *, limit: int = 20) -> tuple[HistoryEntry, ...]:
         return tuple(
