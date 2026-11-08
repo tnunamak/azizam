@@ -528,7 +528,6 @@ def test_images_E10_too_many_images(tmp_path):
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E11_mask_required_and_missing(tmp_path):
     old, row = pair(tmp_path, EDIT, form(files={"image": IMG}), edit_ok)
     old_has(old, "an answer", status(old))
@@ -571,7 +570,6 @@ def test_images_E15_upload_without_filename_502(tmp_path):
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E16_mask_upload_failure_502(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(strict=False, extra=[
@@ -581,7 +579,6 @@ def test_images_E16_mask_upload_failure_502(tmp_path):
     _edit_compare(old, row)
 
 
-@NEEDS_RH
 def test_images_E17_mask_headers(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
     old_has(old, "mask headers", headers_with(old, "x-image-mask"))
@@ -658,7 +655,6 @@ def test_images_V05_delegated_prompt_workflow_and_denoise(tmp_path):
                 ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow", "metadata")))
 
 
-@NEEDS_RH
 def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(), variation_ok)
     old_has(old, "the metadata key", "variations_delegated_workflow" in json.dumps(receipt_fields(old, "metadata") or {}))
@@ -687,7 +683,6 @@ def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
     assert_same(old, row, status)
 
 
-@NEEDS_RH
 def test_images_V10_size_adjustment_on_variations(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(size="768X512"), variation_ok)
     old_has(old, "an answer", status(old) == 200)
