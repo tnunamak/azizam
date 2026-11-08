@@ -2862,10 +2862,17 @@ def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | No
 
     pairs: list[tuple[str, Any]] = []
     stored = document.get("workflows") if isinstance(document.get("workflows"), Mapping) else {}
-    ids = {str(workflow_id) for workflow_id in (bundled_workflow_manifests() if bundled is None else bundled)}
+    shipped = bundled_workflow_manifests() if bundled is None else bundled
+    ids = {str(workflow_id) for workflow_id in shipped}
     ids.update(str(workflow_id) for workflow_id in stored)
     for workflow_id in sorted(ids):
         pairs.extend(workflow_name_pairs(workflow_id))
+        record = stored.get(workflow_id)
+        contract = record.get("manifest", record) if isinstance(record, Mapping) else None
+        if not isinstance(contract, Mapping):   # a bundled id the document does not store: the release's own contract
+            contract = shipped.get(workflow_id) if isinstance(shipped, Mapping) else None
+        aliases = contract.get("aliases") if isinstance(contract, Mapping) else None
+        pairs.extend((str(alias), NameOwner("workflow_alias", workflow_id)) for alias in aliases or () if isinstance(alias, str))
     services = document.get("services") if isinstance(document.get("services"), Mapping) else {}
     for service in services.values():
         config = service.get("config") if isinstance(service, Mapping) else None
