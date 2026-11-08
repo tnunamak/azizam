@@ -89,6 +89,9 @@ def rig(monkeypatch, tmp_path):
     cache.mkdir()
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
     harness = Harness()
+    # One run at a time is the gateway's default (images.media_jobs.concurrency); a cell that needs two at once raises it.
+    monkeypatch.setattr(proxy, "_workflow_run_semaphore", asyncio.Semaphore(1))
+    harness.run_slots = lambda n: monkeypatch.setattr(proxy, "_workflow_run_semaphore", asyncio.Semaphore(n))
     monkeypatch.setattr(proxy.MESH_DEPS, "services", lambda: harness.services)
     monkeypatch.setattr(proxy.MESH_DEPS, "client_factory", harness.deps().client_factory)
     host = dataclasses.replace(proxy.MULTIPART_HOST, leases=harness.leases, require_egress=lambda _service: None)
@@ -222,7 +225,22 @@ def cell_async_job(h: Harness) -> dict[str, Any]:
     return run(h, go)
 
 
+def cell_queued_behind(h: Harness) -> dict[str, Any]:
+    """With the default of one run at a time, a second request waits for the first; it is not refused."""
+    gate = Gate(h)
+
+    async def go(c):
+        first = await c.post(SYNC, headers=ASYNC, **form("1"))
+        await gate.started.wait()
+        second = await c.post(SYNC, headers=ASYNC, **form("2"))
+        waiting = await job_facts(c, job_id_of(second))
+        gate.release.set()
+        return {"waiting": waiting, "first_job": await settle(c, job_id_of(first)), "second_job": await settle(c, job_id_of(second))}
+    return run(h, go)
+
+
 def cell_busy_lease(h: Harness) -> dict[str, Any]:
+    h.run_slots(4)
     gate = Gate(h)
 
     async def go(c):
