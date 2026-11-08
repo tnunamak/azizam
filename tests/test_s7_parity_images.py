@@ -1116,9 +1116,9 @@ def _pixels(o, i=0):
 
 
 def _half_mask():
-    image = Image.new("L", (64, 64), 0)
-    for x in range(32, 64):
-        for y in range(64):
+    image = Image.new("L", (8, 8), 0)             # the golden input is 8 x 8
+    for x in range(4, 8):
+        for y in range(8):
             image.putpixel((x, y), 255)
     out = io.BytesIO()
     image.save(out, "PNG")
