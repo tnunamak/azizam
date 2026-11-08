@@ -26,11 +26,6 @@ UNPINNED = {
     "store_creator": "the raw media-jobs API: an outside adapter reports the work, the gateway runs no workflow",
     "_submit": "the Make route picks its workflow at dispatch, after the job row exists",
     "_create_indexed": "indexes a response that is already finished; nothing runs",
-    # The mesh job's create runs in ``admitted``, nested in ``_run_job`` in ``register_mesh_routes``; each enclosing
-    # function is a site to the scan.
-    "register_mesh_routes": "the 3D engine route: its manifest names an engine service, no graph template to pin; engine offerings are pinned in S2.5",
-    "_run_job": "the 3D engine route: its manifest names an engine service, no graph template to pin; engine offerings are pinned in S2.5",
-    "admitted": "the 3D engine route: its manifest names an engine service, no graph template to pin; engine offerings are pinned in S2.5",
 }
 PINNED = {"_create", "_identity_submit_job", "_submit_audio_media_job", "_submit_video_media_job", "gateway_image_generations_media_job"}
 
