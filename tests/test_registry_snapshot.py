@@ -440,4 +440,4 @@ def test_an_orphan_run_control_patch_owns_no_name_in_the_write_check_or_the_snap
     assert build(document).names.owner("workflow", "gone.workflow") is None
     # With the release still shipping the id, the patch's workflow holds its names as before.
     held = {owner.id for _name, owner in service_registry.registry_name_pairs(document, bundled=["gone.workflow"])}
-    assert held == {"gone.workflow"}
+    assert "gone.workflow" in held

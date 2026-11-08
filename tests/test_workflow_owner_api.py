@@ -477,7 +477,8 @@ def test_the_detail_of_a_held_out_owner_workflow_is_its_stored_contract_with_the
 def test_the_detail_of_a_held_out_override_is_the_stored_contract_and_the_serving_bundled_one_is_named_apart(api):
     other = "image.edit.flux2-klein-4b"
     edited = {**_detail(api)["contract"], "display_name": "Mine", "aliases": ["mine-alias"]}
-    assert create(api, edited, overrides=BUNDLED_ID).status_code == 201
+    saved = create(api, edited, overrides=BUNDLED_ID)
+    assert saved.status_code == 201, saved.text
     newer = _restarted(api, {other: lambda manifest: {**manifest, "aliases": ["mine-alias"]}})
     body = _detail(newer)
     assert body["held_out"] is True and body["contract"]["display_name"] == "Mine"
