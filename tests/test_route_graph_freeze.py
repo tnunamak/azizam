@@ -266,4 +266,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Before it the frozen digest was e22f458536ecd05d42ccd8386fd4219befe891c3a3c79b380bd84e14a6f902ea.
     # Re-captured 2026-11-08 for the nine /admin/api/workflows owner operations (see ADDED_PATHS): only those six paths
     # are new. Before it the frozen digest was 2c63428501d78648d12449003431d89f68dc58341751d76db03fcb8642f6305f.
+    # Re-captured 2026-11-08 for S7 (builder D4): POST /v1/meshes/generate left; POST /v1/3d/generations and
+    # POST /v1/3d/generations/glb arrived with the same App key security; the mesh workflow's documented paths moved.
+    # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the frozen digest was
+    # b62d42d37489df105cda9f0d730000d9ea8dba85e958df91ecfa7b21d629e6ad.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

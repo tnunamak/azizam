@@ -304,6 +304,14 @@
       ],
       "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
       "access": "content:job:read"
+    },
+    {
+      "path": "gateway/job_retry_hint.py",
+      "function": "write",
+      "source_sha256": "d36924af8aa509bfd0148a986c421363fcc803b29c8894dad5a8f3d70d259ea1",
+      "call": "append_event",
+      "event": "'retry_after'",
+      "access": "content:job:read"
     }
   ],
   "mcp_fields": {
@@ -3526,9 +3534,15 @@
       "access": "none"
     },
     {
-      "handler": "gateway.mesh_api.register_mesh_routes.<locals>.generate_mesh",
+      "handler": "gateway.row_routes._handler.<locals>.serve",
       "method": "POST",
-      "path": "/v1/meshes/generate",
+      "path": "/v1/3d/generations",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.row_routes._handler.<locals>.serve",
+      "method": "POST",
+      "path": "/v1/3d/generations/glb",
       "access": "own-account"
     },
     {
@@ -3596,6 +3610,7 @@
     "progress": "content:job:read",
     "queued": "content:job:read",
     "retry": "content:job:read",
+    "retry_after": "content:job:read",
     "started": "content:job:read",
     "submitted": "content:job:read",
     "succeeded": "content:job:read"

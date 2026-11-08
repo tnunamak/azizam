@@ -464,7 +464,7 @@ for (const view of VIEWPORTS) {
     await page.setViewportSize({ width: view.width, height: view.height });
     await page.route("**/me/api/workflows", (route) => fulfilJson(route, meshCatalog));
     const listed = await routeLibrary(page);
-    await page.route("**/v1/meshes/generate", (route) =>
+    await page.route("**/v1/3d/generations/glb", (route) =>
       fulfilBytes(route, {
         status: 503,
         contentType: "application/json",
@@ -488,7 +488,7 @@ for (const view of VIEWPORTS) {
     await libraryClosed(page);
     await pickedSummary(page, page, "A teal fish", "PNG");
     await shot(page, `photo-to-3d-picked-${view.name}`);
-    const request = page.waitForRequest("**/v1/meshes/generate");
+    const request = page.waitForRequest("**/v1/3d/generations/glb");
     await page.getByRole("button", { name: "Make 3D model" }).click();
     const posted = (await request).postDataBuffer() as Buffer;
     expect(posted.includes(Buffer.from('filename="library-picture.png"'))).toBe(true);

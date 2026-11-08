@@ -148,7 +148,7 @@ async function catalogRequested() {
 
 function serve(workflows: unknown) {
   fetchMock.mockReset().mockImplementation(async (url: string) => {
-    if (url.includes("meshes")) return glb();
+    if (url.includes("3d/generations")) return glb();
     return url.includes("workflows") ? json(workflows) : json(models);
   });
 }
@@ -230,9 +230,9 @@ test("the Photo to 3D tab shows once the mesh workflow is available, and runs a 
     expect(container.querySelector("model-viewer")).not.toBeNull(),
   );
   const meshCall = fetchMock.mock.calls.find(([url]) =>
-    String(url).includes("meshes"),
+    String(url).includes("3d/generations"),
   );
-  expect(meshCall?.[0]).toBe("/v1/meshes/generate");
+  expect(meshCall?.[0]).toBe("/v1/3d/generations/glb");
   const form = meshCall?.[1].body as FormData;
   expect(form.get("resolution")).toBe("1024");
   expect((form.get("image") as File).name).toBe("mug.png");
@@ -286,9 +286,9 @@ test("a picture chosen on Home opens Photo to 3D and starts the model with that 
   });
   const { container } = render(<TryPage />);
   await waitFor(() => expect(container.querySelector("model-viewer")).not.toBeNull());
-  const meshCall = fetchMock.mock.calls.find(([url]) => String(url).includes("meshes"));
+  const meshCall = fetchMock.mock.calls.find(([url]) => String(url).includes("3d/generations"));
   expect(((meshCall?.[1].body as FormData).get("image") as File).name).toBe("from-home.png");
-  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("meshes"))).toHaveLength(1);
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("3d/generations"))).toHaveLength(1);
 });
 
 test("a recording chosen on Home opens Transcription with that file and runs it", async () => {
@@ -354,7 +354,7 @@ test("an audio file chosen from the Library is the file Transcription sends", as
 
 test("Photo to 3D offers the Library for its picture, filtered to the picture kind", async () => {
   const library = stubbedLibrary([PICTURE_ITEM, RECORDING_ITEM], async (url) => {
-    if (url.includes("meshes")) return glb();
+    if (url.includes("3d/generations")) return glb();
     return url.includes("workflows")
       ? Response.json(catalogWith(meshRow({ available: true })))
       : Response.json(models);
@@ -366,7 +366,7 @@ test("Photo to 3D offers the Library for its picture, filtered to the picture ki
   await userEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
   expect(await screen.findByText("From your Library")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Make 3D model" }));
-  await waitFor(() => expect(urlsFetched().some((url) => url.includes("meshes"))).toBe(true));
-  const meshCall = fetchMock.mock.calls.find(([url]) => String(url).includes("meshes"));
+  await waitFor(() => expect(urlsFetched().some((url) => url.includes("3d/generations"))).toBe(true));
+  const meshCall = fetchMock.mock.calls.find(([url]) => String(url).includes("3d/generations"));
   expect(((meshCall?.[1].body as FormData).get("image") as File).name).toBe("library-picture.png");
 });

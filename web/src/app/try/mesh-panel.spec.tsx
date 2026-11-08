@@ -115,7 +115,7 @@ test("posts the picture and the chosen detail as multipart to the mesh route wit
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   const { url, init, form } = sent();
-  expect(url).toBe("/v1/meshes/generate");
+  expect(url).toBe("/v1/3d/generations/glb");
   expect(init.method).toBe("POST");
   expect(new Headers(init.headers).get("authorization")).toBe(
     "Bearer test-secret",
@@ -129,7 +129,7 @@ test("posts the picture and the chosen detail as multipart to the mesh route wit
 
 test("a picture chosen from the Library is the multipart file the mesh route gets", async () => {
   const library = stubbedLibrary([PICTURE_ITEM], (url) =>
-    Promise.resolve(url === "/v1/meshes/generate" ? glb() : refusal(404, {})),
+    Promise.resolve(url === "/v1/3d/generations/glb" ? glb() : refusal(404, {})),
   );
   fetchMock.mockImplementation(library.impl);
   renderPanel();
@@ -138,8 +138,8 @@ test("a picture chosen from the Library is the multipart file the mesh route get
   expect(await screen.findByText("From your Library")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Make 3D model" }));
 
-  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/v1/meshes/generate")).toBe(true));
-  const call = fetchMock.mock.calls.find(([url]) => url === "/v1/meshes/generate") as [string, RequestInit];
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/v1/3d/generations/glb")).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => url === "/v1/3d/generations/glb") as [string, RequestInit];
   const image = (call[1].body as FormData).get("image") as File;
   expect(image.name).toBe("library-picture.png");
   expect(image.type).toBe("image/png");
@@ -330,7 +330,7 @@ type Script = {
 function serve(script: Script) {
   let poll = 0;
   fetchMock.mockImplementation(async (url: string) => {
-    if (url === "/v1/meshes/generate") return job("queued");
+    if (url === "/v1/3d/generations/glb") return job("queued");
     if (url.endsWith("/cancel")) return script.cancel?.() ?? job("running", { cancel_requested: true });
     if (url.endsWith("/content")) return glb();
     const next = script.polls[Math.min(poll, script.polls.length - 1)];
@@ -418,7 +418,7 @@ test("a server fault that never clears ends as 'Azizam is not answering', keeps 
   pollDelay.unreachableMs = 40; // a few polls of 5 ms stand for two minutes
   let down = true;
   fetchMock.mockImplementation(async (url: string) => {
-    if (url === "/v1/meshes/generate") return job("queued");
+    if (url === "/v1/3d/generations/glb") return job("queued");
     if (url.endsWith("/content")) return glb();
     return down ? new Response("bad gateway", { status: 502 }) : job("succeeded");
   });
@@ -437,7 +437,7 @@ test("a server fault that never clears ends as 'Azizam is not answering', keeps 
   down = false;
   await userEvent.click(screen.getByRole("button", { name: "Check again" }));
   await waitFor(() => expect(container.querySelector("model-viewer")).not.toBeNull());
-  expect(urls().filter((url) => url === "/v1/meshes/generate").length).toBe(1); // the same job, not a new one
+  expect(urls().filter((url) => url === "/v1/3d/generations/glb").length).toBe(1); // the same job, not a new one
   expect(window.sessionStorage.getItem(MESH_JOB_STORAGE_KEY)).toBeNull();
 });
 
@@ -453,7 +453,7 @@ test("a reload finds the job again: no new submit, the polling resumes and the m
   await waitFor(() =>
     expect(container.querySelector("model-viewer")).not.toBeNull(),
   );
-  expect(urls()).not.toContain("/v1/meshes/generate");
+  expect(urls()).not.toContain("/v1/3d/generations/glb");
   expect(container.querySelector("model-viewer")?.getAttribute("alt")).toBe(
     "3D model made from the picture mug.png",
   );

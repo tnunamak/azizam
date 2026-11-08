@@ -106,12 +106,13 @@ MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/
 AVATAR_PREFIX = "/me/api/profile/avatar"
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
-# The mesh route (gateway/mesh_api.py) is new since the baseline: POST is the route; the other methods meet the
-# catch-all, and HEAD meets the route's 405 (POST only). Live outcomes name each caller's answer.
-MESH_PATH = "/v1/meshes/generate"
+# The two 3D rows (registry/protocol_frontends.yml, mounted by gateway/row_routes.py) are new since the baseline: POST is
+# the route; the other methods meet the catch-all, and HEAD meets the route's 405 (POST only). Live outcomes name each
+# caller's answer.
+MESH_PATHS = ("/v1/3d/generations", "/v1/3d/generations/glb")
 MESH_ROUTING = {
-    "POST": f"{MESH_PATH} generate_mesh",
-    "HEAD": f"405 allow=POST via {MESH_PATH} generate_mesh",
+    "POST": "{path} serve",
+    "HEAD": "405 allow=POST via {path} serve",
 }
 MESH_LIVE = {
     "HEAD": "none: 405 application/json allow=POST; app: 405 application/json allow=POST; admin: 405 application/json allow=POST",
@@ -203,7 +204,7 @@ def _deliberate(key: str) -> str | None:
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if path == ENGINE_PROTOCOLS_PATH:
         return "engine_protocols"
-    if path == MESH_PATH:
+    if path in MESH_PATHS:
         return "mesh"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
@@ -323,7 +324,7 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "lifecycle_hop" and key not in old:
             continue  # new lifecycle hop endpoints; tests/test_litellm_inner_hop_endpoints.py covers them
         if kind == "mesh" and key not in old:
-            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route")
+            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route").format(path=key.split(" ", 1)[1])
             if outcome == expected:
                 continue
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):

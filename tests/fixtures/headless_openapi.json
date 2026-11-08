@@ -28761,6 +28761,60 @@
         "summary": "Systemone"
       }
     },
+    "/v1/3d/generations": {
+      "post": {
+        "operationId": "row_mesh_generations__v1_3d_generations_v1_3d_generations_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Row:Mesh-Generations:/V1/3D/Generations"
+      }
+    },
+    "/v1/3d/generations/glb": {
+      "post": {
+        "operationId": "row_mesh_glb__v1_3d_generations_glb_v1_3d_generations_glb_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Row:Mesh-Glb:/V1/3D/Generations/Glb"
+      }
+    },
     "/v1/assets/{asset_id}": {
       "delete": {
         "description": "Delete an asset this App (or its accountable person) made; the same work as the browser Delete.",
@@ -32638,33 +32692,6 @@
           }
         ],
         "summary": "Images Content"
-      }
-    },
-    "/v1/meshes/generate": {
-      "post": {
-        "operationId": "generate_mesh_v1_meshes_generate_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "AppKeyBearer": []
-          },
-          {
-            "AppKeyApiKey": []
-          },
-          {
-            "AppKeyXApiKey": []
-          }
-        ],
-        "summary": "Generate Mesh"
       }
     },
     "/v1/messages": {
@@ -39363,7 +39390,7 @@
               "Prefer": "respond-async"
             },
             "method": "POST",
-            "path": "/v1/meshes/generate"
+            "path": "/v1/3d/generations/glb"
           },
           "terminal": [
             "succeeded",
@@ -39397,7 +39424,7 @@
           },
           "method": "POST",
           "output": "model/gltf-binary (GLB bytes)",
-          "path": "/v1/meshes/generate"
+          "path": "/v1/3d/generations/glb"
         }
       },
       "id": "mesh.generate.trellis-2",
