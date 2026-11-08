@@ -363,10 +363,10 @@ def test_a_new_release_of_a_bundled_workflow_shows_through_its_run_control_chang
 
 @pytest.mark.parametrize("api", ["real"], indirect=True)
 def test_a_contract_override_of_a_bundled_workflow_keeps_its_contract_after_a_new_release(api):
-    # A contract the owner saved on purpose (PUT with overrides) is a fork: a release does not change it, and it is not
+    # A contract the owner saved on purpose (saved with overrides) is a fork: a release does not change it, and it is not
     # reviewed, even when it equals a bundled file.
     edited = {**_detail(api)["contract"], "display_name": "Mine"}
-    assert put(api, edited, overrides=BUNDLED_ID).status_code == 200
+    assert create(api, edited, overrides=BUNDLED_ID).status_code == 201
     newer = _restarted(api, {BUNDLED_ID: _renamed("New in this release")})
     after = _detail(newer)
     assert after["contract"]["display_name"] == "Mine"
@@ -377,7 +377,7 @@ def test_a_contract_override_of_a_bundled_workflow_keeps_its_contract_after_a_ne
 def test_a_saved_copy_of_the_bundled_contract_is_not_reviewed(api):
     # Trust is the release file's: a stored full contract is never reviewed, also when it is the bundled one unchanged.
     before = _detail(api)
-    assert put(api, before["contract"], overrides=BUNDLED_ID).status_code == 200
+    assert create(api, before["contract"], overrides=BUNDLED_ID).status_code == 201
     assert _detail(api)["provenance"]["trusted"] is False
 
 
@@ -385,7 +385,7 @@ def test_a_saved_copy_of_the_bundled_contract_is_not_reviewed(api):
 def test_delete_of_an_overridden_bundled_id_reverts_it_to_the_bundled_workflow(api):
     before = _detail(api)
     edited = {**before["contract"], "display_name": "Mine"}
-    assert put(api, edited, overrides=BUNDLED_ID).status_code == 200
+    assert create(api, edited, overrides=BUNDLED_ID).status_code == 201
     assert _post(api, "publish", {"published": False}).status_code == 200
     reverted = api.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(api)})
     assert reverted.status_code == 200, reverted.json()
