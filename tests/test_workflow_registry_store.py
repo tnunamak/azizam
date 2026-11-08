@@ -318,7 +318,7 @@ def test_concurrent_creates_of_one_id_make_one_workflow(parts):
     threads = [threading.Thread(target=create) for _ in range(4)]
     [t.start() for t in threads]
     [t.join() for t in threads]
-    assert sorted(results) == [WORKFLOW_EXISTS] * 3 + ["ok"]
+    assert sorted(results) == ["ok", *[WORKFLOW_EXISTS] * 3]
 
 
 def test_every_bundled_contract_passes_the_save_pipeline(store):
