@@ -39,6 +39,10 @@ class _Reply(Exception):
         self.response = response
 
 
+class BodyRefused(_Reply):
+    """The injected body reader refused the request (not JSON, not an object); ``response`` is the answer to send."""
+
+
 def _clean(text: str) -> str:
     """A gateway sentence as the error shape would send it (control characters and URL user info removed)."""
     return json.loads(egress.safe_error_response(status.HTTP_400_BAD_REQUEST, "x", text).body)["error"]["message"]
@@ -179,6 +183,8 @@ def register_workflow_owner_routes(
             return ctx
         try:
             contract, facts, overrides = _save_body(await read_json(request))
+        except _Reply as reply:
+            return reply.response
         except BodyError as error:
             return _refused([{"path": [error.path], "pointer": f"/{error.path}", "code": INVALID, "message": error.message}])
         snapshot = await asyncio.to_thread(store.snapshot)

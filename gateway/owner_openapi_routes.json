@@ -755,39 +755,48 @@
   },
   "GET /admin/api/workflows": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/workflows": {
     "tag": "workflows",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
+    "success_status": 201,
+    "owner_only": false
   },
   "POST /admin/api/workflows/check": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/workflows/{workflow_id}": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/workflows/{workflow_id}": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/workflows/{workflow_id}": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/workflows/{workflow_id}/state": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/workflows/{workflow_id}/publish": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/workflows/{workflow_id}/restore": {
     "tag": "workflows",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   }
 }
