@@ -129,7 +129,7 @@ def cell_policy_refusal() -> dict[str, Any]:
 def cell_admission_refusal() -> dict[str, Any]:
     """A run holds the pool; a second run is refused at once with the busy answer and Retry-After."""
     import tempfile
-    with tempfile.TemporaryDirectory(dir=str(Path.home() / ".tmp")) as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         harness = AsyncHarness(Path(tmp))
 
         async def scenario() -> dict[str, Any]:
@@ -163,7 +163,7 @@ def cell_wait_timeout() -> dict[str, Any]:
     """The engine dribbles bytes past its configured time: the sync form answers its timeout, the job form fails the job."""
     import tempfile
     out: dict[str, Any] = {}
-    with tempfile.TemporaryDirectory(dir=str(Path.home() / ".tmp")) as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         for name, prefer in (("sync", False), ("job", True)):
             (Path(tmp) / name).mkdir()
             harness = AsyncHarness(Path(tmp) / name)
@@ -184,7 +184,7 @@ def cell_wait_timeout() -> dict[str, Any]:
 def cell_cancel_queued() -> dict[str, Any]:
     """Cancel while the engine works (the job is admitted at once, so there is no earlier state to cancel)."""
     import tempfile
-    with tempfile.TemporaryDirectory(dir=str(Path.home() / ".tmp")) as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         harness = AsyncHarness(Path(tmp))
 
         async def scenario() -> dict[str, Any]:
@@ -204,7 +204,7 @@ def cell_cancel_queued() -> dict[str, Any]:
 
 def cell_cancel_finished() -> dict[str, Any]:
     import tempfile
-    with tempfile.TemporaryDirectory(dir=str(Path.home() / ".tmp")) as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         harness = AsyncHarness(Path(tmp))
         harness.hold_engine = False
 
@@ -225,7 +225,7 @@ def cell_disconnect() -> dict[str, Any]:
     """The client leaves after the 202: the job is not cancelled. A sync client that leaves while the engine works closes
     its receipt as cancelled and the pool frees when the engine returns."""
     import tempfile
-    with tempfile.TemporaryDirectory(dir=str(Path.home() / ".tmp")) as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         harness = AsyncHarness(Path(tmp))
 
         async def scenario() -> dict[str, Any]:
