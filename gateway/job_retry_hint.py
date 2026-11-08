@@ -16,7 +16,7 @@ EVENT = "retry_after"
 
 
 def write(job_id: str, seconds: int, *, path: Path) -> None:
-    media_jobs.append_event(job_id, EVENT, {"phase": "busy", "step": int(seconds)}, path=path)
+    media_jobs.append_event(job_id, "retry_after", {"phase": "busy", "step": int(seconds)}, path=path)
 
 
 def read(events: Iterable[Any]) -> int | None:

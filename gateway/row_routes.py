@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable, ContextManager, Iterable
 from fastapi import FastAPI, Request
 from starlette.responses import Response
 
+from gateway import operation_security
 from gateway.frontend_shapes import build_shape, bundled_rows
 from gateway.workflow_runtime_types import FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunRefused
 
@@ -62,7 +63,8 @@ def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None
         shape = build_shape(row)
         for route in row.routes:
             app.add_api_route(route.canonical, _handler(deps, row, shape, route.canonical), methods=list(route.methods),
-                              include_in_schema=True, name=f"row:{row.id}:{route.canonical}")
+                              include_in_schema=True, name=f"row:{row.id}:{route.canonical}",
+                              openapi_extra=operation_security.openapi_extra(operation_security.APP_KEY))
 
 
 def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -> Callable[[Request], Awaitable[Response]]:
