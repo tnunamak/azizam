@@ -405,3 +405,24 @@ def test_delete_of_a_bundled_id_with_only_run_control_reverts_it(api):
     reverted = api.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(api)})
     assert reverted.status_code == 200, reverted.json()
     assert _detail(api)["published"] is True and _detail(api)["provenance"] == before["provenance"]
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_restore_of_a_run_control_patch_revision_writes_the_patch_and_a_contract_revision_still_restores(api):
+    before = _detail(api)
+    first = _post(api, "publish", {"published": False})
+    assert first.status_code == 200
+    patch_revision = first.json()["commit"]["record_revision"]
+    edited = {**before["contract"], "display_name": "Mine"}
+    assert put(api, edited, overrides=BUNDLED_ID).status_code == 200
+    assert _detail(api)["contract"]["display_name"] == "Mine"
+    # The patch revision comes back as a patch: the bundled contract serves again, unpublished.
+    back = _post(api, "restore", {"record_revision": patch_revision})
+    assert back.status_code == 200, back.json()
+    now = _detail(api)
+    assert (now["contract"], now["published"], now["provenance"]) == (before["contract"], False, before["provenance"])
+    # And the contract override revision restores as a contract record.
+    contract_revision = patch_revision + 1
+    again = _post(api, "restore", {"record_revision": contract_revision})
+    assert again.status_code == 200, again.json()
+    assert _detail(api)["contract"]["display_name"] == "Mine"
