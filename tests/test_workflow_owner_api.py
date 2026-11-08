@@ -573,11 +573,17 @@ def test_a_run_control_patch_then_contract_override_then_delete_serves_the_curre
     assert again.status_code == 409 and again.json()["error"]["code"] == "id_is_bundled"
 
 
-@pytest.mark.skip(reason="_restarted replaces manifests but preserves every bundled id; it cannot remove a workflow")
-def test_a_run_control_patch_is_inert_when_the_next_release_removes_its_bundled_id():
-    # Passing None or deleting a manifest's id would make an invalid manifest, not remove the release mapping's key.
-    # The requested helper cannot model this release transition. Do not claim coverage with a different scenario.
-    pass
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_run_control_patch_is_inert_when_the_next_release_removes_its_bundled_id(api, monkeypatch):
+    assert _post(api, "publish", {"published": False}).status_code == 200
+    newer = _restarted_without(api, BUNDLED_ID, monkeypatch)
+    listing = newer.get("/admin/api/workflows")
+    assert listing.status_code == 200
+    assert BUNDLED_ID not in {row["id"] for row in listing.json()["workflows"]}
+    assert listing.json()["held_out"] == []
+    assert newer.get(f"/admin/api/workflows/{BUNDLED_ID}").status_code == 404
+    # The orphan patch holds no name: an owner workflow may take the id.
+    assert create(newer, owner_contract(BUNDLED_ID), facts=FACTS_BODY).status_code == 201
 
 
 @pytest.mark.parametrize("api", ["real"], indirect=True)
