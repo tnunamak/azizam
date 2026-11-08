@@ -149,8 +149,10 @@ def test_a_bundled_workflow_runs_through_the_core_and_the_engine_gets_the_adapte
     expected = compile_workflow(manifest, "comfyui", template_of(manifest), {**inputs, **drawn})
     assert engine.prompts[0]["prompt"] == expected
     assert set(engine.prompts[0]) <= {"prompt", "client_id", "extra_data"}
-    assert engine.calls[0] == "POST /prompt" and "GET /history/p1" in engine.calls
-    assert {c.split()[1] for c in engine.calls} <= {"/prompt", "/history/p1", "/view", "/ws", "/queue"}
+    # The node-graph round may read the engine's capacity first (the old image route's probe), so the prompt is the first submit.
+    submits = [c for c in engine.calls if c.startswith("POST")]
+    assert submits[0] == "POST /prompt" and "GET /history/p1" in engine.calls
+    assert {c.split()[1] for c in engine.calls} <= {"/prompt", "/history/p1", "/view", "/ws", "/queue", "/system_stats"}
 
 
 @pytest.mark.parametrize("workflow_id", ["image.analyze.face-likeness", "mesh.generate.trellis-2", "image.edit.image-identity"])

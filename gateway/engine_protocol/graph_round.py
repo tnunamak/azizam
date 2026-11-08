@@ -4,8 +4,9 @@ This is the engine side of every node-graph run. It is the same code for a calle
 (the old routes) and for a run the run core executes. It raises ``RoundFailure`` with a typed reason; the caller turns the
 reason into its own answer (an HTTP response, a job failure). Nothing here names an engine or a workflow.
 
-The cadence is part of the contract: the first status check is immediate, then the gap starts at ``POLL_FIRST_S`` and
-doubles up to ``POLL_MAX_S``. The wait budget is charged only with the gaps, never with the time a status call takes.
+The cadence is data: the protocol description gives each run operation its ``poll`` (``ramp_s`` gaps, then
+``interval_s``, at most ``max_polls`` status checks). A gap of 0 is an immediate check. The wait budget is charged only
+with the gaps, never with the time a status call takes.
 """
 from __future__ import annotations
 
@@ -14,11 +15,9 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
 from gateway.engine_protocol import node_graph
+from gateway.engine_protocol.description import Poll
 from gateway.engine_protocol.errors import MalformedResponse, SelectionRefused, TransportFailure, UpstreamError
 from gateway.engine_protocol.types import CanonicalRequest, JobRef, JobState
-
-POLL_FIRST_S = 0.05
-POLL_MAX_S = 0.5
 
 # Why a round ended without files.
 SUBMIT_TIMEOUT = "submit_timeout"
@@ -108,6 +107,7 @@ async def run_round(
     binding: Mapping[str, Any],
     contract_outputs: Mapping[str, Any],
     limits: Any,
+    cadence: Poll,
     say: Callable[[str], None] = lambda _text: None,
 ) -> RoundResult:
     """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first."""
@@ -127,16 +127,17 @@ async def run_round(
         say(f"{adapter.label} {label} submitted: {prompt_id}")
 
         remaining = float(max_wait_s)
-        delay = 0.0
         finished = None
-        while remaining > 0:
+        polls = 0
+        while remaining > 0 and (cadence.max_polls is None or polls < cadence.max_polls):
             if await is_disconnected():
                 await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="client disconnect", timeout=control_timeout, say=say)
                 raise RoundFailure(DISCONNECTED, prompt_id=prompt_id)
+            delay = min(cadence.ramp_s[polls] if polls < len(cadence.ramp_s) else cadence.interval_s, remaining)
+            polls += 1
             if delay:
                 await asyncio.sleep(delay)
                 remaining -= delay
-            delay = min(delay * 2 if delay else POLL_FIRST_S, POLL_MAX_S, remaining)
             try:
                 status = await adapter.poll(session.conn, ref, headers=dict(headers), session=session, graph=dict(graph))
             except (TransportFailure, UpstreamError):

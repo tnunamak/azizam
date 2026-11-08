@@ -127,7 +127,7 @@ from gateway.workflow_runtime_types import JobNotFound, MediaRef, ResultUnavaila
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
-from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, row_routes, workflow_adapters
+from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, node_graph_runner, row_routes, workflow_adapters
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
@@ -8400,6 +8400,7 @@ async def _graph_run_round(
     max_wait_s: int | None = None,
     binding: Mapping[str, Any] | None = None,
     contract_outputs: Mapping[str, Any] | None = None,
+    intent: str | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single prompt to the graph engine and harvest the resulting image bytes.
 
@@ -8436,6 +8437,7 @@ async def _graph_run_round(
             is_disconnected=lambda: _request_is_disconnected(request),
             binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
+            cadence=adapter.poll_for(intent or IMAGE_GENERATE_INTENT),
             say=lambda text: print(f"[proxy] {text}", flush=True))
     except graph_round.RoundFailure as failed:
         return _round_failure_response(failed, adapter, graph), []
@@ -8625,6 +8627,48 @@ def _workflow_display_name(manifest: Mapping[str, Any] | None) -> str | None:
     """The name a person knows a workflow by (its manifest's ``display_name``), or None for a route with no manifest."""
     name = (manifest or {}).get("display_name") if isinstance(manifest, Mapping) else None
     return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optional["_VramProbe"], free_before: Optional[int],
+                                    batch_target: int, workflow_name: str, width: int, height: int) -> Optional[int]:
+    """Record what one image of this workflow at this size costs, from the first round's probe (or, failing that, the
+    free-memory difference), and return the estimate the batcher may plan with (None when it is untrusted)."""
+    per_image_cost = 0
+    measurement_trusted = False
+    source = "probe"
+    model_state = "unknown"
+    comfy_baseline = 0
+    samples_count = probe.samples if probe is not None else 0
+    free_after, _ = await graph_vram_snapshot(client)
+    if probe is not None and probe.trustworthy():
+        marginal, model_state = probe.marginal_and_state()
+        if isinstance(marginal, int) and marginal > 0:
+            # marginal is the per-batch-round delta; divide by batch_target to get the per-image cost.
+            per_image_cost = marginal // max(1, batch_target)
+            measurement_trusted = True
+            source = "probe"
+        comfy_baseline = probe.comfy_baseline_min if isinstance(probe.comfy_baseline_min, int) else 0
+    elif probe is not None and probe.error:
+        print(f"[proxy] VRAM probe error for {workflow_name} {width}x{height}: {probe.error}", flush=True)
+    if per_image_cost <= 0:
+        # The probe gave nothing useful: persist the endpoint difference, marked untrusted.
+        if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
+            per_image_cost = (free_before - free_after) // max(1, batch_target)
+        if per_image_cost <= 0:
+            per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
+        measurement_trusted = False
+        source = "endpoint_diff"
+    record_vram_estimate(
+        workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
+        comfy_baseline_bytes=comfy_baseline, samples_count=samples_count)
+    sys_peak = probe.system_peak_used_bytes() if probe is not None else None
+    gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
+    print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
+          f"(trusted={measurement_trusted}, source={source}, model_state={model_state}, probe_samples={samples_count}, "
+          f"comfy_before={gib(probe.comfy_before if probe is not None else None)}, "
+          f"comfy_peak={gib(probe.comfy_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
+    # Re-read; None when the measurement was untrusted (no scheduling decision is made from it).
+    return get_vram_estimate(workflow_name, width, height)
 
 
 async def _generate_images_with_adaptive_batching(
@@ -8897,86 +8941,9 @@ async def _generate_images_with_adaptive_batching(
         # Fallback: endpoint diff `free_before - free_after`, tagged as
         # untrusted so the batcher doesn't plan against it.
         if estimate is None and rounds_run == 1:
-            per_image_cost = 0
-            measurement_trusted = False
-            source = "probe"
-            model_state = "unknown"
-            comfy_baseline = 0
-            samples_count = probe.samples if probe is not None else 0
-            free_after, _ = await graph_vram_snapshot(client)
-
-            if probe is not None and probe.trustworthy():
-                marginal, model_state = probe.marginal_and_state()
-                if isinstance(marginal, int) and marginal > 0:
-                    # marginal is the per-batch-round delta; divide by
-                    # batch_target to get per-image cost (cache key is
-                    # per-image).
-                    divisor = max(1, batch_target)
-                    per_image_cost = marginal // divisor
-                    measurement_trusted = True
-                    source = "probe"
-                comfy_baseline = (
-                    probe.comfy_baseline_min
-                    if isinstance(probe.comfy_baseline_min, int)
-                    else 0
-                )
-            elif probe is not None and probe.error:
-                print(
-                    f"[proxy] VRAM probe error for {workflow_name} "
-                    f"{width}x{height}: {probe.error}",
-                    flush=True,
-                )
-
-            if per_image_cost <= 0:
-                # Probe failed or returned nothing useful. Fall back to the
-                # legacy endpoint diff so we at least persist *something*,
-                # but mark it untrusted.
-                if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
-                    per_image_cost = (free_before - free_after) // max(1, batch_target)
-                if per_image_cost <= 0:
-                    per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
-                measurement_trusted = False
-                source = "endpoint_diff"
-                if model_state == "unknown":
-                    model_state = "unknown"
-
-            record_vram_estimate(
-                workflow_name,
-                width,
-                height,
-                per_image_cost,
-                trusted=measurement_trusted,
-                source=source,
-                model_state=model_state,
-                comfy_baseline_bytes=comfy_baseline,
-                samples_count=samples_count,
-            )
-            # Re-read; will be None if measurement was untrusted (so we
-            # don't make scheduling decisions off it).
-            estimate = get_vram_estimate(workflow_name, width, height)
-            sys_peak = probe.system_peak_used_bytes() if probe is not None else None
-            sys_peak_str = (
-                f"{sys_peak / (1024**3):.2f} GiB" if isinstance(sys_peak, int) else "n/a"
-            )
-            before_str = (
-                f"{probe.comfy_before / (1024**3):.2f} GiB"
-                if probe is not None and isinstance(probe.comfy_before, int)
-                else "n/a"
-            )
-            peak_str = (
-                f"{probe.comfy_peak / (1024**3):.2f} GiB"
-                if probe is not None and isinstance(probe.comfy_peak, int)
-                else "n/a"
-            )
-            print(
-                f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: "
-                f"{per_image_cost / (1024**2):.1f} MiB/image marginal "
-                f"(trusted={measurement_trusted}, source={source}, "
-                f"model_state={model_state}, probe_samples={samples_count}, "
-                f"comfy_before={before_str}, comfy_peak={peak_str}, "
-                f"system_peak={sys_peak_str})",
-                flush=True,
-            )
+            estimate = await _measure_first_round_vram(
+                client, probe=probe, free_before=free_before, batch_target=batch_target,
+                workflow_name=workflow_name, width=width, height=height)
 
     images_collected = images_collected[:images_total]
     if not images_collected:
@@ -26638,6 +26605,17 @@ def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDeci
         available_label="available workflow ids", empty_label="no available workflow was reported")
 
 
+def _graph_wait_s() -> float:
+    """The longest a run waits on the graph engine: queue time included."""
+    return float(DERIVED.COMFY_TIMEOUT)
+
+
+def _graph_service_connection(record: Mapping[str, Any]) -> AdapterConnection:
+    """The connection to one graph service's address, with the run's wait as its read bound."""
+    return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
+        connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
+
+
 class _WorkflowRunPort:
     """``workflow_run.RunPort`` over this module's helpers."""
 
@@ -26771,12 +26749,11 @@ class _WorkflowRunPort:
 
         def connection() -> AdapterConnection:
             _require_egress_lease(service_id)
-            return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
-                connect_s=10, first_byte_s=DERIVED.COMFY_TIMEOUT, total_s=DERIVED.COMFY_TIMEOUT))
+            return _graph_service_connection(record)
 
         runtime_ = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
-            timing=(2.0, float(DERIVED.COMFY_TIMEOUT)), jobs_path=media_jobs.DB_PATH,
+            timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
             context=ResultContext(self.result_limits()))
         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
         # it. No operation of the protocol is picked by position.
@@ -26833,6 +26810,131 @@ class _WorkflowRunPort:
 
 
 _WORKFLOW_RUN_PORT = _WorkflowRunPort()
+
+
+class _AdaptiveBatching:
+    """The sizing of image rounds from the engine's free memory, over the module's capacity reads (S7 parity M6). It holds
+    the same state the old batching loop held: the estimate for the workflow at this size, the free memory before the run,
+    and whether idle models were already freed."""
+
+    @dataclass
+    class _State:
+        key: tuple[str, int, int]
+        estimate: Optional[int]
+        free_before: Optional[int]
+        batch_limit: Any
+        models_freed: bool = False
+
+    async def plan(self, session, ctx, inputs, options):
+        contract = ctx.pin.contract
+        spec = (contract.get("inputs") or {})
+        width = int(inputs.get("width") or (spec.get("width") or {}).get("default") or 1024)
+        height = int(inputs.get("height") or (spec.get("height") or {}).get("default") or 1024)
+        per_prompt = inputs.get("batch_size") or (spec.get("batch_size") or {}).get("default") or 1
+        per_prompt = per_prompt if isinstance(per_prompt, int) and not isinstance(per_prompt, bool) and per_prompt >= 1 else 1
+        n = options.get("n", 1)
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 1 else 1
+        total = n * per_prompt
+        warnings: list[str] = []
+        if total > MAX_IMAGES_PER_REQUEST:
+            total = MAX_IMAGES_PER_REQUEST
+            warnings.append(f"n={n} x batch_size={per_prompt} exceeds the {MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}")
+        name = str(contract.get("id") or "")
+        state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
+                            free_before=await graph_free_vram_bytes(session.client),
+                            batch_limit=(spec.get("batch_size") or {}).get("maximum"))
+        return node_graph_runner.Plan(total=total, max_rounds=max(1, total + 2), warnings=warnings, state=state)
+
+    async def target(self, plan, session, round_no, remaining):
+        state, client = plan.state, session.client
+        free_now = await graph_free_vram_bytes(client)
+        if round_no == 1 and state.estimate is None:
+            target = 1
+        elif state.estimate is not None:
+            cap = compute_max_batch(free_now, state.estimate)
+            if cap == 0 and _image_free_vram_on_exhaustion() and not state.models_freed:
+                state.models_freed = await _free_graph_models_if_idle(client)
+                if state.models_freed:
+                    free_now = await graph_free_vram_bytes(client)
+                    cap = compute_max_batch(free_now, state.estimate)
+            target = min(max(cap, 1), remaining)
+        else:
+            target = min(_image_max_batch_size(), remaining)
+        limit = state.batch_limit
+        if isinstance(limit, int) and not isinstance(limit, bool):
+            target = min(target, max(1, limit))
+        return target
+
+    def round_inputs(self, plan, target):
+        return {"batch_size": max(1, int(target))}
+
+    def probe(self, plan, session, round_no):
+        return _VramProbe(session.client) if plan.state.estimate is None else None
+
+    async def free_after_refusal(self, plan, session):
+        state = plan.state
+        if state.models_freed or not _image_free_vram_on_exhaustion():
+            return False
+        state.models_freed = await _free_graph_models_if_idle(session.client)
+        return state.models_freed
+
+    async def measured(self, plan, session, round_no, target, probe):
+        state = plan.state
+        if state.estimate is None:
+            name, width, height = state.key
+            state.estimate = await _measure_first_round_vram(
+                session.client, probe=probe, free_before=state.free_before, batch_target=target,
+                workflow_name=name, width=width, height=height)
+
+
+def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):
+    """Rounds are sized from free memory for a workflow that takes a count of pictures; any other run is one round."""
+    spec = ctx.pin.contract.get("inputs") or {}
+    return _AdaptiveBatching() if "batch_size" in spec else None
+
+
+def _graph_runner_host() -> node_graph_runner.GraphHost:
+    def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext) -> Any:
+        from gateway.engine_protocol.media import GatewayAssetStore
+        owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+        return reviewed_adapters.adapter_for_backend(
+            record, next(iter(protocol.serves), ""),
+            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
+                                     origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
+
+    def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+        _require_egress_lease(service_id)
+        return _graph_service_connection(record)
+
+    def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+        found = _workflow_engine(binding.adapter_id)
+        if found is None:
+            raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+        service_id, record, protocol, adapter_ = found
+        return workflow_run.AdapterIdentity(
+            protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+            interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+
+    return node_graph_runner.GraphHost(
+        engine=_workflow_engine, identity=identity,
+        problem=lambda binding: None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE,
+        adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
+        max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+        headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
+        batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True),
+        stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect))
+
+
+def _register_graph_runner() -> None:
+    """One runner for the bindings of each protocol description the node-graph adapter serves."""
+    from gateway.engine_protocol import description as protocol_description
+    for doc in protocol_description.load_registry().values():
+        if doc.executor == f"adapter:{node_graph.ADAPTER_ID}":
+            workflow_adapters.register(node_graph_runner.NodeGraphRunner(
+                doc.binding, pinned_runtime.adapter_identity(doc), _graph_runner_host()))
+
+
+_register_graph_runner()
 
 # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
