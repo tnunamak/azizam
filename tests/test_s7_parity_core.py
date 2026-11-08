@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import sqlite3
 from pathlib import Path
 
@@ -395,6 +396,83 @@ def test_a_retry_stops_when_a_cancel_was_asked_or_the_caller_is_gone(db, tmp_pat
     core._sleep = sleep_then_revoke
     run(core.execute_run(gone.job_id))
     assert len(port.seen) == 1 and job_error(db, gone.job_id)[0] == "failed"
+
+
+def _at_durable_attempt(db, job_id, attempt):
+    """A running job as recovery finds it: a recorded upstream id and a durable attempt number."""
+    media_jobs.update_status(job_id, "running", path=db, metadata_patch={"protocol_job": "up-1"})
+    while media_jobs.get(job_id, audience="internal", path=db)["attempt_number"] < attempt:
+        media_jobs.begin_attempt(job_id, path=db)
+
+
+def test_retry_budget_survives_recovery(db, tmp_path):
+    """K3-1: a job recovered at durable attempt 3 of 3 makes no further attempt on a retryable failure; with a larger
+    limit, retry events keep counting from the stored attempt. A row with no attempt number starts from 1."""
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky()])
+    job_id = submit(core).job_id
+    _at_durable_attempt(db, job_id, 3)
+    run(core.execute_run(job_id))
+    assert len(port.seen) == 1 and slept == [] and job_error(db, job_id)[0] == "failed"
+    assert _events(db, job_id, "retry") == []
+
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky()], retry={"max_attempts": 5})
+    wider = submit(core, idempotency_key="wider").job_id
+    _at_durable_attempt(db, wider, 3)
+    run(core.execute_run(wider))
+    assert len(port.seen) == 3 and slept == [20, 30]
+    assert [e["attempt"] for e in _events(db, wider, "retry")] == [3, 4]
+    assert job_error(db, wider)[0] == "failed"
+
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky()])
+    legacy = submit(core, idempotency_key="legacy").job_id
+    with media_jobs.connection(db) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        raw = json.loads(conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (legacy,)).fetchone()[0])
+        raw["attempt_number"] = None
+        conn.execute("UPDATE media_jobs SET job_json=? WHERE job_id=?", (json.dumps(raw), legacy))
+        conn.commit()
+    run(core.execute_run(legacy))
+    assert len(port.seen) == 3 and slept == [5, 10]
+
+
+@pytest.mark.parametrize("late", ["canceled", "cancel_requested"])
+def test_cancel_between_last_check_and_next_attempt_stops_the_retry(db, tmp_path, monkeypatch, late):
+    """K3-2: a cancel that completes, or is asked, after the loop's last read and before the next attempt starts stops
+    the job with no further adapter call."""
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky()])
+    job_id = submit(core).job_id
+    real = media_jobs.begin_attempt
+
+    def begin_after_cancel(jid, **kw):
+        if late == "canceled":
+            media_jobs.update_status(jid, "canceled", error="Canceled by requester", path=db)
+        else:
+            media_jobs.update_status(jid, "running", path=db, metadata_patch={"cancel_requested_at": 1})
+        return real(jid, **kw)
+
+    monkeypatch.setattr(media_jobs, "begin_attempt", begin_after_cancel)
+    run(core.execute_run(job_id))
+    assert len(port.seen) == 1
+    status = job_error(db, job_id)[0]
+    assert status == ("canceled" if late == "canceled" else "failed")
+    assert media_jobs.get(job_id, audience="internal", path=db)["attempt_number"] == 1
+
+
+def test_same_key_after_delete_does_not_replay_the_deleted_job(db, tmp_path):
+    """K3-3: after a keyed job is deleted, the same request and key is refused as deleted (from this core and from a
+    fresh one); it never returns the job's view and starts no work. The claim goes when the tombstone is reaped."""
+    core, port, job_id = _finished_job(db, tmp_path, key="gone")
+    service = _service(port, db)
+    service.delete(job_id, Caller())
+    fresh_core, fresh_port, _ = make_core(db, tmp_path, snapshot(), Port(db))
+    for c in (core, fresh_core):
+        again = submit(c, idempotency_key="gone")
+        assert isinstance(again, RunRefused) and (again.http_status, again.code) == (404, "job_deleted")
+    with media_jobs.connection(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0] == 1
+    assert len(port.scheduled) == 1
+    media_jobs.reap_tombstones(before=2**40, path=db)
+    assert isinstance(submit(core, idempotency_key="gone"), RunJobView)
 
 
 # ------------------------------------------------------------------------------------- M7: JobService.delete

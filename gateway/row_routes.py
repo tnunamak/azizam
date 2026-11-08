@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, AsyncContextManager, Awaitable, Callable, ContextManager, Iterable
+from typing import Any, AsyncContextManager, Awaitable, Callable, ContextManager, Iterable, Mapping
 
 from fastapi import FastAPI, Request
 from starlette.responses import Response
@@ -31,7 +31,7 @@ from gateway import operation_security, request_history_capture
 from gateway.access_plans import capability_for_intent
 from gateway.frontend_shapes import build_shape, bundled_rows
 from gateway.workflow_runtime_types import (
-    FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused, WorkflowEntry)
+    FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
 
 PREFER_ASYNC = "respond-async"
 REQUEST_ID_HEADER = "x-request-id"
@@ -59,8 +59,18 @@ class RowRouteDeps:
     # for a cancelled request). ``handoff()`` leaves the closing to the run core, which calls the run port's
     # ``close_receipt`` when the job ends.
     open_receipt: Callable[[Any, str, str, FrontendRow], AsyncContextManager[Any]]
-    # name_receipt(owner, entry): the receipt names the record the row chose (known once the shape has read the body).
-    name_receipt: Callable[[Any, WorkflowEntry], None]
+    # name_receipt(owner, workflow_id, record_revision, contract_digest): the receipt names the record the request ran
+    # (the one the row chose once the shape has read the body; the job's pinned one for a replay). A fact the caller does
+    # not hold is None.
+    name_receipt: Callable[[Any, str, int | None, str | None], None]
+    # pinned(job_id) -> the definitions the job pinned, or None when it holds none.
+    pinned: Callable[[str], Any]
+
+
+def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
+    """The canonical paths the named bundled rows mount: the paths their request receipts record."""
+    rows = {row.id: row for row in bundled_rows()}
+    return tuple(route.canonical for row_id in row_ids for route in rows[row_id].routes)
 
 
 def prefers_async(value: str | None) -> bool:
@@ -83,19 +93,22 @@ def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None
                               openapi_extra=operation_security.openapi_extra(operation_security.APP_KEY))
 
 
-def run_facts(entry: WorkflowEntry) -> dict[str, str]:
-    """What the kept request says it ran, from the chosen record alone."""
-    facts = {"workflow": entry.id, "title": str(entry.contract.get("display_name") or entry.id)}
-    capability = capability_for_intent(entry.intent)
+def run_facts(workflow_id: str, contract: Mapping[str, Any]) -> dict[str, str]:
+    """What the kept request says it ran, from one workflow's contract alone."""
+    facts = {"workflow": workflow_id, "title": str(contract.get("display_name") or workflow_id)}
+    capability = capability_for_intent(str(contract.get("intent") or ""))
     if capability:
         facts["capability"] = capability
     return facts
 
 
-def _outcome(view: RunJobView | None) -> tuple[str, str]:
-    """The receipt outcome of a job as the sync wait left it."""
+def _outcome(view: RunJobView | None, *, waited: bool = True) -> tuple[str, str]:
+    """The receipt outcome of a job as the answer left it. ``waited`` is False when the answer was the job itself with no
+    wait: a job still running is then accepted, and ``wait_timeout`` is only for a wait that ran out."""
     if view is None:
         return "failed", "job_unavailable"
+    if not waited and view.status in ("queued", "running"):
+        return "succeeded", "accepted"
     if view.status == "succeeded":
         return "succeeded", "succeeded"
     if view.status == "failed":
@@ -142,8 +155,8 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         entry = snapshot.get(run_request.workflow_id)
         facts: dict[str, str] = {}
         if entry is not None:
-            deps.name_receipt(owner, entry)
-            facts = run_facts(entry)
+            deps.name_receipt(owner, entry.id, entry.record_revision, entry.contract_digest)
+            facts = run_facts(entry.id, entry.contract)
             setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
         run_request = dataclasses.replace(run_request, request_id=request_id)
         # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
@@ -152,19 +165,39 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
     if isinstance(outcome, RunRefused):
         owner.report(status="failed", reason=outcome.code)
         return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
-    if wants_async and outcome.disposition == "new":
+    if outcome.disposition == "replay":
+        facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome)
+    if answered.mode == "job" and outcome.disposition == "new":
         # The core closes the receipt when the job ends; nothing may await between this call and leaving the receipt.
         owner.handoff()
         return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
     response = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
     view = await asyncio.to_thread(_job_view, deps, outcome.job_id, caller)
-    status, reason = _outcome(view)
+    status, reason = _outcome(view, waited=answered.mode != "job")
     owner.report(status=status, reason=reason)
-    if view is not None and view.status == "succeeded" and not wants_async:
+    if view is not None and view.status == "succeeded" and answered.mode != "job":
         asset = next((ref.asset_id for ref in (view.results or ()) if ref.asset_id), None)
         if asset:
             setattr(request.state, request_history_capture.RUN_STATE_KEY, {**facts, "asset_id": asset})
     return response
+
+
+def _name_pinned(deps: RowRouteDeps, owner: Any, request: Request, view: RunJobView) -> dict[str, str]:
+    """A replay answers the job that was made, not the record as it is now: the receipt and the kept request name what the
+    job pinned. A fact the job does not hold stays unknown."""
+    try:
+        pin = deps.pinned(view.job_id)
+    except Exception:  # noqa: BLE001 - an unreadable pin leaves the facts unknown
+        pin = None
+    if pin is None:
+        deps.name_receipt(owner, view.workflow_id, view.record_revision, None)
+        facts = {"workflow": view.workflow_id}
+    else:
+        envelope = pin.envelope
+        deps.name_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
+        facts = run_facts(envelope.source_id, pin.contract)
+    setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
+    return facts
 
 
 def _job_view(deps: RowRouteDeps, job_id: str, caller: Any) -> RunJobView | None:

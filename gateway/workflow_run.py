@@ -103,6 +103,7 @@ NEEDS_POLICY = "needs_policy"
 CALLER_UNAVAILABLE = "caller_unavailable"
 BINDING_UNAVAILABLE = "binding_unavailable"
 INTERNAL_ERROR = "internal_error"
+JOB_DELETED = "job_deleted"
 FAILED_FALLBACK = "The job failed."
 
 # What a restart says about a job it cannot finish (S7 parity M12), keyed by the reason. One table for every kind of job.
@@ -463,6 +464,8 @@ class WorkflowRunCore:
         if job is None:
             return RunRefused(409, IDEMPOTENCY_IN_PROGRESS, "the job for this Idempotency-Key is not readable yet; retry",
                               retry_after_s=RETRY_AFTER_S)
+        if media_jobs.tombstoned(str(job["job_id"]), path=self._path):     # deleted: the claim stays until the reaper
+            return RunRefused(404, JOB_DELETED, "the job for this Idempotency-Key was deleted")
         return job_view(job, self._path, disposition="replay")
 
     async def _resolve_lost(self, fence: media_jobs.RunClaimFence | None) -> RunJobView | RunRefused:
@@ -681,7 +684,7 @@ class WorkflowRunCore:
                 self._fail(job_id, *problem)
                 return
         policy = retry_policy(pin.binding)
-        attempt = 1
+        attempt = int(job.get("attempt_number") or 1)       # the durable number: a recovered job keeps its budget
         while True:
             ctx = RunContext(
                 job_id=job_id, caller=caller, pin=pin, payload=payload,
@@ -746,8 +749,14 @@ class WorkflowRunCore:
             return None, None, (SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start.")
         if caller is None:       # a retry runs as the caller is now: a revoked key or connection stops it here
             return None, None, (CALLER_UNAVAILABLE, "authorization", "The account that asked for this job can no longer use the gateway.")
-        with contextlib.suppress(ValueError):
-            media_jobs.begin_attempt(job_id, path=self._path)
+        try:       # refuses a terminal or cancel-pending job inside its own transaction: that stops the retry
+            started = media_jobs.begin_attempt(job_id, path=self._path)
+        except media_jobs.CancellationPending:
+            return None, None, ("cancel_unconfirmed", "capacity", RETRY_CANCEL_UNCONFIRMED)
+        except ValueError:
+            return None, None, ("job_settled", "internal", "The job ended while it waited to retry.")
+        if started is None:
+            return None, None, ("job_settled", "internal", "The job ended while it waited to retry.")
         return caller, payload, None
 
     def _record_result_metadata(self, job_id: str, result_metadata: Mapping[str, Any]) -> None:
