@@ -499,6 +499,78 @@ watch_litellm_config
     ]
 
 
+@pytest.mark.parametrize("first_start_fails", [False, True])
+def test_no_tracked_child_launches_even_while_the_hash_is_unavailable(tmp_path, first_start_fails):
+    # Catch `kill -0 0` (the watcher's own process group) standing in for a child that was never started.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_hash() {")
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
+    (tmp_path / "selected.yaml").write_text("exists")
+    script = """
+WORK=$1
+FIRST_START_FAILS=$2
+LITELLM_CONFIG_PATH=$WORK/selected.yaml
+AZIZAM_ADMIN_DB_PATH=$WORK/admin.db
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+LITELLM_PID=""
+POLL=0
+python3() { return 1; }
+start_litellm() {
+    echo launch >> "$WORK/launches"
+    if [ "$FIRST_START_FAILS" = True ] && [ "$POLL" -eq 0 ]; then return 1; fi
+    echo receipt > "$LITELLM_RUNTIME_HASH_FILE"
+    LITELLM_PID=$$
+}
+sleep() {
+    POLL=$((POLL + 1))
+    if [ "$POLL" -eq 4 ]; then trap - EXIT INT TERM; exit 0; fi
+}
+""" + source[start:end] + """
+litellm_runtime_inputs() { echo stable; }
+litellm_runtime_inputs_settled() { return 0; }
+watch_litellm_config
+"""
+    result = subprocess.run(["bash", "-c", script, "no-child", str(tmp_path), str(first_start_fails)],
+                            capture_output=True, text=True, check=True, timeout=10)
+    # The real `kill -0` sees the live tracked PID afterwards, so there is no relaunch.
+    expected = ["launch", "launch"] if first_start_fails else ["launch"]
+    assert (tmp_path / "launches").read_text().splitlines() == expected
+    assert result.stderr.splitlines() == [
+        "[start] LiteLLM runtime hash unavailable; keeping the running child and retrying next poll."]
+
+
+def test_the_watcher_survives_errexit_without_the_optional_journals(tmp_path):
+    # Catch a partial stat (no -wal or -journal file) ending a watcher that inherited `set -e`.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_inputs() {")
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
+    (tmp_path / "selected.yaml").write_text("exists")
+    (tmp_path / "admin.db").write_text("db")
+    script = """
+set -e
+WORK=$1
+LITELLM_CONFIG_PATH=$WORK/selected.yaml
+AZIZAM_ADMIN_DB_PATH=$WORK/admin.db
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+LITELLM_PID=""
+POLL=0
+start_litellm() { echo launch >> "$WORK/launches"; echo h1 > "$LITELLM_RUNTIME_HASH_FILE"; LITELLM_PID=$$; }
+sleep() {
+    echo poll >> "$WORK/polls"
+    POLL=$((POLL + 1))
+    if [ "$POLL" -eq 3 ]; then trap - EXIT INT TERM; exit 0; fi
+}
+""" + source[start:end] + """
+litellm_runtime_hash() { echo h1; }
+watch_litellm_config
+"""
+    subprocess.run(["bash", "-c", script, "errexit", str(tmp_path)],
+                   capture_output=True, text=True, check=True, timeout=10)
+    assert not (tmp_path / "admin.db-wal").exists() and not (tmp_path / "admin.db-journal").exists()
+    assert (tmp_path / "launches").read_text().splitlines() == ["launch"]
+    assert len((tmp_path / "polls").read_text().splitlines()) == 3
+
+
 @pytest.mark.parametrize("setting, bound", [("2", 2), ("", 120), ("oops", 120), ("0", 120),
                                             ("-1", 120), ("007", 120), ("1.5", 120), ("999999999", 120)])
 def test_start_litellm_bounds_missing_receipt_and_validates_timeout(tmp_path, setting, bound):

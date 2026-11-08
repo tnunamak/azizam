@@ -187,7 +187,9 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
         while true; do
             while [ ! -s "$LITELLM_CONFIG_PATH" ]; do sleep 1; done
             # Read the inputs before the hash: a change after this read shows next poll.
-            INPUTS="$(litellm_runtime_inputs)"
+            # stat fails on the optional -wal and -journal files when they are absent but still prints the
+            # others; that partial output is the signature, so its status must not stop the watcher.
+            INPUTS="$(litellm_runtime_inputs)" || :
             HASH_POLLS=$((HASH_POLLS + 1))
             if [ -z "$LAST_HASH" ] || [ "$INPUTS" != "$LAST_INPUTS" ] \
                 || [ "$HASH_POLLS" -ge "$HASH_REFRESH_POLLS" ] \
@@ -214,7 +216,8 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
                 NEXT_HASH=$LAST_HASH
             fi
             LAST_INPUTS=$INPUTS
-            if [ "$NEXT_HASH" != "$LAST_HASH" ] || ! kill -0 "${LITELLM_PID:-0}" >/dev/null 2>&1; then
+            # No tracked child always means a launch, even while the hash is unavailable.
+            if [ -z "$LITELLM_PID" ] || [ "$NEXT_HASH" != "$LAST_HASH" ] || ! kill -0 "$LITELLM_PID" >/dev/null 2>&1; then
                 if [ -n "$LITELLM_PID" ]; then
                     kill "$LITELLM_PID" >/dev/null 2>&1 || true
                     wait "$LITELLM_PID" >/dev/null 2>&1 || true
@@ -222,7 +225,9 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
                 if start_litellm; then
                     LAST_HASH="$(cat "$LITELLM_RUNTIME_HASH_FILE")"
                 else
+                    # Every failed start has reaped its child; a stale PID could be reused by another process.
                     LAST_HASH=""
+                    LITELLM_PID=""
                 fi
             fi
             sleep "${AZIZAM_LITELLM_RELOAD_INTERVAL:-2}"
