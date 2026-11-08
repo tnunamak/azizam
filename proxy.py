@@ -8398,6 +8398,7 @@ async def _graph_run_round(
     max_wait_s: int | None = None,
     binding: Mapping[str, Any] | None = None,
     contract_outputs: Mapping[str, Any] | None = None,
+    intent: str | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single prompt to the graph engine and harvest the resulting image bytes.
 
@@ -8434,6 +8435,7 @@ async def _graph_run_round(
             is_disconnected=lambda: _request_is_disconnected(request),
             binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
+            cadence=adapter.poll_for(intent or IMAGE_GENERATE_INTENT),
             say=lambda text: print(f"[proxy] {text}", flush=True))
     except graph_round.RoundFailure as failed:
         return _round_failure_response(failed, adapter, graph), []

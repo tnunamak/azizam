@@ -441,6 +441,8 @@ class NodeGraphAdapter:
         self.binding = description.binding if description is not None else ""
         # The selector form this engine's bindings take, declared in its protocol description (None: it takes none).
         self.result_selectors = description.result_selectors if description is not None else None
+        # The run operations' poll cadence, as the description declares it (empty: built without a description).
+        self._operations = description.operations if description is not None else {}
         self._assets = assets
         # Where a manifest's graph path is resolved. Without it a manifest-backed request cannot compile.
         self._root = workflow_root
@@ -470,6 +472,14 @@ class NodeGraphAdapter:
             return
         async with self.open(conn) as opened:
             yield opened
+
+    def poll_for(self, op: str) -> Any:
+        """The poll cadence the description declares for run operation ``op`` (a ``description.Poll``)."""
+        declared = self._operations.get(op)
+        poll = getattr(declared, "poll", None)
+        if poll is None:
+            raise UnknownOperation(f"The node-graph description declares no poll cadence for '{op}'.")
+        return poll
 
     # --- caller-facing messages (the engine's name is data) -----------------------------------
 
