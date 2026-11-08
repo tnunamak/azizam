@@ -162,7 +162,8 @@ class LocalAI3D(_OnePicture):
 
     shape_id = "localai.3d.generations"
 
-    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext) -> Response:
+    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
+                             answer: Mapping[str, Any] | None = None) -> Response:
         ref = self.model_ref(view)
         if ref is None:
             return _wire.error_response(500, "The result is not one model", kind="api_error", code="result_shape")
@@ -175,7 +176,8 @@ class RawGlb(_OnePicture):
 
     shape_id = "multipart.glb"
 
-    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext) -> Response:
+    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
+                             answer: Mapping[str, Any] | None = None) -> Response:
         ref = self.model_ref(view)
         if ref is None:
             return _wire.error_response(500, "The result is not one model", kind="api_error", code="result_shape")

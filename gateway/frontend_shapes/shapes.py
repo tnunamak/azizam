@@ -13,6 +13,7 @@ from typing import Any
 
 from starlette.responses import JSONResponse, Response
 
+from gateway import image_output
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import Shape, job_object
 from gateway.workflow_runtime_types import (
@@ -28,6 +29,8 @@ AssetUrl = Callable[[ResultRef, CallerContext], str]
 # The deployment's default workflow for a wire, by shape id: installed at start by the main module from its
 # configuration (a shape holds no deployment setting). A shape with no entry has no default.
 DEFAULT_WORKFLOWS: dict[str, Callable[[], str | None]] = {}
+ANSWER_FORMS = ("b64_json", "url")
+MAX_IMAGES = 10                 # the public range of ``n``: one request returns at most this many pictures
 _SIZE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
 
 
@@ -59,11 +62,58 @@ class OpenAIImagesJson(Shape):
             inputs["width"], inputs["height"] = int(match.group(1)), int(match.group(2))
         return inputs
 
-    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext) -> Response:
+    def read_wire(self, fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+        """The options that change the picture or its encoding (they reach the adapter and the run's identity), and the
+        answer form (how this request wants the pictures shown). Each is checked as the wire always checked it."""
+        def refuse(message: str, param: str, code: str | None = None) -> Response:
+            return _wire.error_response(400, message, param=param, code=code)
+
+        def sent(name: str) -> bool:
+            return fields.get(name) not in (None, "")
+
+        background, problem = image_output.parse_image_background(fields.get("background"))
+        if problem:
+            return refuse(problem, "background", "invalid_value")
+        output_format, problem = image_output.parse_output_format(fields.get("output_format"))
+        if problem:
+            return refuse(problem, "output_format", "invalid_value")
+        conflict = image_output.background_format_conflict(background or "auto", output_format)
+        if conflict:
+            return refuse(conflict, "background", "invalid_value")
+        compression, problem = image_output.parse_output_compression(fields.get("output_compression"), output_format)
+        if problem:
+            return refuse(problem, "output_compression", "invalid_value")
+        quality, problem = image_output.parse_quality(fields.get("quality"))
+        if problem:
+            return refuse(problem, "quality", "invalid_value")
+        count = fields.get("n", 1)
+        if isinstance(count, str) and count.strip().lstrip("+-").isdigit():     # a form field is text
+            count = int(count)
+        if isinstance(count, bool) or not isinstance(count, int):
+            return refuse("n must be an integer", "n")
+        if not 1 <= count <= MAX_IMAGES:
+            return refuse(f"n must be between 1 and {MAX_IMAGES}", "n")
+        form = fields.get("response_format")
+        if form in (None, ""):
+            form = "b64_json"
+        if form not in ANSWER_FORMS:
+            return _wire.error_response(400, "response_format must be 'b64_json' or 'url'")
+        if form == "url" and self.asset_url is None:
+            return _wire.error_response(400, "response_format 'url' is not available on this route", param="response_format")
+        options: dict[str, Any] = {}
+        for name, value in (("n", count), ("quality", quality), ("output_format", output_format), ("output_compression", compression),
+                            ("background", background)):
+            if sent(name):
+                options[name] = value
+        return options, {"response_format": form}
+
+    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
+                             answer: Mapping[str, Any] | None = None) -> Response:
+        form = (answer or {}).get("response_format") or "b64_json"
         items = []
         for ref in self.media_refs(view):
             item: dict[str, Any] = {"asset_id": ref.asset_id, "media_type": ref.media_type}
-            if self.asset_url is not None:
+            if form == "url" and self.asset_url is not None:
                 item["url"] = self.asset_url(ref, caller)
             else:
                 item["b64_json"] = base64.b64encode(self.read(view, ref, jobs, caller)).decode("ascii")
@@ -94,7 +144,8 @@ class AudioGenerate(Shape):
     output_prefix = "audio/"
     timeout_code = "audio_generation_timeout"
 
-    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext) -> Response:
+    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
+                             answer: Mapping[str, Any] | None = None) -> Response:
         refs = self.media_refs(view)
         if len(refs) != 1:
             return _wire.error_response(500, "The result is not one audio file", kind="api_error", code="result_shape")

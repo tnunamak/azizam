@@ -127,10 +127,11 @@ class Shape:
     def form_limits(self, row: FrontendRow, snapshot: RegistrySnapshot, spool: RequestSpool) -> _wire.FormLimits:
         """The most one form may hold: as many file parts as the wire carries (one, or as many as the most asset inputs
         a workflow the row selects declares), each as large as the spool accepts."""
+        # Every asset input a selected workflow declares can arrive as a file part (a required source and its optional
+        # mask or references): the body budget counts them all. A one-file wire still has room for its one file.
+        file_slots = max((len(_wire.asset_input_names(entry)) for entry in _wire.candidates(snapshot, row)), default=0)
         if self.files == "one":
-            file_slots = 1
-        else:
-            file_slots = max((len(_wire.asset_input_names(entry)) for entry in _wire.candidates(snapshot, row)), default=0)
+            file_slots = max(1, file_slots)
         return _wire.FormLimits(file_slots=file_slots, max_file_bytes=getattr(spool, "max_file_bytes", None))
 
     async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
@@ -146,6 +147,11 @@ class Shape:
             if isinstance(read, Response):
                 return read
             fields = read
+        read_wire = self.read_wire(fields)
+        if isinstance(read_wire, Response):
+            return read_wire
+        options, answer = read_wire
+        request.state.answer_form = answer
         target = _wire.pop_str(fields, "model") or self.default_target()
         servable = lambda entry: not self.profile(entry.contract)  # noqa: E731
         pool = _wire.candidates(snapshot, row, servable)
@@ -162,8 +168,14 @@ class Shape:
         inputs = {name: coerce(chosen, name, value) for name, value in fields.items() if name not in self.transport_fields}
         inputs = self.fill_inputs(chosen, inputs, fields)
         key = request.headers.get(IDEMPOTENCY_HEADER) if self.honours_idempotency_key else None
-        return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, idempotency_key=key or None,
+        return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, options=options, idempotency_key=key or None,
                           frontend_id=row.id, failure_text=row.job_failure_text, retries=row.job_retries)
+
+    def read_wire(self, fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+        """Hook: the options this request asks of the run (they are part of its identity and reach the adapter) and the
+        answer form it asks for (how this request wants the result shown; it never enters the job). A bad value is a
+        shaped refusal. The fields are read, not removed: ``transport_fields`` keeps them out of the inputs."""
+        return {}, {}
 
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""
@@ -193,7 +205,8 @@ class Shape:
         if view.status != "succeeded":
             return _wire.error_response(504, "The job did not finish in time", kind="api_error", code=self.timeout_code)
         try:
-            return await self.render_success(view, jobs, caller)
+            answer = getattr(getattr(request, "state", None), "answer_form", None) or {}
+            return await self.render_success(view, jobs, caller, answer)
         except (JobNotFound, ResultUnavailable):
             return _wire.error_response(404, "The result is not available", code="result_unavailable")
 
@@ -211,7 +224,8 @@ class Shape:
         status = 200 if view.status in TERMINAL else 202
         return JSONResponse(job_object(view), status_code=status, headers={"Location": f"/gateway/v1/media/jobs/{view.job_id}"})
 
-    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext) -> Response:
+    async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
+                             answer: Mapping[str, Any] | None = None) -> Response:
         raise NotImplementedError
 
     @staticmethod

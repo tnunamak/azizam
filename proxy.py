@@ -384,6 +384,7 @@ from gateway.image_output import (
     background_format_conflict,
     encode_image_bytes,
     parse_output_compression,
+    parse_image_background,
     parse_output_format,
     parse_quality,
     quality_steps_from_manifest,
@@ -7316,21 +7317,6 @@ def _background_removal_fallback(source: str, error: str = "") -> ImageBackgroun
         source=source,
         error=str(error or "")[:200],
     )
-
-
-def parse_image_background(value: Any) -> tuple[Optional[str], Optional[str]]:
-    """Parse OpenAI's image `background` option.
-
-    Returns (value, error). None and empty string mean OpenAI's default: auto.
-    """
-    if value is None or value == "":
-        return "auto", None
-    if not isinstance(value, str):
-        return None, "background must be one of 'transparent', 'opaque', or 'auto'"
-    normalized = value.strip().lower()
-    if normalized in ("transparent", "opaque", "auto"):
-        return normalized, None
-    return None, "background must be one of 'transparent', 'opaque', or 'auto'"
 
 
 def _parse_image_output_shape(
