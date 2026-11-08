@@ -150,6 +150,26 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     _GUARD.restore()
 
 
+_ASYNCIO_GLOBALS = ("sleep", "wait_for", "to_thread", "create_task")
+
+
+@pytest.fixture(autouse=True)
+def _asyncio_globals_are_restored() -> Iterator[None]:
+    """A test leaves the global asyncio functions as it found them. Defined before every other autouse fixture, so it
+    is set up first and torn down last, after each MonkeyPatch has been undone. Two patch owners undone out of order
+    (a test's monkeypatch over a rig's own patch of asyncio.sleep) leave a fake in place for every later test in the
+    worker; this names the test that leaked it and puts the real function back."""
+    import asyncio
+
+    before = {name: getattr(asyncio, name) for name in _ASYNCIO_GLOBALS}
+    yield
+    leaked = [name for name, value in before.items() if getattr(asyncio, name) is not value]
+    for name in leaked:
+        setattr(asyncio, name, before[name])
+    if leaked:
+        pytest.fail(f"this test left asyncio.{', asyncio.'.join(leaked)} patched after teardown", pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     """Submitting a ComfyUI prompt derives the embedded UI workflow from
