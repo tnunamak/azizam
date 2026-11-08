@@ -27,6 +27,8 @@ ROW_OF = {
     "/v1/images/edits": "images-edits",
     "/v1/images/variations": "images-variations",
     "/gateway/v1/media/jobs/image-generations": "image-jobs",
+    "/v1/audio/generate": "audio-generate",     # the poll-schedule contract test compares these with the image round
+    "/v1/videos": "videos-create",
 }
 ROW_PREFIX = "/__row"
 

@@ -1096,3 +1096,102 @@ def test_images_F07_view_missing(tmp_path):
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an error", (status(old) or 0) >= 400)
     assert_same(old, row, status, failure)
+
+
+# ------------------------------------------------------------------------------------------------ 7. design review answers (S7 section 6)
+import base64
+import io
+
+from PIL import Image
+
+
+def _pixels(o, i=0):
+    """The delivered pictures of a ``b64_json`` answer, decoded: (size, mode, every pixel)."""
+    out = []
+    for item in data_items(o, i):
+        if "b64_json" in item:
+            image = Image.open(io.BytesIO(base64.b64decode(item["b64_json"])))
+            out.append((image.size, image.mode, list(image.convert("RGBA").getdata())))
+    return out
+
+
+def _half_mask():
+    image = Image.new("L", (64, 64), 0)
+    for x in range(32, 64):
+        for y in range(64):
+            image.putpixel((x, y), 255)
+    out = io.BytesIO()
+    image.save(out, "PNG")
+    return ("mask.png", out.getvalue(), "image/png")
+
+
+def test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels(tmp_path):
+    """Section 6.5: masking runs in the adapter before the bundle commits, so the delivered pictures and the stored
+    Library file are the masked bytes, and equal to what the old route delivers and stores."""
+    request = form(files={"image": IMG, "mask": _half_mask()})
+    old, row = pair(tmp_path, EDIT, request, edit_ok)
+    old_has(old, "a picture", _pixels(old))
+    engine_output = Image.open(io.BytesIO(base._png((20, 20, 20)))).convert("RGBA").getdata()
+    old_has(old, "pixels that the mask changed", set(_pixels(old)[0][2]) != set(engine_output))
+    assert_same(old, row, status, ("delivered pixels", _pixels), ("stored files", asset_files), ("mask headers", lambda o: headers_with(o, "x-image-mask")))
+
+
+def test_s7_background_fallback_and_offset_inpaint_preserve_composition(tmp_path):
+    transparent = {"json_body": {"prompt": "a red fox", "response_format": "b64_json", "background": "transparent"}}
+    old, row = pair(tmp_path / "cutout", GEN, transparent, ok)
+    old_has(old, "a picture", _pixels(old))
+    assert_same(old, row, status, ("delivered pixels", _pixels), ("stored files", asset_files),
+                ("background headers", lambda o: headers_with(o, "x-image-background")))
+    old2, row2 = pair(tmp_path / "tile", GEN, body(model="flux2-klein-4b-seamless-tile"), ok)
+    old_has(old2, "an answer", status(old2))
+    assert_same(old2, row2, status, ("delivered pixels", _pixels), ("stored files", asset_files),
+                ("tile headers", lambda o: headers_with(o, "x-image-seam")), failure)
+
+
+def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_path):
+    """Section 6.8: each operation keeps its own cadence. The audio route sleeps 2 s per poll, the video media job 5 s,
+    and neither is the image round's 0.05 s doubling to 0.5 s."""
+    image_round = {0.05, 0.1, 0.2, 0.4, 0.5}
+
+    def audio(rig):
+        base._audio_comfy(rig, running_polls=3, strict=False)
+    a_old, a_row = pair(tmp_path / "audio", "/v1/audio/generate", {"json_body": {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}}, audio)
+    old_has(a_old, "audio poll sleeps", sleeps(a_old))
+    assert set(sleeps(a_old)).isdisjoint(image_round), "the old audio route uses the image schedule?"
+    assert_same(a_old, a_row, status, sleeps, engine_without_probes)
+
+    v_old, v_row = cell(tmp_path / "video", "vc", "success")
+    old_has(v_old, "video poll sleeps", sleeps(v_old))
+    assert set(sleeps(v_old)).isdisjoint(image_round)
+    assert_same(v_old, v_row, sleeps, engine_without_probes)
+
+
+@pytest.mark.xfail(strict=True, reason="core M13 retry")
+def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
+    """Section 6.6: a retryable failure is retried on the same job up to the attempt limit, waiting 5 s then doubling
+    to at most 30 s, and appends the retry event each time."""
+    def setup(rig):
+        job_setup(lambda r: base._comfy(r, comfy_exchanges(strict=False, extra=[
+            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]},
+                     repeat=True, required=False)])))(rig)
+
+    def mk(use_row):
+        async def go(rig):
+            target = (ROW_PREFIX if use_row else "") + JOB
+            first = await rig.call("POST", target, label="submit", **job_body())
+            job_id = _job_id(first)
+            if use_row:
+                for _ in range(2000):
+                    await asyncio.sleep(0)
+            else:
+                ran = 0
+                while ran < len(rig.scheduled):
+                    await proxy._run_image_media_job(rig.scheduled[ran])
+                    ran += 1
+            await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label="job")
+            await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/events", label="events")
+        return go
+    old = observe(tmp_path, JOB, mk(False), setup, row=False)
+    row = observe(tmp_path, JOB, mk(True), setup, row=True)
+    old_has(old, "a retry wait", 5.0 in sleeps(old))
+    assert_same(old, row, ("job states", _states), ("events", lambda o: doc(o, 2)), sleeps, ("prompts", lambda o: len(engine_bodies(o, "/prompt"))))
