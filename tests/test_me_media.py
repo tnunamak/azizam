@@ -302,14 +302,18 @@ class MeMediaRouterTests(unittest.TestCase):
             ids.append(data["asset_id"])
         return ids
 
-    def _delete_unshared(self, asset_id: str) -> bool:
-        owners = set(self._asset_metadata(asset_id).get("owner_key_hashes") or [])
-        if len(owners) > 1:
-            return False
-        for path in (self._asset_path(asset_id), self._meta_path(asset_id)):
-            if path and path.exists():
-                path.unlink()
-        return True
+    def _write_meta(self, asset_id: str, metadata) -> None:
+        from gateway import private_io
+        private_io.atomic_write_text(self._meta_path(asset_id), json.dumps(dict(metadata), sort_keys=True))
+
+    def _delete_unshared(self, asset_id: str, **release) -> bool:
+        return me_media.conservative_asset_deleter(
+            metadata_reader=self._asset_metadata,
+            asset_path_resolver=self._asset_path,
+            metadata_path_resolver=self._meta_path,
+            metadata_writer=self._write_meta,
+            prompt_memory_path=lambda: self.prompt_db,
+        )(asset_id, **release)
 
     def _write_asset(self, asset_id: str, owner_hashes: list[str], prompt: str = "misty lake", request_id: str = "req_cache", created_at: float | int = 1_700_000_000) -> None:
         record = provenance.build_provenance_record(
@@ -742,6 +746,48 @@ class MeMediaRouterTests(unittest.TestCase):
         bob_list = self.client.get("/me/api/media")
         self.assertEqual(bob_list.status_code, 200)
         self.assertEqual([item["asset_id"] for item in bob_list.json()["assets"]], [asset_id])
+
+    def _delete_headers(self) -> dict[str, str]:
+        return {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
+
+    def test_shared_asset_delete_releases_only_the_callers_ownership(self) -> None:
+        asset_id = "img_" + "d" * 64
+        self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
+        meta = self._meta_path(asset_id)
+        data = json.loads(meta.read_text())
+        data["maker_person_ids"] = [self.alice["id"], self.bob["id"]]
+        meta.write_text(json.dumps(data))
+        self._receipt(self.app_a["id"], "req_alice")
+        self._job("req_alice", asset_id)
+
+        deleted = self.client.delete(f"/me/api/media/{asset_id}", headers=self._delete_headers())
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertFalse(deleted.json()["physical_removed"])
+        self.assertTrue(self._asset_path(asset_id).exists())
+        kept = json.loads(meta.read_text())
+        self.assertNotIn("sha256:alice", kept["owner_key_hashes"])
+        self.assertIn("sha256:bob", kept["owner_key_hashes"])
+        self.assertEqual(kept["maker_person_ids"], [self.bob["id"]])
+        self.assertIsNone(prompt_memory.get(asset_id, self.alice["id"], path=self.prompt_db))
+        self.assertIsNotNone(prompt_memory.get(asset_id, self.bob["id"], path=self.prompt_db))
+
+        repeat = self.client.delete(f"/me/api/media/{asset_id}", headers=self._delete_headers())
+        self.assertEqual(repeat.status_code, 404)
+        self.assertEqual(self._delete_audit_rows(asset_id), 1)
+        self.current_user = self.bob
+        self.assertEqual([i["asset_id"] for i in self.client.get("/me/api/media").json()["assets"]], [asset_id])
+
+        deleted = self.client.delete(f"/me/api/media/{asset_id}", headers=self._delete_headers())
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()["physical_removed"])
+        self.assertFalse(self._asset_path(asset_id).exists())
+        self.assertFalse(meta.exists())
+
+    def _delete_audit_rows(self, asset_id: str) -> int:
+        with admin_store._conn(self.admin_db) as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM audit_events WHERE action='media.asset.delete' AND target_id=?", (asset_id,)
+            ).fetchone()[0]
 
     def test_deleting_library_item_erases_the_request_history_that_made_it(self) -> None:
         asset_id = "img_" + "a" * 64
@@ -3143,6 +3189,7 @@ class ConservativeAssetDeleterTests(unittest.TestCase):
                 metadata_reader=lambda asset_id: json.loads(json.dumps(metadata)),
                 asset_path_resolver=lambda asset_id: asset,
                 metadata_path_resolver=lambda asset_id: None,
+                metadata_writer=lambda asset_id, data: None,
                 prompt_memory_path=lambda: Path(tmp) / "jobs.db",
             )
             results = []

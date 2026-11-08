@@ -506,7 +506,8 @@ content URL is a bearer capability to read and grants no delete. An unknown asse
 asset the key does not own both answer `404 asset_not_found`, so ids cannot be probed.
 The delete removes the file, the accountable person's kept prompt for it and writes one audit
 row naming the App, as the browser Library Delete does. A file with several owners is kept
-(`physical_removed: false`).
+(`physical_removed: false`), and the caller's own ownership leaves its metadata: the key can no longer
+read it, a repeat delete answers `404`, and the other owners keep full access.
 
 This is the bridge between authentication, routing, credential provisioning,
 and user-facing compatibility.
