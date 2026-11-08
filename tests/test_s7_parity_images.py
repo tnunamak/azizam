@@ -148,8 +148,7 @@ def test_images_04_unknown_field_refused(tmp_path):
     assert_same(old, row, status, failure, engine, ("accepted_inputs", lambda o: receipt_fields(o, "accepted_inputs", "rejected_inputs", "ignored_inputs")))
 
 
-@pytest.mark.parametrize("fields", [{"background": "purple"}, pytest.param({"n": 0}, marks=ROW_PENDING), pytest.param({"n": 11}, marks=ROW_PENDING),
-                                    {"response_format": "gif"}], ids=lambda f: next(iter(f)))
+@pytest.mark.parametrize("fields", [{"background": "purple"}, {"n": 0}, {"n": 11}, {"response_format": "gif"}], ids=lambda f: next(iter(f)))
 def test_images_05_validation_before_engine(tmp_path, fields):
     """``n`` above 10 is a 400 at the route; the clamp to ``MAX_IMAGES_PER_REQUEST`` inside the batching loop is not
     reachable from the wire."""

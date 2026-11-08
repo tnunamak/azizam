@@ -68,7 +68,7 @@ class OpenAIImagesJson(Shape):
         """The options that change the picture or its encoding (they reach the adapter and the run's identity), and the
         answer form (how this request wants the pictures shown). Each is checked as the wire always checked it."""
         def refuse(message: str, param: str, code: str | None = None) -> Response:
-            return _wire.error_response(400, message, param=param, code=code)
+            return _wire.error_response(400, message, param=param, code=code, null_code=True)
 
         def sent(name: str) -> bool:
             return fields.get(name) not in (None, "")

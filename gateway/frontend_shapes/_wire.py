@@ -34,11 +34,13 @@ WORKFLOW_AMBIGUOUS = "workflow_ambiguous"
 
 
 def error_response(status: int, message: str, *, kind: str = "invalid_request_error", code: str | None = None,
-                   headers: Mapping[str, str] | None = None, **extra: Any) -> Response:
+                   headers: Mapping[str, str] | None = None, null_code: bool = False, **extra: Any) -> Response:
     """The OpenAI-shaped error body: ``{"error": {"message", "type", "code"?}}``."""
     body: dict[str, Any] = {"message": message, "type": kind}
     if code:
         body["code"] = code
+    elif null_code:             # a wire whose clients saw ``"code": null`` on this refusal
+        body["code"] = None
     body.update(extra)
     return JSONResponse({"error": body}, status_code=status, headers=dict(headers or {}))
 
