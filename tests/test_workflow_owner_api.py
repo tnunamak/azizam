@@ -483,3 +483,58 @@ def test_the_detail_of_a_held_out_override_is_the_stored_contract_and_the_servin
     assert body["held_out"] is True and body["contract"]["display_name"] == "Mine"
     assert {problem["code"] for problem in body["hold_problems"]} == {"id_clash"}
     assert body["serving"]["incarnation"] == "bundled" and body["serving"]["contract"]["display_name"] != "Mine"
+
+
+def _restarted_without(client, workflow_id, monkeypatch):
+    """The gateway restarted on a release that no longer ships ``workflow_id``."""
+    from dataclasses import replace  # noqa: F401, PLC0415
+
+    from gateway import registry_snapshot
+
+    shipped = service_registry.bundled_workflow_manifests()
+    monkeypatch.setattr(service_registry, "bundled_workflow_manifests",
+                        lambda directory=None: {k: v for k, v in shipped.items() if k != workflow_id})
+
+    def builder(document, _release, *, generation):
+        release = registry_snapshot.bundled_release()
+        kept = {k: v for k, v in release.workflows.items() if k != workflow_id}
+        return registry_snapshot.build(document, registry_snapshot.BundledRelease(kept, release.frontends),
+                                       generation=generation)
+
+    registry = WorkflowRegistryStore(path=client.db, definitions=DefinitionStore(client.jobs_db),
+                                     build_snapshot=builder, config=lambda: client.config)
+    app = FastAPI()
+    app.include_router(create_admin_router(AdminSQLiteStore(client.db), auth=lambda _request: OWNER,
+                                           workflow_registry=registry))
+    restarted = TestClient(app, raise_server_exceptions=False)
+    restarted.db, restarted.config, restarted.registry, restarted.jobs_db = client.db, client.config, registry, client.jobs_db
+    return restarted
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_restoring_a_run_control_patch_after_its_workflow_left_the_release_is_a_typed_409(api, monkeypatch):
+    # c2d-R-patch-review-1108 (1), first sequence: unpublish a bundled workflow, upgrade to a release without it.
+    first = _post(api, "publish", {"published": False})
+    assert first.status_code == 200
+    patch_revision = first.json()["commit"]["record_revision"]
+    newer = _restarted_without(api, BUNDLED_ID, monkeypatch)
+    before = admin_store.get_service_registry_json_with_generation(path=api.db)["operator_settings_generation"]
+    response = newer.post(f"/admin/api/workflows/{BUNDLED_ID}/restore", json={"record_revision": patch_revision},
+                          headers={"If-Match": os_n(newer)})
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "bundled_workflow_removed"
+    assert admin_store.get_service_registry_json_with_generation(path=api.db)["operator_settings_generation"] == before
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_restoring_a_patch_over_an_owner_contract_of_a_removed_bundled_id_is_refused_and_keeps_the_contract(api, monkeypatch):
+    # Second sequence: the owner then created a full contract under the now unbundled id; the old patch must not replace it.
+    first = _post(api, "publish", {"published": False})
+    patch_revision = first.json()["commit"]["record_revision"]
+    newer = _restarted_without(api, BUNDLED_ID, monkeypatch)
+    mine = owner_contract(BUNDLED_ID, display_name="Mine")
+    assert create(newer, mine, facts=FACTS_BODY).status_code == 201
+    response = newer.post(f"/admin/api/workflows/{BUNDLED_ID}/restore", json={"record_revision": patch_revision},
+                          headers={"If-Match": os_n(newer)})
+    assert response.status_code == 409 and response.json()["error"]["code"] == "bundled_workflow_removed"
+    assert _detail(newer)["contract"]["display_name"] == "Mine"

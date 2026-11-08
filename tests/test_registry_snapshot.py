@@ -426,3 +426,18 @@ def test_holding_out_a_workflow_whose_bundled_fallback_clashes_again_holds_the_n
     assert snap.get("safe.three") is not None and snap.get("owner.two") is None
     assert snap.get("bundle.one").incarnation == "bundled"
     assert snap.names.owner("workflow_alias", "legacy-x").id == "bundle.one"
+
+
+def test_an_orphan_run_control_patch_owns_no_name_in_the_write_check_or_the_snapshot():
+    # c2d-R-patch-review-1108 (2): a patch of a workflow the release dropped is inert; the write-time name check and
+    # the snapshot agree that nobody holds its id.
+    from gateway import service_registry
+
+    document = {"workflows": {"gone.workflow": {rs.RUN_CONTROL_PATCH_KEY: "gone.workflow", "state": "active",
+                                                "published": False, "record_revision": 2}}}
+    owners = {owner.id for _name, owner in service_registry.registry_name_pairs(document, bundled=[])}
+    assert "gone.workflow" not in owners
+    assert build(document).names.owner("workflow", "gone.workflow") is None
+    # With the release still shipping the id, the patch's workflow holds its names as before.
+    held = {owner.id for _name, owner in service_registry.registry_name_pairs(document, bundled=["gone.workflow"])}
+    assert held == {"gone.workflow"}
