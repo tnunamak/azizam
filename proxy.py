@@ -16640,9 +16640,12 @@ MULTIPART_HOST = multipart_adapter.MultipartHost(
 workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
 
 
+_MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts
+
+
 def _mount_3d_rows(app: FastAPI) -> None:
     """The routes of the 3D frontend rows, over the run core."""
-    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, ("mesh-generations", "mesh-glb"))
+    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, _MOUNTED_ROW_IDS)
 
 
 FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
@@ -23867,7 +23870,9 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
 def _recover_workflow_runs() -> None:
     """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
     runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
-    # No task of a stopped gateway is left to close the receipt of a run it was serving.
+    # No task of a stopped gateway is left to close the receipt of a run it was serving. That covers a receipt whose job
+    # does not exist yet (the body was still arriving) and one whose job ended before the receipt closed.
+    receipt_store.close_orphans_on_paths(row_routes.row_paths(_MOUNTED_ROW_IDS))
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
         if job.get("intent") == workflow_run.RUN_INTENT:
             receipt_store.close_orphan(str(job.get("request_id") or ""))
@@ -26949,10 +26954,20 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
         api_key_name=identity.name if identity else None))
 
 
-def _name_row_receipt(owner: _RunReceiptOwner, entry: Any) -> None:
-    owner.receipt.resolved_workflow = entry.id
-    owner.receipt.attach_manifest(manifest_id=entry.id, manifest_version=str(entry.record_revision),
-                                  manifest_hash=entry.contract_digest)
+def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
+                      contract_digest: str | None) -> None:
+    owner.receipt.resolved_workflow = workflow_id
+    owner.receipt.attach_manifest(manifest_id=workflow_id,
+                                  manifest_version=None if record_revision is None else str(record_revision),
+                                  manifest_hash=contract_digest)
+
+
+def _pinned_of_job(job_id: str) -> Any:
+    """What the job pinned, or None when it holds no definitions."""
+    try:
+        return pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    except definition_store.DefinitionUnavailable:
+        return None
 
 
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
@@ -26968,6 +26983,7 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     new_request_id=new_request_id,
     open_receipt=_open_row_receipt,
     name_receipt=_name_row_receipt,
+    pinned=_pinned_of_job,
 )
 
 

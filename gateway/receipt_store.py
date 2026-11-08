@@ -331,6 +331,23 @@ def close_orphan(request_id: str) -> bool:
         return False
 
 
+def close_orphans_on_paths(paths: Iterable[str]) -> int:
+    """At startup, close every receipt still in progress on the given request paths as failed, with the reason: the
+    request that held it is gone with the stopped gateway, whether or not a job exists or still runs. Returns how many."""
+    wanted = tuple(paths)
+    if not wanted:
+        return 0
+    try:
+        with _conn(DB_PATH) as conn:
+            marks = ",".join("?" * len(wanted))
+            ids = [row[0] for row in conn.execute(
+                f"SELECT request_id FROM receipts WHERE status='in_progress' AND path IN ({marks})", wanted)]
+    except Exception:  # noqa: BLE001 - a store that is down is no fault at startup
+        logging.getLogger("azizam.receipts").warning("open receipts were not listed", exc_info=True)
+        return 0
+    return sum(1 for request_id in ids if close_orphan(request_id))
+
+
 def touch(receipt: RouteReceipt | Mapping[str, Any], *, now_ms: int | None = None, path: Path = DB_PATH) -> bool:
     """Say that the work behind an in-progress receipt is still going: refresh its ``updated_at_ms``, so it is not read as
     ``stale_incomplete``. A receipt that is closed, or was never begun, is left as it is (returns False)."""

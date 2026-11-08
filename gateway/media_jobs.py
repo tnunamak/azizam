@@ -1814,6 +1814,8 @@ def begin_attempt(job_id: str, *, now: int | None = None, path: Path = DB_PATH) 
         job = _coerce_to_job(json.loads(row[0]))
         if job.status != STATUS_RUNNING:
             raise ValueError("only a running job can begin another attempt")
+        if (job.metadata or {}).get("cancel_requested_at"):
+            raise CancellationPending("Cancel requested; no further attempt may start")
         if job.attempt_number is None:
             return job.to_dict()
         job.previous_attempts.append({"attempt_number": job.attempt_number,

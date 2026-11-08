@@ -8,6 +8,7 @@ requires that ``gateway/row_routes.py`` names no domain word.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 import time
@@ -275,6 +276,83 @@ def test_a_replayed_async_request_closes_its_own_receipt_and_the_job_closes_the_
     assert len(receipts(SYNC)) == 2
 
 
+def test_async_replay_of_a_running_job_closes_its_receipt_as_accepted(rig):
+    """K3-4: a respond-async replay of a job that still runs answers 202; its own receipt closes accepted, not as a wait
+    timeout (no wait happened). The first request's receipt stays held by the core until the job ends."""
+    gate = Gate(rig)
+
+    async def go(c):
+        headers = {**ASYNC, "Idempotency-Key": "K-run"}
+        first = await c.post(SYNC, headers=headers, **form())
+        await gate.started.wait()
+        second = await c.post(SYNC, headers=headers, **form())
+        assert second.status_code == 202 and job_id_of(second) == job_id_of(first)
+        replay = await closed(second.headers["x-request-id"])
+        assert receipt_store.get(first.headers["x-request-id"])["status"] == "in_progress"
+        gate.release.set()
+        await settle(c, job_id_of(first))
+        return replay, await closed(first.headers["x-request-id"])
+
+    replay, first = run_async(go)
+    assert (replay["status"], reason(replay)) == ("succeeded", "accepted")
+    assert (first["status"], reason(first)) == ("succeeded", "succeeded")
+
+
+class _Edited:
+    """A snapshot provider that, once ``edited`` is set, serves the workflow as a later revision with another title."""
+
+    def __init__(self, inner):
+        self._inner, self.edited = inner, False
+
+    def current(self):
+        snap = self._inner.current()
+        if not self.edited:
+            return snap
+        edited = self
+
+        class Snap:
+            def get(self, workflow_id):
+                entry = snap.get(workflow_id)
+                if entry is None:
+                    return None
+                return dataclasses.replace(entry, record_revision=entry.record_revision + 1,
+                                           contract_digest="sha256:" + "e" * 64,
+                                           contract={**entry.contract, "display_name": "Edited title"})
+
+            def __getattr__(self, name):
+                return getattr(snap, name)
+
+        return Snap()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_replay_receipt_and_history_name_the_pinned_revision(remembered, monkeypatch):
+    """K3-5: after the workflow is edited, a replay of the finished job names the revision, digest and title the job
+    pinned, not the current entry's."""
+    live = _Edited(proxy.WORKFLOW_SNAPSHOTS)
+    monkeypatch.setattr(proxy, "WORKFLOW_SNAPSHOTS", live)
+
+    async def go(c):
+        headers = {**ASYNC, "Idempotency-Key": "K-rev"}
+        first = await c.post(SYNC, headers=headers, **form())
+        await settle(c, job_id_of(first))
+        first_receipt = await closed(first.headers["x-request-id"])
+        live.edited = True
+        second = await c.post(SYNC, headers=headers, **form())
+        assert job_id_of(second) == job_id_of(first)
+        return first_receipt, await closed(second.headers["x-request-id"])
+
+    first, replay = run_async(go)
+    assert replay["manifest_version"] == first["manifest_version"]
+    assert replay["manifest_hash"] == first["manifest_hash"] and replay["resolved_workflow"] == WORKFLOW
+    rows = _kept_rows(media_jobs.DB_PATH)
+    assert len(rows) == 2
+    titles = {json.loads(r["summary_json"])["run"]["title"] for r in rows}
+    assert titles == {TITLE}
+
+
 # ------------------------------------------------------------------------------------------------ S7 parity 6.2, 6.4
 def test_s7_same_key_replays_after_backend_becomes_unavailable(rig):
     async def go(c):
@@ -325,6 +403,26 @@ def test_a_run_receipt_left_open_by_a_stopped_gateway_is_closed_as_restarted(rig
 
     after = receipt_store.get(request_id)
     assert (after["status"], reason(after)) == ("failed", GATEWAY_RESTARTED)
+
+
+def test_restart_closes_open_row_receipts_without_an_unfinished_job(rig):
+    """K3-6: a receipt opened before its job exists (a restart during the body upload) and a receipt whose job ended
+    before the receipt closed are both closed as restarted at startup; a receipt on another path is left alone."""
+    no_job, ended, other = ("req_" + c * 32 for c in "abc")
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=no_job))
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=SYNC, request_id=ended))
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path="/v1/not-a-row", request_id=other))
+    job = media_jobs.create(media_jobs.MediaJob(intent="workflow.run", workflow=WORKFLOW, backend="b", request_id=ended,
+                                                metadata={"mode": "workflow.run"}), path=media_jobs.DB_PATH)
+    media_jobs.update_status(job.job_id, "running", path=media_jobs.DB_PATH)
+    media_jobs.update_status(job.job_id, "succeeded", path=media_jobs.DB_PATH)
+
+    proxy._recover_workflow_runs()
+
+    for request_id in (no_job, ended):
+        after = receipt_store.get(request_id)
+        assert (after["status"], reason(after)) == ("failed", GATEWAY_RESTARTED)
+    assert receipt_store.get(other)["status"] == "in_progress"
 
 
 # ------------------------------------------------------------------------------------------------ (d) no domain words
