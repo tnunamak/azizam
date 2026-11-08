@@ -2500,7 +2500,17 @@ def normalize_protocol_frontend(frontend_id: str, raw: Mapping[str, Any]) -> dic
     return out
 
 
+def is_run_control_patch(raw: Any) -> bool:
+    """Whether a stored workflow record is a run-control patch of a bundled workflow: no contract, only state,
+    publication and revision, under ``patch_of: <id>``."""
+    return isinstance(raw, Mapping) and bool(raw.get(registry_layers.RUN_CONTROL_PATCH_KEY))
+
+
 def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+    if is_run_control_patch(raw):
+        if raw[registry_layers.RUN_CONTROL_PATCH_KEY] != workflow_id:
+            raise ValueError(f"workflow {workflow_id!r} is a run-control patch of a different id")
+        return {"id": workflow_id, registry_layers.RUN_CONTROL_PATCH_KEY: workflow_id, "enabled": True, **run_control_of(raw)}
     manifest = raw.get("manifest")
     if not isinstance(manifest, Mapping):
         manifest = {
@@ -2700,7 +2710,8 @@ def _claims_override(payload: Mapping[str, Any], workflow_id: str) -> bool:
             continue
         manifest = raw.get("manifest")
         if workflow_id in (key, raw.get("id"), manifest.get("id") if isinstance(manifest, Mapping) else None):
-            return raw.get("overrides") == workflow_id
+            # A run-control patch names the bundled id it changes; it holds no contract to claim the id with.
+            return raw.get("overrides") == workflow_id or raw.get(registry_layers.RUN_CONTROL_PATCH_KEY) == workflow_id
     return False
 
 
@@ -2881,7 +2892,7 @@ def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | No
     for workflow_id in sorted(ids):
         pairs.extend(workflow_name_pairs(workflow_id))
         record = stored.get(workflow_id)
-        contract = record.get("manifest", record) if isinstance(record, Mapping) else None
+        contract = record.get("manifest", record) if isinstance(record, Mapping) and not is_run_control_patch(record) else None
         if not isinstance(contract, Mapping):   # a bundled id the document does not store: the release's own contract
             contract = shipped.get(workflow_id) if isinstance(shipped, Mapping) else None
         aliases = contract.get("aliases") if isinstance(contract, Mapping) else None

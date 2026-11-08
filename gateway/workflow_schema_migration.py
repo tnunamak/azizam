@@ -307,6 +307,8 @@ def _plan_one(
         return _plan_patch(record_id, entry, base, v1_base)
     if set(entry) == {layers.REPLACE_KEY} and isinstance(entry[layers.REPLACE_KEY], Mapping):
         entry = entry[layers.REPLACE_KEY]  # no release record to replace: it is stored whole, as a read takes it
+    if entry.get(layers.RUN_CONTROL_PATCH_KEY):   # a run-control patch of a bundled id holds no contract to convert
+        return Row(record_id, ALREADY_V2), copy.deepcopy(dict(entry))
     if _schema_version(entry) == 2:
         return Row(record_id, ALREADY_V2), copy.deepcopy(dict(entry))
     record, failures, fields = _convert_record(record_id, entry)

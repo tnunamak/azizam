@@ -27,6 +27,6 @@ test("the owner lists workflows, opens one and toggles publication with the ETag
   await expect(sheet.getByRole("button", { name: after, exact: true })).toBeVisible();
 
   // Put it back, with the ETag of the detail that was read after the first write.
-  await sheet.getByRole("button", { name: before, exact: true }).click();
+  await sheet.getByRole("button", { name: after, exact: true }).click();
   await expect(sheet.getByRole("button", { name: before, exact: true })).toBeVisible();
 });

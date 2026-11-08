@@ -25,6 +25,7 @@ import yaml
 from gateway import binding_descriptors
 from gateway.alias_policy import service_model_records
 from gateway.binding_descriptors import BindingDescriptor
+from gateway.registry_layers import RUN_CONTROL_PATCH_KEY
 from gateway.discovery import WorkflowRecord
 from gateway.manifests import BUNDLED_PROVENANCE, ContractError, Provenance
 from gateway.workflow_kernel import (
@@ -234,6 +235,21 @@ def _bundled_entry(record: WorkflowRecord, generation: int) -> WorkflowEntry:
     return _entry(record.manifest, facts=_facts_of(record.facts),
                   provenance=Provenance(record.identity.trusted, record.identity.source) if record.identity else BUNDLED_PROVENANCE,
                   state=BUNDLED_STATE, published=True, incarnation=BUNDLED_INCARNATION, record_revision=generation, overrides=None)
+
+
+def _patched_entry(base: WorkflowRecord, record: Mapping[str, Any], generation: int) -> WorkflowEntry:
+    """The bundled workflow of a run-control patch: the release's contract, facts, provenance and incarnation, with the
+    patch's state and publication over them. Nothing of the contract is stored, so a later release shows through."""
+    state = record.get("state") or BUNDLED_STATE
+    if state not in ("active", "disabled"):
+        raise SnapshotBuildError([_problem(("workflows", base.manifest.get("id", ""), "state"), "record_state",
+                                           "state is active or disabled")])
+    revision = record.get("record_revision")
+    return _entry(base.manifest, facts=_facts_of(base.facts),
+                  provenance=Provenance(base.identity.trusted, base.identity.source) if base.identity else BUNDLED_PROVENANCE,
+                  state=state, published=bool(record.get("published", True)), incarnation=BUNDLED_INCARNATION,
+                  record_revision=revision if isinstance(revision, int) and revision >= 1 else generation,
+                  overrides=str(base.manifest["id"]))   # the owner changed this id: the same marker a contract override has
 
 
 def _stored_facts(raw: Any) -> WorkflowFacts | None:
@@ -453,6 +469,10 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
         if not isinstance(record, Mapping):
             raise SnapshotBuildError([_problem(("workflows", str(workflow_id)), "record", "a stored workflow is an object")])
         if record.get("migration"):   # a record the schema step quarantined never runs; the bundled version of its id serves
+            continue
+        if record.get(RUN_CONTROL_PATCH_KEY):   # a run-control patch of a bundled id; with no bundled workflow it is inert
+            if str(workflow_id) in release.workflows:
+                entries[str(workflow_id)] = _patched_entry(release.workflows[str(workflow_id)], record, generation)
             continue
         entries[str(workflow_id)] = _stored_entry(str(workflow_id), record, generation, release.workflows)
     frontends = {row.id: row for row in release.frontends}
