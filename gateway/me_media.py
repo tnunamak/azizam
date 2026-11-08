@@ -88,6 +88,39 @@ class _Actor:
         return self.role in {"owner", "superadmin"}
 
 
+def remove_asset(
+    asset_id: str,
+    *,
+    person_id: str | None,
+    actor_kind: str,
+    actor_id: str | None,
+    actor_label: str | None,
+    job_id: Any,
+    asset_deleter: AssetDeleter,
+    admin_db_path: Path,
+    prompt_memory_path: Path,
+) -> bool:
+    """Delete one asset the caller already proved they own: the file, that person's kept prompt, one audit row.
+
+    The browser Delete and the App-key ``DELETE /v1/assets/{id}`` both end here, so the two cannot drift.
+    Returns whether the file was physically removed (a file with several owners is kept).
+    """
+    physical_removed = asset_deleter(asset_id)
+    if person_id:
+        prompt_memory.delete_asset_for_person(asset_id, person_id, path=prompt_memory_path)
+    admin_store.record_audit(
+        "media.asset.delete",
+        actor_kind=actor_kind,
+        actor_id=actor_id,
+        actor_label=actor_label,
+        target_kind="media_asset",
+        target_id=asset_id,
+        metadata={"physical_removed": bool(physical_removed), "job_id": job_id},
+        path=admin_db_path,
+    )
+    return bool(physical_removed)
+
+
 def create_me_media_router(
     *,
     session_provider: SessionProvider,
@@ -294,17 +327,10 @@ def create_me_media_router(
             )
             if item is None:
                 raise PublicFailure("asset_not_found", 404, asset_id=asset_id)
-            physical_removed = asset_deleter(asset_id)
-            prompt_memory.delete_asset_for_person(asset_id, actor.user_id, path=prompt_path)
-            admin_store.record_audit(
-                "media.asset.delete",
-                actor_kind="user",
-                actor_id=actor.user_id,
-                actor_label=str(actor.user.get("email") or actor.user_id),
-                target_kind="media_asset",
-                target_id=asset_id,
-                metadata={"physical_removed": bool(physical_removed), "job_id": item.get("job_id")},
-                path=admin_path,
+            physical_removed = remove_asset(
+                asset_id, person_id=actor.user_id, actor_kind="user", actor_id=actor.user_id,
+                actor_label=str(actor.user.get("email") or actor.user_id), job_id=item.get("job_id"),
+                asset_deleter=asset_deleter, admin_db_path=admin_path, prompt_memory_path=prompt_path,
             )
             return _json({
                 "asset_id": asset_id,

@@ -2267,6 +2267,20 @@
       "access": "content:creation:read"
     },
     {
+      "handler": "proxy.assets_delete",
+      "method": "DELETE",
+      "path": "/openai/v1/assets/{asset_id}",
+      "access": "content:creation:delete",
+      "note": "Owner-only: the owner-key rule of the owner-scoped asset read; a signed content URL grants no delete."
+    },
+    {
+      "handler": "proxy.assets_delete",
+      "method": "DELETE",
+      "path": "/v1/assets/{asset_id}",
+      "access": "content:creation:delete",
+      "note": "Owner-only: the owner-key rule of the owner-scoped asset read; a signed content URL grants no delete."
+    },
+    {
       "handler": "proxy.audio_generate",
       "method": "POST",
       "path": "/openai/v1/audio/generate",
