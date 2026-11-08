@@ -280,7 +280,10 @@ were already in the S3.2 contract; the registry is checked against the contract'
   receipt field.
 - **Durable and fail closed.** A new job that needs a generated value has its `generated` block stored in the same
   transaction as its job row, whether or not the route compiles from the pin; if the envelope cannot be built or
-  written, the accept fails (503) and no job, payload or submission remains. A reader tells three states apart: an input
+  written, the accept fails (503) and no job, payload or submission remains. A workflow whose binding has no pin (it has no graph
+  binding, for example a gateway composition such as the bundled seamless tile) builds no envelope; its job is accepted
+  as before S3.6 and draws at run, so a retry of such a job can draw a different value. Closing that gap needs an
+  envelope for bindings without a graph pin, which is not in S3.6. A reader tells three states apart: an input
   with no entry (a job made before values were kept, or one with no envelope) keeps the old draw so an in-flight job
   survives the deploy; an erased entry (`{generator, erased: true}`) and an unreadable or malformed one fail the job with
   a plain error and draw nothing. The idempotency race: two same-key image requests can both draw before either

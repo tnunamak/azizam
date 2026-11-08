@@ -476,6 +476,7 @@ def submit_audio(body: Mapping[str, Any]) -> str:
 
 
 IMAGE_BODY = {"model": "flux2-klein-4b", "prompt": "a lighthouse"}
+TILE_BODY = {"model": "flux2-klein-4b-seamless-tile", "prompt": "moss on stone"}
 AUDIO_BODY = {"model": "tangoflux", "prompt": "rain on a tin roof", "duration": 8}
 
 
@@ -884,3 +885,14 @@ def test_two_concurrent_requests_with_one_key_get_one_job_and_one_stored_value(j
     surfaces += [path.read_text(encoding="utf-8", errors="replace") for path in spool_files(tmp_path)]
     assert not any(str(loser) in text for text in surfaces), "the losing request's value reaches nothing"
     assert len(job_rows(jobs_db)) == 1
+
+
+def test_a_job_whose_binding_has_no_pin_is_still_accepted_and_draws_at_run(jobs_db):
+    """A bundled workflow with a generated input and a binding that is not the graph binding (a gateway composition)
+    builds no envelope. Requiring one would refuse every such job; it keeps the behaviour it had before S3.6."""
+    manifest = proxy._find_image_manifest("image.generate", TILE_BODY["model"])
+    assert manifest is not None and generated_defaults.generated_inputs(manifest.get("inputs") or {})
+    assert not proxy._manifest_has_pin(manifest)
+    assert proxy._manifest_has_pin(proxy._find_image_manifest("image.generate", IMAGE_BODY["model"]))
+    job_id = submit_image(TILE_BODY)
+    assert DefinitionStore(jobs_db).envelope(job_id) is None

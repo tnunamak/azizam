@@ -6478,6 +6478,13 @@ def _pin_not_recorded_response() -> Response:
     )
 
 
+def _manifest_has_pin(manifest: Mapping[str, Any] | None) -> bool:
+    """Whether a job for ``manifest`` can be pinned: its workflow has a graph binding. A workflow with another binding
+    (for example a gateway composition) has no envelope to build, so a job for it is never refused for lacking one."""
+    bindings = manifest.get("bindings") if isinstance(manifest, Mapping) else None
+    return isinstance(bindings, Mapping) and isinstance(bindings.get(DERIVED._GRAPH_BINDING), Mapping)
+
+
 def _manifest_job_envelope(
     manifest: Mapping[str, Any] | None, capability: str, generated: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> job_envelope.JobEnvelope | None:
@@ -24911,8 +24918,9 @@ async def _submit_audio_media_job(
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
     compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
     # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
-    # the envelope is required for it whether or not the route compiles from its pin.
-    needs_envelope = compiles_from_pin or bool(generated)
+    # the envelope is required for it whether or not the route compiles from its pin. A workflow whose binding has no
+    # pin (no graph binding) has no envelope to build; it keeps the old behaviour and draws at run, as before S3.6.
+    needs_envelope = compiles_from_pin or (bool(generated) and _manifest_has_pin(manifest))
     if envelope is None and needs_envelope:
         # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
         return _pin_not_recorded_response()
@@ -25852,10 +25860,11 @@ async def gateway_image_generations_media_job(request: Request):
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         # A job that holds a generated value must have it stored before it is scheduled: without it a retry would draw
-        # another. So the envelope is required, whether or not the route compiles from its pin.
+        # another. So the envelope is required, whether or not the route compiles from its pin. A workflow whose binding
+        # has no pin (a gateway composition) has no envelope to build and keeps the old behaviour: it draws at run.
         created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH,
                                     envelope=_manifest_job_envelope(manifest, _GRAPH_CAPABILITY, generated),
-                                    require_envelope=bool(generated))
+                                    require_envelope=bool(generated) and _manifest_has_pin(manifest))
     except EphemeralMediaPayloadCapacityError:
         _delete_image_media_job_payload(job.job_id)
         response = _ephemeral_media_payload_busy_response()
