@@ -361,7 +361,7 @@ def base_metadata(entry: Mapping[str, Any], sources: MetadataSources) -> ModelMe
     intent = entry.get("azizam_intent")
     derived = None
     if intent:
-        derived = from_contract(sources.manifest(str(entry.get("azizam_workflow_id") or "")))
+        derived = from_contract(sources.manifest(str(entry.get("azizam_workflow_id") or ""))) or from_capability(intent)
     if derived is None and sources.origins.get(model_id) == ORIGIN_DECISION:
         derived = _DECISION
     if derived is None:
