@@ -660,16 +660,6 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         (self.cache_dir / ("c" * 64 + ".glb")).write_bytes(b"glTF-fixture-model")
         return "ast_" + "c" * 64
 
-    def test_mesh_job_content_is_the_model_itself(self) -> None:
-        asset = self._mesh_model()
-        job = self._mesh_job("succeeded", assets=[{"asset_id": asset, "media_type": "model/gltf-binary"}])
-        with authenticated_profile(plan_for("mesh", caps=("mesh",))):
-            response = self.client.get(f"/gateway/v1/media/jobs/{job.job_id}/content", headers=AUTH_HEADERS)
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.headers["content-type"], "model/gltf-binary")
-        self.assertEqual(response.headers["x-asset-id"], asset)
-        self.assertEqual(response.content, b"glTF-fixture-model")
-
     def test_mesh_job_content_waits_for_the_job_and_reports_a_lost_model(self) -> None:
         running = self._mesh_job("running")
         lost = self._mesh_job("succeeded", assets=[{"asset_id": "ast_" + "d" * 64, "media_type": "model/gltf-binary"}])

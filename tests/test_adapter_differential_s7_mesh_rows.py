@@ -12,7 +12,8 @@ same bytes from the new rows for the same input, so the engine saw no change.
 
 Cell map (new cell -> the ``mr`` cell it replaces) and every difference from the old route. The old route was one
 handler with its own lease, receipts and wire. The raw row is its closest wire (the answer is the GLB); the LocalAI row
-answers JSON that carries the model. In every cell the engine saw the same request (the oracle test below). Differences
+answers JSON that carries the model. In every cell the engine saw the same request, parts and bytes, with its form fields in alphabetical order
+(the oracle test below). Differences
 that hold for every cell: (a) the old ``x-request-id`` and ``x-asset-id`` headers and the route's receipt rows are gone
 (the run core keeps a job row and a Library asset; no per-request receipt); (b) a failed run's message is the run core's
 generic text ("The job failed."), the status and code carry the reason (old: a sentence per case); (c) the job is a
@@ -453,9 +454,25 @@ def _old_engine_request() -> dict[str, Any]:
     return json.loads(OLD_CELLS.read_text(encoding="utf-8"))["success"]["engine_requests"][0]
 
 
+def _parts(request: dict[str, Any]) -> list[tuple[str, ...]]:
+    """The parts of a recorded multipart request, as a sorted list: name, filename, content type and bytes of each."""
+    body = base64.b64decode(request["body"])
+    parts = []
+    for raw in body.split(b"--BOUNDARY")[1:-1]:
+        head, _, payload = raw.strip(b"\r\n").partition(b"\r\n\r\n")
+        parts.append((head.decode("latin-1"), _b64(payload)))
+    return sorted(parts)
+
+
 def test_the_engine_request_equals_the_old_route_request(rig):
-    facts = CELLS["success_raw"](rig)
-    assert facts["engine_requests"] == [_old_engine_request()]
+    """Same method, URL, content type and parts (names, filenames, types and bytes). Only the order of the form fields
+    differs: the old route sent them in the manifest's order (seed, resolution); the run pins the binding with sorted
+    keys, so they go alphabetically (resolution, seed). The engine reads a form by field name."""
+    (new,) = CELLS["success_raw"](rig)["engine_requests"]
+    old = _old_engine_request()
+    assert {key: new[key] for key in ("method", "url", "content_type")} == {key: old[key] for key in ("method", "url", "content_type")}
+    assert _parts(new) == _parts(old)
+    assert len(base64.b64decode(new["body"])) == len(base64.b64decode(old["body"]))
 
 
 def test_the_model_bytes_equal_the_old_route_answer(rig):
@@ -499,3 +516,14 @@ def test_a_changed_behavior_changes_the_record(rig):
     free = CELLS["success_raw"](rig)["answer"]["status"]
     busy = CELLS["busy_lease"](rig)["second_sync"]["status"]
     assert (free, busy) == (200, 503)
+
+
+def test_the_job_content_route_serves_the_model(rig):
+    """The 202 job's ``content_url`` serves the finished model itself (the run's Library asset)."""
+    async def go(c):
+        created = await c.post(SYNC, headers=ASYNC, **form())
+        await settle(c, job_id_of(created))
+        content = await c.get(created.json()["content_url"])
+        return {"status": content.status_code, "type": content.headers.get("content-type"), "bytes": content.content}
+    got = run(rig, go)
+    assert (got["status"], got["type"], got["bytes"]) == (200, "model/gltf-binary", GLB)

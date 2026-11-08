@@ -20,6 +20,10 @@ byte for byte what the readers gave before the switch:
   input type, input modalities (``text`` to ``asset`` and ``text``), home modalities and catalog media type changed;
 - ace-step: its ``prompt`` input is gone (it and ``tags`` wrote the same node input); the route sends the prompt to
   ``tags`` as before, so only the catalog, schema, mapping and example entries lose ``prompt``.
+
+Re-captured at S7 (builder D4): the mesh route moved from ``/v1/meshes/generate`` to ``/v1/3d/generations/glb``. Only the
+mesh ``openapi_catalog`` and ``member_catalog`` entries changed, and only the route path in them (11 strings, the path
+field and the three code examples). Every other byte is as before.
 """
 
 from __future__ import annotations
