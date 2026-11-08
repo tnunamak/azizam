@@ -110,15 +110,18 @@ def bounds_from_config(config: Mapping[str, Any]) -> Bounds:
 # -- structure of an inline template -----------------------------------------------------------------------------------
 
 
-def inline_templates(contract: Mapping[str, Any]) -> list[tuple[str, Any]]:
-    """``(binding key, inline template)`` for each binding that carries its template inline
-    (``bindings.<key>.template: {inline: ...}``, 5.7). Any adapter: nothing here reads what the template means."""
-    found: list[tuple[str, Any]] = []
+def inline_templates(contract: Mapping[str, Any]) -> list[tuple[str, str, Any]]:
+    """``(binding key, template field, inline template)`` for each binding that carries its template inline (5.7). The
+    field is the one the binding's description declares as a template; any adapter, and nothing here reads what the
+    template means."""
+    found: list[tuple[str, str, Any]] = []
     bindings = contract.get("bindings")
+    descriptors = binding_descriptors.cached_shipped_binding_descriptors()
     for key, block in (bindings.items() if isinstance(bindings, Mapping) else ()):
-        template = block.get("template") if isinstance(block, Mapping) else None
-        if isinstance(template, Mapping) and isinstance(template.get("inline"), (Mapping, list)):
-            found.append((str(key), template["inline"]))
+        descriptor = descriptors.get(str(key))
+        carried = binding_descriptors.inline_template(descriptor, block) if descriptor and isinstance(block, Mapping) else None
+        if carried is not None:
+            found.append((str(key), carried[0], carried[1]))
     return found
 
 
@@ -144,8 +147,8 @@ def bound_problems(contract: Mapping[str, Any], bounds: Bounds) -> list[Contract
     """Every inline template that breaks a bound. Bytes are the canonical JSON; a node is one entry of the template's
     top level (the graph's nodes); depth is the nesting of objects and lists."""
     problems: list[ContractError] = []
-    for key, template in inline_templates(contract):
-        at = ("bindings", key, "template", "inline")
+    for key, field, template in inline_templates(contract):
+        at = ("bindings", key, field, "inline")
         size = len(canonical_bytes(template))
         if size > bounds.max_template_bytes:
             problems.append(ContractError(at, BOUND_EXCEEDED, f"the template is {size} bytes; the limit is {bounds.max_template_bytes}"))
@@ -200,7 +203,7 @@ def _selector_save_problems(contract: Mapping[str, Any], descriptors: Mapping[st
         return []
     shipped = output_selectors._cached_shipped()
     cardinalities = manifests._cardinalities(bindings, descriptors)
-    inline = dict(inline_templates(contract))
+    inline = {key: template for key, _field, template in inline_templates(contract)}
     problems: list[ContractError] = []
     for key, block in bindings.items():
         if not isinstance(block, Mapping):

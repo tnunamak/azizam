@@ -208,9 +208,18 @@ def _template(nodes: int = 3, depth: int = 1, padding: int = 0) -> dict:
 
 
 def _with_inline(contract: dict, template: dict) -> dict:
+    """The template carried in the binding's own template field (the description's ``kind: template``), not by file."""
     key = next(iter(contract["bindings"]))
-    contract["bindings"][key] = {**contract["bindings"][key], "template": {"inline": template}}
+    contract["bindings"][key] = {**contract["bindings"][key], "workflow": {"inline": template}}
     return contract
+
+
+def bundled_template(workflow_id: str = BUNDLED_ID) -> dict:
+    """The graph the bundled workflow names by file, to carry inline."""
+    import json
+    from gateway.discovery import ROOT
+    block = next(iter(discovery.bundled_workflow_manifests()[workflow_id]["bindings"].values()))
+    return json.loads((ROOT / block["workflow"]).read_text(encoding="utf-8"))
 
 
 def test_each_bound_is_checked_with_its_path_and_code():  # row 9
@@ -218,7 +227,7 @@ def test_each_bound_is_checked_with_its_path_and_code():  # row 9
     contract = _with_inline(owner_contract(), _template(nodes=9, depth=9, padding=500))
     problems = bound_problems(contract, limits)
     assert [p.code for p in problems] == [BOUND_EXCEEDED] * 3
-    assert all(p.path[-2:] == ("template", "inline") for p in problems)
+    assert all(p.path[-2:] == ("workflow", "inline") for p in problems)
     assert bound_problems(_with_inline(owner_contract(), _template(2, 1)), limits) == []
     assert template_depth({}) == 1 and template_depth(5) == 0 and template_depth({"a": [1, {"b": 2}]}) == 3
 
