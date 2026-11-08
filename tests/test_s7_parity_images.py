@@ -185,7 +185,6 @@ def test_images_09_model_resolves_to_a_workflow_on_the_receipt(tmp_path):
     assert_same(old, row, status, ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow", "manifest_id", "manifest_hash", "manifest_version")))
 
 
-@ROW_PENDING
 def test_images_10_b64_json_answer(tmp_path):
     old, row = pair(tmp_path, GEN, body(), ok)
     old_has(old, "b64", data_items(old) and "b64_json" in data_items(old)[0])
@@ -236,7 +235,6 @@ def test_images_16_background_removal_headers(tmp_path):
     assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image-background")), engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_17_engine_traffic_of_one_round(tmp_path):
     old, row = pair(tmp_path, GEN, body(), ok)
     assert_same(old, row, status, engine)
@@ -348,14 +346,12 @@ def test_images_26_client_disconnect_during_poll_cancels_and_answers_499(tmp_pat
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@NEEDS_RH
 def test_images_27_task_cancellation_cancels_the_engine_job(tmp_path):
     old, row = cell(tmp_path, "ig", "cancel_queued")
     old_has(old, "a cancel call", any("cancel" in path for _m, path in engine(old)))
     assert_same(old, row, engine_without_probes, ("cancel body", lambda o: engine_bodies(o, "/api/jobs/p1/cancel")), ("receipts", receipt_summary))
 
 
-@ROW_PENDING
 def test_images_28_no_health_probe_before_submit(tmp_path):
     """writers-62: the only ``/system_stats`` calls are the capacity samples; none comes before the first prompt."""
     old, row = pair(tmp_path, GEN, body(), ok)
@@ -418,14 +414,12 @@ def test_images_34_wait_timeout_answers_and_closes_the_receipt(tmp_path):
     assert_same(old, row, status, failure, sleeps, engine_without_probes, receipt_summary)
 
 
-@NEEDS_RH
 def test_images_35_history_summary_carries_no_run_facts(tmp_path):
     """writers-30: no image route sets run facts, so the kept History summary has none. The row must not add any."""
     old, row = pair(tmp_path, GEN, body(), ok)
     assert_same(old, row, ("history run", lambda o: [r.get("receipt_json", {}).get("metadata", {}).get("run") for r in receipts(o)]))
 
 
-@ROW_PENDING
 def test_images_36_library_asset_origin(tmp_path):
     old, row = pair(tmp_path, GEN, body(), ok)
     old_has(old, "an origin", any(origins(old)))
@@ -600,7 +594,6 @@ def test_images_E17_mask_headers(tmp_path):
     assert_same(old, row, status, ("mask headers", lambda o: headers_with(o, "x-image-mask")), ("warnings", lambda o: receipt_fields(o, "warnings")))
 
 
-@NEEDS_RH
 def test_images_E18_post_composite_mask(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(model="krea2-turbo"), edit_ok)
     old_has(old, "an answer", status(old))
@@ -1119,7 +1112,6 @@ def test_images_R06_crash_mid_run_copy(tmp_path):
     assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R07_restart_closes_open_receipts(tmp_path):
     """Allowed delta ``restart_closes_receipt``: the row's receipt is closed by the recovery of the run; the old
     route left it for ``close_orphan``. The test asserts the receipt is no longer open."""
@@ -1163,7 +1155,6 @@ def test_images_F05_timeout(tmp_path):
     assert_same(old, row, status, failure, sleeps)
 
 
-@ROW_PENDING
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[

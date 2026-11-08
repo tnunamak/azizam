@@ -26916,7 +26916,8 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
         max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
-        batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True))
+        batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True),
+        stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect))
 
 
 def _register_graph_runner() -> None:

@@ -101,6 +101,8 @@ class GraphHost:
     batching: Callable[[RunContext, Any], Batching | None]
     stages: Mapping[str, Callable[..., Awaitable[list[bytes]]]]
     say: Callable[[str], None] = lambda text: None
+    # Each media input of the run, held by the engine, as the name the engine gives it: ``(ctx, adapter, connection) -> {input: name}``.
+    stage_media: Callable[..., Awaitable[Mapping[str, str]]] | None = None
 
 
 def retry_reason_of(kind: str, binding_key: str) -> str | None:
@@ -175,19 +177,23 @@ class NodeGraphRunner:
             context=ResultContext(self.host.limits()))
         op = str(ctx.pin.contract["intent"])
         body = {**dict(ctx.inputs), **dict(ctx.generated)}
+        staged: dict[str, str] = {}
+        if ctx.media and self.host.stage_media is not None:
+            staged = dict(await self.host.stage_media(ctx, adapter, lambda: self.host.connection(service_id, record)))
+            body.update(staged)
         current = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
         metadata = current.get("metadata") or {}
         if metadata.get("protocol_job") or metadata.get("protocol_submitting") or not _only_files(ctx.pin.contract):
             await protocol_jobs.run(runtime, op, body, job_id=ctx.job_id)
             return
-        await self._rounds(ctx, adapter, runtime, op)
+        await self._rounds(ctx, adapter, runtime, op, staged)
 
-    async def _rounds(self, ctx: RunContext, adapter: Any, runtime: Any, op: str) -> None:
+    async def _rounds(self, ctx: RunContext, adapter: Any, runtime: Any, op: str, staged: Mapping[str, str]) -> None:
         host = self.host
         poll = adapter.poll_for(op)
         manifest_inputs = (ctx.pin.contract.get("inputs") or {})
         options = ((ctx.payload.get("body") or {}).get("options") or {})
-        template_request = runtime.request(op, {**dict(ctx.inputs), **dict(ctx.generated)})
+        template_request = runtime.request(op, {**dict(ctx.inputs), **dict(ctx.generated), **staged})
         conn = runtime.connection_for(op)
         batching = host.batching(ctx, adapter)
         binding = ctx.pin.binding
@@ -210,13 +216,13 @@ class NodeGraphRunner:
                 files = await self._one_round(
                     ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, target,
                     probe, headers, binding, outputs, limits, poll, f"round {rounds}/{plan.max_rounds} (target={target})",
-                    failure_binding, conn, retry_freed=lambda: models_freed)
+                    failure_binding, conn, retry_freed=lambda: models_freed, staged=staged)
                 if files is None:       # one retry after the engine's models were freed
                     models_freed = True
                     files = await self._one_round(
                         ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, 1,
                         None, headers, binding, outputs, limits, poll, f"round {rounds}/{plan.max_rounds} after model unload",
-                        failure_binding, conn, retry_freed=lambda: True)
+                        failure_binding, conn, retry_freed=lambda: True, staged=staged)
                 names, round_files = files
                 result_name = names or result_name
                 offset += max(1, len(round_files))
@@ -241,10 +247,10 @@ class NodeGraphRunner:
         protocol_jobs._commit_bundle(runtime, ctx.job_id, bundle, clear_marker=True)
 
     async def _one_round(self, ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, target,
-                         probe, headers, binding, outputs, limits, poll, label, failure_binding, conn, *, retry_freed):
+                         probe, headers, binding, outputs, limits, poll, label, failure_binding, conn, *, retry_freed, staged):
         host = self.host
         values = generated_defaults.offset_values(manifest_inputs, dict(ctx.generated), offset)
-        round_body = {**dict(ctx.inputs), **values, **(dict(batching.round_inputs(plan, target)) if batching is not None else {})}
+        round_body = {**dict(ctx.inputs), **staged, **values, **(dict(batching.round_inputs(plan, target)) if batching is not None else {})}
         request = CanonicalRequest(op=op, body=copy.deepcopy(round_body), params=template_request.params)
         graph, payload = adapter.compile(op, request)
         media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
