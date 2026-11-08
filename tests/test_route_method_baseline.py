@@ -60,6 +60,9 @@ baseline's paths and its own. Only these differences are allowed:
 * GET /admin/api/settings/effective and /admin/api/settings/effective/export are deleted (config homes C10; the
   sections routes under /admin/api/config replace them): each falls to the catch-all or a 405, like the other
   deleted paths;
+* /admin/api/workflows and the paths under it are new owner routes (the owner's workflow store, CODE_TO_DATA_S4_S8
+  I2; tests/test_workflow_owner_api.py covers them, tests/test_admin_secret_sweep_writes.py their writes): each answers
+  with its own route, that route's 405, or the catch-all; none existed in r18;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -184,6 +187,8 @@ def _deliberate(key: str) -> str | None:
         return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
     if path.startswith("/admin/api/config/") and path not in {"/admin/api/config/export", "/admin/api/config/reload"} or path == "/admin/api/config":
         return "config_sections"  # owner routes for the config sections (gateway/config_api.py); tests/test_config_api.py covers them
+    if path == "/admin/api/workflows" or path.startswith("/admin/api/workflows/"):
+        return "workflow_owner"  # the owner's workflow store routes (gateway/workflow_owner_api.py)
     if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
@@ -343,6 +348,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # lightweight member CSRF-token read for sign-out; tests/test_session_lifecycle.py covers it
         if kind == "remembered" and key not in old:
             continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
+        if kind == "workflow_owner" and key not in old:
+            continue  # new owner workflow routes; tests/test_workflow_owner_api.py covers them
         if kind == "provider_sign_out":
             # As /login: GET is the route, HEAD says 405 for it, and every other method falls to the catch-all.
             expected = {"GET": "/login/provider-sign-out provider_sign_out",
@@ -423,6 +430,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if kind == "lifecycle_hop" and key not in old:
             continue
         if kind == "config_sections" and key not in old:
+            continue
+        if kind == "workflow_owner" and key not in old:
             continue
         if kind == "media_job_results" and key not in old:
             continue  # GET is the result route; the other methods answer as the catch-all does
