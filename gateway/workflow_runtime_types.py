@@ -405,6 +405,9 @@ class RunRequest:
     # Which text a failed job stores: "adapter" (the adapter's own message) or "category_copy" (the fixed sentence for the
     # failure's category). It is data of the row (``runtime_policy.job_failure_text``) and not part of run identity.
     failure_text: str = "adapter"
+    # The intent the job row is filed under: the one the matched route declares (``runtime_policy.intent``), the same value
+    # the request receipt records. Empty: the generic run intent. Not part of run identity.
+    intent: str = ""
 
 
 @dataclass(frozen=True)

@@ -23836,7 +23836,7 @@ def _recover_workflow_runs() -> None:
     runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
     # No task of a stopped gateway is left to close the receipt of a run it was serving.
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
-        if job.get("intent") == workflow_run.RUN_INTENT:
+        if workflow_run.is_run_job(job):
             receipt_store.close_orphan(str(job.get("request_id") or ""))
     core = _workflow_run_core()
     if core is None:
@@ -26062,12 +26062,12 @@ async def gateway_media_job_content(job_id: str, request: Request):
         }, status_code=503 if retryable else 410,
            headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
-    if intent == mesh_api.MESH_INTENT:
-        return _mesh_job_content(job)  # the plan was checked above, with the other kinds
-    if intent == workflow_run.RUN_INTENT:
+    if workflow_run.is_run_job(job):  # first: a run's row carries its route's intent, which may be mesh.generate
         single = await asyncio.to_thread(_run_job_content, job_id, auth_context)
         if single is not None:
             return single
+    if intent == mesh_api.MESH_INTENT:
+        return _mesh_job_content(job)  # the plan was checked above, with the other kinds
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"
@@ -27044,10 +27044,8 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     identity = auth.identity
     # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
     # activity read their capability from it. A route that declares none records the generic run intent.
-    route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
-    intent = str((route.runtime_policy if route else {}).get("intent") or workflow_run.RUN_INTENT)
     return _RunReceiptOwner(RouteReceipt(
-        protocol=row.receipt_protocol, intent=intent, path=path, request_id=request_id,
+        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
         app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
 

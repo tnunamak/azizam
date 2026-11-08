@@ -30,6 +30,7 @@ from starlette.responses import Response
 from gateway import operation_security, request_history_capture
 from gateway.access_plans import capability_for_intent
 from gateway.frontend_shapes import build_shape, bundled_rows
+from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
     FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused, WorkflowEntry)
 
@@ -105,6 +106,13 @@ def _outcome(view: RunJobView | None) -> tuple[str, str]:
     return "failed", "wait_timeout"
 
 
+def route_intent(row: FrontendRow, path: str) -> str:
+    """The intent the matched route declares (``runtime_policy.intent``); the generic run intent when it declares none.
+    The request receipt and the job row both file under it."""
+    route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
+    return str((route.runtime_policy if route else {}).get("intent") or RUN_INTENT)
+
+
 def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -> Callable[[Request], Awaitable[Response]]:
     async def serve(request: Request) -> Response:
         caller = await asyncio.to_thread(deps.authenticate, request, canonical)
@@ -123,7 +131,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         request_id = deps.new_request_id()
         async with deps.open_receipt(caller, request_id, canonical, row) as owner:
             response = await _serve_open(deps, row, answered, shape, core, request, caller, snapshot, spool, owner,
-                                         request_id, wants_async)
+                                         request_id, wants_async, route_intent(row, canonical))
         response.headers[REQUEST_ID_HEADER] = request_id
         return response
 
@@ -132,7 +140,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
 
 async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRow, shape: Any, core: Any,
                       request: Request, caller: Any, snapshot: RegistrySnapshot, spool: RequestSpool, owner: Any,
-                      request_id: str, wants_async: bool) -> Response:
+                      request_id: str, wants_async: bool, intent: str) -> Response:
     """The steps after the receipt opens. Each exit reports the outcome, or hands the receipt to the core."""
     with deps.scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
@@ -145,7 +153,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
             deps.name_receipt(owner, entry)
             facts = run_facts(entry)
             setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
-        run_request = dataclasses.replace(run_request, request_id=request_id)
+        run_request = dataclasses.replace(run_request, request_id=request_id, intent=intent)
         # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
         # finished job still answers that job when its backend has become unavailable (S7 parity 6.2).
         outcome = await core.submit_run(run_request, caller, snapshot=snapshot)

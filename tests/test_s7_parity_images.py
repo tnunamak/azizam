@@ -768,7 +768,6 @@ def job_everything(rig, job_id):
 
 def _job_doc(o, i=1):
     d = doc(o, i) or {}
-    # ``intent`` is left out: the core files every workflow run under one intent (delta ``job_row_intent``, see J06).
     return {k: d.get(k) for k in ("status", "workflow", "progress", "error", "retryable", "attempts", "mode") if k in d}
 
 
@@ -808,13 +807,10 @@ def test_images_J05_admission_refusal_writes_a_receipt(tmp_path):
 
 
 def test_images_J06_job_row_intent_workflow_payload(tmp_path):
-    """DELTA ``job_row_intent``: the old job row filed its intent as the image intent; the core files every workflow run under
-    one intent and the row names the workflow. The workflow and status are unchanged."""
     old, row = job_pair(tmp_path, job_body(), job_setup(), run=False)
     old_has(old, "a job row", media_jobs(old))
     # The row runs the job at once (the old scheduler is captured), so the status is not compared.
-    assert [(j["intent"], j.get("workflow")) for j in media_jobs(old)] == [("image.generate", "image.generate.krea2-turbo")]
-    assert [(j["intent"], j.get("workflow")) for j in media_jobs(row)] == [("workflow.run", "image.generate.krea2-turbo")]
+    assert_same(old, row, ("intent and workflow", lambda o: [(j["intent"], j.get("workflow")) for j in media_jobs(o)]))
 
 
 def _job_rows(o):

@@ -47,6 +47,13 @@ log = logging.getLogger(__name__)
 
 # The job store's intent and mode for a job made by this core. The job's workflow id is the workflow it runs.
 RUN_INTENT = "workflow.run"
+
+
+def is_run_job(job: Mapping[str, Any] | None) -> bool:
+    """A job the run core owns. Its row intent is the route's declared one (or ``RUN_INTENT``); the mode is always the run's."""
+    if not job:
+        return False
+    return job.get("intent") == RUN_INTENT or (job.get("metadata") or {}).get("mode") == RUN_INTENT
 # How a job's terminal status closes the request receipt it carries (status, reason); a failed job uses its error code.
 RECEIPT_OUTCOMES = {
     media_jobs.STATUS_SUCCEEDED: ("succeeded", "succeeded"),
@@ -570,7 +577,7 @@ class WorkflowRunCore:
         binding = entry.bindings[binding_key]
         owner_hash, app_id, key_name = port.job_owner(caller)
         job = media_jobs.MediaJob(
-            intent=RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
+            intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
                       "frontend": req.frontend_id, "failure_text": req.failure_text})
@@ -866,7 +873,7 @@ class WorkflowRunCore:
             counts[outcome] = counts.get(outcome, 0) + 1
 
         for job in media_jobs.unfinished(path=self._path):
-            if job.get("intent") != RUN_INTENT:
+            if not is_run_job(job):
                 continue
             job_id = str(job["job_id"])
             with media_jobs.connection(self._path) as conn:
@@ -978,7 +985,7 @@ class WorkflowJobService:
 
     def _readable(self, job_id: str, caller: CallerContext) -> dict[str, Any]:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
-        if (job is None or job.get("intent") != RUN_INTENT or not self._port.can_read(job, caller)
+        if (job is None or not is_run_job(job) or not self._port.can_read(job, caller)
                 or media_jobs.tombstoned(job_id, path=self._path)):
             raise JobNotFound(job_id)
         return job
