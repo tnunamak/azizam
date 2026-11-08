@@ -136,6 +136,9 @@ def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str
                 chosen = next((entry for entry in pool if entry.id == owner.id), None)
                 if chosen is not None:
                     return chosen
+        short = [entry for entry in pool if entry.id == f"{entry.contract.get('intent')}.{target}"]
+        if len(short) == 1:        # a workflow is also addressed by its id without the intent that starts it
+            return short[0]
         return error_response(404, f"The model {target!r} does not exist or is not available on this route",
                               code=WORKFLOW_NOT_FOUND, param="model")
     fitting = [entry for entry in pool if required_inputs(entry) <= set(supplied)]

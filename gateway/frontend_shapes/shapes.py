@@ -25,6 +25,9 @@ from gateway.workflow_runtime_types import (
 )
 
 AssetUrl = Callable[[ResultRef, CallerContext], str]
+# The deployment's default workflow for a wire, by shape id: installed at start by the main module from its
+# configuration (a shape holds no deployment setting). A shape with no entry has no default.
+DEFAULT_WORKFLOWS: dict[str, Callable[[], str | None]] = {}
 _SIZE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
 
 
@@ -35,15 +38,23 @@ class OpenAIImagesJson(Shape):
     files = "none"
     output_prefix = "image/"
     timeout_code = "image_generation_timeout"
+    # Wire fields that shape the picture or its encoding, not the workflow's inputs: the answer's encoding and size are
+    # read from the wire request when it is rendered.
+    transport_fields = Shape.transport_fields | frozenset({
+        "size", "n", "quality", "background", "output_format", "output_compression", "style", "moderation",
+        "partial_images", "stream", "extensions"})
 
     def __init__(self, *, wait_s: float = 300.0, asset_url: AssetUrl | None = None) -> None:
         super().__init__(wait_s=wait_s)
         self.asset_url = asset_url
 
+    def default_target(self) -> str | None:
+        resolver = DEFAULT_WORKFLOWS.get(self.shape_id)
+        return resolver() if resolver is not None else None
+
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         match = _SIZE.match(str(wire.get("size") or ""))
         if match and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
-            inputs.pop("size", None)
             inputs["width"], inputs["height"] = int(match.group(1)), int(match.group(2))
         return inputs
 
