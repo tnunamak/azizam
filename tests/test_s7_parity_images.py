@@ -303,8 +303,8 @@ NO_PROMPT_ID = _failing(prompt={"json": {"node_errors": {}}})
 EXEC_ERROR = _failing(history=FAILED)
 
 
-@pytest.mark.parametrize("name,setup", [("unreachable", UNREACHABLE), ("http_500", HTTP_500), ("no_prompt_id", NO_PROMPT_ID)])
-@ROW_PENDING
+@pytest.mark.parametrize("name,setup", [("unreachable", UNREACHABLE), pytest.param("http_500", HTTP_500, marks=ROW_PENDING),
+                                        ("no_prompt_id", NO_PROMPT_ID)])
 def test_images_22_engine_failures_at_submit(tmp_path, name, setup):
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
@@ -1132,7 +1132,6 @@ def test_images_R07_restart_closes_open_receipts(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------------ 6. failure texts
-@ROW_PENDING
 def test_images_F01_engine_unreachable(tmp_path):
     old, row = pair(tmp_path, GEN, body(), UNREACHABLE)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
