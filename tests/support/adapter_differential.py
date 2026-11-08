@@ -183,7 +183,7 @@ class Normalizer:
         value = _UUID.sub(lambda m: self.token("uuid", m.group(0)), value)
         value = _HEX32.sub(lambda m: self.token("hex32", m.group(0)), value)
         value = _ISO_TIME.sub(lambda m: "<iso-time>" if not payload or _after_time_key(value, m.start()) else m.group(0), value)
-        value = _NEUTRAL_HTTP_DATE.sub("<http-date>", value)
+        value = _NEUTRAL_HTTP_DATE.sub(lambda m: "<http-date>" if not payload or _after_time_key(value, m.start()) else m.group(0), value)
         value = _NUMBER_AFTER_KEY.sub(self._number_after_key, value)
         keep_input, keep_request = self._exact_hashes(value)
         value = _INPUT_HASH.sub(self._hash_sub(keep_input, '"<digest>"'), value)
