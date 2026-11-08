@@ -42,11 +42,14 @@ class RunFailed(Exception):
     ``upstream_status`` and ``retryable``. The core retries only when ``retry_reason`` is set."""
 
     def __init__(self, code: str, category: str, client_message: str, *, upstream_status: int | None = None,
-                 retryable: bool = False, retry_reason: str | None = None, retry_after_s: float | None = None,
+                 retryable: bool | None = None, retry_reason: str | None = None, retry_after_s: float | None = None,
                  queue_position: int | None = None) -> None:
         super().__init__(code)
         self.code, self.category, self.client_message = code, category, client_message
-        self.upstream_status, self.retryable = upstream_status, retryable
+        self.upstream_status = upstream_status
+        # A caller may ask again after a timeout, a capacity refusal or an engine that answered with a server error.
+        self.retryable = retryable if retryable is not None else (
+            category in ("timeout", "capacity") or (category == "upstream" and (upstream_status or 0) >= 500))
         self.retry_reason, self.retry_after_s, self.queue_position = retry_reason, retry_after_s, queue_position
 
 

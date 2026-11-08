@@ -38,7 +38,9 @@ def test_a_row_value_that_is_not_one_of_the_two_words_is_refused_at_load():
 
 def test_two_routes_of_one_row_cannot_disagree():
     document = yaml.safe_load(frontend_shapes.ROWS_PATH.read_text(encoding="utf-8"))
-    row = next(r for r in document[frontend_shapes.ROWS_KEY] if len(r["routes"]) > 1)
+    row = document[frontend_shapes.ROWS_KEY][0]
+    row["routes"] = [copy.deepcopy(row["routes"][0]), copy.deepcopy(row["routes"][0])]
+    row["routes"][1]["canonical"] = row["routes"][0]["canonical"] + "-second"
     row["routes"][0].setdefault("runtime_policy", {})["job_failure_text"] = "category_copy"
     with pytest.raises(frontend_shapes.RowError, match="job_failure_text"):
         frontend_shapes.parse_rows(document)
