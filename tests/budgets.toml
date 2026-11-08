@@ -795,7 +795,8 @@ pytest = 22222
 # History receipt re-read: +4 cases in history-page.spec.tsx; measured 3926 (vitest list --root web).
 # Status coverage (2026-11-08): +2 cases in owner-status.spec.tsx (a busy or unchecked engine still serves its capability); measured 3928 (vitest list --root web).
 # Status coverage review (2026-11-08): +9 cases in owner-status.spec.tsx (starting, faulted, other-label and provider spares); measured 3937.
-vitest = 3937
+# Builder A carried test (2026-11-08): +1 case in owner-status.spec.tsx (a degraded spare that shares a label is a fault on record).
+vitest = 3938
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

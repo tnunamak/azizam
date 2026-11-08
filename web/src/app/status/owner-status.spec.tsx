@@ -696,6 +696,8 @@ it.each([
   ["unavailable", "neutral", "Chat", UNCONFIRMED],
   // A fault on record is not a spare.
   ["unavailable", "bad", "Chat", EXPOSED],
+  // A degraded engine is a fault on record too, though its tone is warn: it covers nothing.
+  ["degraded", "warn", "Chat", EXPOSED],
   // An engine for another capability covers nothing.
   ["busy", "ok", "Images", EXPOSED],
   ["unavailable", "neutral", "Images", EXPOSED],
