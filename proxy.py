@@ -26925,6 +26925,13 @@ _register_graph_runner()
 # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.ImageJobs.shape_id] = _image_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipart.shape_id] = image_edit_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[
+    frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+# What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
+frontend_wire_shapes.FIXED_INPUTS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = lambda: {
+    "prompt": IMAGE_VARIATIONS_PROMPT, "denoise": _image_variations_denoise()}
 
 
 def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:

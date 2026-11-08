@@ -7,7 +7,7 @@ no model and no engine; the input names it sets come from the chosen workflow's 
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
 from starlette.requests import Request
@@ -145,7 +145,7 @@ class Shape:
                              spool: RequestSpool) -> RunRequest | Response:
         uploads: list[tuple[str, Any]] = []
         if self.body == "multipart":
-            read = await _wire.split_form(request, self.form_limits(row, snapshot, spool))
+            read = await _wire.split_form(request, self.form_limits(row, snapshot, spool), self.unreadable_form)
             if isinstance(read, Response):
                 return read
             fields, uploads = read
@@ -161,13 +161,22 @@ class Shape:
         if row.default_answer and not answer.get(self.answer_field):
             answer = {**answer, self.answer_field: row.default_answer}
         request.state.answer_form = answer
-        target = _wire.pop_str(fields, "model") or self.default_target()
+        refused = self.precheck(fields, uploads)
+        if refused is not None:
+            return refused
+        named = _wire.pop_str(fields, "model")
         servable = lambda entry: not self.profile(entry.contract)  # noqa: E731
+        target = self.refine_target(named or self.default_target(), named=bool(named), uploads=uploads,
+                                    exists=lambda name: not isinstance(
+                                        _wire.choose_workflow(snapshot, row, target=name, supplied=[], servable=servable), Response))
         pool = _wire.candidates(snapshot, row, servable)
         supplied = [*fields, *(name for entry in pool for name in _wire.asset_input_names(entry) if uploads)]
         chosen = _wire.choose_workflow(snapshot, row, target=target, supplied=supplied, servable=servable)
         if isinstance(chosen, Response):
-            return chosen
+            return self.no_such_model(target, chosen)
+        refused = self.postcheck(chosen, fields, uploads)
+        if refused is not None:
+            return refused
         mapping = self.file_inputs(chosen, [name for name, _ in uploads])
         if isinstance(mapping, Response):
             return mapping
@@ -185,6 +194,27 @@ class Shape:
         answer form it asks for (how this request wants the result shown; it never enters the job). A bad value is a
         shaped refusal. The fields are read, not removed: ``transport_fields`` keeps them out of the inputs."""
         return {}, {}
+
+    def unreadable_form(self) -> Response:
+        """Hook: what a multipart body that does not parse is told."""
+        return _wire.error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
+
+    def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        """Hook: refusals the wire made before it looked up any workflow."""
+        return None
+
+    def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
+                      exists: Callable[[str], bool]) -> str | None:
+        """Hook: the workflow name a request runs, from the name it sent (or the default) and the files it carries."""
+        return target
+
+    def no_such_model(self, target: str | None, refusal: Response) -> Response:
+        """Hook: how the wire tells that the chosen name selects nothing (``refusal`` is the common answer)."""
+        return refusal
+
+    def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        """Hook: refusals the wire made once the workflow is known."""
+        return None
 
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""

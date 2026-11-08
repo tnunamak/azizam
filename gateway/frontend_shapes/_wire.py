@@ -146,7 +146,7 @@ def _bounded(request: Request, budget: float) -> Request:
     return Request(request.scope, receive)
 
 
-async def split_form(request: Request, limits: FormLimits) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
+async def split_form(request: Request, limits: FormLimits, unreadable: Callable[[], Response] | None = None) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
     """A multipart body as its fields and its file parts (name, upload) in the order received. The body is bounded
     while it is read: its bytes by ``limits.body_budget``, its file and text parts by their counts. A file part whose
     name is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
@@ -160,7 +160,8 @@ async def split_form(request: Request, limits: FormLimits) -> tuple[dict[str, An
         return error_response(413, "The request body is larger than this route accepts", code="payload_too_large")
     except (MultiPartException, HTTPException, ValueError):  # the parser's own error is a ValueError
         _close_spills(parser)
-        return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
+        return unreadable() if unreadable is not None else error_response(
+            400, "The request body is not valid multipart/form-data", code="invalid_request_body")
     fields: dict[str, Any] = {}
     uploads: list[tuple[str, Any]] = []
     for name, value in form.multi_items():

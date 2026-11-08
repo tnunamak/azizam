@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse, Response
 
 import json
 
-from gateway import image_extensions, image_output
+from gateway import client_errors, image_extensions, image_output
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import Shape, coerce, job_object
 from gateway.workflow_runtime_types import (
@@ -32,6 +32,8 @@ AssetUrl = Callable[[ResultRef, CallerContext], str]
 # The deployment's default workflow for a wire, by shape id: installed at start by the main module from its
 # configuration (a shape holds no deployment setting). A shape with no entry has no default.
 DEFAULT_WORKFLOWS: dict[str, Callable[[], str | None]] = {}
+# Inputs a wire sets itself, by shape id: installed by the main module from configuration. Only a declared input is set.
+FIXED_INPUTS: dict[str, Callable[[], Mapping[str, Any]]] = {}
 MAX_IMAGES = 10                 # the public range of ``n``: one request returns at most this many pictures
 _SIZE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
 
@@ -61,14 +63,29 @@ class OpenAIImagesJson(Shape):
         resolver = DEFAULT_WORKFLOWS.get(self.shape_id)
         return resolver() if resolver is not None else None
 
+    def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        if not fields.get("prompt"):
+            return _wire.error_response(400, "prompt is required")
+        return None
+
+    def no_such_model(self, target: str | None, refusal: Response) -> Response:
+        if json.loads(bytes(refusal.body)).get("error", {}).get("code") != "workflow_not_found":
+            return refusal
+        return _wire.error_response(404, f"Model '{target}' is not available for image generation.", code="model_not_found",
+                                    param="model")
+
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         extensions = wire.get("extensions")
         block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
         if isinstance(block, Mapping):
             inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()})
-        match = _SIZE.match(str(wire.get("size") or ""))
-        if match and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
-            inputs["width"], inputs["height"] = int(match.group(1)), int(match.group(2))
+        dimensions = read_size(wire.get("size"))
+        if isinstance(dimensions, tuple) and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
+            inputs["width"], inputs["height"] = dimensions
+        fixed = FIXED_INPUTS.get(self.shape_id)
+        for name, value in (fixed().items() if fixed is not None else ()):
+            if _wire.declared(entry, name):
+                inputs[name] = value
         return inputs
 
     # The top-level wire fields this route accepts; any other is refused (a workflow's own inputs go under ``extensions``).
@@ -148,6 +165,24 @@ class OpenAIImagesJson(Shape):
         return JSONResponse({"created": view.created_at_s, "data": items})
 
 
+IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
+MASK_PART = "mask"
+SECOND_CHOICE = ".multi_image"                   # DEFAULT_WORKFLOWS key suffix: the default when several pictures arrive
+_DIMENSIONS = re.compile(r"[0-9]+x[0-9]+")
+
+
+def read_size(text: Any) -> tuple[int, int] | None | bool:
+    """``WIDTHxHEIGHT`` in the spellings that worked before strict validation (``512X768``, ``512 x 768``). None: no size
+    or ``auto``; False: not a size."""
+    if text is None or text == "auto":
+        return None
+    normalized = re.sub(r"\s*[xX]\s*", "x", text.strip()) if isinstance(text, str) else ""
+    if not _DIMENSIONS.fullmatch(normalized):
+        return False
+    width, height = (int(part) for part in normalized.split("x"))
+    return (width, height) if width > 0 and height > 0 else False
+
+
 class OpenAIImagesMultipart(OpenAIImagesJson):
     """The same answer for a multipart request: a picture, and optionally a mask or more pictures, as file parts."""
 
@@ -155,6 +190,74 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     body = "multipart"
     files = "one"
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
+    not_object_text = "The request body must be a JSON object"
+    intent = "image.edit"
+
+    def unreadable_form(self) -> Response:
+        return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
+
+    def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        if read_size(fields.get("size")) is False:
+            return _wire.error_response(400, "size must be 'auto' or WIDTHxHEIGHT with positive integers", param="size",
+                                        code=None, null_code=True)
+        count = len([name for name, _ in uploads if name in IMAGE_PARTS])
+        if count == 0:
+            return _wire.error_response(400, "image is required")
+        return self.check_count(count)
+
+    def check_count(self, count: int) -> Response | None:
+        return None
+
+    def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
+                      exists: Callable[[str], bool]) -> str | None:
+        """The edit name a request runs: a name that is no edit workflow reads as its ``-edit`` sibling, a mask asks for
+        the ``-inpaint`` sibling, and several pictures with no name ask for the multi-picture default."""
+        if not target:
+            return target
+        count = len([name for name, _ in uploads if name in IMAGE_PARTS])
+        masked = any(name == MASK_PART for name, _ in uploads)
+        default = DEFAULT_WORKFLOWS.get(self.shape_id)
+        multi = DEFAULT_WORKFLOWS.get(self.shape_id + SECOND_CHOICE)
+        if multi is not None and target == multi():
+            return self.inpaint_of(default() if default else target, exists) if masked else target
+        if not target.endswith(("-edit", "-inpaint")) and not exists(target):
+            target = f"{target}-edit"
+        if masked:
+            return self.inpaint_of(target, exists)
+        if count > 1 and default is not None and target == default() and multi is not None:
+            return multi()
+        return target
+
+    @staticmethod
+    def inpaint_of(name: str, exists: Callable[[str], bool]) -> str:
+        if name.endswith("-inpaint"):
+            return name
+        sibling = f"{name.removesuffix('-edit')}-inpaint"
+        return sibling if exists(sibling) else name
+
+    def no_such_model(self, target: str | None, refusal: Response) -> Response:
+        if json.loads(bytes(refusal.body)).get("error", {}).get("code") != "workflow_not_found":
+            return refusal
+        return _wire.error_response(404, f"Model '{target}' is not available for image editing.", code="model_not_found",
+                                    param="model", null_code=True)
+
+    def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        name = entry.id.removeprefix(f"{self.intent}.")
+        if _wire.entry_required(entry, "prompt") is True and not fields.get("prompt"):
+            return _wire.error_response(400, "prompt is required")
+        pictures = len([part for part, _ in uploads if part in IMAGE_PARTS])
+        slots = [asset for asset in _wire.asset_input_names(entry) if asset != MASK_PART]
+        needed = len([asset for asset in slots if _wire.entry_required(entry, asset) is True])
+        if pictures < needed:
+            return _wire.error_response(400, f"workflow {name} requires at least {needed} input image(s); {pictures} were provided",
+                                        param="image[]", code="missing_required_image")
+        if pictures > len(slots):
+            return _wire.error_response(400, f"workflow {name} accepts at most {len(slots)} input image(s); {pictures} were provided",
+                                        param="image[]", code="too_many_images")
+        if _wire.entry_required(entry, MASK_PART) is True and not any(part == MASK_PART for part, _ in uploads):
+            return _wire.error_response(400, f"mask is required for workflow input {MASK_PART}", param=MASK_PART,
+                                        code="missing_required_parameter")
+        return None
 
 
 class OpenAIImagesVariations(OpenAIImagesMultipart):
@@ -162,6 +265,21 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
     shape_id = "openai.images.variations"
     standard_fields = image_extensions.STANDARD_IMAGE_VARIATIONS_FIELDS
+
+    def check_count(self, count: int) -> Response | None:
+        if count > 1:
+            return _wire.error_response(400, f"/v1/images/variations accepts exactly one input image; {count} were provided",
+                                        param="image", code="too_many_images")
+        return None
+
+    def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
+                      exists: Callable[[str], bool]) -> str | None:
+        if target and not target.endswith(("-edit", "-inpaint")):
+            return f"{target}-edit"
+        return target
+
+    def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        return None
 
 
 class ImageJobs(OpenAIImagesJson):
