@@ -105,17 +105,33 @@ _SERVICE_CAPABILITIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("decisions", _DECISION),
 )
 
-# Gateway operation capabilities whose modalities do not say what they are: a text answer is a language model, a
-# reranker or a decision runtime alike. Every other capability is typed from its declared modalities (``type_of``).
+# Gateway capability intents (gateway/capabilities.Capability.intent). Capabilities are produced by services and carry
+# an intent word and sometimes no modalities, so these defaults stay until the capability producers declare them (the
+# workflow side is computed from the contract: ``from_contract``). Families match by prefix when no exact intent does;
+# the capability's own declared modalities then refine the defaults.
 _CAPABILITY_INTENTS: dict[str, ModelMetadata] = {
+    "image.generate": _md("image", ["text"], ["image"]),
+    "image.edit": _md("image", ["text", "image"], ["image"]),
+    "image.analyze": _md("image", ["image"], ["text"]),
+    "video.generate": _md("video", ["text"], ["video"]),
+    "video.edit": _md("video", ["text", "video"], ["video"]),
+    "audio.generate": _md("audio", ["text"], ["audio"]),
+    "text.embeddings": _md("embedding", ["text"], ["embedding"]),
     "chat.completions": _LANGUAGE,
     "text.completions": _LANGUAGE,
     "text.rerank": _OPERATIONS["rerank"],
+    "speech.synthesis": _OPERATIONS["speech"],
+    "speech.transcription": _OPERATIONS["transcriptions"],
+    "speech.translation": _OPERATIONS["transcriptions"],
 }
 _CAPABILITY_INTENT_FAMILIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("chat.", _LANGUAGE),
     ("responses.", _LANGUAGE),
     ("decision.", _DECISION),
+    ("image.", _CAPABILITY_INTENTS["image.generate"]),
+    ("video.", _CAPABILITY_INTENTS["video.generate"]),
+    ("speech.", _OPERATIONS["speech"]),
+    ("audio.", _CAPABILITY_INTENTS["audio.generate"]),
 )
 
 # Major media type of a manifest output -> output modality.
@@ -163,11 +179,13 @@ def from_capability(
     base = _CAPABILITY_INTENTS.get(intent) or next(
         (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES if intent.startswith(prefix)), None
     )
-    inputs, outputs = _ordered(input_modalities, INPUT_MODALITIES), _ordered(output_modalities, OUTPUT_MODALITIES)
     if base is None:
-        type_ = type_of(inputs, outputs)
-        return None if type_ is None else ModelMetadata(type_, inputs, outputs)
-    return replace(base, input_modalities=inputs or base.input_modalities, output_modalities=outputs or base.output_modalities)
+        return None
+    return replace(
+        base,
+        input_modalities=_ordered(input_modalities, INPUT_MODALITIES) or base.input_modalities,
+        output_modalities=_ordered(output_modalities, OUTPUT_MODALITIES) or base.output_modalities,
+    )
 
 
 def from_fields(fields: Mapping[str, Any] | None) -> ModelMetadata | None:
