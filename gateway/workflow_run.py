@@ -580,7 +580,7 @@ class WorkflowRunCore:
         denied = port.dispatch_target_problem(entry, caller)
         if denied is not None:
             return denied, "authorization", "The workflow is not available to this account now."
-        pinned = BindingDef(adapter_id=envelope.adapter_id, binding=pin.binding, binding_digest=envelope.binding)
+        pinned = BindingDef(adapter_id=envelope.binding_key or "", binding=pin.binding, binding_digest=envelope.binding)
         problems = self._projections.binding_problems(pinned, port.available)         # 5. the PINNED binding
         if problems:
             return problems[0], "capacity", "The binding this job pinned cannot run here now."
