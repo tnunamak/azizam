@@ -26771,10 +26771,8 @@ class _WorkflowRunPort:
         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
         # it. No operation of the protocol is picked by position.
         op = str(ctx.pin.contract["intent"])
-        media = {name: [{"media_type": ref.wire_media_type or ref.media_type, "filename": ref.filename,
-                         "size": ref.size, "digest": ref.digest} for ref in refs] for name, refs in ctx.media.items()}
-        await protocol_jobs.run(runtime_, op, {"inputs": dict(ctx.inputs), "generated": dict(ctx.generated),
-                                               "media": media}, job_id=ctx.job_id)
+        # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
+        await protocol_jobs.run(runtime_, op, {**dict(ctx.inputs), **dict(ctx.generated)}, job_id=ctx.job_id)
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
         path = asset_cache_path(asset_id)
