@@ -208,3 +208,43 @@ def test_a_prefix_that_starts_another_does_not_claim_its_nodes():
     units = _compose(_document(), _spec(*([13] + [8] * 11))).units  # p1. starts the text of p10. and p11.
     assert video_extend.segment_of_node(units, "p10.cat", node_prefix="p{index}.") == 10
     assert video_extend.segment_of_node(units, "p1.cat", node_prefix="p{index}.") == 1
+
+
+def test_a_template_with_a_cycle_is_refused_at_load():
+    document = _document()
+    document["template"]["variants"]["start"]["nodes"]["gen"]["inputs"]["model"] = ["@dec", 0]
+    with pytest.raises(sc.ChainTemplateError, match="cycle"):
+        sc.load(document)
+
+
+@pytest.mark.parametrize("change", [
+    # a scaled source with sound: the voice node is dropped, but the sound export still links to it
+    lambda d: d["template"]["source"]["nodes"]["voice"].update(unless="scaled"),
+    # a one-segment chain: the finish links to a node only a second segment adds
+    lambda d: d["template"]["finish"]["nodes"]["out"]["inputs"].update(frames=["p1.cat", 0]),
+])
+def test_dangling_links_in_any_reachable_state_are_refused_at_load(change):
+    document = _document()
+    change(document)
+    with pytest.raises(sc.ChainTemplateError, match="dangling link"):
+        sc.load(document)
+
+
+def test_custom_prefix_attribution_is_exact():
+    document = _document()
+    document["binding"]["node_prefix"] = "p{index}.{index}."  # the index twice: the composer replaces both
+    units = sc.compose(sc.load(document), _spec(13, 8, 8), context=9, negative="bad").units
+    assert [u["sample"] for u in units] == ["p0.0.gen", "p1.1.gen", "p2.2.gen"]
+    assert video_extend.segment_of_node(units, "p1.1.cat", node_prefix="p{index}.{index}.") == 1
+    assert video_extend.segment_of_node(units, "p2.2.snd", node_prefix="p{index}.{index}.") == 2
+    assert video_extend.segment_of_node(units, "p12.12.cat", node_prefix="p{index}.{index}.") is None  # no segment 12
+
+
+def test_a_prefix_the_lookup_cannot_reverse_is_refused_at_load():
+    document = _document()
+    document["binding"]["node_prefix"] = "p{index}"  # no separator: a local id that starts with a digit reads into the index
+    more = document["template"]["variants"]["more"]
+    more["nodes"]["2cat"] = more["nodes"].pop("cat")
+    more["exports"]["frames"] = ["@2cat", 0]
+    with pytest.raises(sc.ChainTemplateError, match="cannot be reversed"):
+        sc.load(document)

@@ -18,7 +18,6 @@ Frame arithmetic, with the grid ``frame_step`` and ``frame_offset`` from the bin
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -215,6 +214,13 @@ def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str, *, node_pr
             return index
     if node_prefix is None or progress_only:
         return None
-    head, _, tail = node_prefix.partition("{index}")
-    match = re.match(re.escape(head) + r"(\d+)" + re.escape(tail), node_id)
-    return int(match.group(1)) if match and int(match.group(1)) < len(units) else None
+    index = segment_chain.prefix_index(node_prefix, node_id)
+    return index if index is not None and index < len(units) else None
+
+
+LEGACY_NODE_PREFIX = "s{index}_"  # the prefix every chain used before a record stored its own
+
+
+def record_node_prefix(chain: Mapping[str, Any]) -> str:
+    """The node-id prefix a stored chain record was built with. A record without the key predates it."""
+    return str(chain.get("node_prefix") or LEGACY_NODE_PREFIX)

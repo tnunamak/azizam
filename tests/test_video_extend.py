@@ -419,6 +419,14 @@ class FailureInfoTests(unittest.TestCase):
         error = proxy._chain_failure_error(record, job, "ComfyUI node q1.cat: boom")
         self.assertEqual((error["failed_segment"], error["segments_completed"]), (2, 1))
 
+    def test_a_legacy_chain_record_keeps_failure_attribution(self) -> None:
+        # Records written before node_prefix was stored have no key; their node ids use s{index}_.
+        units = [{"sample": f"s{i}_sample", "decode": f"s{i}_decode"} for i in range(3)]
+        record = {"chain": {"segments": 3, "units": units, "fps": 24.0, "segment_frames": [193, 144, 144]}}
+        job = {"status": {"messages": [["execution_error", {"node_id": "s1_ctx", "exception_message": "boom"}]]}}
+        error = proxy._chain_failure_error(record, job, "ComfyUI node s1_ctx: boom")
+        self.assertEqual((error["failed_segment"], error["segments_completed"]), (2, 1))
+
     def test_error_outside_a_segment_keeps_the_plain_message(self) -> None:
         record = {"chain": {"segments": 2, "units": [{"sample": "s0_sample", "decode": "s0_decode"},
                                                      {"sample": "s1_sample", "decode": "s1_decode"}], "fps": 24.0,

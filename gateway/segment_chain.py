@@ -23,6 +23,7 @@ workflow; a name the template uses that this module does not provide is a templa
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -235,6 +236,7 @@ def load(document: Mapping[str, Any]) -> ChainTemplate:
     compiled = ChainTemplate(chain_id, binding, copy.deepcopy(dict(shared)), copy.deepcopy(dict(source)),
                              copy.deepcopy(dict(variants)), copy.deepcopy(dict(finish)))
     _check_graphs(compiled)
+    _check_prefix(compiled)
     return compiled
 
 
@@ -250,33 +252,104 @@ def _links(value: Any):
             yield from _links(item)
 
 
-def _check_graphs(template: ChainTemplate) -> None:
-    """Compose a few small requests for every fact the template reads and refuse a link to a node that is not there.
+def _deps(graph: Mapping[str, Any], node_id: str) -> list[str]:
+    return [t for t in _links(graph[node_id]["inputs"]) if t in graph]
 
-    A node a fact leaves out, or a literal id nothing adds, would otherwise reach the engine as a dangling link.
+
+def _cycle(graph: Mapping[str, Any]) -> list[str] | None:
+    """One dependency cycle in ``graph`` as node ids, first and last equal; None when the graph is acyclic."""
+    done: set[str] = set()
+    for root in graph:
+        if root in done:
+            continue
+        path = [root]
+        frames = [iter(_deps(graph, root))]
+        while frames:
+            child = next(frames[-1], None)
+            if child is None:
+                frames.pop()
+                done.add(path.pop())
+            elif child in path:
+                return path[path.index(child):] + [child]
+            elif child not in done:
+                path.append(child)
+                frames.append(iter(_deps(graph, child)))
+    return None
+
+
+def _check_graphs(template: ChainTemplate) -> None:
+    """Compose small requests for every reachable state and refuse a graph that cannot run.
+
+    The states are the source kinds (none, sound or silent, scaled or not), the first frame, and every chain length from
+    one segment to the last index a rule names plus two. A link to a node the graph lacks, a dependency cycle, or a save
+    node or unit the graph lacks is refused, with the state that reaches it.
     """
     binding = template.binding
     step = binding.frame_step
     named = [entry["index"] for entry in binding.rule if "index" in entry]
-    count = max(named, default=0) + 2
+    longest = max(named, default=0) + 2
     sources = (None,
                SimpleNamespace(filename="source", frames=step * 3, width=64, height=48, has_audio=True),
+               SimpleNamespace(filename="source", frames=step * 3, width=32, height=24, has_audio=True),
+               SimpleNamespace(filename="source", frames=step * 3, width=64, height=48, has_audio=False),
                SimpleNamespace(filename="source", frames=step * 3, width=32, height=24, has_audio=False))
     for source in sources:
         for first_frame in (None, "first"):
-            spec = SimpleNamespace(
-                segments=[SimpleNamespace(prompt="p", frames=step * 2 + binding.frame_offset if i == 0 else step)
-                          for i in range(count)],
-                width=64, height=48, fps=8.0, seed=1, source=source, first_frame_image=first_frame,
-                first_frame_strength=1.0, context_strength=0.5, filename_prefix="x")
-            try:
-                graph = compose(template, spec, context=binding.default_context_frames, negative="").graph
-            except (KeyError, TypeError, AttributeError, IndexError) as exc:
-                raise _bad("template", f"does not compose ({exc!r})") from exc
-            missing = sorted({t for node in graph.values() for t in _links(node["inputs"]) if t not in graph})
-            if missing:
-                case = f"source={source is not None}, sound={getattr(source, 'has_audio', True)}, first_frame={first_frame is not None}"
-                raise _bad("template", f"dangling link to {missing} when {case}")
+            for count in range(1, longest + 1):
+                spec = SimpleNamespace(
+                    segments=[SimpleNamespace(prompt="p", frames=step * 2 + binding.frame_offset if i == 0 else step)
+                              for i in range(count)],
+                    width=64, height=48, fps=8.0, seed=1, source=source, first_frame_image=first_frame,
+                    first_frame_strength=1.0, context_strength=0.5, filename_prefix="x")
+                case = (f"source={source is not None}, sound={getattr(source, 'has_audio', True)}, "
+                        f"scaled={source is not None and (source.width, source.height) != (64, 48)}, "
+                        f"first_frame={first_frame is not None}, segments={count}")
+                try:
+                    composed = compose(template, spec, context=binding.default_context_frames, negative="")
+                except (KeyError, TypeError, AttributeError, IndexError) as exc:
+                    raise _bad("template", f"does not compose ({exc!r}) when {case}") from exc
+                graph = composed.graph
+                missing = sorted({t for node in graph.values() for t in _links(node["inputs"]) if t not in graph})
+                if missing:
+                    raise _bad("template", f"dangling link to {missing} when {case}")
+                lacking = sorted({composed.save_node, *(n for unit in composed.units for n in unit.values())} - set(graph))
+                if lacking:
+                    raise _bad("template", f"save or progress node {lacking} is not in the graph when {case}")
+                cycle = _cycle(graph)
+                if cycle is not None:
+                    raise _bad("template", f"dependency cycle {' -> '.join(cycle)} when {case}")
+
+
+def _check_prefix(template: ChainTemplate) -> None:
+    """Refuse a node prefix the lookup cannot reverse: each node a segment makes must read back as that segment."""
+    prefix = template.binding.node_prefix
+    local = {node for variant in template.variants.values() for node in variant["nodes"]}
+    for index in range(max(12, len(template.binding.rule) + 2)):
+        for node in sorted(local):
+            name = prefix_name(prefix, index) + node
+            got = prefix_index(prefix, name)
+            if got != index:
+                raise _bad("binding.node_prefix",
+                           f"{prefix!r} cannot be reversed: segment {index} node {name!r} reads back as {got}")
+
+
+def prefix_name(prefix: str, index: int) -> str:
+    """The prefix a segment's node ids start with: every ``{index}`` replaced by ``index``."""
+    return prefix.replace("{index}", str(index))
+
+
+def prefix_index(prefix: str, node_id: str) -> int | None:
+    """The segment index a node id made under ``prefix`` carries, or None. The inverse of composition.
+
+    The first ``{index}`` is read as digits; a later one must repeat that exact index.
+    """
+    parts = prefix.split("{index}")
+    pattern = re.escape(parts[0])
+    for position, part in enumerate(parts[1:]):
+        pattern += r"(\d+)" if position == 0 else r"\1"
+        pattern += re.escape(part)
+    match = re.match(pattern, node_id)
+    return int(match.group(1)) if match else None
 
 
 # --------------------------------------------------------------------------------------------------------- compose
