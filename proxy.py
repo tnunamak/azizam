@@ -17,6 +17,7 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
+from gateway.frontend_shapes import media_job as media_job_shape
 from gateway import registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_projections import SnapshotRegistry
@@ -23584,13 +23585,6 @@ def _image_response_error(response: Response) -> tuple[str, str | None]:
     return f"image generation failed with HTTP {response.status_code}", None
 
 
-_JOB_FAILURE_COPY = {
-    "authorization": ("not_in_access_plan", "This workflow isn't in your access plan."),
-    "invalid_input": ("invalid_input", "The gateway did not accept this job's inputs."),
-    "capacity": ("capacity", "The gateway is too busy to run this job now. Try again later."),
-    "timeout": ("timeout", "The backend did not finish this job in time."),
-    "safety": ("content_policy_violation", "The backend refused this job's content."),
-}
 # Error codes a job may copy from a refusal: the gateway's own and the standard
 # OpenAI ones. Any other code, even a plain token, may carry words from a prompt
 # a backend echoed, so it becomes the category's default code.
@@ -23649,7 +23643,7 @@ def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
             "error_code": code or "upstream_error", "error_category": "upstream",
             "retryable": status >= 500, "upstream_http_status": status,
         }
-    default_code, message = _JOB_FAILURE_COPY[category]
+    default_code, message = media_job_shape.JOB_FAILURE_COPY[category]
     if category == "capacity" and getattr(response, "gateway_refusal", None):
         message = _admission_refusal_message(response)
     elif category == "invalid_input" and getattr(response, "gateway_refusal", None):
