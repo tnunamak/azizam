@@ -163,11 +163,11 @@ def systemone_provider_for_model(registry: Mapping[str, Any], model: Any) -> pro
     return provider
 
 
-def systemone_providers(registry: Mapping[str, Any]) -> list[providers.ProviderRef]:
+def systemone_providers(registry: Mapping[str, Any], *, include_disabled: bool = False) -> list[providers.ProviderRef]:
     return [
         provider
         for provider in providers.provider_refs(registry).values()
-        if provider.enabled and "typesafe-systemone" in provider.protocols
+        if (include_disabled or provider.enabled) and "typesafe-systemone" in provider.protocols
     ]
 
 
