@@ -529,6 +529,14 @@ def _narrow_input(name: str, limits: Mapping[str, Any], inputs: dict[str, Any], 
     if "minimum" in spec and "maximum" in spec and spec["minimum"] > spec["maximum"]:
         errors.add(at, "bounds_empty", f"effective bounds for {name} are empty: {spec['minimum']} > {spec['maximum']}")
         return
+    if isinstance(spec.get("generate"), Mapping):
+        # Local import avoids the generated-defaults -> scalar-validator import cycle.
+        from gateway.generated_defaults import legal_integer_domain
+
+        if not legal_integer_domain(spec["generate"], spec).count:
+            errors.add(at + ("generate",), "generator_range_empty",
+                       "the generator and effective input share no legal integer")
+            return
     if "default" in spec:
         reason = _validate_value(name, spec["default"], spec)
         if reason is not None:

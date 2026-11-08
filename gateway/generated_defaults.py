@@ -27,9 +27,10 @@ import math
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Any
 
-from gateway.manifests import ManifestError, validate_input_value
+from gateway.manifests import ManifestError, exact_number, validate_input_value
 
 ERASED = "erased"  # the key an erased entry carries in place of ``value``
 
@@ -64,6 +65,80 @@ def integer_range(rule: Mapping[str, Any], spec: Mapping[str, Any]) -> tuple[int
     return first, last
 
 
+@dataclass(frozen=True)
+class IntegerDomain:
+    """An ordered integer domain. A grid costs O(1); only a declared enum stores individual values."""
+
+    first: int
+    period: int
+    count: int
+    members: tuple[int, ...] | None = None
+
+    def value(self, index: int) -> int:
+        if not 0 <= index < self.count:
+            raise ManifestError("generated domain index is outside its range")
+        return self.members[index] if self.members is not None else self.first + self.period * index
+
+    def index(self, value: int) -> int:
+        if self.members is not None:
+            try:
+                return self.members.index(value)
+            except ValueError as exc:
+                raise ManifestError("batch base is outside the input's enum") from exc
+        if (value - self.first) % self.period:
+            raise ManifestError("batch base is outside the input's grid")
+        return (value - self.first) // self.period
+
+
+def legal_integer_domain(rule: Mapping[str, Any], spec: Mapping[str, Any]) -> IntegerDomain:
+    """The ordered integers in the rule/input intersection, enum and exact step/offset grid.
+
+    Unknown step/offset semantics retain the old feasibility fallback: the plain interval, not a proof of emptiness.
+    No interval is enumerated, including the full 32-bit range.
+    """
+    low = max(rule["minimum"], spec.get("minimum", rule["minimum"]))
+    high = min(rule["maximum"], spec.get("maximum", rule["maximum"]))
+    first, last = math.ceil(exact_number(low)), math.floor(exact_number(high))
+    if first > last:
+        return IntegerDomain(first, 1, 0)
+    period = 1
+    step = spec.get("step")
+    if step is not None:
+        step_exact, offset_exact = exact_number(step), exact_number(spec.get("offset", 0))
+        if step_exact is None or offset_exact is None or step_exact <= 0:
+            return IntegerDomain(first, 1, last - first + 1)
+        found = _first_on_grid(first, step_exact, offset_exact)
+        if found is None or found > last:
+            return IntegerDomain(first, 1, 0)
+        first, period = found, step_exact.numerator
+    enum = spec.get("enum")
+    if isinstance(enum, list):
+        members = tuple(sorted({v for v in enum if isinstance(v, int) and not isinstance(v, bool)
+                                and first <= v <= last and (v - first) % period == 0}))
+        return IntegerDomain(members[0] if members else first, period, len(members), members)
+    return IntegerDomain(first, period, (last - first) // period + 1)
+
+
+def _first_on_grid(first: int, step: Fraction, offset: Fraction) -> int | None:
+    """The least integer n >= first with n = offset + k*step for an integer k (the grid ``on_grid`` tests), or None
+    when no integer is on the grid. With D the common denominator, D*n = A (mod P) for the integers A = offset*D and P = step*D."""
+    denominator = math.lcm(step.denominator, offset.denominator)
+    target, period = int(offset * denominator), int(step * denominator)
+    divisor = math.gcd(denominator, period)
+    if target % divisor:
+        return None
+    modulus = period // divisor
+    residue = (target // divisor) * pow(denominator // divisor, -1, modulus) % modulus
+    return first + (residue - first) % modulus
+
+
+def _generates_a_value(spec: Mapping[str, Any], low: Any, high: Any) -> bool:
+    """Compatibility entry point: feasibility and sampling use the same domain."""
+    if exact_number(low) is None or exact_number(high) is None:
+        return True
+    return legal_integer_domain({"minimum": low, "maximum": high}, spec).count > 0
+
+
 def declared_range(rule: Mapping[str, Any], spec: Mapping[str, Any]) -> tuple[int, int]:
     """The whole numbers the input itself allows: its own bounds, or the rule's where the input names none."""
     first = math.ceil(spec.get("minimum", rule["minimum"]))
@@ -76,7 +151,8 @@ def declared_range(rule: Mapping[str, Any], spec: Mapping[str, Any]) -> tuple[in
 def offset_values(inputs: Mapping[str, Any], carried: Mapping[str, int], offset: int) -> dict[str, int]:
     """The value each generated input takes ``offset`` steps after its stored base, wrapped inside the input's range.
 
-    ``value_n = low + ((base - low + offset) mod (high - low + 1))`` for ``low..high`` the input's declared range. An
+    ``value_n = low + ((base - low + offset) mod (high - low + 1))`` for ``low..high`` the input's declared range. On a
+    step grid or an enum, ``offset`` counts the input's legal values instead. An
     image batch binds one base for the whole job and offsets it by the images made so far, so every round gets a
     value the input accepts, however many rounds run."""
     declared = generated_inputs(inputs)
@@ -87,13 +163,22 @@ def offset_values(inputs: Mapping[str, Any], carried: Mapping[str, int], offset:
             shifted[name] = value
             continue
         low, high = declared_range(spec["generate"], spec)
-        shifted[name] = low + ((value - low + offset) % (high - low + 1))
+        domain = legal_integer_domain({"minimum": low, "maximum": high}, spec)
+        if not domain.count:
+            raise ManifestError("the input has no legal integer for a batch")
+        shifted[name] = domain.value((domain.index(value) + offset) % domain.count)
     return shifted
 
 
 def _random_integer(rule: Mapping[str, Any], spec: Mapping[str, Any], source: Source) -> int:
-    first, last = integer_range(rule, spec)
-    return source(first, last)
+    domain = legal_integer_domain(rule, spec)
+    if not domain.count:
+        raise ManifestError("the generator and input share no legal integer")
+    if domain.members is None and domain.period == 1:
+        # A plain range asks the source for the value itself, as it always has.
+        return source(domain.first, domain.first + domain.count - 1)
+    # A grid or an enum asks for a position in its ordered legal values, so every draw is one the input accepts.
+    return domain.value(source(0, domain.count - 1))
 
 
 @dataclass(frozen=True)
