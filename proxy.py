@@ -26783,7 +26783,9 @@ class _WorkflowRunPort:
                 staged[name] = await stage(connection(), filename="input" + suffix, data=data,
                                            media_type=ref.wire_media_type or ref.media_type)
             except (TransportFailure, ProtocolUpstreamError) as exc:
-                raise ProtocolError("The engine did not take an input file.", code="asset_upload_failed") from exc
+                # An engine that answered 200 without a name for the file is told apart from one that refused it.
+                reason = "upload_no_name" if getattr(exc, "status", None) == 200 else "upload_failed"
+                raise node_graph_runner.RunFailed(reason, "upstream", client_errors.REASONS[reason], upstream_status=502) from exc
         return staged
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
