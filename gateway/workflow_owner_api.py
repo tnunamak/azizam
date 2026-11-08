@@ -175,7 +175,9 @@ def register_workflow_owner_routes(
         if isinstance(ctx, JSONResponse):
             return ctx
         snapshot = await asyncio.to_thread(store.snapshot)
-        rows = [entry_view(entry, problems_of(entry)) for _id, entry in sorted(snapshot.workflows.items())]
+        # A workflow's problems can read the live service registry (an adapter's binding check), so off the loop.
+        rows = await asyncio.to_thread(
+            lambda: [entry_view(entry, problems_of(entry)) for _id, entry in sorted(snapshot.workflows.items())])
         # Stored workflows that do not serve because their names clash with names the registry already held.
         held_out = [{"id": wid, "problems": [_with_clean(problem.as_dict()) for problem in problems]}
                     for wid, problems in snapshot.held_out.items()]
