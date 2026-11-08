@@ -24304,6 +24304,20 @@
       "get": {
         "description": "OpenAI-compatible model list. Returns:\n  1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled\n  2. Gateway-native media workflow model IDs\n\nEach entry the gateway can classify also carries `type`, `architecture`\nand, when known, `max_tokens` and `tags` (docs/api/MODEL_METADATA.md).",
         "operationId": "list_models_openai_v1_models_get",
+        "parameters": [
+          {
+            "description": "With `true`, leave out models known to be unavailable (see `azizam_availability`). Models in any other state stay listed, and a left-out model can still be called.",
+            "in": "query",
+            "name": "available",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true"
+              ],
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -31689,6 +31703,20 @@
       "get": {
         "description": "OpenAI-compatible model list. Returns:\n  1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled\n  2. Gateway-native media workflow model IDs\n\nEach entry the gateway can classify also carries `type`, `architecture`\nand, when known, `max_tokens` and `tags` (docs/api/MODEL_METADATA.md).",
         "operationId": "list_models_v1_models_get",
+        "parameters": [
+          {
+            "description": "With `true`, leave out models known to be unavailable (see `azizam_availability`). Models in any other state stay listed, and a left-out model can still be called.",
+            "in": "query",
+            "name": "available",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true"
+              ],
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {

@@ -1358,6 +1358,8 @@ def test_availability_projection_is_presentation_only_not_a_routing_input():
         "_gateway_capabilities_provider", "_capabilities_availability_evidence", "_runtime_availability_evidence",
         "_status_payload_with_availability", "_with_availability", "_user_models_catalog_payload",
         "_user_workflows_catalog_payload",
+        # The model list's `azizam_availability` hint: it reads the cached snapshot only and never gates a call.
+        "_annotate_model_availability",
     }
     # The two provider callables are only handed to discovery and the Home/Status routers. Both read the same
     # snapshot (_status_payload_with_availability); the background build is the only code that probes.
