@@ -307,24 +307,17 @@ class MultipartRunner:
     async def _form(self, ctx: RunContext, binding: Mapping[str, Any]) -> tuple[str, ImageAsset, dict[str, str]]:
         """The file part's field name and bytes, and the flat scalar fields, from the job's pinned binding."""
         contract_inputs = ctx.pin.contract.get("inputs") or {}
-        values = {**ctx.generated, **ctx.inputs}
         file_field: str | None = None
         file: ImageAsset | None = None
-        fields: dict[str, str] = {}
         for logical, target in (binding.get("map") or {}).items():
-            spec = contract_inputs.get(logical) or {}
-            if spec.get("type") == "asset":
+            if (contract_inputs.get(logical) or {}).get("type") == "asset":
                 refs = ctx.media.get(logical) or ()
                 if len(refs) != 1:
                     raise RunError(INPUT_UNAVAILABLE, "invalid_input")
                 file_field, file = str(target), await self._read_file(ctx, refs[0])
-            elif logical in values:
-                fields[str(target)] = _scalar(values[logical])
-            elif "default" in spec:
-                fields[str(target)] = _scalar(spec["default"])
         if file is None or file_field is None:
             raise RunError(INPUT_UNAVAILABLE, "invalid_input")
-        return file_field, file, fields
+        return file_field, file, scalar_fields(contract_inputs, binding.get("map") or {}, {**ctx.generated, **ctx.inputs})
 
     async def _read_file(self, ctx: RunContext, ref: Any) -> ImageAsset:
         if ref.spool_key is not None:
@@ -394,6 +387,20 @@ def _run_error(error: MultipartFailure) -> RunError:
 def _source_name(ctx: RunContext) -> str:
     refs = next(iter(ctx.media.values()), ())
     return str((refs[0].filename if refs else None) or "input")
+
+
+def scalar_fields(contract_inputs: Mapping[str, Any], mapping: Mapping[str, Any], values: Mapping[str, Any]) -> dict[str, str]:
+    """The flat form fields a binding sends: each mapped, non-asset input from ``values``, else its contract default."""
+    fields: dict[str, str] = {}
+    for logical, target in mapping.items():
+        spec = contract_inputs.get(logical) or {}
+        if spec.get("type") == "asset":
+            continue
+        if logical in values:
+            fields[str(target)] = _scalar(values[logical])
+        elif "default" in spec:
+            fields[str(target)] = _scalar(spec["default"])
+    return fields
 
 
 def _scalar(value: Any) -> str:

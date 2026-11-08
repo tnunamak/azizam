@@ -75,7 +75,7 @@ _IMAGE_EDIT_MANAGED = frozenset(
 _IMAGE_EDIT_IMAGE_PART = "image[]"
 # The contract input a video request's ``input_reference`` fills. The projection and the route read it from here.
 VIDEO_REFERENCE_INPUT = "image"
-_MESH_PATH = "/v1/meshes/generate"
+_MESH_PATH = "/v1/3d/generations/glb"
 
 _JSON_TYPES = {
     "string": "string",

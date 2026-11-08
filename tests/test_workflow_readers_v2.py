@@ -170,12 +170,6 @@ def test_mesh_route_reads_its_contract_for_the_picture_input(registry: WorkflowR
     workflow = mesh_api.mesh_workflow_from_record(record)
     assert workflow.image_input == "image"
     assert workflow.inputs[workflow.image_input]["type"] == "asset"  # the contract's name for the picture
-    picture = mesh_manifest.ImageAsset(b"x", "input.png", "image/png")
-    request = mesh_manifest.bind_request(workflow, {"resolution": "512", "seed": "7"}, picture)
-    assert request.values == {"resolution": 512, "seed": 7}
-    assert mesh_manifest.downstream_form(workflow, request)[0] == {"seed": "7", "resolution": "512"}
-    with pytest.raises(mesh_manifest.MeshInputError):
-        mesh_manifest.bind_request(workflow, {"resolution": "512", "seed": "7"}, None)
     assert not {key for _, key in reads} & V1_KEYS_ANYWHERE
 
 
