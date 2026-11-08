@@ -784,7 +784,8 @@ pytest = 22103
 # Library picker polish (2026-11-06): picked-summary.spec.tsx (+4, image pixel size) and try/workflow-inputs.spec.tsx (+3, empty prompt sizes to its example); vitest list --json measured 3922 (--root web).
 # Train 10 (2026-11-06): Library picker polish, picked image pixel size and the Try empty prompt field (+7); measured 3922.
 # Engine readiness (2026-11-07): +1 case in add-engine-dialog.spec.tsx (abilities step with nothing ticked); measured 3921 (vitest list --json --root web).
-vitest = 3922
+# History receipt re-read: +4 cases in history-page.spec.tsx; measured 3926 (vitest list --root web).
+vitest = 3926
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
