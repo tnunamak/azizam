@@ -28,6 +28,7 @@ from gateway.public_failure import PublicFailure
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
 
+import inspect
 import asyncio
 import shutil
 import base64
@@ -27090,10 +27091,22 @@ def _pinned_of_job(job_id: str) -> Any:
         return None
 
 
+def _row_route_policy(path: str) -> dict[str, Any] | None:
+    """The policy a mounted row's route declares for its path (its ``runtime_policy`` data), as policy-request fields.
+    None when the path has none of its own; the registry's route policy then decides."""
+    wanted = inspect.signature(make_policy_request).parameters
+    for row in frontend_shapes.bundled_rows():
+        for route in row.routes:
+            if path == route.canonical or path in route.aliases:
+                fields = {k: v for k, v in route.runtime_policy.items() if k in wanted}
+                return fields if fields else None
+    return None
+
+
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
 _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     authenticate=lambda request, path: authenticate_request(request, path),
-    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path),
+    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=DERIVED._RUNTIME_ROUTE_POLICY.get(path) or _row_route_policy(path)),
     core=_workflow_run_core,
     snapshot=lambda: WORKFLOW_SNAPSHOTS.current(),
     jobs=_workflow_job_service,
