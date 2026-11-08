@@ -26822,6 +26822,7 @@ class _AdaptiveBatching:
         estimate: Optional[int]
         free_before: Optional[int]
         batch_limit: Any
+        counts: bool = True            # the workflow takes a batch size: a round can ask for several pictures at once
         models_freed: bool = False
 
     async def plan(self, session, ctx, inputs, options):
@@ -26841,7 +26842,7 @@ class _AdaptiveBatching:
         name = str(contract.get("id") or "")
         state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
                             free_before=await graph_free_vram_bytes(session.client),
-                            batch_limit=(spec.get("batch_size") or {}).get("maximum"))
+                            batch_limit=(spec.get("batch_size") or {}).get("maximum"), counts="batch_size" in spec)
         return node_graph_runner.Plan(total=total, max_rounds=max(1, total + 2), warnings=warnings, state=state)
 
     async def target(self, plan, session, round_no, remaining):
@@ -26865,7 +26866,7 @@ class _AdaptiveBatching:
         return target
 
     def round_inputs(self, plan, target):
-        return {"batch_size": max(1, int(target))}
+        return {"batch_size": max(1, int(target))} if plan.state.counts else {}
 
     def probe(self, plan, session, round_no):
         return _VramProbe(session.client) if plan.state.estimate is None else None
