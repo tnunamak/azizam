@@ -28155,8 +28155,9 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
     except Exception:  # noqa: BLE001
         pass
     try:
-        # A decision provider's catalog names (`<provider>/<model>`) are served by that provider's own service.
-        for provider in decision_provider_execution.systemone_providers(registry or {}):
+        # A decision provider's catalog names (`<provider>/<model>`) are served by that provider's own service. A
+        # turned-off provider keeps its listed names and reads `unavailable`, like any turned-off service.
+        for provider in decision_provider_execution.systemone_providers(registry or {}, include_disabled=True):
             for public_name in decision_provider_execution.catalog_models(provider):
                 add(public_name, provider.id)
     except Exception:  # noqa: BLE001
@@ -28183,6 +28184,22 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
     return index
 
 
+_ENGINE_ENTRY_OPERATIONS = {"decision": ("decisions",), "reranking": ("rerank",)}
+
+
+def _engine_operations_of_entry(entry: Mapping[str, Any]) -> tuple[str, ...]:
+    """The engine operations a plain /v1/models entry can belong to, from the `type` and modalities the metadata pass
+    gave it; empty for an ordinary entry (language, image, ...), which an engine's names must not mark."""
+    kind = entry.get("type")
+    if kind == "audio":
+        architecture = entry.get("architecture") if isinstance(entry.get("architecture"), Mapping) else {}
+        inputs = architecture.get("input_modalities")
+        if isinstance(inputs, list) and inputs:
+            return ("transcriptions",) if "audio" in inputs else ("speech",)
+        return ("speech", "transcriptions")
+    return _ENGINE_ENTRY_OPERATIONS.get(kind, ()) if isinstance(kind, str) else ()
+
+
 def _model_entry_availability(
     entry: Mapping[str, Any],
     *,
@@ -28201,7 +28218,8 @@ def _model_entry_availability(
     A name maps through a workflow it is (the services the workflow needs, all at once), through the services
     that serve it by name, or through the names an alias resolves to. An engine-operation alias maps to the services
     of its engine candidates (`engines_by_op`: {operation: {engine id: engine row}}, from the alias discovery view):
-    the deployed candidates, or all of them when none is deployed. It reads evidence only: no probe."""
+    the deployed candidates; known candidates with none deployed read `unavailable`, as a request would be refused. It
+    reads evidence only: no probe."""
     engines_by_op = engines_by_op or {}
 
     def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, str] | None:
@@ -28273,22 +28291,37 @@ def _model_entry_availability(
             return states[0]
         return {"state": "unknown"}
 
-    def engine_service_ids(rows: list[Mapping[str, Any]]) -> list[str]:
-        # The deployed engines are the ones a request can reach; with none deployed, every candidate is judged.
+    def engine_state(rows: list[Mapping[str, Any]]) -> dict[str, str] | None:
+        # Known engines, none deployed: a request gets model_not_deployed whatever their services' health says. No
+        # known engine at all is no information, as before.
+        if not rows:
+            return None
         deployed = [row for row in rows if row.get("deployed")]
-        return list(dict.fromkeys(str(row["service"]) for row in (deployed or rows) if row.get("service")))
+        if not deployed:
+            return {"state": "unavailable", "reason": "No engine behind this name is deployed."}
+        return judge(list(dict.fromkeys(str(row["service"]) for row in deployed if row.get("service"))))
 
     def by_engine_candidates(operation: str, engine_ids: list[Any]) -> dict[str, str] | None:
         known = engines_by_op.get(operation, {})
-        return judge(engine_service_ids([known[engine_id] for engine_id in engine_ids
-                                         if isinstance(engine_id, str) and engine_id in known]))
+        return engine_state([known[engine_id] for engine_id in engine_ids
+                             if isinstance(engine_id, str) and engine_id in known])
 
     def by_engine_name(name: str) -> dict[str, str] | None:
-        # A name that is an engine id, or the model an engine serves, maps to the services of those engines.
+        # Only an entry of an engine operation, and only within one operation, as a request routes: an engine id
+        # selects that engine alone; the model an engine serves is searched only when no engine id matched.
         wanted = normalize_model_id(name)
-        rows = [row for known in engines_by_op.values() for engine_id, row in known.items()
-                if wanted and wanted in {normalize_model_id(engine_id), normalize_model_id(str(row.get("model") or ""))}]
-        return judge(engine_service_ids(rows))
+        if not wanted:
+            return None
+        known_by_op = [engines_by_op.get(operation) or {} for operation in _engine_operations_of_entry(entry)]
+        for known in known_by_op:
+            rows = [row for engine_id, row in known.items() if normalize_model_id(engine_id) == wanted]
+            if rows:
+                return engine_state(rows)
+        for known in known_by_op:
+            rows = [row for row in known.values() if normalize_model_id(str(row.get("model") or "")) == wanted]
+            if rows:
+                return engine_state(rows)
+        return None
 
     workflow_id = entry.get("azizam_workflow_id")
     if isinstance(workflow_id, str) and workflow_id:

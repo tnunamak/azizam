@@ -347,6 +347,11 @@ class ModelAvailabilityTests(unittest.TestCase):
                             for engine, service, deployed in rows}}
 
     @staticmethod
+    def _plain(model_id: str, kind: str = "decision", **extra) -> dict:
+        """A plain list entry (no alias fields) as the metadata pass types it."""
+        return {"id": model_id, "object": "model", "type": kind, **extra}
+
+    @staticmethod
     def _engine_alias(operation: str, candidates: list[str], picked: str | None) -> dict:
         return {"id": "engine-alias", "azizam_alias": True, "azizam_resolves_to": {operation: picked},
                 "azizam_engine_candidates": {operation: candidates}}
@@ -392,12 +397,12 @@ class ModelAvailabilityTests(unittest.TestCase):
     def test_a_decision_model_entry_is_judged_by_the_service_that_serves_it(self) -> None:
         engines = self._engines("decisions", ("decider-x", "svc-up", True), ("decider-y", "svc-down", True))
         # Its engine id, or the model the engine serves: a plain decision model entry.
-        self.assertEqual(self._judge({"id": "decider-x"}, engines_by_op=engines), {"state": "available"})
-        self.assertEqual(self._judge({"id": "decider-y-weights"}, engines_by_op=engines)["state"], "unavailable")
+        self.assertEqual(self._judge(self._plain("decider-x"), engines_by_op=engines), {"state": "available"})
+        self.assertEqual(self._judge(self._plain("decider-y-weights"), engines_by_op=engines)["state"], "unavailable")
         # A name that points at an engine slot (no candidate list) is judged by that slot's service.
         pointer = {"id": "jev-alias", "azizam_alias": True, "azizam_resolves_to": {"decisions": "decider-y"}}
         self.assertEqual(self._judge(pointer, engines_by_op=engines)["state"], "unavailable")
-        self.assertIsNone(self._judge({"id": "no-such-model"}, engines_by_op=engines))
+        self.assertIsNone(self._judge(self._plain("no-such-model"), engines_by_op=engines))
 
     def test_a_decision_provider_catalog_name_maps_to_the_provider_service(self) -> None:
         registry = {"services": {"prov": {"id": "prov", "kind": "provider", "enabled": True,
@@ -407,6 +412,124 @@ class ModelAvailabilityTests(unittest.TestCase):
                                                       "default_models": ["prov/jev-latest"]}}}}
         with patch.dict(proxy.config, {"backends": {}}):
             self.assertEqual(REAL_INDEX(registry)["prov/jev-latest"], ["prov"])
+
+    def test_known_candidates_with_none_deployed_read_unavailable_whatever_their_health(self) -> None:
+        # A request to the alias gets model_not_deployed; the services' own health cannot make it routable.
+        for service, label in (("svc-up", "fresh up"), ("svc-unseen", "no row in the snapshot")):
+            engines = self._engines("speech", ("first", service, False), ("second", service, False))
+            with self.subTest(service=label):
+                state = self._judge(self._engine_alias("speech", ["first", "second"], None), engines_by_op=engines)
+                self.assertEqual(state["state"], "unavailable")
+                self.assertTrue(state["reason"])
+        # Idle and startable on demand is still not deployed.
+        idle = {"svc-idle": {"status": "idle"}}
+        records = {"services": {"svc-idle": {"enabled": True, "config": {"lifecycle": {"mode": "on_demand"}}}}}
+        engines = self._engines("speech", ("first", "svc-idle", False))
+        self.assertEqual(self._judge(self._engine_alias("speech", ["first"], None), engines_by_op=engines,
+                                     evidence=idle, records=records)["state"], "unavailable")
+        # The direct lookup (a name that points at one engine, and an engine id) reads the same.
+        pointer = {"id": "pointer", "azizam_alias": True, "azizam_resolves_to": {"speech": "first"}}
+        self.assertEqual(self._judge(pointer, engines_by_op=engines, evidence=idle, records=records)["state"], "unavailable")
+        self.assertEqual(self._judge(self._plain("first", "audio"), engines_by_op=engines, evidence=idle,
+                                     records=records)["state"], "unavailable")
+        # Without a fresh snapshot the deployment still decides: it comes from the registry, not the snapshot.
+        up = self._engines("speech", ("first", "svc-up", False))
+        self.assertEqual(self._judge(self._engine_alias("speech", ["first"], None), engines_by_op=up,
+                                     fresh=False)["state"], "unavailable")
+
+    def test_no_known_candidate_row_keeps_the_old_behaviour(self) -> None:
+        # No row for the candidate at all: nothing to judge, so no mark (the target name is tried instead).
+        alias = self._engine_alias("speech", ["ghost"], None)
+        self.assertIsNone(self._judge(alias, engines_by_op={"speech": {}}))
+        self.assertIsNone(self._judge(alias, engines_by_op=None))
+        # A candidate with no row, beside an undeployed one: the known row decides.
+        engines = self._engines("speech", ("first", "svc-up", False))
+        self.assertEqual(self._judge(self._engine_alias("speech", ["ghost", "first"], None),
+                                     engines_by_op=engines)["state"], "unavailable")
+
+    def test_an_engine_id_beats_another_engines_model_of_the_same_name(self) -> None:
+        # alpha (service down) and beta (service up) serving a model named alpha: asking for alpha selects the alpha
+        # engine alone, with no fallback to beta.
+        for alpha_service, beta_service, expected in (("svc-down", "svc-up", "unavailable"),
+                                                      ("svc-up", "svc-down", "available")):
+            engines = {"decisions": {
+                "alpha": {"engine": "alpha", "service": alpha_service, "model": "alpha-weights", "deployed": True},
+                "beta": {"engine": "beta", "service": beta_service, "model": "alpha", "deployed": True}}}
+            with self.subTest(alpha=alpha_service):
+                self.assertEqual(self._judge(self._plain("alpha"), engines_by_op=engines)["state"], expected)
+        # With no engine of that id, the served-model name still maps.
+        engines = {"decisions": {"beta": {"engine": "beta", "service": "svc-down", "model": "alpha", "deployed": True}}}
+        self.assertEqual(self._judge(self._plain("alpha"), engines_by_op=engines)["state"], "unavailable")
+
+    def test_a_name_is_matched_within_one_operation(self) -> None:
+        engines = {"decisions": {"shared": {"engine": "shared", "service": "svc-down", "model": "m", "deployed": True}},
+                   "speech": {"shared": {"engine": "shared", "service": "svc-up", "model": "m", "deployed": True}},
+                   "rerank": {"other": {"engine": "other", "service": "svc-up", "model": "shared", "deployed": True}}}
+        self.assertEqual(self._judge(self._plain("shared"), engines_by_op=engines)["state"], "unavailable")
+        self.assertEqual(self._judge(self._plain("shared", "audio", architecture={
+            "input_modalities": ["text"], "output_modalities": ["audio"]}), engines_by_op=engines),
+            {"state": "available"})
+        # A reranking entry never takes the decision engine of the same id, nor the speech one.
+        self.assertEqual(self._judge(self._plain("shared", "reranking"), engines_by_op=engines), {"state": "available"})
+        # A transcription entry looks in transcriptions only.
+        self.assertIsNone(self._judge(self._plain("shared", "audio", architecture={
+            "input_modalities": ["audio"], "output_modalities": ["text"]}), engines_by_op=engines))
+
+    def test_an_ordinary_entry_never_inherits_an_engines_state(self) -> None:
+        engines = {"decisions": {"decider": {"engine": "decider", "service": "svc-down", "model": "common", "deployed": True}},
+                   "speech": {"voice": {"engine": "voice", "service": "svc-down", "model": "chat-name", "deployed": True}}}
+        for kind in ("language", "embedding", "image", None):
+            for name in ("common", "decider", "voice", "chat-name"):
+                entry = self._plain(name, kind) if kind else {"id": name}
+                with self.subTest(kind=kind, name=name):
+                    self.assertIsNone(self._judge(entry, engines_by_op=engines))
+        # Through the model list: an unmapped language entry keeps no mark and stays under ?available=true.
+        data = [{"id": "common", "type": "language"}, {"id": "decider", "type": "decision"}]
+        with patch.object(proxy, "_gateway_aliases_provider", lambda *_a, **_k: {
+                op: {"engines": list(rows.values()), "stable": []} for op, rows in engines.items()}):
+            out = proxy._annotate_model_availability(data, only_available=True)
+        self.assertEqual([item["id"] for item in out], ["common"])
+        self.assertNotIn("azizam_availability", out[0])
+
+    def test_a_mapped_language_entry_keeps_its_own_services_state(self) -> None:
+        # Its own service is up; a decision engine with the same model name is down. The name mapping wins.
+        engines = {"decisions": {"decider": {"engine": "decider", "service": "svc-down", "model": "up-model",
+                                             "deployed": True}}}
+        self.assertEqual(self._judge(self._plain("up-model", "language"), engines_by_op=engines), {"state": "available"})
+        self.assertEqual(self._judge(self._plain("down-model", "decision"), engines_by_op=engines)["state"], "unavailable")
+        # A decision-typed entry that is mapped by name is judged by that mapping first.
+        self.assertEqual(self._judge(self._plain("up-model", "decision"), engines_by_op=engines), {"state": "available"})
+
+    def test_a_turned_off_decision_provider_keeps_its_catalog_names_and_reads_unavailable(self) -> None:
+        def registry(enabled: bool) -> dict:
+            return {"services": {"prov": {"id": "prov", "kind": "provider", "enabled": enabled,
+                                          "capabilities": ["typesafe-systemone"],
+                                          "config": {"provider_id": "prov", "base_url": "https://prov.test",
+                                                     "api_key_env": "PROV_TEST_KEY", "cost_class": "paid-remote",
+                                                     "default_models": ["prov/jev-latest"]}}}}
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled), patch.dict(proxy.config, {"backends": {}}):
+                self.assertEqual(REAL_INDEX(registry(enabled))["prov/jev-latest"], ["prov"])
+        records = registry(False)
+        state = self._judge(self._plain("prov/jev-latest"), by_name={"prov/jev-latest": ["prov"]}, records=records,
+                            evidence={"prov": {"status": "up"}})
+        self.assertEqual(state["state"], "unavailable")
+
+    def test_stamped_engine_entries_are_marked_through_the_model_list(self) -> None:
+        # The entries as the list builder gives them (type from the metadata pass): decision models and speech names.
+        engines = {"decisions": {"decider": {"engine": "decider", "service": "svc-down", "model": "decider-2b",
+                                             "deployed": True}},
+                   "speech": {"voice": {"engine": "voice", "service": "svc-up", "model": "voice-m", "deployed": True}}}
+        data = [{"id": "decider-2b", "type": "decision", "owned_by": "azizam"},
+                {"id": "voice-m", "type": "audio", "architecture": {"input_modalities": ["text"],
+                                                                      "output_modalities": ["audio"]}},
+                {"id": "decider-2b-chat", "type": "language"}]
+        with patch.object(proxy, "_gateway_aliases_provider", lambda *_a, **_k: {
+                op: {"engines": list(rows.values()), "stable": []} for op, rows in engines.items()}):
+            out = {item["id"]: item for item in proxy._annotate_model_availability(data, only_available=False)}
+        self.assertEqual(out["decider-2b"]["azizam_availability"]["state"], "unavailable")
+        self.assertEqual(out["voice-m"]["azizam_availability"], {"state": "available"})
+        self.assertNotIn("azizam_availability", out["decider-2b-chat"])
 
     def test_engine_aliases_are_marked_in_the_model_list(self) -> None:
         engines = {"speech": {"engines": [{"engine": "first", "service": "svc-down", "model": "m", "deployed": False},
