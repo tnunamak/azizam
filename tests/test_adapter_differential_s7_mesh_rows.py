@@ -3,8 +3,8 @@
 Each cell runs the real app, the real run core and worker, the real job store and the real multipart adapter. Only the
 engine HTTP is fake (``tests.support.mesh_harness.Harness``: the observer, the health read and ``/generate``). One cell is
 one outcome of the S7 matrix; its record is in ``fixtures/adapter_differential/s7_mesh_rows_cells.json``. To re-record,
-set ``AZIZAM_RECORD_MESH_ROWS=1`` and run with ``--junit-xml-out`` and ``-o junit_logging=all``; the JSON is the text
-between the ``S7-MESH-ROWS-RECORD`` markers.
+run with ``--junit-xml-out`` and ``-o junit_logging=all`` (every run prints each cell after the ``S7-MESH-ROWS-RECORD``
+marker).
 
 Oracle for the engine side: ``fixtures/adapter_differential/s7_mr_cells.json`` holds the bytes today's
 ``POST /v1/meshes/generate`` sent to the engine. ``test_the_engine_request_equals_the_old_route_request`` requires the
@@ -49,7 +49,6 @@ import asyncio
 import base64
 import dataclasses
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -70,7 +69,6 @@ FIXTURES = Path(__file__).parent / "fixtures" / "adapter_differential"
 GOLDEN = FIXTURES / "s7_mesh_rows_cells.json"
 OLD_CELLS = FIXTURES / "s7_mr_cells.json"
 MARK = "S7-MESH-ROWS-RECORD"
-RECORD = os.environ.get("AZIZAM_RECORD_MESH_ROWS") == "1"
 ASYNC = {"Prefer": "respond-async"}
 TERMINAL = {"succeeded", "failed", "canceled", "cancelled"}
 
@@ -404,15 +402,13 @@ def _golden() -> dict[str, Any]:
 @pytest.mark.parametrize("name", sorted(CELLS))
 def test_the_cell_matches_its_recording(rig, name):
     facts = CELLS[name](rig)
-    if RECORD:
-        print(f"{MARK} {name} {json.dumps(facts, sort_keys=True)}")
-        return
+    print(f"{MARK} {name} {json.dumps(facts, sort_keys=True)}")
     assert name in _golden(), f"{name} has no recording; record it (see the module docstring)"
     assert facts == _golden()[name]
 
 
 def test_the_recording_holds_exactly_the_cells():
-    assert RECORD or set(_golden()) == set(CELLS)
+    assert set(_golden()) == set(CELLS)
 
 
 # ------------------------------------------------------------------------------------------------ the oracle
@@ -452,7 +448,6 @@ def _flip(value: Any) -> Any:
     return None
 
 
-@pytest.mark.skipif(RECORD, reason="recording")
 @pytest.mark.parametrize("name", sorted(CELLS))
 def test_a_changed_fact_would_fail_the_cell(rig, name):
     """Control: one changed fact (a status, a code, an engine byte) is a different record, so the comparison can fail."""
