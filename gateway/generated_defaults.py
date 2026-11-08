@@ -132,6 +132,18 @@ def _read_stored(name: str, kept: Any, generator: str) -> dict[str, Any]:
     return {"generator": generator, "value": kept["value"]}
 
 
+def _check_stored_value(name: str, value: Any, rule: Mapping[str, Any], spec: Mapping[str, Any]) -> None:
+    """A stored value must still fit the input (type, bounds, step grid) and the rule's own bounds. One that does not
+    is unreadable: the job fails and nothing is drawn in its place."""
+    fits = (isinstance(value, int) and not isinstance(value, bool)
+            and validate_input_value(name, value, dict(spec)) is None)
+    if fits:
+        first, last = integer_range(rule, spec)
+        fits = first <= value <= last
+    if not fits:
+        raise GeneratedValueUnavailable(f"input {name}: the stored generated value does not fit the input", erased=False)
+
+
 def erased_block(block: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """The block erasure leaves: each entry keeps its generator and loses its value, so a later read can tell an
     erased value from a job that never kept one."""
@@ -163,7 +175,9 @@ def resolve_generated(
         if reviewed is None:
             raise ManifestError(f"input {name}: no reviewed generator has the id {rule.get('generator')!r}")
         if stored is not None and name in stored:
-            block[name] = _read_stored(name, stored[name], rule["generator"])
+            entry = _read_stored(name, stored[name], rule["generator"])
+            _check_stored_value(name, entry["value"], rule, spec)
+            block[name] = entry
             continue
         value = reviewed.draw(rule, spec, source)
         if validate_input_value(name, value, dict(spec)) is not None:

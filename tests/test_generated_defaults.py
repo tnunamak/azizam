@@ -132,6 +132,28 @@ def test_a_stored_entry_that_cannot_be_read_is_refused_and_never_redrawn(entry):
     assert raised.value.erased is False
 
 
+@pytest.mark.parametrize("value", [3, 99, "7", True, 4.0], ids=["off-the-step-grid", "out-of-range", "string", "bool", "float"])
+def test_a_stored_value_that_does_not_fit_the_input_is_refused_and_never_redrawn(value):
+    inputs = inputs_with(type="integer", step=2, offset=0, minimum=0, maximum=10)
+    stored = {"n": {"generator": "random_integer", "value": value}}
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable) as raised:
+        generated_defaults.resolve_generated(inputs, {}, stored=stored, source=refuse_a_draw)
+    assert raised.value.erased is False
+
+
+def test_a_stored_value_outside_the_rules_own_bounds_is_refused():
+    inputs = inputs_with(generate=rule(0, 10))
+    stored = {"n": {"generator": "random_integer", "value": 99}}
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable):
+        generated_defaults.resolve_generated(inputs, {}, stored=stored, source=refuse_a_draw)
+
+
+def test_a_stored_value_that_fits_the_input_is_read_back():
+    stored = {"n": {"generator": "random_integer", "value": 4}}
+    inputs = inputs_with(type="integer", step=2, offset=0, minimum=0, maximum=10)
+    assert generated_defaults.resolve_generated(inputs, {}, stored=stored, source=refuse_a_draw) == stored
+
+
 def test_an_input_with_no_stored_entry_still_draws_for_a_job_made_before_values_were_kept():
     source = Recorder(17)
     assert generated_defaults.resolve_generated(inputs_with(), {}, stored={}, source=source)["n"]["value"] == 17
@@ -611,6 +633,39 @@ def test_the_kill_switch_wildcard_empties_every_block(tmp_path):
     ids = [make_job(db, "app_a", 1111), make_job(db, "app_b", 2222)]
     media_jobs.erase_prompt_derivatives({"*"}, before=int(__import__("time").time()) + 5, path=db)
     assert [kept(db, job_id) for job_id in ids] == [{"n": {"generator": "random_integer", "erased": True}}] * 2
+
+
+def make_job_at(db: Path, app_id: str, value: int, created_at: float) -> str:
+    job = media_jobs.create(
+        media_jobs.MediaJob(intent="image.generate", workflow="wf-erase", app_id=app_id, request_id=f"req-{app_id}-{created_at}",
+                            created_at=created_at),
+        envelope=envelope_with(value), path=db, maker_from_request=False)
+    return job.job_id
+
+
+ERASED_BLOCK = {"n": {"generator": "random_integer", "erased": True}}
+
+
+@pytest.mark.parametrize("cutoff_owner", ["owner", "wildcard"])
+@pytest.mark.parametrize("offset, erased", [(-5, True), (0, True), (5, False)], ids=["before", "equal", "after"])
+def test_a_job_created_after_erasure_is_stored_with_its_values_erased_when_the_cutoff_covers_it(
+        tmp_path, cutoff_owner, offset, erased):
+    """Late create: its other derivatives are cleared and the job is kept, so its generated values are erased markers too."""
+    db = tmp_path / "media_jobs.db"
+    media_jobs.init_db(db)
+    cutoff = 1_900_000_000
+    owner = media_jobs.stored_owner_key(None, app_id="app_mine")
+    media_jobs.erase_prompt_derivatives({"*"} if cutoff_owner == "wildcard" else {owner}, before=cutoff, path=db)
+
+    mine = make_job_at(db, "app_mine", 611223344, cutoff + offset)
+    other = make_job_at(db, "app_other", 655443322, cutoff + offset)
+
+    assert kept(db, mine) == (ERASED_BLOCK if erased else {"n": {"generator": "random_integer", "value": 611223344}})
+    text = "\n".join(str(row) for row in sqlite_rows(db, "job_envelope"))
+    assert ("611223344" in text) is (not erased)
+    # The control: another owner is covered only by the wildcard.
+    other_erased = erased and cutoff_owner == "wildcard"
+    assert kept(db, other) == (ERASED_BLOCK if other_erased else {"n": {"generator": "random_integer", "value": 655443322}})
 
 
 def sqlite_rows(db: Path, table: str) -> list[tuple]:
