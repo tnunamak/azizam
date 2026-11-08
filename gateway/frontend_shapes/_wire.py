@@ -58,14 +58,14 @@ def refused_response(refused: RunRefused) -> Response:
     return error_response(refused.http_status, refused.message, kind=kind, code=refused.code, headers=headers, **extra)
 
 
-async def json_object(request: Request) -> dict[str, Any] | Response:
+async def json_object(request: Request, *, not_object: str = "The request body must be a JSON object") -> dict[str, Any] | Response:
     """The request body as a JSON object, or a 400 in the shape's vocabulary."""
     try:
         parsed = json.loads(await request.body() or b"")
     except (ValueError, UnicodeDecodeError, RecursionError):  # a body nested past the parser's depth is invalid too
         return error_response(400, "Invalid JSON body")
     if not isinstance(parsed, dict):
-        return error_response(400, "The request body must be a JSON object")
+        return error_response(400, not_object)
     return parsed
 
 

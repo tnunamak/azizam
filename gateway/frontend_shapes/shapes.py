@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import base64
 import re
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, ClassVar
 
 from starlette.responses import JSONResponse, Response
 
-from gateway import image_output
+import json
+
+from gateway import image_extensions, image_output
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import Shape, job_object
+from gateway.frontend_shapes._base import Shape, coerce, job_object
 from gateway.workflow_runtime_types import (
     CallerContext,
     JobService,
@@ -39,6 +41,7 @@ class OpenAIImagesJson(Shape):
 
     shape_id = "openai.images.json"
     files = "none"
+    not_object_text = "Request body must be a JSON object"
     output_prefix = "image/"
     timeout_code = "image_generation_timeout"
     wire_codes = frozenset({timeout_code, "image_client_disconnected"})
@@ -59,12 +62,20 @@ class OpenAIImagesJson(Shape):
         return resolver() if resolver is not None else None
 
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
+        extensions = wire.get("extensions")
+        block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
+        if isinstance(block, Mapping):
+            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()})
         match = _SIZE.match(str(wire.get("size") or ""))
         if match and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
             inputs["width"], inputs["height"] = int(match.group(1)), int(match.group(2))
         return inputs
 
-    def read_wire(self, fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+    # The top-level wire fields this route accepts; any other is refused (a workflow's own inputs go under ``extensions``).
+    standard_fields: ClassVar[frozenset[str]] = image_extensions.STANDARD_IMAGE_GENERATE_FIELDS
+
+    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()
+                  ) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """The options that change the picture or its encoding (they reach the adapter and the run's identity), and the
         answer form (how this request wants the pictures shown). Each is checked as the wire always checked it."""
         def refuse(message: str, param: str, code: str | None = None) -> Response:
@@ -72,6 +83,20 @@ class OpenAIImagesJson(Shape):
 
         def sent(name: str) -> bool:
             return fields.get(name) not in (None, "")
+
+        unknown = image_extensions.detect_unknown_top_level_fields({**fields, **dict.fromkeys(upload_names)}, self.standard_fields)
+        if unknown:
+            name, message = next(iter(unknown.items()))
+            return _wire.error_response(400, message, param=name, code="unknown_parameter")
+        extensions = fields.get("extensions")
+        if isinstance(extensions, str):                       # a form field is text
+            try:
+                extensions = json.loads(extensions)
+            except ValueError:
+                extensions = None
+            if not isinstance(extensions, Mapping):
+                return refuse("extensions must be a JSON object string", "extensions", "invalid_json")
+            fields["extensions"] = extensions
 
         background, problem = image_output.parse_image_background(fields.get("background"))
         if problem:
@@ -129,6 +154,14 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     shape_id = "openai.images.multipart"
     body = "multipart"
     files = "one"
+    standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
+
+
+class OpenAIImagesVariations(OpenAIImagesMultipart):
+    """``/v1/images/variations``: one picture and no prompt, the narrowest of the image wires."""
+
+    shape_id = "openai.images.variations"
+    standard_fields = image_extensions.STANDARD_IMAGE_VARIATIONS_FIELDS
 
 
 class ImageJobs(OpenAIImagesJson):
@@ -136,6 +169,7 @@ class ImageJobs(OpenAIImagesJson):
     is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes."""
 
     shape_id = "openai.images.jobs"
+    not_object_text = "JSON body must be an object"
 
 
 class AudioGenerate(Shape):

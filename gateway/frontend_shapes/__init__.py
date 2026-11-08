@@ -31,7 +31,7 @@ ROWS_PATH = Path(__file__).resolve().parents[2] / "registry" / "protocol_fronten
 ROWS_KEY = "frontends"
 
 SHAPE_CLASSES: Mapping[str, Callable[..., Shape]] = {cls.shape_id: cls for cls in (
-    OpenAIImagesJson, OpenAIImagesMultipart, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, LocalAI3D, RawGlb)}
+    OpenAIImagesJson, OpenAIImagesMultipart, OpenAIImagesVariations, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, LocalAI3D, RawGlb)}
 
 
 class RowError(ValueError):

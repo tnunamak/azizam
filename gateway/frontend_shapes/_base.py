@@ -7,7 +7,7 @@ no model and no engine; the input names it sets come from the chosen workflow's 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 from starlette.requests import Request
@@ -104,6 +104,8 @@ class Shape:
     # The answer forms the wire lets a caller ask for, and the wire field that carries the choice. None: no choice.
     answer_forms: ClassVar[frozenset[str]] = frozenset()
     answer_field: ClassVar[str] = ""
+    # What a JSON body that is not an object is told, in the words this wire's clients saw.
+    not_object_text: ClassVar[str] = "The request body must be a JSON object"
 
     def __init__(self, *, wait_s: float = 300.0) -> None:
         self.wait_s = wait_s
@@ -148,11 +150,11 @@ class Shape:
                 return read
             fields, uploads = read
         else:
-            read = await _wire.json_object(request)
+            read = await _wire.json_object(request, not_object=self.not_object_text)
             if isinstance(read, Response):
                 return read
             fields = read
-        read_wire = self.read_wire(fields)
+        read_wire = self.read_wire(fields, [name for name, _ in uploads])
         if isinstance(read_wire, Response):
             return read_wire
         options, answer = read_wire
@@ -178,7 +180,7 @@ class Shape:
         return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, options=options, idempotency_key=key or None,
                           frontend_id=row.id, failure_text=row.job_failure_text, retries=row.job_retries)
 
-    def read_wire(self, fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """Hook: the options this request asks of the run (they are part of its identity and reach the adapter) and the
         answer form it asks for (how this request wants the result shown; it never enters the job). A bad value is a
         shaped refusal. The fields are read, not removed: ``transport_fields`` keeps them out of the inputs."""
