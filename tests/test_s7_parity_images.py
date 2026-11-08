@@ -58,6 +58,13 @@ def ok(rig, n=1, **kw):
     base._comfy(rig, comfy_exchanges(views=[(base._png((40 * i, 30, 200 - 40 * i)), "image/png") for i in range(n)], **kw))
 
 
+def engine_answered(obs, method, path, status_code):
+    """Guard: the fake engine really answered ``method path`` with ``status_code`` (the failure the scenario injects fired).
+    ``extra`` exchanges that cannot match leave the well-behaved ones in charge; this tells the two apart."""
+    return [e for e in obs.engine_requests if e["method"] == method and e["path"] == path
+            and (e.get("outcome") or {}).get("status") == status_code]
+
+
 def edit_ok(rig):
     base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), strict=False))
 
@@ -311,7 +318,7 @@ def test_images_24_transient_history_errors_are_retried(tmp_path):
     def setup(rig):
         ok(rig, extra=[exchange("h-503", "GET", "/history/p1", {"status": 503, "json": {}}, times=2)])
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an answer", status(old))
+    old_has(old, "two 503 history answers", len(engine_answered(old, "GET", "/history/p1", 503)) == 2)
     assert_same(old, row, status, failure, engine_without_probes, sleeps)
 
 
@@ -320,7 +327,7 @@ def test_images_25_view_missing_fails_the_round(tmp_path):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
             exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an error", (status(old) or 0) >= 400)
+    old_has(old, "a 404 on the download", engine_answered(old, "GET", "/view", 404) and (status(old) or 0) >= 400)
     assert_same(old, row, status, failure, engine_without_probes)
 
 
@@ -564,14 +571,14 @@ def _upload_refused(rig, response=None):
 @ROW_PENDING
 def test_images_E14_image_upload_refused_502(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), _upload_refused)
-    old_has(old, "502", status(old) == 502)
+    old_has(old, "502 after a refused upload", status(old) == 502 and engine_answered(old, "POST", "/upload/image", 500))
     _edit_compare(old, row)
 
 
 @ROW_PENDING
 def test_images_E15_upload_without_filename_502(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), lambda rig: _upload_refused(rig, {"json": {}}))
-    old_has(old, "an error", (status(old) or 0) >= 400)
+    old_has(old, "an error after an upload answer with no name", (status(old) or 0) >= 400 and engine_answered(old, "POST", "/upload/image", 200))
     _edit_compare(old, row)
 
 
@@ -581,7 +588,7 @@ def test_images_E16_mask_upload_failure_502(tmp_path):
         base._comfy(rig, comfy_exchanges(strict=False, extra=[
             exchange("mask-upload-refused", "POST", "/upload/image", {"status": 500, "json": {"error": "disk full"}}, times=1, required=False)]))
     old, row = pair(tmp_path, EDIT, edit_masked(), setup)
-    old_has(old, "an answer", status(old))
+    old_has(old, "a refused upload", status(old) == 502 and engine_answered(old, "POST", "/upload/image", 500))
     _edit_compare(old, row)
 
 
@@ -1156,7 +1163,7 @@ def test_images_F07_view_missing(tmp_path):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
             exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an error", (status(old) or 0) >= 400)
+    old_has(old, "a 404 on the download", engine_answered(old, "GET", "/view", 404) and (status(old) or 0) >= 400)
     assert_same(old, row, status, failure)
 
 
