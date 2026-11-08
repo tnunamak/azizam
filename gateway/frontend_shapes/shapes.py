@@ -189,7 +189,6 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     files = "any"                  # an edit may take several pictures (a workflow with more than one required asset)
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
     not_object_text = "The request body must be a JSON object"
-    intent = "image.edit"
 
     def unreadable_form(self) -> Response:
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
@@ -238,7 +237,7 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
                                     param="model")
 
     def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
-        name = entry.id.removeprefix(f"{self.intent}.")
+        name = entry.id.removeprefix(f"{entry.contract.get('intent')}.")
         if _wire.entry_required(entry, "prompt") is True and not fields.get("prompt"):
             return _wire.error_response(400, "prompt is required")
         pictures = len([part for part, _ in uploads if part in IMAGE_PARTS])
@@ -266,7 +265,7 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
     def check_count(self, count: int) -> Response | None:
         if count > 1:
             return _wire.error_response(400, f"/v1/images/variations accepts exactly one input image; {count} were provided",
-                                        param="image", code="too_many_images")
+                                        param=IMAGE_PARTS[1], code="too_many_images")
         return None
 
     def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],

@@ -9301,7 +9301,7 @@ async def proxy_graph_image_request(
 # a defensive allow-listed alias (not an OpenAI SDK field) so a non-SDK
 # client using the plural, unbracketed name still works instead of being
 # silently ignored.
-_EDIT_IMAGE_FIELD_NAMES = ("image[]", "image", "images")
+_EDIT_IMAGE_FIELD_NAMES = frontend_wire_shapes.IMAGE_PARTS
 
 
 def _collect_edit_image_uploads(form: Any) -> list[Any]:
