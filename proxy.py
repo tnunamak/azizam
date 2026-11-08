@@ -26731,7 +26731,7 @@ class _WorkflowRunPort:
         if ref is None:
             return None
         if ref.inline is not None:
-            return job_envelope.canonical_bytes(ref.inline)
+            return job_envelope.canonical_bytes(workflow_run.plain(ref.inline))
         return _resolve_workflow_artifact_path(None, ref.path).read_bytes() if ref.path else None
 
     # the execution payload
