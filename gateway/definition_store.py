@@ -238,6 +238,26 @@ def release_holder_in(conn: sqlite3.Connection, holder_id: str) -> None:
     conn.execute("DELETE FROM definition_ref WHERE job_id = ? AND holder_kind = 'holder'", (holder_id,))
 
 
+def holder_shas_in(conn: sqlite3.Connection, holder_id: str) -> tuple[str, ...]:
+    """The blobs a holder (not a job) references, in sha order. Empty for an unknown holder."""
+    rows = conn.execute(
+        "SELECT blob_sha FROM definition_ref WHERE job_id = ? AND holder_kind = 'holder' ORDER BY blob_sha", (holder_id,)
+    ).fetchall()
+    return tuple(row[0] for row in rows)
+
+
+def replace_holder_in(conn: sqlite3.Connection, holder_id: str, shas: Iterable[str]) -> None:
+    """Make a holder reference exactly ``shas``: the others it held are released, in this one transaction. A missing blob
+    refuses all and changes nothing. A job id raises ``HolderIdError``."""
+    _require_transaction(conn)
+    shas = list(shas)
+    if _is_job_id(conn, holder_id):
+        raise HolderIdError(f"{holder_id!r} is a job id, not a holder id")
+    _require_blobs(conn, shas)
+    conn.execute("DELETE FROM definition_ref WHERE job_id = ? AND holder_kind = 'holder'", (holder_id,))
+    _add_refs(conn, holder_id, "holder", shas)
+
+
 def collect_garbage_in(conn: sqlite3.Connection, *, cutoff: float, limit: int | None = None) -> int:
     """Delete blobs created before ``cutoff`` that have no reference. Returns how many were deleted.
 
@@ -305,6 +325,14 @@ class DefinitionStore:
     def hold(self, holder_id: str, shas: Iterable[str]) -> None:
         with self._write() as conn:
             hold_in(conn, holder_id, shas)
+
+    def holder_shas(self, holder_id: str) -> tuple[str, ...]:
+        with media_jobs.connection(self._path) as conn:
+            return holder_shas_in(conn, holder_id)
+
+    def replace_holder(self, holder_id: str, shas: Iterable[str]) -> None:
+        with self._write() as conn:
+            replace_holder_in(conn, holder_id, shas)
 
     def release_holder(self, holder_id: str) -> None:
         with self._write() as conn:

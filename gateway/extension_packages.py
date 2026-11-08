@@ -100,6 +100,11 @@ def comparable_record(record: Mapping[str, Any], disabled_state: bool | None) ->
     comparable = copy.deepcopy(dict(record))
     if disabled_state is not None and comparable.get("enabled") is False:
         comparable["enabled"] = disabled_state
+    if "incarnation" in comparable:
+        # The run control of a stored workflow record (CODE_TO_DATA_S4_S8, 5.2) is the store's, not the package's: it is
+        # added after the install and does not make the record "changed".
+        for key in ("state", "published", "incarnation", "record_revision"):
+            comparable.pop(key, None)
     return comparable
 
 

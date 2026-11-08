@@ -216,6 +216,9 @@ PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
     # Dated operator-authored evidence and derived destination metadata; no raw service record.
     "retention_ledger": frozenset({"ledger"}),
     "retention_facts": frozenset({"retention_facts", "overridden"}),
+    # The workflow owner API (CODE_TO_DATA_S4_S8, I6): workflow documents and their history. A workflow document holds
+    # no credential; a save that carries one is refused by the document's own schema.
+    "workflow_owner": frozenset({"workflows", "workflow", "commit", "report", "revision", "error", "problems"}),
 }
 
 

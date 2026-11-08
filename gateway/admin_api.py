@@ -1271,6 +1271,13 @@ def _app_outranks_you(exc: Exception) -> JSONResponse:
     return _RouteError(status.HTTP_403_FORBIDDEN, "app_outranks_you", str(exc)).as_response()
 
 
+def _name_clash_response(exc: "service_registry.NameClash") -> JSONResponse:
+    """A write that would give one name to two owners: 422 ``id_clash`` with every clash and its path."""
+    from gateway.workflow_owner_api import _refused
+
+    return _refused([problem.as_dict() for problem in exc.problems])
+
+
 def _owner_required(exc: Exception) -> JSONResponse:
     return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
 
@@ -1781,6 +1788,8 @@ def create_admin_router(
     frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
     registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
     transitions: Callable[[], Any] | None = None,
+    workflow_registry: Any = None,
+    workflow_entry_problems: Callable[[Any], list[dict[str, Any]]] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1819,6 +1828,10 @@ def create_admin_router(
     if transitions is not None:
         from gateway.transition_admin import register_transition_routes
         register_transition_routes(router, runtime=transitions, guard=_guard, read_json=_read_json_body)
+    if workflow_registry is not None:
+        from gateway.workflow_owner_api import register_workflow_owner_routes
+        register_workflow_owner_routes(router, store=workflow_registry, guard=_guard, read_json=_read_json_body,
+                                       entry_problems=workflow_entry_problems)
     from gateway.retention_fact_api import register_routes as register_retention_fact_routes
     register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)
     from gateway.engine_protocol_admin import register_engine_protocol_routes
@@ -2620,6 +2633,8 @@ def create_admin_router(
         except service_registry.BundledWorkflowId as exc:
             return egress.error_with_projection(
                 status.HTTP_409_CONFLICT, "id_is_bundled", str(exc), {"bundled_workflow": exc.bundled})
+        except service_registry.NameClash as exc:
+            return _name_clash_response(exc)
         except ValueError as exc:
             # No check is known to quote a value it refuses, but none may: the message leaves without the body's secrets.
             return _RouteError(
