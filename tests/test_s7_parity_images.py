@@ -210,7 +210,6 @@ def test_images_13_output_format_background_quality_echoed(tmp_path):
     assert_same(old, row, status, top_keys, item_keys, ("fields", lambda o: {k: v for k, v in (doc(o) or {}).items() if k != "data" and k != "created"}))
 
 
-@NEEDS_RH
 def test_images_14_size_adjustment_is_reported_and_recorded(tmp_path):
     old, row = pair(tmp_path, GEN, body(size="768X512"), ok)
     old_has(old, "an adjustment", header(old, "x-azizam-size-adjusted") or (receipt_fields(old, "metadata") or {}).get("metadata"))
@@ -243,7 +242,6 @@ def test_images_18_poll_schedule(tmp_path):
     assert_same(old, row, status, sleeps, engine_without_probes)
 
 
-@NEEDS_RH
 def test_images_19_out_of_memory_frees_models_and_retries(tmp_path):
     def setup(rig):
         ok(rig, extra=[exchange("prompt-oom", "POST", "/prompt",
