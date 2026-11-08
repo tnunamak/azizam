@@ -8627,6 +8627,48 @@ def _workflow_display_name(manifest: Mapping[str, Any] | None) -> str | None:
     return name.strip() if isinstance(name, str) and name.strip() else None
 
 
+async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optional["_VramProbe"], free_before: Optional[int],
+                                    batch_target: int, workflow_name: str, width: int, height: int) -> Optional[int]:
+    """Record what one image of this workflow at this size costs, from the first round's probe (or, failing that, the
+    free-memory difference), and return the estimate the batcher may plan with (None when it is untrusted)."""
+    per_image_cost = 0
+    measurement_trusted = False
+    source = "probe"
+    model_state = "unknown"
+    comfy_baseline = 0
+    samples_count = probe.samples if probe is not None else 0
+    free_after, _ = await graph_vram_snapshot(client)
+    if probe is not None and probe.trustworthy():
+        marginal, model_state = probe.marginal_and_state()
+        if isinstance(marginal, int) and marginal > 0:
+            # marginal is the per-batch-round delta; divide by batch_target to get the per-image cost.
+            per_image_cost = marginal // max(1, batch_target)
+            measurement_trusted = True
+            source = "probe"
+        comfy_baseline = probe.comfy_baseline_min if isinstance(probe.comfy_baseline_min, int) else 0
+    elif probe is not None and probe.error:
+        print(f"[proxy] VRAM probe error for {workflow_name} {width}x{height}: {probe.error}", flush=True)
+    if per_image_cost <= 0:
+        # The probe gave nothing useful: persist the endpoint difference, marked untrusted.
+        if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
+            per_image_cost = (free_before - free_after) // max(1, batch_target)
+        if per_image_cost <= 0:
+            per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
+        measurement_trusted = False
+        source = "endpoint_diff"
+    record_vram_estimate(
+        workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
+        comfy_baseline_bytes=comfy_baseline, samples_count=samples_count)
+    sys_peak = probe.system_peak_used_bytes() if probe is not None else None
+    gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
+    print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
+          f"(trusted={measurement_trusted}, source={source}, model_state={model_state}, probe_samples={samples_count}, "
+          f"comfy_before={gib(probe.comfy_before if probe is not None else None)}, "
+          f"comfy_peak={gib(probe.comfy_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
+    # Re-read; None when the measurement was untrusted (no scheduling decision is made from it).
+    return get_vram_estimate(workflow_name, width, height)
+
+
 async def _generate_images_with_adaptive_batching(
     request: Request,
     client: httpx.AsyncClient,
@@ -8897,86 +8939,9 @@ async def _generate_images_with_adaptive_batching(
         # Fallback: endpoint diff `free_before - free_after`, tagged as
         # untrusted so the batcher doesn't plan against it.
         if estimate is None and rounds_run == 1:
-            per_image_cost = 0
-            measurement_trusted = False
-            source = "probe"
-            model_state = "unknown"
-            comfy_baseline = 0
-            samples_count = probe.samples if probe is not None else 0
-            free_after, _ = await graph_vram_snapshot(client)
-
-            if probe is not None and probe.trustworthy():
-                marginal, model_state = probe.marginal_and_state()
-                if isinstance(marginal, int) and marginal > 0:
-                    # marginal is the per-batch-round delta; divide by
-                    # batch_target to get per-image cost (cache key is
-                    # per-image).
-                    divisor = max(1, batch_target)
-                    per_image_cost = marginal // divisor
-                    measurement_trusted = True
-                    source = "probe"
-                comfy_baseline = (
-                    probe.comfy_baseline_min
-                    if isinstance(probe.comfy_baseline_min, int)
-                    else 0
-                )
-            elif probe is not None and probe.error:
-                print(
-                    f"[proxy] VRAM probe error for {workflow_name} "
-                    f"{width}x{height}: {probe.error}",
-                    flush=True,
-                )
-
-            if per_image_cost <= 0:
-                # Probe failed or returned nothing useful. Fall back to the
-                # legacy endpoint diff so we at least persist *something*,
-                # but mark it untrusted.
-                if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
-                    per_image_cost = (free_before - free_after) // max(1, batch_target)
-                if per_image_cost <= 0:
-                    per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
-                measurement_trusted = False
-                source = "endpoint_diff"
-                if model_state == "unknown":
-                    model_state = "unknown"
-
-            record_vram_estimate(
-                workflow_name,
-                width,
-                height,
-                per_image_cost,
-                trusted=measurement_trusted,
-                source=source,
-                model_state=model_state,
-                comfy_baseline_bytes=comfy_baseline,
-                samples_count=samples_count,
-            )
-            # Re-read; will be None if measurement was untrusted (so we
-            # don't make scheduling decisions off it).
-            estimate = get_vram_estimate(workflow_name, width, height)
-            sys_peak = probe.system_peak_used_bytes() if probe is not None else None
-            sys_peak_str = (
-                f"{sys_peak / (1024**3):.2f} GiB" if isinstance(sys_peak, int) else "n/a"
-            )
-            before_str = (
-                f"{probe.comfy_before / (1024**3):.2f} GiB"
-                if probe is not None and isinstance(probe.comfy_before, int)
-                else "n/a"
-            )
-            peak_str = (
-                f"{probe.comfy_peak / (1024**3):.2f} GiB"
-                if probe is not None and isinstance(probe.comfy_peak, int)
-                else "n/a"
-            )
-            print(
-                f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: "
-                f"{per_image_cost / (1024**2):.1f} MiB/image marginal "
-                f"(trusted={measurement_trusted}, source={source}, "
-                f"model_state={model_state}, probe_samples={samples_count}, "
-                f"comfy_before={before_str}, comfy_peak={peak_str}, "
-                f"system_peak={sys_peak_str})",
-                flush=True,
-            )
+            estimate = await _measure_first_round_vram(
+                client, probe=probe, free_before=free_before, batch_target=batch_target,
+                workflow_name=workflow_name, width=width, height=height)
 
     images_collected = images_collected[:images_total]
     if not images_collected:
@@ -26844,31 +26809,11 @@ class _AdaptiveBatching:
 
     async def measured(self, plan, session, round_no, target, probe):
         state = plan.state
-        if state.estimate is not None:
-            return
-        name, width, height = state.key
-        per_image_cost, trusted, source, model_state, baseline = 0, False, "probe", "unknown", 0
-        samples = probe.samples if probe is not None else 0
-        free_after, _ = await graph_vram_snapshot(session.client)
-        if probe is not None and probe.trustworthy():
-            marginal, model_state = probe.marginal_and_state()
-            if isinstance(marginal, int) and marginal > 0:
-                per_image_cost, trusted, source = marginal // max(1, target), True, "probe"
-            baseline = probe.comfy_baseline_min if isinstance(probe.comfy_baseline_min, int) else 0
-        elif probe is not None and probe.error:
-            print(f"[proxy] VRAM probe error for {name} {width}x{height}: {probe.error}", flush=True)
-        if per_image_cost <= 0:
-            before = state.free_before
-            if isinstance(free_after, int) and isinstance(before, int) and free_after < before:
-                per_image_cost = (before - free_after) // max(1, target)
-            if per_image_cost <= 0:
-                per_image_cost = 4 * 1024 * 1024
-            trusted, source = False, "endpoint_diff"
-        record_vram_estimate(name, width, height, per_image_cost, trusted=trusted, source=source, model_state=model_state,
-                             comfy_baseline_bytes=baseline, samples_count=samples)
-        state.estimate = get_vram_estimate(name, width, height)
-        print(f"[proxy] VRAM estimate for {name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
-              f"(trusted={trusted}, source={source}, model_state={model_state}, probe_samples={samples})", flush=True)
+        if state.estimate is None:
+            name, width, height = state.key
+            state.estimate = await _measure_first_round_vram(
+                session.client, probe=probe, free_before=state.free_before, batch_target=target,
+                workflow_name=name, width=width, height=height)
 
 
 def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):

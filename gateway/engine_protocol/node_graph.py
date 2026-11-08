@@ -478,7 +478,7 @@ class NodeGraphAdapter:
         declared = self._operations.get(op)
         poll = getattr(declared, "poll", None)
         if poll is None:
-            raise UnknownOperation(f"The node-graph description declares no poll cadence for '{op}'.")
+            raise UnknownOperation(f"The protocol description declares no poll cadence for '{op}'.")
         return poll
 
     # --- caller-facing messages (the engine's name is data) -----------------------------------
@@ -577,14 +577,7 @@ class NodeGraphAdapter:
     def _workflow_payload(self, op: str, request: CanonicalRequest) -> dict[str, Any]:
         """The prompt body of a manifest-backed request, compiled now from the request: the graph, this adapter's client
         id and any UI twin. Nothing is cached on the request, so the body is read at the moment it is sent."""
-        manifest = request.params.get("manifest")
-        if not isinstance(manifest, Mapping):
-            raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
-                                   f"manifest; '{op}' carries none.")
-        pinned = request.params.get("template")
-        template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)
-        graph = compile_workflow(manifest, self.binding, template, request.body)
-        return build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
+        return self.compile(op, request)[1]
 
     @staticmethod
     def _pinned_template(template: Any) -> dict[str, Any]:
