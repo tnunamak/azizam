@@ -7,6 +7,8 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
+from starlette.exceptions import HTTPException
+from starlette.formparsers import MultiPartException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -78,7 +80,10 @@ def nested_part(name: str) -> bool:
 async def split_form(request: Request) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
     """A multipart body as its fields and its file parts (name, upload) in the order received. A file part whose name
     is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
-    form = await request.form()
+    try:
+        form = await request.form()
+    except (MultiPartException, HTTPException, ValueError):  # the parser's own error is a ValueError
+        return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
     fields: dict[str, Any] = {}
     uploads: list[tuple[str, Any]] = []
     for name, value in form.multi_items():

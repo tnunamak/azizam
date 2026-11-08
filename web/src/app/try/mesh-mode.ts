@@ -8,7 +8,7 @@ import type { WorkflowInput } from "./workflow-inputs";
 /** The catalog capability of the TRELLIS.2 workflow: its row lists under "mesh", not in Workflow. */
 export const MESH_CAPABILITY = "mesh";
 /** The gateway route the mesh workflow posts to. */
-export const MESH_PATH = "/v1/meshes/generate";
+export const MESH_PATH = "/v1/3d/generations/glb";
 export const MESH_MEDIA_TYPE = "model/gltf-binary";
 /** The job routes the async form uses: poll, fetch the model, cancel. */
 export const MESH_JOB_PATH = "/gateway/v1/media/jobs/";

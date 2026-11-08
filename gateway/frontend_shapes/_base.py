@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from gateway import client_errors, job_retry_hint
 from gateway.frontend_shapes import _wire
 from gateway.workflow_kernel import selector_matches  # noqa: F401  (re-exported for shape tests)
 from gateway.workflow_runtime_types import (
@@ -35,7 +36,7 @@ from gateway.workflow_runtime_types import (
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 TERMINAL = ("succeeded", "failed", "canceled")
 # How a job store failure category is spelled on the wire.
-_STATUS_BY_CATEGORY = {"client": 400, "policy": 403, "upstream": 502, "timeout": 504}
+_STATUS_BY_CATEGORY = {"client": 400, "policy": 403, "capacity": 503, "upstream": 502, "timeout": 504}
 
 
 def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
@@ -57,13 +58,16 @@ def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
     return value
 
 
-def failure_response(failure: RunFailure | None, *, fallback: str) -> Response:
+def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s: int | None = None) -> Response:
     if failure is None:
         return _wire.error_response(500, fallback, kind="api_error")
     status = failure.upstream_status if failure.category == "upstream" and failure.upstream_status else \
         _STATUS_BY_CATEGORY.get(failure.category, 500)
-    return _wire.error_response(status if status >= 400 else 502, failure.message,
-                                kind="invalid_request_error" if status < 500 else "api_error", code=failure.code)
+    response = _wire.error_response(status if status >= 400 else 502, failure.message,
+                                    kind="invalid_request_error" if status < 500 else "api_error", code=failure.code)
+    if retry_after_s is not None and failure.retryable:
+        response.headers["Retry-After"] = client_errors.retry_after(str(retry_after_s)) or str(retry_after_s)
+    return response
 
 
 def job_object(view: RunJobView, *, base: str = "/gateway/v1/media/jobs") -> dict[str, Any]:
@@ -168,7 +172,8 @@ class Shape:
         except JobNotFound:
             return _wire.error_response(404, "Job not found", code="job_not_found")
         if view.status == "failed":
-            return failure_response(view.failure, fallback="The job failed")
+            return failure_response(view.failure, fallback="The job failed",
+                                    retry_after_s=self.retry_after(view, jobs, caller))
         if view.status == "canceled":
             return _wire.error_response(409, "The job was canceled", code="job_canceled")
         if view.status != "succeeded":
@@ -177,6 +182,16 @@ class Shape:
             return await self.render_success(view, jobs, caller)
         except (JobNotFound, ResultUnavailable):
             return _wire.error_response(404, "The result is not available", code="result_unavailable")
+
+    @staticmethod
+    def retry_after(view: RunJobView, jobs: JobService, caller: CallerContext) -> int | None:
+        """The delay a busy resource asked for, from the job's events; None when the job holds none."""
+        if view.failure is None or not view.failure.retryable:
+            return None
+        try:
+            return job_retry_hint.read(jobs.events(view.job_id, caller, limit=200))
+        except JobNotFound:
+            return None
 
     def render_job(self, view: RunJobView) -> Response:
         status = 200 if view.status in TERMINAL else 202

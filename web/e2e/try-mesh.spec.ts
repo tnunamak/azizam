@@ -157,7 +157,7 @@ for (const { name, size } of viewports) {
         contentType: "application/json",
         body: JSON.stringify(body),
       });
-      await page.route("**/v1/meshes/generate", async (route) => {
+      await page.route("**/v1/3d/generations/glb", async (route) => {
         sentBody = route.request().postData() ?? "";
         sentPrefer = route.request().headers()["prefer"] ?? "";
         await fulfilBytes(route, {
@@ -293,7 +293,7 @@ for (const { name, size } of viewports) {
     await openMeshMode(page);
     await page.locator('input[type="file"]').setInputFiles(PICTURE);
     const reply = page.waitForResponse((response) =>
-      response.url().endsWith("/v1/meshes/generate"),
+      response.url().endsWith("/v1/3d/generations/glb"),
     );
     await page.getByRole("button", { name: "Make 3D model" }).click();
     const response = await reply;

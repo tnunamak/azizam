@@ -3,7 +3,7 @@
 The mesh row is one row of the shared capability catalog (proxy._mesh_facts). Its state is the pool's live probe, which
 joins every listing as availability evidence (proxy.LIVE_PROBES), so the member catalog and the general listing show it
 the same way. These tests go through the real handlers with a signed-in owner; only the probe's network is faked, by the
-harness from test_mesh_route.py.
+harness from tests/support/mesh_harness.py.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import httpx
 import proxy
 from gateway import mesh_api
 from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
-from tests.test_mesh_route import OBSERVER_URL, TRELLIS_URL, Harness
+from tests.support.mesh_harness import OBSERVER_URL, TRELLIS_URL, Harness
 
 MESH_WORKFLOW = "mesh.generate.trellis-2"
 MESH_KEY = ("mesh.generate", MESH_WORKFLOW)

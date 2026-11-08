@@ -35,7 +35,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
     "/gateway/v1/media/jobs/{job_id}/results/{name:path}": "an authenticated read of one published JSON result of a job, from the job's result bundle; every refusal is one 404; tests/test_media_job_results.py covers it",
-    "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
+    "/v1/3d/generations": "the 3D frontend rows over the run core: POST /v1/3d/generations (the LocalAI wire) and POST /v1/3d/generations/glb (the raw GLB wire); they replace POST /v1/meshes/generate; tests/test_adapter_differential_s7_mesh_rows.py covers them",
     "/admin/api/engines/domains": "owner-only service transition gate: start a transition, read one, read the gate and its lease counts, resolve a held step; tests/test_transition_admin.py covers them",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/categories/plan-reach": "the access plan editor's before-Save preview of who a change to a plan's categories reaches (owner only; it reads the rules and the plan and writes nothing); tests/test_category_audience.py covers it",
@@ -125,6 +125,7 @@ def _reviewed(path: str | None, methods: list[str] | None = None) -> bool:
 REMOVED_PATHS: dict[str, str] = {
     "/admin/api/settings/effective": "config homes C10: the sections routes under /admin/api/config replace the effective view",
     "/admin/api/settings/effective/export": "config homes C10: GET /admin/api/config/export is the one export",
+    "/v1/meshes/generate": "S7 (builder D4): the 3D rows POST /v1/3d/generations and /v1/3d/generations/glb replace it",
 }
 
 
@@ -226,7 +227,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-08 for the nine /admin/api/workflows owner operations (see ADDED_PATHS): only those six
         # paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing else).
         # Before it the digest was 28327686fc98f347d83bbd9c8a44d8d1f173670e2b2e4dfd4d80dd787bc008b9.
-        assert route_graph.openapi_digest(proxy.app) == "501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8"
+        # Re-captured 2026-11-08 for S7 (builder D4): POST /v1/meshes/generate left and POST /v1/3d/generations and
+        # POST /v1/3d/generations/glb arrived (see REMOVED_PATHS and ADDED_PATHS); the mesh workflow's documented sync and
+        # async paths moved to /v1/3d/generations/glb (tests/fixtures/headless_openapi.json shows the same changes).
+        # Before it the digest was 501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8.
+        assert route_graph.openapi_digest(proxy.app) == "8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -261,4 +266,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Before it the frozen digest was e22f458536ecd05d42ccd8386fd4219befe891c3a3c79b380bd84e14a6f902ea.
     # Re-captured 2026-11-08 for the nine /admin/api/workflows owner operations (see ADDED_PATHS): only those six paths
     # are new. Before it the frozen digest was 2c63428501d78648d12449003431d89f68dc58341751d76db03fcb8642f6305f.
+    # Re-captured 2026-11-08 for S7 (builder D4): POST /v1/meshes/generate left; POST /v1/3d/generations and
+    # POST /v1/3d/generations/glb arrived with the same App key security; the mesh workflow's documented paths moved.
+    # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the frozen digest was
+    # b62d42d37489df105cda9f0d730000d9ea8dba85e958df91ecfa7b21d629e6ad.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

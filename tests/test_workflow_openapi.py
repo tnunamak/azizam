@@ -28,11 +28,7 @@ from gateway.workflow_openapi import (  # noqa: E402
 )
 from openapi_lint import validate_openapi  # noqa: E402
 from gateway.workflows_catalog import _workflow_row  # noqa: E402
-from gateway.mesh_manifest import (  # noqa: E402
-    bind_request,
-    downstream_form,
-    sniff_image,
-)
+from gateway.multipart_adapter import scalar_fields  # noqa: E402
 from gateway.mesh_api import mesh_workflow_from_record  # noqa: E402
 from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 
@@ -290,10 +286,8 @@ class WorkflowOpenApiTests(unittest.TestCase):
         field_to_input = {field: name for name, field in manifest.mapping.items()}
         self.assertTrue(set(example["form"]) <= set(field_to_input))
         supplied = {field_to_input[field]: value for field, value in example["form"].items()}
-        request = bind_request(manifest, supplied, sniff_image(PNG, max_bytes=MIB))
-        fields, image = downstream_form(manifest, request)
+        fields = scalar_fields(manifest.inputs, manifest.mapping, supplied)
         self.assertEqual(set(fields), set(example["form"]))
-        self.assertEqual(image.content_type, "image/png")
 
     def test_mesh_is_one_multipart_post_with_its_picture_as_a_file_part(self) -> None:
         mesh = self.catalog["mesh.generate.trellis-2"]["execution"]
@@ -301,7 +295,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(mesh["recommended"], "async")
         self.assertEqual(mesh["async"]["kind"], "respond_async")
         submit = mesh["async"]["submit"]
-        self.assertEqual((submit["method"], submit["path"]), ("POST", "/v1/meshes/generate"))
+        self.assertEqual((submit["method"], submit["path"]), ("POST", "/v1/3d/generations/glb"))
         self.assertEqual(submit["content_type"], "multipart/form-data")
         self.assertEqual(submit["headers"], {"Prefer": "respond-async"})
         self.assertTrue(mesh["async"]["poll"]["path"].startswith("/gateway/v1/media/jobs/"))
@@ -310,7 +304,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(mesh["async"]["content"]["output"], "model/gltf-binary (GLB bytes)")
         self.assertEqual(mesh["async"]["fields"], mesh["sync"]["fields"])
         self.assertEqual(mesh["sync"]["method"], "POST")
-        self.assertEqual(mesh["sync"]["path"], "/v1/meshes/generate")
+        self.assertEqual(mesh["sync"]["path"], "/v1/3d/generations/glb")
         self.assertEqual(mesh["sync"]["content_type"], "multipart/form-data")
         self.assertEqual(mesh["sync"]["fields"]["image"], {"in": "file", "field": "image"})
         self.assertEqual(mesh["sync"]["fields"]["seed"], {"in": "form", "field": "seed"})
@@ -324,7 +318,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_mesh_example_asks_for_the_job_and_does_not_save_it_as_a_model(self) -> None:
         example = self.mesh_row()["example_request"]
-        self.assertEqual(example["path"], "/v1/meshes/generate")
+        self.assertEqual(example["path"], "/v1/3d/generations/glb")
         self.assertIn("-H 'Prefer: respond-async'", example["curl"])
         self.assertIn("'Prefer': 'respond-async'", example["python"])
         self.assertIn('"Prefer": "respond-async"', example["javascript"])

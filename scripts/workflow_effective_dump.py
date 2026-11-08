@@ -79,27 +79,21 @@ def engine_requests(root: Path, package_dir: Path | None, document: dict[str, An
 
 def multipart_form(record: Any, cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The form fields the multipart binding sends for each corpus case, and the name of the file part."""
-    from gateway import mesh_api, mesh_manifest
+    from gateway import multipart_adapter
 
     document = record.manifest
-    if not any(isinstance(block, dict) and "multipart" in str(block.get("transport", {}).get("kind", "")) or key == "http-multipart"
-               for key, block in (document.get("bindings") or {}).items()):
+    blocks = [block for key, block in (document.get("bindings") or {}).items()
+              if isinstance(block, dict) and (key == "http-multipart" or "multipart" in str(block.get("transport", {}).get("kind", "")))]
+    if not blocks:
         return []
-    if hasattr(mesh_api, "mesh_workflow_from_record"):
-        workflow = mesh_api.mesh_workflow_from_record(record)
-    else:
-        workflow = mesh_manifest.load_mesh_manifest(record.source_path)
-    picture = mesh_manifest.ImageAsset(b"x", "input.png", "image/png")
+    mapping = blocks[0].get("map") or {}
+    inputs = record.contract.get("inputs") or {}
+    image_input = next((name for name in mapping if (inputs.get(name) or {}).get("type") == "asset"), None)
     out = []
     for case in cases:
-        supplied = {name: value for name, value in case["values"].items() if name in workflow.inputs and name != workflow.image_input}
-        try:
-            request = mesh_manifest.bind_request(workflow, supplied, picture)
-            fields, part = mesh_manifest.downstream_form(workflow, request)
-            out.append({"case": case["name"], "fields": fields, "part": part.filename, "image_input": workflow.image_input,
-                        "rejected": case.get("rejected", {})})
-        except mesh_manifest.MeshInputError as error:
-            out.append({"case": case["name"], "refused": error.code, "rejected": case.get("rejected", {})})
+        supplied = {name: value for name, value in case["values"].items() if name in inputs and name != image_input}
+        out.append({"case": case["name"], "fields": multipart_adapter.scalar_fields(inputs, mapping, supplied),
+                    "part": "input.png", "image_input": image_input, "rejected": case.get("rejected", {})})
     return out
 
 

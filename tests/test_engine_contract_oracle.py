@@ -88,7 +88,9 @@ def test_frontend_route_graph_is_frozen() -> None:
     # the digest is still 5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca.
     # Then DELETE /v1/assets/{asset_id} and its /openai alias (App keys delete assets they made); before them the digest was
     # 963290051e2e622bd481c6a0c380f91e93878d051c9301d4006d41c2a1926162.
-    assert _digest(graph) == "f9b65e5b01c09f2cd8a1d8ddb5a5ec0ac38d219013cd3d36a2a69caf95185c58"
+    # S7 (builder D4): POST /v1/meshes/generate left and POST /v1/3d/generations and POST /v1/3d/generations/glb arrived;
+    # before that change the digest was f9b65e5b01c09f2cd8a1d8ddb5a5ec0ac38d219013cd3d36a2a69caf95185c58.
+    assert _digest(graph) == "8cf497463c537c485a6fbc2bb0404c1edf33e00d15bba4cc4308d3d82a1390e9"
 
 
 def _build_registry() -> WorkflowRegistry:

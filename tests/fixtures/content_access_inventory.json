@@ -268,21 +268,6 @@
       ]
     },
     {
-      "path": "gateway/mesh_api.py",
-      "function": "_event",
-      "source_sha256": "9d12524c75abac0f5179968e08309aba7baacebb82140372b32c4e4c6be05851",
-      "call": "append_event",
-      "event": "phase",
-      "access": "content:job:read",
-      "note": "Photo to 3D job lifecycle; callers pass only the four literals below.",
-      "resolved_types": [
-        "started",
-        "succeeded",
-        "failed",
-        "canceled"
-      ]
-    },
-    {
       "path": "gateway/media_jobs.py",
       "function": "append_event",
       "source_sha256": "ce3b4079468f0778b8aa3dd44b90703c5720cc556e4c8dedec35bace9d1a3136",
@@ -303,6 +288,14 @@
         "succeeded"
       ],
       "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/job_retry_hint.py",
+      "function": "write",
+      "source_sha256": "d36924af8aa509bfd0148a986c421363fcc803b29c8894dad5a8f3d70d259ea1",
+      "call": "append_event",
+      "event": "'retry_after'",
       "access": "content:job:read"
     }
   ],
@@ -3526,9 +3519,15 @@
       "access": "none"
     },
     {
-      "handler": "gateway.mesh_api.register_mesh_routes.<locals>.generate_mesh",
+      "handler": "gateway.row_routes._handler.<locals>.serve",
       "method": "POST",
-      "path": "/v1/meshes/generate",
+      "path": "/v1/3d/generations",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.row_routes._handler.<locals>.serve",
+      "method": "POST",
+      "path": "/v1/3d/generations/glb",
       "access": "own-account"
     },
     {
@@ -3596,6 +3595,7 @@
     "progress": "content:job:read",
     "queued": "content:job:read",
     "retry": "content:job:read",
+    "retry_after": "content:job:read",
     "started": "content:job:read",
     "submitted": "content:job:read",
     "succeeded": "content:job:read"

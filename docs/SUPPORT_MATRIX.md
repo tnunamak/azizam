@@ -242,7 +242,8 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/v1/images/generations` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `images_generations` |
 | `POST` | `/v1/images/variations` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `images_variations` |
 | `GET` | `/v1/images/{image_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `images_content` |
-| `POST` | `/v1/meshes/generate` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mesh_api.py](../gateway/mesh_api.py) `generate_mesh` |
+| `POST` | `/v1/3d/generations` | supported | Implemented route (LocalAI wire: JSON answer carrying the model); requires applicable policy and backend configuration | [gateway/row_routes.py](../gateway/row_routes.py) row `mesh-generations` |
+| `POST` | `/v1/3d/generations/glb` | supported | Implemented route (raw multipart wire: the model is the body); requires applicable policy and backend configuration | [gateway/row_routes.py](../gateway/row_routes.py) row `mesh-glb` |
 | `POST` | `/v1/messages` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `anthropic_messages` |
 | `POST` | `/v1/messages/count_tokens` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `anthropic_count_tokens` |
 | `GET` | `/v1/models` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `list_models` |

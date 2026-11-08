@@ -816,24 +816,24 @@ def _unsupported_contract(method, template, response, row):
 
 
 def _unavailable_contract(method, template, response, row, gateway):
-    """A capacity-gated route with no seeded registry refuses before any backend call.
+    """A 3D row with no picture refuses before any backend call.
 
-    The mesh route checks auth first, then fails closed with 503 when its frontend
-    record, service, or capacity is absent. This harness seeds none of them, so the
-    503 proves nothing runs. Only this exact answer qualifies; a backend call or a
-    dispatched receipt still makes the row a violation.
+    The row authenticates and enforces the route policy first (gateway/row_routes.py), then reads the wire request. The
+    harness sends no picture, so the row answers 400 ``missing_input`` after the policy decision and before any job or
+    backend call. tests/test_adapter_differential_s7_mesh_rows.py (the ``policy_refusal`` cell) shows the policy refusal
+    itself. Only this exact answer qualifies; a backend call or a dispatched receipt still makes the row a violation.
     """
-    if (method, template) != ("POST", "/v1/meshes/generate") or response.status_code != 503:
+    if (method, template) not in {("POST", "/v1/3d/generations"), ("POST", "/v1/3d/generations/glb")}:
         return
-    if gateway.calls or row.get("dispatched") != "no":
+    if response.status_code != 400 or gateway.calls or row.get("dispatched") != "no":
         return
     try:
         error = response.json().get("error") or {}
     except ValueError:
         return
-    if error.get("code") == "service_unavailable":
+    if error.get("code") == "missing_input":
         row["outcome"] = "unavailable (contract)"
-        row["rule"] = "fail-closed 503 before any backend call; nothing runs"
+        row["rule"] = "400 missing input after the policy decision, before any backend call; nothing runs"
         row["detail"] = ""
 
 
