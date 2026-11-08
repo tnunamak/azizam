@@ -309,8 +309,8 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
                 self.assertNotIn("tags", fields, fields["id"])
 
     def test_media_models_take_image_input_without_tags(self) -> None:
-        edit, edit_manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset"}}, "outputs": {"image": {"media_type": "image/png"}}})
-        i2v, i2v_manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
+        edit, edit_manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"image": {"media_type": "image/png"}}})
+        i2v, i2v_manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset", "accepts": ["image/png"]}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         sources = mm.MetadataSources(manifest={**edit_manifests, **i2v_manifests}.get)
         out = _annotated([edit, i2v, {"id": "image-edit", "azizam_resolves_to": {"image_edits": "edit"}}], sources)
         for model_id in ("edit", "i2v", "image-edit"):
