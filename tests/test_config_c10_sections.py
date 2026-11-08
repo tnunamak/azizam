@@ -22,7 +22,10 @@ def test_both_sections_ship_and_are_registered():
 
 def test_the_release_ships_no_model_entry_():
     assert yaml.safe_load((DEFAULTS / "models.yml").read_text(encoding="utf-8")) in ({}, None)
-    assert yaml.safe_load((DEFAULTS / "workflow_execution.yml").read_text(encoding="utf-8")) in ({}, None)
+    # workflow_execution ships the I7 keys (docs/design/CODE_TO_DATA_S4_S8.md) and nothing else
+    assert yaml.safe_load((DEFAULTS / "workflow_execution.yml").read_text(encoding="utf-8")) == {
+        "max_wait_s": 60, "history_depth": 20,
+        "bounds": {"max_template_bytes": 524288, "max_nodes": 2000, "max_depth": 32}}
 
 
 def test_the_old_models_list_becomes_the_mapping():

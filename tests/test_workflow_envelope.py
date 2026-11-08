@@ -157,7 +157,7 @@ def test_missing_key_refused(path, match):
 @pytest.mark.parametrize(
     ("path", "value", "match"),
     [
-        (("envelope_version",), 2, "envelope_version: expected 1"),
+        (("envelope_version",), 3, "envelope_version: expected one of 1, 2"),
         (("envelope_version",), "1", "envelope_version: expected an integer"),
         (("envelope_version",), True, "envelope_version: expected an integer"),
         (("source",), "x", "source: expected an object"),
@@ -325,3 +325,48 @@ def test_a_terminal_job_needs_no_recovery_whatever_else_is_saved(state):
 def test_recovery_takes_keywords_only():
     with pytest.raises(TypeError):
         classify_recovery(False, False, False, False, False)  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------------------- version 2 (section 7.4)
+
+
+def valid_v2(**source) -> dict:
+    data = valid()
+    data["envelope_version"] = 2
+    data["source"] = {"kind": "workflow", "id": "wf.example", "revision": 3, "incarnation": "inc-1",
+                      "binding_key": "fake", "record_revision": 7, **source}
+    return data
+
+
+def test_version_two_round_trips_and_carries_the_registry_facts():
+    data = valid_v2()
+    envelope = parse_envelope(data, GENERATORS)
+    assert (envelope.incarnation, envelope.binding_key, envelope.record_revision) == ("inc-1", "fake", 7)
+    assert envelope.to_json() == data
+    assert parse_envelope(envelope.to_json(), GENERATORS) == envelope
+
+
+def test_version_one_is_still_read_and_has_no_registry_facts():
+    envelope = parse_envelope(valid(), GENERATORS)
+    assert (envelope.envelope_version, envelope.incarnation, envelope.binding_key, envelope.record_revision) == (1, None, None, None)
+    assert "incarnation" not in envelope.to_json()["source"]
+
+
+def test_version_two_requires_incarnation_and_binding_key_but_record_revision_is_audit_only():
+    for missing in ("incarnation", "binding_key"):
+        data = valid_v2()
+        del data["source"][missing]
+        with pytest.raises(ValueError, match=f"source.{missing}: required"):
+            parse_envelope(data, GENERATORS)
+    data = valid_v2(record_revision=None)
+    assert parse_envelope(data, GENERATORS).record_revision is None
+    data = valid_v2()
+    del data["source"]["record_revision"]
+    assert parse_envelope(data, GENERATORS).record_revision is None
+
+
+def test_version_one_refuses_the_version_two_keys():
+    data = valid()
+    data["source"]["incarnation"] = "inc-1"
+    with pytest.raises(ValueError, match="unknown key"):
+        parse_envelope(data, GENERATORS)

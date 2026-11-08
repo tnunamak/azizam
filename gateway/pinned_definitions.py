@@ -1,4 +1,4 @@
-"""Read back what a job pinned, so a route compiles from the pin and not from a live file (S2 design, D2 "Use").
+"""Read back what a job pinned, so a run uses the pin and not a live file (S2 design, D2 "Use").
 
 ``gateway/job_envelope.py`` builds the record at accept time and ``gateway/definition_store.py`` keeps it. This module
 reads it for a run: the contract, the binding and the template bytes that the job's envelope names. A run that uses the
@@ -9,8 +9,7 @@ to the current file.
 The module names no workflow, model, engine or modality. A route says which binding key holds its graph; the shape of
 the contract is whatever the route pinned.
 
-Which routes compile from the pin is a setting, per route capability: ``workflow_execution.compile_from_pin.<capability>``
-in the runtime config, read on each request (``compile_from_pin_enabled``).
+A generic workflow run (``gateway/workflow_run.py``) always runs from its pin; there is no setting.
 """
 
 from __future__ import annotations
@@ -28,18 +27,9 @@ from gateway.definition_store import DefinitionUnavailable, envelope_in, read_bl
 from gateway.manifests import ManifestError, validate_manifest
 from gateway.workflow_envelope import Envelope
 
-CONFIG_SECTION = "workflow_execution"
-CONFIG_KEY = "compile_from_pin"
 # The manifest fields a job pins as its contract: the header a compile validates (`validate_manifest`) and the input and
 # output schemas. Everything else in a manifest is for listings and the UI, and a run does not read it.
 PINNED_MANIFEST_FIELDS = ("schema_version", "id", "intent", "inputs", "outputs")
-
-
-def compile_from_pin_enabled(config: Mapping[str, Any], capability: str) -> bool:
-    """Whether jobs of the route ``capability`` compile from their pin. Only a literal ``true`` turns it on."""
-    section = config.get(CONFIG_SECTION)
-    flags = section.get(CONFIG_KEY) if isinstance(section, Mapping) else None
-    return isinstance(flags, Mapping) and flags.get(capability) is True
 
 
 @dataclass(frozen=True)

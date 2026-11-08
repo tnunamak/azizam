@@ -279,7 +279,7 @@
             },
             "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
           },
-          "envelope_version": 1,
+          "envelope_version": 2,
           "executor": {
             "adapter_id": "node-graph",
             "interface_version": 2
@@ -289,8 +289,11 @@
             "bundle": "bundle:<job:1>:1"
           },
           "source": {
+            "binding_key": "untracked",
             "id": "video-ltx-2.5-t2v",
+            "incarnation": "untracked",
             "kind": "workflow",
+            "record_revision": null,
             "revision": "sha256:4a14c83e0f7d152b61a2b5b7fb102c20b2695345dce69655110994cbb60d5f48"
           },
           "upstream": {

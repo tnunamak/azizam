@@ -54,6 +54,7 @@ from decimal import Decimal
 from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
+import dataclasses
 import contextvars
 import io
 from contextlib import asynccontextmanager
@@ -115,6 +116,9 @@ from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
+from gateway import pinned_runtime, request_spool, workflow_run
+from gateway.engine_protocol.types import ResultContext
+from gateway.workflow_runtime_types import JobNotFound, MediaRef, RunRefused
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -6505,12 +6509,6 @@ def _video_job_envelope(workflow_name: str) -> job_envelope.JobEnvelope | None:
 
 
 _PINNED_MANIFEST_FIELDS = pinned_definitions.PINNED_MANIFEST_FIELDS
-
-
-def _compile_from_pin(capability: str) -> bool:
-    """Whether jobs of the route ``capability`` compile from their pinned definitions (CODE_TO_DATA_S2 D2 "Use"),
-    read from the published config on each call."""
-    return pinned_definitions.compile_from_pin_enabled(runtime().config, capability)
 
 
 _DEFINITION_UNAVAILABLE = "A definition this job was accepted with is no longer available; please submit it again."
@@ -15550,18 +15548,7 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
 def _gateway_result_reader(request: Request) -> result_bundle.Reader | None:
     """Who is reading a job result: the App's owner scope and the person, credential or MCP connection the request ran
     as. A request that resolved no identity reads nothing."""
-    from gateway.ownership import stored_owner_key
-    identity = _auth_context_from_scope(request).identity
-    if identity is None:
-        return None
-    scope = stored_owner_key(getattr(identity, "key_hash", None), app_id=getattr(identity, "app_id", None),
-                             path=ADMIN_STORE.path)
-    if not scope:
-        return None
-    return result_bundle.Reader(
-        owner_scope=scope, person_id=getattr(identity, "person_id", None) or None,
-        credential_id=getattr(identity, "credential_id", None) or None,
-        connection_id=getattr(identity, "connection_id", None) or None)
+    return _result_reader_for(_auth_context_from_scope(request))
 
 
 async def _gateway_media_job_submitter(
@@ -23920,6 +23907,21 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
     )
 
 
+def _recover_workflow_runs() -> None:
+    """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
+    runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
+    core = _workflow_run_core()
+    if core is None:
+        return
+    try:
+        report = core.recover_runs(int(time.time()))
+    except Exception as exc:  # noqa: BLE001 - a failed recovery must not stop startup; the next start decides again
+        _MEDIA_JOB_LOG.warning("workflow run recovery failed: %s", log_scrub.describe_error(exc))
+        return
+    if report.counts:
+        _MEDIA_JOB_LOG.info("workflow runs recovered: %s", dict(report.counts))
+
+
 def _recover_media_jobs() -> None:
     """Run on every startup, even when the operator disables resuming."""
     # Before any job resumes: no run is staging results yet, so every unpublished stage is a dead attempt's.
@@ -23930,9 +23932,11 @@ def _recover_media_jobs() -> None:
     _resume_pending_image_media_jobs()
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
+    _recover_workflow_runs()
     me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH,
                         enabled=_image_media_job_resume_on_start())
-    supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE}
+    supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE,
+                 workflow_run.RUN_INTENT}
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
         mode = (job.get("metadata") or {}).get("mode")
         if mode not in supported:
@@ -24342,6 +24346,9 @@ _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = {
     "sfx.generate": "audio",
     INTENT_VIDEO_GENERATE: "video",
 }
+# Every intent that counts toward the queue depth and an App's concurrency: the modality jobs above, and workflow runs
+# (whose resource class is the workflow's own fact, so it is not in the table).
+_QUEUED_MEDIA_JOB_INTENTS = frozenset(_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT) | {workflow_run.RUN_INTENT}
 
 
 def _optional_int_config(mapping: Mapping[str, Any], key: str) -> int | None:
@@ -24394,7 +24401,7 @@ def _media_job_queue_depth(
         depth += sum(
             1
             for row in rows
-            if str(row.get("intent") or "") in _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT
+            if str(row.get("intent") or "") in _QUEUED_MEDIA_JOB_INTENTS
         )
     return depth
 
@@ -24404,7 +24411,7 @@ def _media_job_app_load(app_id: str | None, limits: Mapping[str, int] | None) ->
         return {}
     try:
         return {app_id: media_jobs.active_count(
-            app_id=app_id, intents=_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT, path=media_jobs.DB_PATH,
+            app_id=app_id, intents=_QUEUED_MEDIA_JOB_INTENTS, path=media_jobs.DB_PATH,
         )}
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] media app admission load read failed: {type(exc).__name__}", flush=True)
@@ -24512,23 +24519,29 @@ def _model_dispatch_admission_response(
 def _media_job_admission_response(
     intent: str, *, count_queue: bool = True, receipt: RouteReceipt | None = None,
     auth_context: AuthContext | None = None, path: str = "/gateway/v1/media/jobs",
+    resource_class: str | None = None,
 ) -> Response | None:
     """Return the operator's refusal for new media work, or None to admit it.
 
     ``count_queue=False`` skips the queue-depth limit, for a job that was
-    already admitted and would otherwise count itself.
+    already admitted and would otherwise count itself. ``resource_class`` is given by a caller whose class is data (a
+    workflow run: the workflow's own fact); the intent table answers for the modality jobs.
     """
     admission_cfg = _effective_media_job_admission_cfg()
     app_id = (auth_context.identity.app_id if auth_context and auth_context.identity
               else receipt.app_id if receipt else None)
     app_limits = admission_cfg.get("max_app_concurrency") if count_queue else None
-    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
+    # A workflow run names its own adapter, so the graph service's switch and operator state do not gate it; the run's
+    # binding is checked by the core (``entry_problems``) before admission.
+    graph_gated = intent != workflow_run.RUN_INTENT
+    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {}) if graph_gated else {}
     override_state = str(service_override.get("state") or "available")
     service_blocked = override_state in {"disabled", "maintenance", "draining"}
     service_degraded = override_state == "degraded"
-    resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
+    resource_class = resource_class or _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
     service_reasons_list: list[str] = []
-    if not DERIVED.COMFY_ENABLED:
+    graph_enabled = DERIVED.COMFY_ENABLED or not graph_gated
+    if not graph_enabled:
         service_reasons_list.append(f"{_graph_adapter().label} media backend disabled")
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
@@ -24543,10 +24556,10 @@ def _media_job_admission_response(
         intent=intent,
         observed_at=time.time(),
         load_quality="measured",
-        service_available=DERIVED.COMFY_ENABLED and not service_blocked,
+        service_available=graph_enabled and not service_blocked,
         service_degraded=service_degraded,
         service_retry_after=service_retry_after
-        or (30 if (not DERIVED.COMFY_ENABLED or service_blocked) else None),
+        or (30 if (not graph_enabled or service_blocked) else None),
         service_reasons=tuple(service_reasons_list),
         resource_class=resource_class,
         app_id=app_id, active_by_app=_media_job_app_load(app_id, app_limits),
@@ -24765,17 +24778,6 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
-        # The route compiles from what the job pinned at accept, or the job fails: never from the live file.
-        pinned_args: dict[str, Any] = {}
-        if _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
-            try:
-                pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
-                pinned_args["pinned_workflow"] = job.get("workflow")
-            except definition_store.DefinitionUnavailable as exc:
-                _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
-                _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
-                return
-
         try:
             media_jobs.update_status(
                 job_id,
@@ -24805,7 +24807,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     response = await proxy_audio_generate(
-                        request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
+                        request_shim, auth_context, store_full=True, receipt=receipt)
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
@@ -25032,13 +25034,12 @@ async def _submit_audio_media_job(
         except ManifestError as exc:  # the manifest and the deployment's limits disagree, or a generator cannot serve its input
             return _generated_value_fault_response(exc)
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
-    compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
     # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
-    # the envelope is required for it whether or not the route compiles from its pin. A workflow whose binding has no
-    # pin (no graph binding) has no envelope to build; it keeps the old behaviour and draws at run, as before S3.6.
-    needs_envelope = compiles_from_pin or (bool(generated) and _manifest_has_pin(manifest))
+    # the envelope is required for it. A workflow whose binding has no pin (no graph binding) has no envelope to build;
+    # it keeps the old behaviour and draws at run, as before S3.6.
+    needs_envelope = bool(generated) and _manifest_has_pin(manifest)
     if envelope is None and needs_envelope:
-        # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
+        # A job that holds a generated value must not be accepted without the pin that keeps it: a retry would draw another.
         return _pin_not_recorded_response()
 
     try:
@@ -26522,264 +26523,370 @@ def _signed_asset_content_response(
     return response
 
 
-async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
-    """Run an upload-driven video-edit manifest and return its rendered asset."""
-    if receipt is None:
-        from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(
-            request, auth_context, intent="video.edit", protocol="openai.video",
-            route_path=str(getattr(getattr(request, "url", None), "path", f"/gateway/v1/workflows/{workflow_id}/run")),
-        )
-        try:
-            response = await _execute_video_manifest_workflow(request, workflow_id, auth_context, receipt=receipt)
-        except BaseException as error:
-            await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
-            raise
-        return await run_receipt_write(media_ingestion.finish_response, receipt, response)
+# ------------------------------------------------------------------------------------------ generic workflow run
+# CODE_TO_DATA_S4_S8 sections 5 and 7. The run core (gateway/workflow_run.py) decides; this block is the main module's
+# side of it: who the caller is, plan policy, admission, the execution payload, scheduling, and the engine adapter.
 
-    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
-    if record is None or record.intent != "video.edit":
-        record = next(
-            (item for item in GATEWAY_WORKFLOW_REGISTRY.records()
-             if item.intent == "video.edit" and item.id.rsplit(".", 1)[-1] == workflow_id),
-            None,
-        )
-    if record is None:
-        return Response(
-            content=json.dumps({"error": {"message": "Unknown video-edit workflow", "type": "invalid_request_error"}}),
-            status_code=404, media_type="application/json",
-        )
-    admission = _dispatch_admission_response(
-        "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
-    )
-    if admission is not None:
-        return admission
-    adapter = _graph_adapter("videos")
-    binding = (record.manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING)
-    artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
-    if not isinstance(artifact, str):
-        return Response(
-            content=json.dumps({"error": {"message": f"Workflow has no {adapter.label} binding", "type": "api_error"}}),
-            status_code=501, media_type="application/json",
-        )
-    workflow_path = Path(__file__).parent / artifact
+# Late-bound by the integrator (the snapshot builder and the projections are other slices): None answers 503.
+WORKFLOW_SNAPSHOTS: Any = None
+WORKFLOW_PROJECTIONS: Any = None
+_WORKFLOW_RUN_SPOOL_ROOT = IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
+_WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_WORKFLOW_RUN_SPOOL_ROOT)
+_workflow_run_tasks: set[asyncio.Task] = set()
+_workflow_run_scheduled: set[str] = set()
+_workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+_workflow_core_cache: tuple[Any, Any, Any] | None = None
+
+
+def _caller_owner_scope(auth_context: AuthContext) -> str:
+    from gateway.ownership import stored_owner_key
+    identity = auth_context.identity
+    if identity is None:
+        return ""
+    return stored_owner_key(getattr(identity, "key_hash", None), app_id=getattr(identity, "app_id", None),
+                            path=ADMIN_STORE.path) or ""
+
+
+def _result_reader_for(auth_context: AuthContext) -> result_bundle.Reader | None:
+    identity = auth_context.identity
+    scope = _caller_owner_scope(auth_context)
+    if identity is None or not scope:
+        return None
+    return result_bundle.Reader(
+        owner_scope=scope, person_id=getattr(identity, "person_id", None) or None,
+        credential_id=getattr(identity, "credential_id", None) or None,
+        connection_id=getattr(identity, "connection_id", None) or None)
+
+
+def _backend_address(record: Mapping[str, Any]) -> str | None:
+    host, port = record.get("host"), record.get("port")
+    return f"http://{host}:{port}" if host and port else None
+
+
+def _workflow_engine(adapter_id: str) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+    """The configured service whose reviewed protocol names ``adapter_id``: (service id, record, protocol, adapter).
+    Found by data (the protocol description's adapter id and the record's protocol), never by an engine name."""
+    from gateway.engine_protocol import description as protocol_description
+    from gateway.engine_protocol import reviewed
+    from gateway.engine_protocol.errors import ProtocolError
+    for doc in protocol_description.load_registry().values():
+        if doc.adapter_id != adapter_id:
+            continue
+        for service_id, record in (config.get("backends") or {}).items():
+            if not isinstance(record, Mapping) or _backend_address(record) is None:
+                continue
+            for capability in (*doc.serves, ""):
+                try:
+                    if reviewed.protocol_for_backend(record, capability).id != doc.id:
+                        continue
+                    return service_id, record, doc, reviewed.adapter_for_backend(record, capability)
+                except ProtocolError:
+                    continue
+    return None
+
+
+def _workflow_binding_problem(binding: Any) -> str | None:
+    """Whether this deployment can run ``binding`` (I3): its adapter is registered for a configured service."""
+    return None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE
+
+
+def _refused_from_response(response: Response) -> RunRefused:
     try:
-        form = await request_forms.read_form(request)
-        input_specs = record.manifest.get("inputs") or {}
-        _begin_media_delivery(auth_context, receipt)
-        metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
-        form_fields = set(form.keys())
-        prompt_mode_field = f"extensions[{prompt_memory.NAMESPACE}][mode]"
-        controls = multipart_extensions(form.get("extensions"))
-        if form.get(metadata_field) is not None:
-            controls[WORKFLOW_EXTENSION_NAMESPACE] = {provenance.METADATA_CONTROL: form.get(metadata_field)}
-        if form.get(prompt_mode_field) is not None:
-            controls[prompt_memory.NAMESPACE] = {"mode": form.get(prompt_mode_field)}
-        unknown_fields = form_fields - set(input_specs) - {"extensions", metadata_field, prompt_mode_field}
-        if unknown_fields:
-            raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
-        supplied: dict[str, Any] = {}
-        asset_uploads: dict[str, tuple[str, bytes, str]] = {}
-        for name, spec in input_specs.items():
-            raw = form.get(name)
-            if spec.get("type") == "asset":
-                if raw is None or not hasattr(raw, "read"):
-                    continue
-                raw_bytes = await raw.read()
-                if not raw_bytes:
-                    raise ValueError(f"{name} file is empty")
-                asset_uploads[name] = (
-                    Path(getattr(raw, "filename", name) or name).name,
-                    raw_bytes,
-                    getattr(raw, "content_type", None) or "application/octet-stream",
-                )
-                supplied[name] = "upload"
-                continue
-            if raw is None:
-                continue
-            try:
-                input_type = spec.get("type", "string")
-                if input_type == "integer":
-                    supplied[name] = int(raw)
-                elif input_type == "number":
-                    supplied[name] = float(raw)
-                elif input_type == "boolean":
-                    lowered = str(raw).lower()
-                    if lowered not in {"true", "false"}:
-                        raise ValueError(f"{name} must be true or false")
-                    supplied[name] = lowered == "true"
-                else:
-                    supplied[name] = str(raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"invalid value for {name}") from exc
-        memory_error = _note_media_metadata_body({**supplied, "extensions": controls})
-        if memory_error is not None:
-            return memory_error
-        validation = validate_inputs(record.manifest, supplied)
-        if validation.rejected:
-            raise ValueError(next(iter(validation.rejected.values())))
-        workflow_template = json.loads(workflow_path.read_text(encoding="utf-8"))
-        workflow_template.pop("_meta", None)
-    except ValueError as exc:
-        return Response(
-            content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error"}}),
-            status_code=400, media_type="application/json",
-        )
-    except (OSError, json.JSONDecodeError, ManifestError) as exc:
-        return Response(
-            content=json.dumps({"error": {"message": f"Could not load workflow: {type(exc).__name__}", "type": "api_error"}}),
-            status_code=500, media_type="application/json",
-        )
+        error = (json.loads(response.body) or {}).get("error") or {}
+    except (TypeError, ValueError):
+        error = {}
+    retry = response.headers.get("retry-after")
+    return RunRefused(
+        response.status_code, str(error.get("code") or error.get("type") or "refused"),
+        str(error.get("message") or "The gateway cannot take this run now."),
+        retry_after_s=int(retry) if retry and retry.isdigit() else None)
 
-    if receipt is not None:
-        receipt.backend = _GRAPH_BACKEND_ID
-        _capture_retention_facts(receipt)
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
-        graph = _graph(client, "videos")
-        for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
-            upload = await graph.upload({"image": (filename, raw_bytes, content_type)}, headers=headers)
-            uploaded_name = upload.json().get("name") if upload.status == 200 else None
-            if not uploaded_name:
-                return Response(
-                    content=json.dumps({"error": {"message": f"{adapter.label} upload failed for {input_name}", "type": "api_error"}}),
-                    status_code=502, media_type="application/json",
-                )
-            validation.accepted[input_name] = uploaded_name
-        workflow = bind_backend_request(
-            record.manifest, DERIVED._GRAPH_BINDING, workflow_template, validation.accepted
-        ).request
 
-        refusal = {"out_of_memory": False}
+def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDecision | None:
+    """Plan and exposure for one workflow, from the facts of its record. None: allowed. No facts is not asked here."""
+    facts = entry.facts
+    if facts is None:
+        return None
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol=_protocol_for_intent(entry.intent), intent=entry.intent, workflow=entry.id,
+            capability_exposure=facts.exposure, capability_trust_tier=facts.trust_tier,
+            capability_resource_tier=facts.resource_tier, capability_tags=facts.tags))
+    if decision.denied:
+        return decision
+    runnable = any(_workflow_binding_problem(b) is None for b in entry.bindings.values())
+    return _target_activation_policy_decision(
+        auth_context, requested_target=entry.id, available_ids=(entry.id,) if runnable else (),
+        available_label="available workflow ids", empty_label="no available workflow was reported")
 
-        async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
-            admission = _dispatch_admission_response(
-                "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
-            )
-            if admission is not None:
-                return None, admission
-            submitted = await graph.submit(_build_graph_submit_payload(workflow), headers=headers)
-            if submitted.status != 200:
-                # What the engine said decides whether to retry; it is never passed on (decision D44).
-                refusal["out_of_memory"] = any(marker in submitted.text.lower() for marker in ("cuda out of memory", "out of memory", "cuda oom"))
-                return None, client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=adapter.label)
-            prompt_id = submitted.json().get("prompt_id")
-            if not prompt_id:
-                return None, Response(
-                    content=json.dumps({"error": {"message": f"{adapter.label} returned no prompt_id", "type": "api_error"}}),
-                    status_code=502, media_type="application/json",
-                )
-            for _ in range(DERIVED.COMFY_TIMEOUT * 2):
-                await asyncio.sleep(0.5)
-                history = await graph.history(prompt_id, headers=headers)
-                job = history.json().get(prompt_id) if history.status == 200 else None
-                if not isinstance(job, Mapping):
-                    continue
-                error_message = _graph_error_message(job, workflow)
-                if error_message:
-                    return dict(job), Response(
-                        content=json.dumps({"error": {"message": error_message, "type": "api_error"}}),
-                        status_code=502, media_type="application/json",
-                    )
-                if job.get("status", {}).get("completed"):
-                    return dict(job), None
-            return None, Response(
-                content=json.dumps({"error": {"message": "Video workflow timed out", "type": "api_error"}}),
-                status_code=504, media_type="application/json",
-            )
 
-        job, error = await submit_and_collect()
-        if error is not None and _image_free_vram_on_exhaustion():
-            if refusal["out_of_memory"]:
-                if await _free_graph_models_if_idle(client):
-                    refusal["out_of_memory"] = False
-                    job, error = await submit_and_collect()
-        if error is not None:
-            return error
-        _, file_info, refusal = _select_video_file(job or {}, record.manifest)
-        if refusal is not None:
-            return refusal
-        if not file_info:
-            return Response(
-                content=json.dumps({"error": {"message": "Workflow returned no video output", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
-            )
+class _WorkflowRunPort:
+    """``workflow_run.RunPort`` over this module's helpers."""
+
+    def __init__(self) -> None:
+        self.available = workflow_run.BindingAvailability(_workflow_binding_problem)
+
+    # who is asking
+    def owner_scope(self, caller: AuthContext) -> str:
+        return _caller_owner_scope(caller)
+
+    def maker(self, caller: AuthContext) -> str:
+        identity = caller.identity
+        return _auth_person_id(caller) or (getattr(identity, "name", None) or "")
+
+    def is_owner(self, caller: AuthContext) -> bool:
+        person_id = _auth_person_id(caller)
+        if not person_id:
+            return False
         try:
-            rendered_bytes = await adapter.fetch_file(
-                graph.conn, file_info, limits=result_bundle.limits_from_config(runtime().config), headers=headers, session=graph)
-        except node_graph.SelectionRefused as refused:
-            return _result_refusal_response(refused.code, _refused_result_status(refused.code))
-        except ProtocolUpstreamError:
-            return Response(
-                content=json.dumps({"error": {"message": f"{adapter.label} could not read the rendered video", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
-            )
-        suffix = Path(file_info["filename"]).suffix.lower()
-        media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
+            return "owner" in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path)
+        except Exception:  # noqa: BLE001 - fails closed
+            return False
+
+    def reader(self, caller: AuthContext) -> result_bundle.Reader | None:
+        return _result_reader_for(caller)
+
+    def audience(self, caller: AuthContext) -> str:
+        return discovery_audience_for_access(_access_for_auth_context(caller))
+
+    def can_read(self, job: Mapping[str, Any], caller: AuthContext) -> bool:
+        from gateway import content_makers
+        from gateway.content_access import viewer_from_auth
+        from gateway.record_ownership import owns_record
+        return owns_record("media_job", job, viewer=viewer_from_auth(caller, owner_keys=()),
+                           apps=content_makers.Apps(ADMIN_STORE.path))
+
+    def can_cancel(self, job: Mapping[str, Any], caller: AuthContext) -> bool:
+        return self.can_read(job, caller) or self.is_owner(caller)
+
+    def job_owner(self, caller: AuthContext) -> tuple[str | None, str | None, str | None]:
+        identity = caller.identity
+        return (getattr(identity, "key_hash", None), getattr(identity, "app_id", None), getattr(identity, "name", None))
+
+    # policy and admission
+    def target_refusal(self, entry: Any, caller: AuthContext) -> RunRefused | None:
+        decision = _workflow_policy_denial(entry, caller)
+        if decision is None:
+            return None
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+        return RunRefused(403, decision.code or "policy_denied", reason)
+
+    def dispatch_target_problem(self, entry: Any, caller: AuthContext) -> str | None:
+        decision = _workflow_policy_denial(entry, caller)
+        return None if decision is None else (decision.code or "policy_denied")
+
+    def admission_refusal(self, resource_class: str, caller: AuthContext, *, count_queue: bool) -> RunRefused | None:
+        response = _media_job_admission_response(
+            workflow_run.RUN_INTENT, count_queue=count_queue, auth_context=caller, resource_class=resource_class)
+        return None if response is None else _refused_from_response(response)
+
+    def result_limits(self) -> result_bundle.ResultLimits:
+        return result_bundle.limits_from_config(runtime().config)
+
+    # what the job pins
+    def adapter_identity(self, entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+        engine = _workflow_engine(binding.adapter_id)
+        if engine is None:
+            raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+        service_id, record, protocol, adapter = engine
+        return workflow_run.AdapterIdentity(
+            protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+            interface_version=adapter.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+
+    def template_bytes(self, binding: Any) -> bytes | None:
+        ref = binding.template
+        if ref is None:
+            return None
+        if ref.inline is not None:
+            return job_envelope.canonical_bytes(ref.inline)
+        return _resolve_workflow_artifact_path(None, ref.path).read_bytes() if ref.path else None
+
+    # the execution payload
+    def caller_payload(self, caller: AuthContext) -> Mapping[str, Any]:
+        identity = caller.identity
+        return {"name": identity.name if identity else None, "key_hash": identity.key_hash if identity else None,
+                "app_id": getattr(identity, "app_id", None), "person_id": _auth_person_id(caller),
+                "connection_id": getattr(identity, "connection_id", None),
+                "trusted_address": getattr(identity, "trusted_address", None)}
+
+    def save_payload(self, job_id: str, payload: Mapping[str, Any], caller: AuthContext) -> None:
+        _spool_media_job_payload(job_id, {**copy.deepcopy(dict(payload)), "created_at": int(time.time())})
+
+    def load_payload(self, job_id: str) -> Mapping[str, Any] | None:
+        return _load_image_media_job_payload(job_id)
+
+    def drop_payload(self, job_id: str) -> None:
+        _delete_image_media_job_payload(job_id)
+
+    def caller_from_payload(self, payload: Mapping[str, Any]) -> AuthContext | None:
+        return _auth_context_from_image_job_payload(payload)
+
+    # running
+    def schedule(self, job_id: str) -> None:
+        _schedule_workflow_run(job_id)
+
+    async def run_adapter(self, ctx: workflow_run.RunContext) -> None:
+        """Run or poll the job through the adapter it pinned. The pinned contract, binding and template are what the
+        adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
+        result bundle is committed by ``engine_protocol.jobs.run`` itself."""
+        from gateway.engine_protocol import jobs as protocol_jobs
+        engine = _workflow_engine(ctx.pin.envelope.adapter_id)
+        if engine is None:
+            raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
+        service_id, record, protocol, adapter = engine
+
+        def connection() -> AdapterConnection:
+            _require_egress_lease(service_id)
+            return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
+                connect_s=10, first_byte_s=DERIVED.COMFY_TIMEOUT, total_s=DERIVED.COMFY_TIMEOUT))
+
+        runtime_ = pinned_runtime.PinnedRuntime(
+            job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
+            timing=(2.0, float(DERIVED.COMFY_TIMEOUT)), jobs_path=media_jobs.DB_PATH,
+            context=ResultContext(self.result_limits()))
+        op = next((name for name, item in protocol.operations.items() if item.job is not None),
+                  next(iter(protocol.operations)))
+        media = {name: [{"media_type": ref.wire_media_type or ref.media_type, "filename": ref.filename,
+                         "size": ref.size, "digest": ref.digest} for ref in refs] for name, refs in ctx.media.items()}
+        await protocol_jobs.run(runtime_, op, {"inputs": dict(ctx.inputs), "generated": dict(ctx.generated),
+                                               "media": media}, job_id=ctx.job_id)
+
+    def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
+        path = asset_cache_path(asset_id)
+        if path is None or not path.exists():
+            return None
+        owners = {str(o) for o in _read_asset_metadata(asset_id).get("owner_key_hashes") or [] if isinstance(o, str)}
+        from gateway.content_access import decide_own
+        if not owners or not decide_own(_asset_content_viewer(caller), owners):
+            return None
+        return path.read_bytes()
+
+
+_WORKFLOW_RUN_PORT = _WorkflowRunPort()
+
+
+def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
+    """The production run core over the injected snapshot provider and projections, or None until both are set."""
+    global _workflow_core_cache
+    if WORKFLOW_SNAPSHOTS is None or WORKFLOW_PROJECTIONS is None:
+        return None
+    cached = _workflow_core_cache
+    if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
+        core = workflow_run.WorkflowRunCore(
+            snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
+            spool=_WORKFLOW_JOB_SPOOL, path=media_jobs.DB_PATH)
+        cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
+    return cached[2]
+
+
+def _workflow_job_service() -> workflow_run.WorkflowJobService:
+    return workflow_run.WorkflowJobService(port=_WORKFLOW_RUN_PORT, path=media_jobs.DB_PATH)
+
+
+async def _run_workflow_job(job_id: str) -> None:
+    core = _workflow_run_core()
+    if core is None:
+        raise RuntimeError("the workflow run core is not configured")
+    async with _workflow_run_semaphore:
+        await core.execute_run(job_id)
+
+
+def _schedule_workflow_run(job_id: str) -> bool:
+    if job_id in _workflow_run_scheduled:
+        return False
+    _workflow_run_scheduled.add(job_id)
+    try:
+        task = asyncio.create_task(_run_workflow_job(job_id))
+    except BaseException:
+        _workflow_run_scheduled.discard(job_id)
+        raise
+    _workflow_run_tasks.add(task)
+
+    def _done(done_task: asyncio.Task) -> None:
+        _workflow_run_tasks.discard(done_task)
+        _workflow_run_scheduled.discard(job_id)
         try:
-            if media_delivery.current_mode() == provenance.METADATA_NONE:
-                rendered_bytes = await asyncio.to_thread(
-                    media_delivery.deliver_bytes, rendered_bytes, suffix, provenance.METADATA_NONE
-                )
-            else:
-                identity = manifest_identity(record.manifest)
-                rendered_bytes = await asyncio.to_thread(
-                    media_delivery.attach_provenance,
-                    rendered_bytes,
-                    suffix,
-                    provenance.build_provenance_record(
-                        kind="video",
-                        requested_model=workflow_id,
-                        resolved_model=record.id,
-                        workflow_id=identity.id,
-                        workflow_version=identity.version,
-                        workflow_hash=identity.manifest_hash,
-                        backend=_GRAPH_BACKEND_ID,
-                        parameters=validation.accepted,
-                    ),
-                )
-        except media_metadata.MediaMetadataError as exc:
-            print(f"[proxy] workflow run metadata rewrite failed: {log_scrub.describe_error(exc)}", flush=True)
-            return Response(
-                content=json.dumps({"error": {"message": "Could not prepare video for delivery", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
-            )
-        return Response(
-            content=rendered_bytes, status_code=200, media_type=media_type,
-            headers={"Content-Disposition": f'inline; filename="{Path(file_info["filename"]).name}"', "X-Workflow-ID": record.id},
-        )
+            exc = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            _log_media_job_crash(job_id, exc)
+            with contextlib.suppress(Exception):
+                media_jobs.update_status(job_id, media_jobs.STATUS_FAILED, error=_MEDIA_JOB_CRASHED,
+                                         error_info=_MEDIA_JOB_CRASHED_INFO, path=media_jobs.DB_PATH)
+
+    task.add_done_callback(_done)
+    return True
+
+
+def _workflow_library_ref(asset_id: str, auth_context: AuthContext) -> MediaRef | None:
+    """A library asset as a media input, if this caller may read it (the asset ownership rule)."""
+    parsed = _parse_asset_id(asset_id)
+    path = asset_cache_path(asset_id)
+    if parsed is None or path is None or not path.exists():
+        return None
+    owners = {str(o) for o in _read_asset_metadata(asset_id).get("owner_key_hashes") or [] if isinstance(o, str)}
+    from gateway.content_access import decide_own
+    if not owners or not decide_own(_asset_content_viewer(auth_context), owners):
+        return None
+    return MediaRef(digest=f"sha256:{parsed[1]}", media_type=asset_media_type(asset_id, path),
+                    size=path.stat().st_size, asset_id=asset_id)
+
+
+def _workflow_run_response(result: Any, *, status_code: int | None = None) -> Response:
+    if isinstance(result, RunRefused):
+        headers = {"Retry-After": str(result.retry_after_s)} if result.retry_after_s is not None else {}
+        return Response(content=json.dumps(workflow_run.refusal_body(result)), status_code=result.http_status,
+                        media_type="application/json", headers=headers)
+    created = result.disposition == "new" and result.status in ("queued", "running")
+    return Response(
+        content=json.dumps(workflow_run.view_body(result)),
+        status_code=status_code or (202 if created or result.status in ("queued", "running") else 200),
+        media_type="application/json",
+        headers={"Location": f"/gateway/v1/media/jobs/{result.job_id}"})
 
 
 @app.post("/gateway/v1/workflows/{workflow_id}/run")
 async def run_video_manifest_workflow(workflow_id: str, request: Request):
+    """Run a workflow by its full id: JSON or multipart, ``Idempotency-Key``, ``Prefer: wait=N`` (section 7.1)."""
     auth_context = _gateway_auth_context(request, "/gateway/v1/workflows/{workflow_id}/run")
     if isinstance(auth_context, Response):
         return auth_context
-    if not DERIVED.COMFY_ENABLED:
-        return Response(status_code=503, content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
         return policy_response
-    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
-    if record is None:
-        record = next(
-            (item for item in GATEWAY_WORKFLOW_REGISTRY.records()
-             if item.intent == "video.edit" and item.id.rsplit(".", 1)[-1] == workflow_id),
-            None,
-        )
-    if record is not None:
-        target_decision = _workflow_target_policy_decision(
-            auth_context,
-            requested=workflow_id,
-            resolved=record.id,
-            manifest=record.manifest,
-            extra_ids=(record.id,),
-        )
-        if target_decision is not None and target_decision.denied:
-            return _policy_denied_response(target_decision)
-    return await _execute_video_manifest_workflow(request, workflow_id, auth_context)
+    core = _workflow_run_core()
+    if core is None:
+        return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    limits = workflow_run.run_limits_from_config(runtime().config)
+    wait_s = 0.0
+    prefer = request.headers.get("prefer", "")
+    for token in prefer.split(","):
+        name, _, value = token.strip().partition("=")
+        if name.strip().lower() == "wait":
+            try:
+                wait_s = min(max(0.0, float(value)), float(limits.max_wait_s))
+            except ValueError:
+                return _workflow_run_response(RunRefused(400, "invalid_prefer", "Prefer: wait takes a number of seconds."))
+    result_limits = _WORKFLOW_RUN_PORT.result_limits()
+    spool = request_spool.FileRequestSpool(
+        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+    with request_spool.request_scope(request, spool):
+        run_request = await request_spool.read_run_request(
+            request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),
+            idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s)
+        if isinstance(run_request, RunRefused):
+            return _workflow_run_response(run_request)
+        snapshot = WORKFLOW_SNAPSHOTS.current()
+        view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
+    if isinstance(view, RunRefused):
+        return _workflow_run_response(view)
+    if wait_s > 0 and view.status in ("queued", "running"):
+        with contextlib.suppress(JobNotFound):
+            view = dataclasses.replace(await _workflow_job_service().wait(view.job_id, auth_context, wait_s),
+                                       disposition=view.disposition)
+    return _workflow_run_response(view)
 
 
 async def videos_create(request: Request):
@@ -26958,15 +27065,6 @@ def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any
     if errors:
         raise definition_store.DefinitionUnavailable(f"the pinned graph is invalid: {'; '.join(errors)}")
     return workflow
-
-
-def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
-    """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
-    before it starts. Raises ``DefinitionUnavailable``."""
-    pinned = pinned_definitions.load(job_id, media_jobs.DB_PATH)
-    pinned.manifest(DERIVED._GRAPH_BINDING)
-    _pinned_graph(pinned)
-    return pinned
 
 
 _AUDIO_SUFFIX_BY_CONTENT_TYPE = {
