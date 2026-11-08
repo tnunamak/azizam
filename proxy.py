@@ -26891,6 +26891,10 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
                 wait_s = min(max(0.0, float(value)), float(limits.max_wait_s))
             except ValueError:
                 return _workflow_run_response(RunRefused(400, "invalid_prefer", "Prefer: wait takes a number of seconds."))
+    snapshot = WORKFLOW_SNAPSHOTS.current()
+    refused = await asyncio.to_thread(core.target_gate, workflow_id, auth_context, snapshot=snapshot)
+    if refused is not None:                     # policy before the body is read or any upload is staged
+        return _workflow_run_response(refused)
     result_limits = _WORKFLOW_RUN_PORT.result_limits()
     spool = request_spool.FileRequestSpool(
         _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
@@ -26900,7 +26904,6 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
             idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s)
         if isinstance(run_request, RunRefused):
             return _workflow_run_response(run_request)
-        snapshot = WORKFLOW_SNAPSHOTS.current()
         view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
     if isinstance(view, RunRefused):
         return _workflow_run_response(view)

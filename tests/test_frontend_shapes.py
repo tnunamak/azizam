@@ -362,12 +362,6 @@ def test_a_shapes_profile_names_why_a_workflow_is_out_of_reach_of_its_wire() -> 
 # ---------------------------------------------------------------------------------------------------- interface gap
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "INTERFACE GAP (I5): FrontendShape.to_response receives the outcome, the row, the job service and the caller, but "
-    "not the wire request. The OpenAI images wire lets the caller choose the answer's form per request "
-    "(response_format: url or b64_json) and the audio wire its container; a shape instance serves many requests, so it "
-    "cannot remember the choice, and a job view holds only references. Needs one more argument (the RunRequest or a "
-    "per-request wire context) or a wire context carried on RunJobView. Reported to the integrator."))
 def test_to_response_can_honour_the_callers_choice_of_answer_form() -> None:
     parameters = inspect.signature(frontend_shapes.shapes.OpenAIImagesJson.to_response).parameters
     assert {"request", "wire", "context", "run_request"} & set(parameters)

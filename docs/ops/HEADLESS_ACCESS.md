@@ -363,6 +363,15 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/engines/domains/{domain}/transitions` | owner-bearer | denied | `gateway.transition_admin.start_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/engines/domains/{domain}/transitions/{op_id}` | owner-bearer | denied | `gateway.transition_admin.get_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/engines/domains/{domain}/gate` | owner-bearer | denied | `gateway.transition_admin.get_gate`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/workflows` | owner-bearer | denied | `gateway.workflow_owner_api.list_workflows`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflows` | owner-bearer | denied | `gateway.workflow_owner_api.create_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflows/check` | owner-bearer | denied | `gateway.workflow_owner_api.check_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/workflows/{workflow_id}` | owner-bearer | denied | `gateway.workflow_owner_api.get_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/workflows/{workflow_id}` | owner-bearer | denied | `gateway.workflow_owner_api.update_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/workflows/{workflow_id}` | owner-bearer | denied | `gateway.workflow_owner_api.delete_workflow`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflows/{workflow_id}/state` | owner-bearer | denied | `gateway.workflow_owner_api.set_state`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflows/{workflow_id}/publish` | owner-bearer | denied | `gateway.workflow_owner_api.set_published`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/workflows/{workflow_id}/restore` | owner-bearer | denied | `gateway.workflow_owner_api.restore`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/domains/{domain}/transitions/{op_id}/resolve` | owner-bearer | denied | `gateway.transition_admin.resolve_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/engines/{service_id}` | owner-bearer | denied | `gateway.engine_admin.get_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.options`; AdminAuthenticator / _require_admin; owner role required | owner |

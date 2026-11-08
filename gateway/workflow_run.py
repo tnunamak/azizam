@@ -371,18 +371,25 @@ class WorkflowRunCore:
         return RunRefused(409, IDEMPOTENCY_IN_PROGRESS, "another request holds this Idempotency-Key; retry",
                           retry_after_s=RETRY_AFTER_S)
 
+    def target_gate(self, workflow_id: str, caller: CallerContext, *, snapshot) -> RunRefused | None:
+        """Step 2's entry and target policy alone: the route asks it before it reads or stages a body, so a caller who
+        may not run the workflow is refused before any upload is accepted; ``submit_run`` asks it again."""
+        port = self._port
+        entry = snapshot.get(workflow_id)
+        if entry is None or (not entry.published and not port.is_owner(caller)):
+            return RunRefused(404, WORKFLOW_NOT_FOUND, f"no workflow {workflow_id}")
+        if entry.state != "active":
+            return RunRefused(409, WORKFLOW_DISABLED, f"workflow {entry.id} is disabled")
+        return port.target_refusal(entry, caller)
+
     async def _decide_and_create(self, req: RunRequest, caller: CallerContext, snapshot,
                                  fence: media_jobs.RunClaimFence | None) -> dict[str, Any] | RunRefused:
         """Steps 2 to 6. Returns the created job, or a refusal. Nothing here is visible until the fenced commit."""
         port = self._port
-        entry = snapshot.get(req.workflow_id)
-        if entry is None or (not entry.published and not port.is_owner(caller)):
-            return RunRefused(404, WORKFLOW_NOT_FOUND, f"no workflow {req.workflow_id}")
-        if entry.state != "active":
-            return RunRefused(409, WORKFLOW_DISABLED, f"workflow {entry.id} is disabled")
-        refused = port.target_refusal(entry, caller)
+        refused = self.target_gate(req.workflow_id, caller, snapshot=snapshot)
         if refused is not None:
             return refused
+        entry = snapshot.get(req.workflow_id)
         problems = self._projections.entry_problems(entry, port.available, binding_key=req.binding_key)
         if problems:
             first = problems[0]

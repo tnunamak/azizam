@@ -3530,6 +3530,60 @@
       "method": "POST",
       "path": "/v1/meshes/generate",
       "access": "own-account"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.list_workflows",
+      "method": "GET",
+      "path": "/admin/api/workflows",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.create_workflow",
+      "method": "POST",
+      "path": "/admin/api/workflows",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.check_workflow",
+      "method": "POST",
+      "path": "/admin/api/workflows/check",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.get_workflow",
+      "method": "GET",
+      "path": "/admin/api/workflows/{workflow_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.update_workflow",
+      "method": "PUT",
+      "path": "/admin/api/workflows/{workflow_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.delete_workflow",
+      "method": "DELETE",
+      "path": "/admin/api/workflows/{workflow_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.set_state",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/state",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.set_published",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/publish",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.restore",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/restore",
+      "access": "operational"
     }
   ],
   "event_types": {
