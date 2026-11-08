@@ -88,6 +88,9 @@ def _discovered_parameters(owner) -> dict[str, str]:
         found["plan_id"] = plans[0]["id"]
     if events:
         found["event_id"] = str(events[0].get("id") or events[0].get("event_id") or "")
+    workflows = owner.get("/admin/api/workflows").json().get("workflows") or []
+    if workflows:   # a bundled workflow: the owner workflow detail route reads it
+        found["workflow_id"] = workflows[0]["id"]
     return found
 
 
