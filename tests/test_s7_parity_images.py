@@ -1258,7 +1258,7 @@ def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
     """Section 6.6: a retryable failure is retried on the same job up to the attempt limit, waiting 5 s then doubling
     to at most 30 s, and appends the retry event each time."""
     def setup(rig):
-        job_setup(lambda r: base._comfy(r, comfy_exchanges(strict=False, extra=[
+        job_setup(lambda r: base._comfy(r, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
             exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]},
                      repeat=True, required=False)])))(rig)
 
