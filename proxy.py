@@ -26800,7 +26800,35 @@ class _WorkflowRunPort:
         # it. No operation of the protocol is picked by position.
         op = str(ctx.pin.contract["intent"])
         # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
-        await protocol_jobs.run(runtime_, op, {**dict(ctx.inputs), **dict(ctx.generated)}, job_id=ctx.job_id)
+        body = {**dict(ctx.inputs), **dict(ctx.generated)}
+        if ctx.media:
+            body.update(await self._stage_media(ctx, adapter, connection))
+        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+
+    async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
+        """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with
+        the job (staged in its spool, or named from the Library); an adapter that cannot take one refuses the run."""
+        stage = getattr(adapter, "stage_input", None)
+        if stage is None:
+            raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
+        staged: dict[str, str] = {}
+        for name, refs in ctx.media.items():
+            if len(refs) != 1:
+                raise ProtocolError("The adapter for this job takes one file for an input.", code="media_input_unsupported")
+            ref = refs[0]
+            if ref.spool_key is not None:
+                data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
+            else:
+                data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
+                if data is None:
+                    raise ProtocolError("An input file is no longer available.", code="input_unavailable")
+            suffix = asset_types.suffix_for_media_type(ref.media_type)
+            try:
+                staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                                           media_type=ref.wire_media_type or ref.media_type)
+            except (TransportFailure, ProtocolUpstreamError) as exc:
+                raise ProtocolError("The engine did not take an input file.", code="asset_upload_failed") from exc
+        return staged
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
         path = asset_cache_path(asset_id)

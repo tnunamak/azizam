@@ -525,6 +525,15 @@ class NodeGraphAdapter:
                 return await session.stats(timeout=timeout)
             return await session.free(request.body, timeout=timeout)
 
+    async def stage_input(self, conn: Connection, *, filename: str, data: bytes, media_type: str) -> str:
+        """Hand one input file to the engine and return the name the engine holds it under, for the run's body."""
+        async with self._use(conn, None) as session:
+            reply = await session.upload({"image": (filename, data, media_type)})
+        name = reply.json().get("name") if reply.status == 200 else None
+        if not isinstance(name, str) or not name:
+            raise UpstreamError(reply.status, "The engine did not take the input file.")
+        return name
+
     def validate(self, conn: Connection, op: str, request: CanonicalRequest) -> None:
         """The local checks ``submit`` makes before any I/O. A manifest-backed request is compiled here, so a refusal
         happens before the caller records that a submit was attempted. The compiled graph is discarded: ``submit``

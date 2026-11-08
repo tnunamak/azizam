@@ -52,6 +52,8 @@ class FakeGraphEngine:
         if request.method == "POST" and path == "/prompt":
             self.prompts.append(json.loads(request.content))
             return httpx.Response(200, json={"prompt_id": "p1"})
+        if request.method == "POST" and path == "/upload/image":
+            return httpx.Response(200, json={"name": "staged-input.png", "subfolder": "", "type": "input"})
         if request.method == "GET" and path == "/history/p1":
             return httpx.Response(200, json={"p1": {"status": {"status_str": "success", "completed": True, "messages": []},
                                                     "outputs": self._outputs}})
@@ -514,3 +516,7 @@ def test_an_uploaded_source_image_reaches_the_engine_through_the_real_adapter(wo
     assert response.json()["status"] == "succeeded", (response.text, engine.calls)
     sent = b"".join(request.content for request in engine.requests)
     assert data in sent, engine.calls
+    # The prompt names the file the engine holds for this run.
+    assert engine.calls.index("POST /upload/image") < engine.calls.index("POST /prompt")
+    node = manifest["bindings"]["comfyui"]["map"]["source_image"][0]
+    assert engine.prompts[0]["prompt"][node["node"]]["inputs"][node["input"]] == "staged-input.png"
