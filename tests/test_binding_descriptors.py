@@ -789,6 +789,14 @@ def test_a_binding_with_no_input_map_present_leaves_a_required_input_unbound(spl
     assert {path for path, _ in found} == {("bindings", "forms")}
 
 
+def test_missing_required_input_maps_do_not_cascade_to_unbound_inputs(split_maps_hook: Any) -> None:
+    descriptors = {"forms": bd.parse_binding_descriptor(
+        binding="forms", executor="adapter:forms", inputs_via="map", check_targets="split_maps_test",
+        binding_fields={"left": {"kind": "input_map", "required": True}, "right": {"kind": "input_map", "required": True}})}
+    found = places(forms_manifest({}), descriptors=descriptors)
+    assert found == [(("bindings", "forms"), "required_field_missing")]
+
+
 def test_an_unmapped_optional_input_passes_with_several_input_maps(split_maps_hook: Any) -> None:
     manifest = forms_manifest({"left": {"prompt": "prompt"}, "right": {"style": "style"}}, extra={"type": "string"})
     assert forms_places(manifest) == []

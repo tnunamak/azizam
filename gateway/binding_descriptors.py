@@ -245,6 +245,7 @@ def _check_block(
     descriptor: BindingDescriptor, block: Mapping[str, Any], at: tuple[PathPart, ...], inputs: Mapping[str, Any] | None,
     template: Mapping[str, Any] | None, services: Collection[str] | None, errors: ErrorCollector,
 ) -> None:
+    block_before = len(errors)
     allowed: dict[str, BindingField] = dict(descriptor.fields)
     role_known = True
     role_field = descriptor.role_field
@@ -278,7 +279,7 @@ def _check_block(
         for spec in needs_hook:
             hook(field=spec.name, kind=spec.kind, value=block[spec.name], at=at + (spec.name,), inputs=inputs,
                  template=template, errors=errors)
-    if descriptor.inputs_via == "map" and len(errors) == before:
+    if descriptor.inputs_via == "map" and len(errors) == block_before:
         # Last, and only on a block with no other error, so a binding keeps the errors it always gave.
         _check_required_inputs_bound(block, present, at, inputs, errors)
 
