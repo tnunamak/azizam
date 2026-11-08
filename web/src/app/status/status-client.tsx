@@ -305,10 +305,21 @@ function engineStateKey(engine: EngineView): CapabilityStateKey {
   return "unknown";
 }
 
-/** An engine that is answering now, idle or working on other requests:
- * it still serves its capabilities while another engine is down. */
-function servesNow(engine: EngineView): boolean {
-  return ["ready", "busy"].includes(engineStateKey(engine));
+/** What another engine tells us about a capability while one engine is
+ * down. "serves": it answers now, idle or busy with other requests.
+ * "unconfirmed": it is enabled but we cannot say it works (it is starting,
+ * or it has no recent check and no fault on record). Anything else, a fault
+ * or off, covers nothing. */
+function spareState(engine: EngineView): "serves" | "unconfirmed" | null {
+  const key = engineStateKey(engine);
+  if (key === "ready" || engine.state === "Busy") return "serves";
+  if (engine.state === "Starting") return "unconfirmed";
+  if (key === "unknown" && engine.health?.tone !== "bad") return "unconfirmed";
+  return null;
+}
+
+function servesLabel(engine: EngineView, label: string): boolean {
+  return (engine.label ? engine.label.split(", ") : []).includes(label);
 }
 
 function stateWordFor(key: CapabilityStateKey) {
@@ -469,7 +480,7 @@ function affectsFact(
             ? `Nothing yet: another engine still serves ${lower(covered)}.`
             : "",
           unconfirmed.length
-            ? `Another engine serves ${lower(unconfirmed)}, but it has not been checked recently.`
+            ? `Another engine is set up for ${lower(unconfirmed)}, but it is not confirmed working.`
             : "",
         ]
           .filter(Boolean)
@@ -612,28 +623,20 @@ function engineProblems(
       new Set(affected.map((engine) => engine.service.id)),
     );
     // A capability with another ready or busy engine still works: say so,
-    // and keep it out of the verdict.
-    const covered = labels.filter((label) =>
+    // and keep it out of the verdict. One whose other engine is unconfirmed
+    // (starting, or no recent check: an engine without a health check reads
+    // Unknown once its last request ages out) may work or not: never call it
+    // unavailable, never call it working.
+    const spares = (state: "serves" | "unconfirmed") => (label: string) =>
       engines.some(
         (engine) =>
           !affected.includes(engine) &&
-          servesNow(engine) &&
-          (engine.label ? engine.label.split(", ") : []).includes(label),
-      ),
-    );
-    // Another enabled engine that serves the label but has no recent check
-    // (an engine without a health check reads Unknown once its last request
-    // ages out) may well work: never call the capability unavailable for it.
+          spareState(engine) === state &&
+          servesLabel(engine, label),
+      );
+    const covered = labels.filter(spares("serves"));
     const unconfirmed = labels.filter(
-      (label) =>
-        !covered.includes(label) &&
-        engines.some(
-          (engine) =>
-            !affected.includes(engine) &&
-            engine.service.enabled &&
-            engineStateKey(engine) === "unknown" &&
-            (engine.label ? engine.label.split(", ") : []).includes(label),
-        ),
+      (label) => !covered.includes(label) && spares("unconfirmed")(label),
     );
     const exposed = labels.filter(
       (label) => !covered.includes(label) && !unconfirmed.includes(label),
@@ -1239,16 +1242,22 @@ export function StatusClient() {
           const service = engines.find(
             (engine) => engine.service.id === provider.id,
           );
-          // A local engine that still serves the same capability keeps it working.
+          // A local engine that still serves the same capability keeps it
+          // working; one that is unconfirmed neither proves nor rules it out.
           const labels = service?.label ? service.label.split(", ") : [];
-          const covered = labels.filter((label) =>
+          const spares = (state: "serves" | "unconfirmed") => (label: string) =>
             tableEngines.some(
               (engine) =>
-                servesNow(engine) &&
-                (engine.label ? engine.label.split(", ") : []).includes(label),
-            ),
+                engine !== service &&
+                spareState(engine) === state &&
+                servesLabel(engine, label),
+            );
+          const covered = labels.filter(spares("serves"));
+          const unconfirmed = labels.filter(
+            (label) => !covered.includes(label) && spares("unconfirmed")(label),
           );
-          const exposed = labels.length > covered.length;
+          const exposed =
+            labels.length > covered.length + unconfirmed.length;
           const facts: Array<[string, ReactNode]> = [
             [
               "Affects",
@@ -1257,7 +1266,9 @@ export function StatusClient() {
                     .map((label) =>
                       covered.includes(label)
                         ? `${label} (an engine on this computer still serves it)`
-                        : label,
+                        : unconfirmed.includes(label)
+                          ? `${label} (an engine on this computer is set up for it, not confirmed working)`
+                          : label,
                     )
                     .join(", ")
                 : "Requests that use this provider",
