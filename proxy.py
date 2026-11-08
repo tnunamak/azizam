@@ -18,6 +18,7 @@ Features:
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
 from gateway import registry_snapshot
+from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
@@ -16197,7 +16198,8 @@ def _mcp_rename(request: Request, auth: Any, tool: str, args: Mapping[str, Any])
 
 
 def _mcp_catalog() -> list[dict[str, Any]]:
-    records = GATEWAY_WORKFLOW_REGISTRY.records()
+    # The tools list published workflows only (5.9), from the one snapshot this call takes.
+    records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
     by_id = {record.id: record for record in records}
     entries = workflow_catalog(records, _gateway_aliases_provider())
     return [{**entry, "inputs": advertised_inputs_schema(by_id[entry["id"]])} for entry in entries]
@@ -18298,13 +18300,15 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     evidence = await _capabilities_availability_evidence(capabilities, service_records)
 
     def build_catalog() -> dict[str, Any]:
+        # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
+        published_records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
         projected = project_capabilities(
             capabilities, service_records=service_records,
             evidence=evidence,
-            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            workflow_records=published_records,
         )
         return build_workflows_catalog(
-            records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            records=published_records,
             capabilities=projected,
             aliases=_gateway_aliases_provider(),
             recent_receipts=activity.get("receipts") or (),
@@ -34345,14 +34349,15 @@ def _gateway_openapi() -> dict[str, Any]:
     """
     aliases = _gateway_aliases_provider()
     limits = video_limits(config.get("videos"))
-    inputs = json.dumps([aliases, limits], sort_keys=True, default=str)
+    registry_view = GATEWAY_REGISTRY_PROVIDER.current()
+    inputs = json.dumps([aliases, limits, registry_view.digest], sort_keys=True, default=str)
     if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
     app.openapi_schema = None
     schema = _fastapi_openapi()
     _augment_workflow_openapi(
         schema,
-        GATEWAY_WORKFLOW_REGISTRY.records(),
+        SnapshotRegistry(registry_view, published_only=True).records(),
         aliases=aliases,
         video_limits=limits,
     )

@@ -69,7 +69,7 @@ class SnapshotRegistry:
     workflows (5.9: an unpublished workflow is the owner's alone)."""
 
     def __init__(self, snapshot: RegistrySnapshot, *, published_only: bool = False) -> None:
-        self._records = {wid: record_of(entry, snapshot.source_paths.get(wid, "")) for wid, entry in sorted(snapshot.workflows.items())
+        self._records = {wid: record_of(entry, getattr(snapshot, "source_paths", {}).get(wid, "")) for wid, entry in sorted(snapshot.workflows.items())
                          if entry.published or not published_only}
 
     def records(self) -> list[WorkflowRecord]:
