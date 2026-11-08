@@ -38,6 +38,13 @@ class RowError(ValueError):
     """A frontend row that cannot be used. The message names the row and the rule."""
 
 
+def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> Any:
+    value = raw.get("receipt_opens", "after_policy")
+    if value not in ("before_policy", "after_policy"):
+        raise RowError(f"{row_id}: receipt_opens must be before_policy or after_policy")
+    return value
+
+
 def _row(raw: Mapping[str, Any]) -> FrontendRow:
     row_id = raw.get("id")
     if not isinstance(row_id, str) or not row_id:
@@ -59,7 +66,8 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
         raise RowError(f"{row_id}: a row needs at least one route")
     return FrontendRow(id=row_id, shape=raw["shape"], routes=routes, selects=dict(selects), mode=raw["mode"],
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
-                       strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)))
+                       strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
+                       receipt_opens=_receipt_opens(row_id, raw))
 
 
 def parse_rows(document: Mapping[str, Any]) -> tuple[FrontendRow, ...]:
