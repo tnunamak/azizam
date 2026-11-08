@@ -155,7 +155,6 @@ def test_images_05_validation_before_engine(tmp_path, fields):
     assert_same(old, row, status, failure, engine)
 
 
-@ROW_PENDING
 def test_images_05_size_text_that_is_not_a_size_falls_back_to_1024(tmp_path):
     old, row = pair(tmp_path, GEN, body(size="abc"), ok)
     old_has(old, "an answer", status(old) == 200)
@@ -192,14 +191,12 @@ def test_images_10_b64_json_answer(tmp_path):
     assert_same(old, row, status, ("b64", lambda o: [i.get("b64_json") for i in data_items(o)]), ("origin", origins))
 
 
-@ROW_PENDING
 def test_images_11_url_answer(tmp_path):
     old, row = pair(tmp_path, GEN, body(response_format="url"), ok)
     old_has(old, "url", data_items(old) and "url" in data_items(old)[0])
     assert_same(old, row, status, item_keys, ("url path", lambda o: [str(i.get("url")).split("?")[0].split("/", 3)[-1] for i in data_items(o)]))
 
 
-@ROW_PENDING
 def test_images_12_batch_runs_rounds_until_n(tmp_path):
     old, row = pair(tmp_path, GEN, body(n=3), lambda rig: ok(rig, 3))
     old_has(old, "three images", len(data_items(old)) == 3)
@@ -207,7 +204,6 @@ def test_images_12_batch_runs_rounds_until_n(tmp_path):
                 ("rounds", lambda o: header(o, "x-image-rounds")), ("returned header", lambda o: header(o, "x-image-returned")))
 
 
-@ROW_PENDING
 def test_images_13_output_format_background_quality_echoed(tmp_path):
     old, row = pair(tmp_path, GEN, body(output_format="jpeg", quality="high"), ok)
     old_has(old, "top-level fields", top_keys(old))
@@ -222,7 +218,6 @@ def test_images_14_size_adjustment_is_reported_and_recorded(tmp_path):
                 ("receipt", lambda o: receipt_fields(o, "metadata", "warnings")), ("size", lambda o: (doc(o) or {}).get("size")))
 
 
-@NEEDS_RH
 def test_images_15_adjustment_text_is_requested_arrow_effective(tmp_path):
     old, row = pair(tmp_path, GEN, body(size="768X512"), ok)
     old_has(old, "the arrow text", "->" in (header(old, "x-azizam-size-adjusted") or ""))
