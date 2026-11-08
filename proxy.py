@@ -8188,7 +8188,8 @@ def _video_job_warnings(record: Mapping[str, Any] | None, job: Mapping[str, Any]
     subject = (record or {}).get("subject") if isinstance(record, Mapping) else None
     if not isinstance(subject, Mapping):
         return []
-    count = video_subject.tracked_count((job or {}).get("outputs") if isinstance(job, Mapping) else None)
+    count = video_subject.tracked_count(
+        (job or {}).get("outputs") if isinstance(job, Mapping) else None, str(subject.get("probe_node") or ""))
     return video_subject.warnings_for(
         count, explicit=bool(subject.get("explicit")), subject=str(subject.get("subject") or "person"))
 
@@ -10907,6 +10908,23 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
             flush=True,
         )
         return None
+    # A role that names no node of the file is a template problem, found here and not when a request fills the graph.
+    roles = workflow_cfg.get("node_roles") or {}
+    dangling = sorted(
+        str(key) for key, value in roles.items()
+        if key.endswith(("_node", "_nodes"))
+        and any(str(node) not in workflow for node in (value if isinstance(value, list) else [value]))
+        and not (workflow_cfg.get("subject_select") and key in ("point_detect_node", "fit_canvas_node"))
+    )
+    if not roles or dangling:
+        print(f"[proxy] invalid video workflow {p}: node roles {dangling or 'missing'}", flush=True)
+        return None
+    if workflow_cfg.get("subject_select"):
+        try:
+            video_subject.check_roles(roles, workflow)
+        except video_subject.SubjectRoleError as exc:
+            print(f"[proxy] invalid video workflow {p}: {exc}", flush=True)
+            return None
     ui = _load_ui_workflow(p)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
@@ -12304,7 +12322,9 @@ async def _proxy_graph_video_create(
 
     # Inject parameters into a deep copy of the workflow.
     workflow = copy.deepcopy(workflow_template)
-    meta = workflow.pop("_meta", {})
+    # The node roles are the workflow's binding (`node_roles` in its videos entry), checked against the graph when the
+    # file loads (`_load_video_workflow_file`); the graph file carries no roles of its own.
+    meta = workflow_cfg.get("node_roles") or {}
 
     prompt_node = meta.get("prompt_node")
     neg_node = meta.get("negative_prompt_node")
@@ -12328,7 +12348,7 @@ async def _proxy_graph_video_create(
     if negative_prompt and neg_node and neg_node in workflow:
         workflow[neg_node]["inputs"]["text"] = negative_prompt
 
-    # Helpers to accept either a single node id or a list of node ids in _meta.
+    # Helpers to accept either a single node id or a list of node ids in the node roles.
     # Some workflows have a single source-of-truth Primitive node feeding many
     # consumers; others spread the field across consumer nodes directly. Accept
     # both so workflow JSONs can stay close to ComfyUI's native format.
@@ -12351,7 +12371,7 @@ async def _proxy_graph_video_create(
     #   "7"                   -> single node with both width/height keys (e.g. EmptyLatentImage)
     #   ["W_NID", "H_NID"]    -> two separate INTConstant/PrimitiveInt source nodes; index 0 is
     #                            width, index 1 is height. Each takes a single `value` key.
-    #   width_node/height_node in _meta override the list/single behavior.
+    #   width_node/height_node in the node roles override the list/single behavior.
     width_node = meta.get("width_node")
     height_node = meta.get("height_node")
     size_list = _as_list(size_node)
@@ -12370,7 +12390,7 @@ async def _proxy_graph_video_create(
 
     # length_node: also accept "value" (PrimitiveInt source-of-truth pattern)
     # and "frames_number" (LTXVEmptyLatentAudio variant). length_nodes (plural)
-    # in _meta is honored too for fan-out when multiple consumers need the same
+    # in the node roles is honored too for fan-out when multiple consumers need the same
     # length without a Primitive node.
     length_targets = _as_list(meta.get("length_nodes")) or _as_list(length_node)
     for nid in length_targets:
@@ -12402,7 +12422,7 @@ async def _proxy_graph_video_create(
         _set_field(nid, ["noise_seed", "seed", "value"], seed_val)
 
     # I2V: when input_reference is supplied, resolve to bytes, upload to ComfyUI,
-    # and wire it into the workflow via the keys exposed in _meta.
+    # and wire it into the workflow via the workflow's node roles.
     #
     # Workflow contract (uniform across aliases — Option A: one workflow per alias
     # handles both T2V and I2V):
@@ -12428,8 +12448,7 @@ async def _proxy_graph_video_create(
                 content=json.dumps({
                     "error": {
                         "message": (
-                            f"Workflow {workflow_name} does not support I2V "
-                            "(missing _meta.image_node)."
+                            f"Workflow {workflow_name} does not support I2V."
                         ),
                         "type": "invalid_request_error",
                     }
@@ -12569,14 +12588,14 @@ async def _proxy_graph_video_create(
         # was validated before the uploads; this rewires the bound graph.
         block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
         try:
-            video_subject.apply_point(workflow, block, width, height)
+            video_subject.apply_point(workflow, block, width, height, meta)
             if block.get("reference_fit", True) not in (False, "false", "False", 0):
-                video_subject.add_reference_fit(workflow)
+                video_subject.add_reference_fit(workflow, meta)
         except video_subject.SubjectError as exc:
             return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
                                code="invalid_workflow_extension")
         subject_record = {
-            "probe_node": video_subject.PROBE_NODE,
+            "probe_node": meta["probe_node"],
             "explicit": video_subject.explicit_selection(block),
             "subject": str(block.get("source_subject") or "person"),
         }

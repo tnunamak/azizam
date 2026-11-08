@@ -1,31 +1,4 @@
 {
- "_meta": {
-  "name": "video-minimax-h3-keyframes-mid",
-  "description": "MiniMax H3 FL2VA image-to-video that starts on the first picture and ends on the last picture, with a third picture pinned at the middle frame. Same model, sampler and settings as video-minimax-h3-i2v; the last picture goes into the last_frame input of the conditioning node; the middle picture is anchored with an add-guide node at half the frame count. 24 fps; frame count must be 17k+5 (124 = 5.17 s). License: MiniMax H3 Community License (territory-restricted; owner decision).",
-  "model_file": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-  "frame_rate": 24,
-  "default_steps": 8,
-  "max_seconds": 10,
-  "default_size": "960x544",
-  "prompt_node": "9",
-  "size_node": [
-   "6",
-   "7"
-  ],
-  "length_nodes": [
-   "8"
-  ],
-  "frame_rate_nodes": [
-   "17"
-  ],
-  "seed_nodes": [
-   "10"
-  ],
-  "save_node": "18",
-  "steps_node": "12",
-  "image_node": "20",
-  "prompt_field": "prompt"
- },
  "1": {
   "class_type": "VAELoader",
   "inputs": {

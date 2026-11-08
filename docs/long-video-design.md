@@ -88,9 +88,9 @@ builds the graph in code; `proxy.py` routes, validates and records.
 
 ## H3 engine (`h3_chain`)
 
-`gateway/video_extend_h3.py`. Same routes, planner shape, cap, record and failure info as the LTX
-engine; the engine interface (`video_extend.ChainEngine`) carries what differs per model: frame
-grid, context window, accepted options, minimum shot length, source checks.
+The template `workflows/videos/chains/h3_chain.json`, composed by `gateway/segment_chain.py`. Same routes, planner shape, cap, record and failure info as the LTX
+engine; the template's binding carries what differs per model: frame grid, context windows,
+accepted options, minimum shot length, source checks, negative default and output prefix.
 
 Why this method (research 2026-10-02 in the maintainers' research notes, and the r/StableDiffusion and r/comfyui threads of September and October 2026):
 
