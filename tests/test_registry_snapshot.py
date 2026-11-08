@@ -122,7 +122,7 @@ def test_the_bindings_carry_the_adapter_id_the_binding_body_and_its_digest():
 def test_an_inline_template_is_carried_and_digested():
     inline = {"1": {"class_type": "x"}}
     c = contract("mine.inline")
-    c["bindings"] = {"comfyui": {**c["bindings"]["comfyui"], "template": {"inline": inline}}}
+    c["bindings"] = {"comfyui": {**c["bindings"]["comfyui"], "workflow": {"inline": inline}}}   # the descriptor's template field
     template = build({"workflows": {"mine.inline": {**stored("mine.inline"), "manifest": c}}}).get("mine.inline").bindings["comfyui"].template
     assert dict(template.inline["1"]) == inline["1"] and template.digest.startswith("sha256:")
 
