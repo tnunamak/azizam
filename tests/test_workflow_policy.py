@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLED = ROOT / "manifests" / "workflows"
 V1 = ROOT / "tests" / "fixtures" / "workflows_v1"
 TILE = "image.generate.flux2-klein-4b-seamless-tile"
-GOOD = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": []}
+GOOD = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media", "tags": []}
 
 
 def policy_text(rows: dict[str, Any]) -> str:
@@ -66,7 +66,7 @@ def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_dem
     # The shipped demo package keeps the facts its schema 1 file stated, so it stays runnable with the same exposure.
     shipped = shipped_package_hash(DEMO_PACKAGE)
     assert shipped and release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash=shipped, from_package=True) == PolicyFacts(
-        "opt_in", "experimental", "batch", ("test", "demo"))
+        "opt_in", "experimental", "batch", "image", ("test", "demo"))
 
 
 def test_the_facts_equal_what_the_old_readers_gave_a_bundled_document_that_stated_none():
@@ -81,7 +81,7 @@ def test_a_fact_that_is_missing_or_malformed_is_not_filled_in():
         assert facts_from_mapping(broken) is None
     for name in GOOD:
         assert facts_from_mapping({key: value for key, value in GOOD.items() if key != name}) is None
-    assert facts_from_mapping(GOOD) == PolicyFacts("default", "stable", "batch", ())
+    assert facts_from_mapping(GOOD) == PolicyFacts("default", "stable", "batch", "media", ())
     assert facts_from_mapping(None) is None and facts_from_mapping([]) is None
 
 
@@ -108,7 +108,7 @@ def test_a_missing_or_broken_file_states_nothing_so_every_workflow_needs_configu
         release_policy(tmp_path / "absent.yml")
     good = tmp_path / "good.yml"
     good.write_text(policy_text({"w": GOOD}), encoding="utf-8")
-    assert release_facts("w", good) == PolicyFacts("default", "stable", "batch", ())
+    assert release_facts("w", good) == PolicyFacts("default", "stable", "batch", "media", ())
     good.write_text(policy_text({"w": {**GOOD, "exposure": "admin"}}), encoding="utf-8")
     assert release_facts("w", good).exposure == "admin"   # a changed file loads again
 
@@ -302,7 +302,7 @@ def test_a_row_that_names_a_package_belongs_to_that_package_alone():
     """The one rule: a package's workflow gets a row only when the row names that package and the package is the shipped one;
     any other workflow, only a row that names none."""
     shipped = shipped_package_hash(DEMO_PACKAGE)
-    demo = PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    demo = PolicyFacts("opt_in", "experimental", "batch", "image", ("test", "demo"))
     assert release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash=shipped, from_package=True) == demo
     assert release_facts(DEMO, package_id="another-package", package_hash=shipped, from_package=True) is None
     assert release_facts(DEMO, package_id=None, package_hash=shipped, from_package=True) is None
@@ -371,7 +371,7 @@ def test_a_row_that_names_a_package_is_not_given_to_a_workflow_the_bundled_direc
 
 
 def test_a_row_may_name_one_package_as_text_and_nothing_else_is_added_to_it():
-    assert parse_policy_text(policy_text({"w": {**GOOD, "package": "p"}}))["w"] == PolicyFacts("default", "stable", "batch", ())
+    assert parse_policy_text(policy_text({"w": {**GOOD, "package": "p"}}))["w"] == PolicyFacts("default", "stable", "batch", "media", ())
     for bad in ({**GOOD, "package": ""}, {**GOOD, "package": 7}, {**GOOD, "extra": 1}, {"exposure": "default", "package": "p"}):
         with pytest.raises(PolicyFileError):
             parse_policy_text(policy_text({"w": bad}))
@@ -415,7 +415,7 @@ def test_the_installed_demo_package_gets_its_facts_and_a_package_that_declares_i
     """The real path: install through the admin store, then load the gateway's workflow registry from the stored records."""
     demo_db, _, _ = _install(tmp_path / "demo", monkeypatch, DEMO_PACKAGE_DIR)
     served = _served(demo_db, monkeypatch)
-    assert served is not None and served.facts == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    assert served is not None and served.facts == PolicyFacts("opt_in", "experimental", "batch", "image", ("test", "demo"))
     assert not summarize_workflow(served, "client").get(NEEDS_CONFIGURATION_CODE)
 
     impostor_db, _, _ = _install(tmp_path / "impostor", monkeypatch, _impostor(tmp_path))
@@ -439,7 +439,7 @@ def test_a_copy_of_the_shipped_package_from_another_folder_is_the_same_package_a
     shutil.copytree(DEMO_PACKAGE_DIR, copy)
     db, _, _ = _install(tmp_path / "db", monkeypatch, copy)
     served = _served(db, monkeypatch)
-    assert served is not None and served.facts == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    assert served is not None and served.facts == PolicyFacts("opt_in", "experimental", "batch", "image", ("test", "demo"))
 
 
 def test_a_second_package_that_declares_the_id_of_an_installed_one_is_refused_as_a_duplicate(tmp_path, monkeypatch):
