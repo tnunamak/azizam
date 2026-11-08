@@ -635,6 +635,10 @@ def test_the_likeness_route_needs_its_role_and_runs_the_registered_implementatio
 def comfy_places(map_value: Any, template: Any) -> list[tuple[tuple[Any, ...], str]]:
     manifest = manifest_of("flux2-klein-4b-edit")
     manifest["inputs"]["seed"] = {"type": "integer"}
+    # Nothing here is about which inputs the map covers (a required input the map never applies is input_unbound, tested
+    # with the grammar rows), so no input is required and the cases stay about the targets they name.
+    for spec in manifest["inputs"].values():
+        spec.pop("required", None)
     manifest["bindings"]["comfyui"]["map"] = map_value
     return places(manifest, templates={"comfyui": template})
 
@@ -730,3 +734,11 @@ def test_a_falsey_malformed_role_fields_value_is_not_an_empty_mapping() -> None:
                 binding="b", executor="adapter:x", binding_fields={"c": {"kind": "role"}}, roles={"r": {"fields": fields}})
     assert bd.parse_binding_descriptor(
         binding="b", executor="adapter:x", binding_fields={"c": {"kind": "role"}}, roles={"r": {}}).roles == {"r": {}}
+
+
+def test_a_required_input_the_map_never_applies_is_refused_for_any_adapter_that_reads_inputs_by_its_map() -> None:
+    """``input_unbound`` is the descriptor's ``inputs_via: map``, not a rule of one adapter (CODE_TO_DATA_S3, D4)."""
+    manifest = manifest_of("flux2-klein-4b-edit")
+    del manifest["bindings"]["comfyui"]["map"]["source_image"]
+    assert places(manifest) == [(("bindings", "comfyui", "map"), "input_unbound")]
+    assert places(manifest_of("flux2-klein-4b-edit")) == []

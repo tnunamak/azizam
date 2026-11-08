@@ -10,15 +10,12 @@ import copy
 from pathlib import Path
 from typing import Any, Callable
 
-import yaml
 
 from gateway import output_selectors as sel
 from gateway.manifests import apply_deployment_inputs, bind_backend_request, validate_manifest
-from gateway.mesh_manifest import validate_mesh_manifest
 from gateway.workflow_requirements import validate_workflow_requirements
 
 ROOT = Path(__file__).resolve().parent.parent
-MESH_MANIFEST = ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
 
 DESCRIPTOR_DOC: dict[str, Any] = {
     "version": 1,
@@ -59,12 +56,6 @@ def edited(change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
     return doc
 
 
-def mesh_doc(change: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-    doc = copy.deepcopy(yaml.safe_load(MESH_MANIFEST.read_text(encoding="utf-8")))
-    change(doc)
-    return doc
-
-
 def requirements_doc(requires: Any) -> dict[str, Any]:
     return {"id": "x.y", "requires": requires}
 
@@ -83,10 +74,6 @@ def check_save(doc: Any, binding_key: str = "eng", parsed: Any = "default", temp
 
 def check_requirements(requires: Any) -> Callable[[], Any]:
     return lambda: validate_workflow_requirements(requirements_doc(requires), {})
-
-
-def check_mesh(doc: Any) -> Callable[[], Any]:
-    return lambda: validate_mesh_manifest(doc)
 
 
 def check_narrowing(narrowing: Any) -> Callable[[], Any]:
@@ -205,44 +192,6 @@ CASES: dict[str, Callable[[], Any]] = {
     "requires-model-pattern": check_requirements({"models": [{"role": "a", "pattern": 4}]}),
     "requires-model-sha": check_requirements({"models": [{"role": "a", "path": "p", "sha256": ""}]}),
     "multi-requires-nodes-and-models": check_requirements({"custom_nodes": [3], "models": [{"path": "p"}, "x"]}),
-    # mesh
-    "mesh-not-mapping": check_mesh([]),
-    "mesh-unknown-top": check_mesh(mesh_doc(lambda m: m.update(surprise=True))),
-    "mesh-missing-top": check_mesh(mesh_doc(lambda m: m.pop("outputs"))),
-    "mesh-schema-version": check_mesh(mesh_doc(lambda m: m.update(schema_version=2))),
-    "mesh-intent": check_mesh(mesh_doc(lambda m: m.update(intent="images.generate"))),
-    "mesh-id": check_mesh(mesh_doc(lambda m: m.update(id=""))),
-    "mesh-inputs-empty": check_mesh(mesh_doc(lambda m: m.update(inputs={}))),
-    "mesh-input-name": check_mesh(mesh_doc(lambda m: m["inputs"].update({"Bad Name": {"type": "string"}}))),
-    "mesh-input-not-mapping": check_mesh(mesh_doc(lambda m: m["inputs"].update(extra=4))),
-    "mesh-input-unknown-key": check_mesh(mesh_doc(lambda m: m["inputs"]["seed"].update(zzz=1))),
-    "mesh-input-type": check_mesh(mesh_doc(lambda m: m["inputs"]["seed"].update(type="video"))),
-    "mesh-image-modality": check_mesh(mesh_doc(lambda m: m["inputs"]["image"].update(modality="video"))),
-    "mesh-modality-on-other": check_mesh(mesh_doc(lambda m: m["inputs"]["seed"].update(modality="image"))),
-    "mesh-integer-spec": check_mesh(mesh_doc(lambda m: m["inputs"]["seed"].update(minimum="x"))),
-    "mesh-enum-empty": check_mesh(mesh_doc(lambda m: m["inputs"]["resolution"].update(enum=[]))),
-    "mesh-enum-type": check_mesh(mesh_doc(lambda m: m["inputs"]["resolution"].update(enum=["a"]))),
-    "mesh-default-invalid": check_mesh(mesh_doc(lambda m: m["inputs"]["seed"].update(default=10**30))),
-    "mesh-image-required": check_mesh(mesh_doc(lambda m: m["inputs"]["image"].update(required=False))),
-    "mesh-outputs-two": check_mesh(mesh_doc(lambda m: m["outputs"].update(extra={"modality": "mesh", "media_type": "model/gltf-binary"}))),
-    "mesh-output-keys": check_mesh(mesh_doc(lambda m: m["outputs"]["mesh"].update(extra=1))),
-    "mesh-output-type": check_mesh(mesh_doc(lambda m: m["outputs"]["mesh"].update(media_type="model/obj"))),
-    "mesh-bindings-two": check_mesh(mesh_doc(lambda m: m["bindings"].update(other={}))),
-    "mesh-binding-key": check_mesh(mesh_doc(lambda m: m.update(bindings={"Bad Id": next(iter(m["bindings"].values()))}))),
-    "mesh-binding-not-mapping": check_mesh(mesh_doc(lambda m: m.update(bindings={next(iter(m["bindings"])): 1}))),
-    "mesh-binding-unknown-key": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values())).update(zzz=1))),
-    "mesh-transport-not-mapping": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values())).update(transport="x"))),
-    "mesh-transport-kind": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values()))["transport"].update(kind="rpc"))),
-    "mesh-transport-path": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values()))["transport"].update(path="/a/../b"))),
-    "mesh-map-empty": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values())).update(map={}))),
-    "mesh-map-unknown-input": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values()))["map"].update(ghost="g"))),
-    "mesh-map-target": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values()))["map"].update(seed="Bad Field"))),
-    "mesh-map-twice": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values()))["map"].update(seed="image"))),
-    "mesh-map-image": check_mesh(mesh_doc(lambda m: next(iter(m["bindings"].values()))["map"].pop("image"))),
-    "multi-mesh-input-and-binding": check_mesh(mesh_doc(lambda m: (m["inputs"]["seed"].update(minimum="x"),
-                                                                    next(iter(m["bindings"].values()))["transport"].update(kind="rpc")))),
-    "multi-mesh-two-inputs": check_mesh(mesh_doc(lambda m: (m["inputs"]["seed"].update(minimum="x"), m["inputs"]["resolution"].update(enum=[])))),
-    "multi-mesh-top-and-output": check_mesh(mesh_doc(lambda m: (m.update(surprise=True), m["outputs"]["mesh"].update(media_type="model/obj")))),
     # deployment narrowing and runtime binding
     "narrow-unknown-input": check_narrowing({"ghost": {"minimum": 1}}),
     "narrow-not-number": check_narrowing({"prompt": {"minimum": 1}}),
@@ -258,8 +207,6 @@ CASES: dict[str, Callable[[], Any]] = {
     "multi-summary-long-and-license-empty": check_manifest(edited(_both(_set(("summary",), " ".join(["word"] * 41)), _set(("license",), "")))),
     "multi-summary-long-and-hint-empty": check_manifest(edited(_both(_set(("summary",), " ".join(["word"] * 41)), _set(("prompt_hint",), "")))),
     "root-not-mapping": check_manifest([]),
-    "multi-mesh-bad-minimum-then-list-type": check_mesh(mesh_doc(lambda m: (m["inputs"]["seed"].update(minimum="bad"), m["inputs"].update(zz={"type": []})))),
-    "multi-mesh-empty-id-then-mapping-type": check_mesh(mesh_doc(lambda m: (m.update(id=""), m["inputs"].update(zz={"type": {}})))),
     "multi-narrow-unknown-then-not-mapping": check_narrowing({"ghost": {}, "count": None}),
     "bind-no-backend": check_bind({"map": {}}, backend="other"),
     "bind-bad-map": check_bind({"map": []}),
@@ -333,42 +280,6 @@ FIRST_MESSAGES: dict[str, tuple[str, str]] = {
     'requires-model-pattern': ('ManifestError', 'manifest requires.models[0].pattern must be a non-empty string'),
     'requires-model-sha': ('ManifestError', 'manifest requires.models[0].sha256 must be a non-empty string'),
     'multi-requires-nodes-and-models': ('ManifestError', 'manifest requires.custom_nodes[0] must be a string or mapping'),
-    'mesh-not-mapping': ('MeshManifestError', 'mesh manifest must be a mapping'),
-    'mesh-unknown-top': ('MeshManifestError', "manifest has unknown keys ['surprise']"),
-    'mesh-missing-top': ('MeshManifestError', "manifest is missing ['outputs']"),
-    'mesh-schema-version': ('MeshManifestError', 'mesh manifest schema_version must be 1'),
-    'mesh-intent': ('MeshManifestError', "mesh manifest intent must be 'mesh.generate'"),
-    'mesh-id': ('MeshManifestError', 'id must be a non-empty string'),
-    'mesh-inputs-empty': ('MeshManifestError', 'mesh manifest inputs must be a non-empty mapping'),
-    'mesh-input-name': ('MeshManifestError', "input name 'Bad Name' is not a plain field name"),
-    'mesh-input-not-mapping': ('MeshManifestError', 'input extra must be a mapping'),
-    'mesh-input-unknown-key': ('MeshManifestError', "input seed has unknown keys ['zzz']"),
-    'mesh-input-type': ('MeshManifestError', "input seed type must be one of ['image', 'integer', 'object', 'string']"),
-    'mesh-image-modality': ('MeshManifestError', 'input image of type image must declare modality image'),
-    'mesh-modality-on-other': ('MeshManifestError', 'input seed may declare a modality only when it is an image'),
-    'mesh-integer-spec': ('MeshManifestError', 'input seed minimum must be an integer'),
-    'mesh-enum-empty': ('MeshManifestError', 'input resolution enum must be a non-empty list'),
-    'mesh-enum-type': ('MeshManifestError', 'input resolution enum holds a value of the wrong type'),
-    'mesh-default-invalid': ('MeshManifestError', 'input seed default is invalid: seed must be an integer'),
-    'mesh-image-required': ('MeshManifestError', 'mesh manifest needs exactly one required image input'),
-    'mesh-outputs-two': ('MeshManifestError', 'mesh manifest outputs must name exactly one output'),
-    'mesh-output-keys': ('MeshManifestError', 'output mesh must declare modality and media_type only'),
-    'mesh-output-type': ('MeshManifestError', 'output mesh must be modality mesh with media type model/gltf-binary'),
-    'mesh-bindings-two': ('MeshManifestError', 'mesh manifest must hold exactly one binding'),
-    'mesh-binding-key': ('MeshManifestError', "binding key 'Bad Id' is not a service id"),
-    'mesh-binding-not-mapping': ('MeshManifestError', 'binding must be a mapping'),
-    'mesh-binding-unknown-key': ('MeshManifestError', "binding trellis has unknown keys ['zzz']"),
-    'mesh-transport-not-mapping': ('MeshManifestError', 'transport must be a mapping'),
-    'mesh-transport-kind': ('MeshManifestError', "transport kind must be 'http-multipart'"),
-    'mesh-transport-path': ('MeshManifestError', 'transport path must be a canonical slash-prefixed relative path'),
-    'mesh-map-empty': ('MeshManifestError', 'binding map must be a non-empty mapping'),
-    'mesh-map-unknown-input': ('MeshManifestError', "map names 'ghost', which is not an input"),
-    'mesh-map-target': ('MeshManifestError', 'map target for seed must be a plain form field name'),
-    'mesh-map-twice': ('MeshManifestError', "map target 'image' is used twice"),
-    'mesh-map-image': ('MeshManifestError', 'the image input must be mapped'),
-    'multi-mesh-input-and-binding': ('MeshManifestError', 'input seed minimum must be an integer'),
-    'multi-mesh-two-inputs': ('MeshManifestError', 'input seed minimum must be an integer'),
-    'multi-mesh-top-and-output': ('MeshManifestError', "manifest has unknown keys ['surprise']"),
     'narrow-unknown-input': ('ManifestError', 'deployment narrows input ghost, which the manifest does not declare'),
     'narrow-not-number': ('ManifestError', 'deployment narrows input prompt, which is not a number'),
     'narrow-unknown-key': ('ManifestError', "deployment sets ['zzz'] for input count; only ['default', 'minimum', 'maximum'] apply"),
@@ -381,8 +292,6 @@ FIRST_MESSAGES: dict[str, tuple[str, str]] = {
     'multi-summary-long-and-license-empty': ('ManifestError', 'manifest license must be a non-empty string'),
     'multi-summary-long-and-hint-empty': ('ManifestError', 'manifest prompt_hint must be a non-empty string'),
     'root-not-mapping': ('ManifestError', 'manifest missing required field: schema_version'),
-    'multi-mesh-bad-minimum-then-list-type': ('MeshManifestError', 'input seed minimum must be an integer'),
-    'multi-mesh-empty-id-then-mapping-type': ('MeshManifestError', 'id must be a non-empty string'),
     'multi-narrow-unknown-then-not-mapping': ('ManifestError', 'deployment narrows input ghost, which the manifest does not declare'),
     'bind-no-backend': ('ManifestError', 'manifest has no binding for backend: other'),
     'bind-bad-map': ('ManifestError', 'manifest binding for eng has invalid map'),
@@ -456,42 +365,6 @@ EXPECTED_ERRORS: dict[str, list[tuple[tuple[str | int, ...], str]]] = {
     'requires-model-pattern': [(('requires', 'models', 0, 'pattern'), 'value_empty')],
     'requires-model-sha': [(('requires', 'models', 0, 'sha256'), 'value_empty')],
     'multi-requires-nodes-and-models': [(('requires', 'custom_nodes', 0), 'type_mismatch'), (('requires', 'models', 0, 'role'), 'value_empty'), (('requires', 'models', 1), 'type_mismatch')],
-    'mesh-not-mapping': [((), 'type_mismatch')],
-    'mesh-unknown-top': [((), 'unknown_field')],
-    'mesh-missing-top': [((), 'required_field_missing')],
-    'mesh-schema-version': [(('schema_version',), 'version_unsupported')],
-    'mesh-intent': [(('intent',), 'intent_mismatch')],
-    'mesh-id': [(('id',), 'value_empty')],
-    'mesh-inputs-empty': [(('inputs',), 'type_mismatch')],
-    'mesh-input-name': [(('inputs', 'Bad Name'), 'name_invalid')],
-    'mesh-input-not-mapping': [(('inputs', 'extra'), 'type_mismatch')],
-    'mesh-input-unknown-key': [(('inputs', 'seed'), 'unknown_field')],
-    'mesh-input-type': [(('inputs', 'seed', 'type'), 'type_unsupported')],
-    'mesh-image-modality': [(('inputs', 'image', 'modality'), 'modality_invalid')],
-    'mesh-modality-on-other': [(('inputs', 'seed', 'modality'), 'modality_invalid')],
-    'mesh-integer-spec': [(('inputs', 'seed', 'minimum'), 'type_mismatch')],
-    'mesh-enum-empty': [(('inputs', 'resolution', 'enum'), 'enum_invalid')],
-    'mesh-enum-type': [(('inputs', 'resolution', 'enum', 0), 'type_mismatch')],
-    'mesh-default-invalid': [(('inputs', 'seed', 'default'), 'default_invalid')],
-    'mesh-image-required': [(('inputs',), 'image_input_count')],
-    'mesh-outputs-two': [(('outputs',), 'output_count')],
-    'mesh-output-keys': [(('outputs', 'mesh'), 'unknown_field')],
-    'mesh-output-type': [(('outputs', 'mesh'), 'output_type_invalid')],
-    'mesh-bindings-two': [(('bindings',), 'binding_count')],
-    'mesh-binding-key': [(('bindings', 'Bad Id'), 'name_invalid')],
-    'mesh-binding-not-mapping': [(('bindings', 'trellis'), 'type_mismatch')],
-    'mesh-binding-unknown-key': [(('bindings', 'trellis'), 'unknown_field')],
-    'mesh-transport-not-mapping': [(('bindings', 'trellis', 'transport'), 'type_mismatch')],
-    'mesh-transport-kind': [(('bindings', 'trellis', 'transport', 'kind'), 'transport_kind_invalid')],
-    'mesh-transport-path': [(('bindings', 'trellis', 'transport', 'path'), 'transport_path_invalid')],
-    'mesh-map-empty': [(('bindings', 'trellis', 'map'), 'type_mismatch')],
-    'mesh-map-unknown-input': [(('bindings', 'trellis', 'map', 'ghost'), 'reference_unknown')],
-    'mesh-map-target': [(('bindings', 'trellis', 'map', 'seed'), 'name_invalid')],
-    'mesh-map-twice': [(('bindings', 'trellis', 'map', 'seed'), 'target_duplicate')],
-    'mesh-map-image': [(('bindings', 'trellis', 'map'), 'image_unmapped')],
-    'multi-mesh-input-and-binding': [(('bindings', 'trellis', 'transport', 'kind'), 'transport_kind_invalid'), (('inputs', 'seed', 'minimum'), 'type_mismatch')],
-    'multi-mesh-two-inputs': [(('inputs', 'resolution', 'enum'), 'enum_invalid'), (('inputs', 'seed', 'minimum'), 'type_mismatch')],
-    'multi-mesh-top-and-output': [((), 'unknown_field'), (('outputs', 'mesh'), 'output_type_invalid')],
     'narrow-unknown-input': [(('inputs', 'ghost'), 'input_unknown')],
     'narrow-not-number': [(('inputs', 'prompt'), 'input_not_numeric')],
     'narrow-unknown-key': [(('inputs', 'count'), 'limit_unknown')],
@@ -504,8 +377,6 @@ EXPECTED_ERRORS: dict[str, list[tuple[tuple[str | int, ...], str]]] = {
     'multi-summary-long-and-license-empty': [(('license',), 'value_empty'), (('summary',), 'too_many_words')],
     'multi-summary-long-and-hint-empty': [(('prompt_hint',), 'value_empty'), (('summary',), 'too_many_words')],
     'root-not-mapping': [(('schema_version',), 'required_field_missing')],
-    'multi-mesh-bad-minimum-then-list-type': [(('inputs', 'seed', 'minimum'), 'type_mismatch'), (('inputs', 'zz', 'type'), 'type_unsupported')],
-    'multi-mesh-empty-id-then-mapping-type': [(('id',), 'value_empty'), (('inputs', 'zz', 'type'), 'type_unsupported')],
     'multi-narrow-unknown-then-not-mapping': [(('inputs', 'count'), 'type_mismatch'), (('inputs', 'ghost'), 'input_unknown')],
     'bind-no-backend': [(('bindings', 'other'), 'binding_missing')],
     'bind-bad-map': [(('bindings', 'eng', 'map'), 'type_mismatch')],
