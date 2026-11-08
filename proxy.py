@@ -16774,7 +16774,7 @@ def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
         artifact = binding.get("workflow")
         if not isinstance(artifact, str):
             raise RuntimeError("identity workflow manifest is missing")
-        graph = json.loads((Path(__file__).parent / artifact).read_text(encoding="utf-8"))
+        graph = json.loads(_resolve_workflow_artifact_path(record, artifact).read_text(encoding="utf-8"))
         _identity_template_cache = (graph, dict(binding))
     return _identity_template_cache
 

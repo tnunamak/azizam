@@ -351,7 +351,6 @@ def prepare_workflow(
             param="people",
         )
     graph = copy.deepcopy(dict(template))
-    graph.pop("_meta", None)
     for index, node_id in enumerate(image_nodes, start=1):
         if index <= used_images:
             continue
