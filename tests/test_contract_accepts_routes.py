@@ -21,9 +21,10 @@ from gateway import media_fetch
 from tests.support.access import access_context
 from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
 from tests.test_media_inputs_image_route import (  # noqa: F401  (rig is a fixture)
-    NS, OWNER_APP, image_bytes, lease_rows, rig, stored,
+    NS, OWNER_APP, image_bytes, lease_rows, live_rows, rig, stored,
 )
-from tests.test_media_inputs_upload_routes import _Upload, edit_rig, run_edit  # noqa: F401  (edit_rig is a fixture)
+from tests.test_media_inputs_upload_routes import (  # noqa: F401  (edit_rig and video_rig are fixtures)
+    _Upload, edit_rig, run_edit, video_rig)
 
 PNG, JPEG = image_bytes("PNG"), image_bytes("JPEG")
 REFUSED = "the input is not a file type this model accepts"
@@ -152,3 +153,80 @@ def test_video_extension_picture_is_resolved_with_the_inputs_own_list():
     with patch.object(proxy, "_resolve_video_workflow_asset", resolve):
         asyncio.run(proxy._resolve_video_workflow_assets(body, doc, {}, None))
     assert seen["accepts"] == ("image/webp",)
+
+
+# -- every extension input is checked before the first one reaches the engine ---------------------------------------------
+
+
+def two_input_manifest(second_accepts: str):
+    doc = manifest_accepting("image/png")
+    doc["inputs"]["style_image"] = {"type": "asset", "accepts": [second_accepts]}
+    doc["bindings"]["comfyui"]["map"]["style_image"] = [{"node": "43", "input": "image"}]
+    return doc
+
+
+def two_assets_to_extension(first: str, second: str, doc):
+    body = {"prompt": "x", "extensions": {NS: {"control_image": {"asset_id": first}, "style_image": {"asset_id": second}}}}
+    return asyncio.run(proxy._upload_image_workflow_extension_assets(
+        form=None, request_body=body, manifest=doc, client=object(), headers={}, receipt=None, auth_context=auth()))
+
+
+def test_a_refused_second_extension_input_leaves_no_upload_and_no_live_lease_behind_for_the_first(rig):
+    first, second = stored(PNG), stored(PNG)
+    _, error = two_assets_to_extension(first, second, two_input_manifest("image/jpeg"))
+    assert error is not None and b"style_image" in error.body
+    assert rig.uploads == [] and live_rows() == 0
+    updated, error = two_assets_to_extension(first, second, two_input_manifest("image/png"))
+    assert error is None and len(rig.uploads) == 2 and live_rows() == 0
+
+
+def test_a_refused_second_multipart_extension_input_leaves_no_upload_behind_for_the_first(rig):
+    doc = two_input_manifest("image/jpeg")
+    body = {"prompt": "x", "extensions": {NS: {"control_image": {"multipart_field": "control"}, "style_image": {"multipart_field": "style"}}}}
+    form = SimpleNamespace(get=lambda name: _Upload(PNG) if name in ("control", "style") else None)
+    _, error = asyncio.run(proxy._upload_image_workflow_extension_assets(
+        form=form, request_body=body, manifest=doc, client=object(), headers={}, receipt=None, auth_context=auth()))
+    assert error is not None and rig.uploads == [] and lease_rows() == 0
+
+
+# -- a picture field the contract declares with another shape is refused, not given the wire's list -----------------------
+
+
+@pytest.mark.parametrize("spec", [{"type": "string"}, {"type": "array", "items": {"type": "asset", "accepts": ["image/*"]}},
+                                  {"type": "object", "properties": {}}, "not a mapping"])
+def test_a_picture_field_declared_as_something_else_is_refused(spec):
+    doc = {"inputs": {"image": spec}}
+    with pytest.raises(proxy._InputReferenceError):
+        proxy._input_accepts(doc, "image")
+    with pytest.raises(proxy._InputReferenceError):
+        proxy._edit_part_accepts({"inputs": {"source_image": spec}}, 1)
+
+
+# -- the video create route reaches the reference helper with the contract's list ---------------------------------------
+
+
+def declaring_reference(*accepts: str):
+    """``_find_video_manifest`` with the picture input declared as the contract of the test says."""
+    real = proxy._find_video_manifest
+
+    def find(workflow_name, workflow_cfg):
+        doc = copy.deepcopy(real(workflow_name, workflow_cfg))
+        doc["inputs"][proxy.VIDEO_REFERENCE_INPUT] = {"type": "asset", "accepts": list(accepts)}
+        return doc
+    return patch.object(proxy, "_find_video_manifest", find)
+
+
+def test_video_create_route_holds_input_reference_to_the_contracts_list(video_rig):
+    # A request that names no workflow extension never loads the contract, so it keeps the wire's list; this one does.
+    reference_png = DATA_URI
+    with declaring_reference("video/*"):
+        refused = video_rig.client.post("/v1/videos", json={
+            "model": "video-minimax-h3-i2v", "prompt": "a lighthouse", "seconds": 5, "seed": 7, "input_reference": reference_png,
+            "extensions": {NS: {"steps": 8}}})
+    assert refused.status_code == 400 and REFUSED in refused.text, refused.text
+    assert video_rig.comfy.uploads == [] and video_rig.comfy.submitted == []
+    with declaring_reference("image/png"):
+        allowed = video_rig.client.post("/v1/videos", json={
+            "model": "video-minimax-h3-i2v", "prompt": "a lighthouse", "seconds": 5, "seed": 7, "input_reference": reference_png,
+            "extensions": {NS: {"steps": 8}}})
+    assert allowed.status_code == 200, allowed.text

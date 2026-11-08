@@ -535,6 +535,29 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.graph["s0_image"]["inputs"]["image"], "up1_" + self.comfy.uploads[0][0])
 
+    def test_i2v_first_frame_on_a_chain_is_held_to_the_contracts_list(self) -> None:
+        # The chain route reaches the reference helper by its own call, so this fails if that call passes a constant list.
+        real = proxy._find_video_manifest
+
+        def declaring(*accepts):
+            def find(workflow_name, workflow_cfg):
+                import copy
+                doc = copy.deepcopy(real(workflow_name, workflow_cfg))
+                doc["inputs"][proxy.VIDEO_REFERENCE_INPUT] = {"type": "asset", "accepts": list(accepts)}
+                return doc
+            return patch.object(proxy, "_find_video_manifest", find)
+
+        reference = "data:image/png;base64," + base64.b64encode(PNG).decode()
+        with declaring("video/*"):
+            refused = self._create(model="video-long", prompt="x", seconds=12, input_reference=reference)
+        self.assertEqual(refused.status_code, 400, refused.text)
+        self.assertEqual(refused.json()["error"]["param"], "input_reference")
+        self.assertIn("not a file type this model accepts", refused.text)
+        self.assertEqual(self.comfy.uploads, [])
+        with declaring("image/png"):
+            allowed = self._create(model="video-long", prompt="x", seconds=12, input_reference=reference)
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+
     def test_progress_units_are_registered_for_the_job(self) -> None:
         self._create(model="video-long", prompt="x", seconds=20)
         self.assertEqual(len(proxy._video_chain_units[NEW_PROMPT_ID]), 3)

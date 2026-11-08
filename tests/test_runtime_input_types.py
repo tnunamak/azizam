@@ -47,7 +47,7 @@ def test_media_bearing_finds_an_asset_at_any_depth(spec):
     {"type": "string"},
     {"type": "array", "max_items": 3, "items": {"type": "string"}},
     {"type": "object", "properties": {"n": {"type": "integer"}}},
-    {"type": "object", "opaque": True, "photo": ASSET},   # opaque data is never searched
+    {"type": "object", "opaque": True, "photo": ASSET},   # a valid opaque object lists no properties, so nothing is searched
     {"type": ["asset"]}, {"type": {"type": "asset"}}, {"type": "array", "items": "asset"},
     {"type": "object", "properties": {"a": "asset", "b": None, "c": ["asset"]}}, {"type": "array"}, {"type": "object", "properties": []},
     None, "asset", 7, [],
@@ -249,3 +249,24 @@ def test_the_asset_inputs_of_a_workflow_include_the_leaves_inside_containers():
     inputs = {"a": ASSET, "b": PHOTOS, "c": {"type": "object", "properties": {"v": {"type": "asset", "accepts": ["video/*"]}}}, "d": {"type": "string"}}
     leaves = model_metadata._asset_inputs({"inputs": inputs})
     assert [leaf["accepts"] for leaf in leaves] == [["image/png"], ["image/png"], ["video/*"]]
+
+
+# ------------------------------------------------------------------ refusal order: enum before the length bounds
+
+COMBINED = {"type": "string", "enum": ["ok"], "max_length": 2}
+
+
+def test_a_value_that_breaks_the_enum_and_a_length_bound_gets_the_enum_reason_at_run():
+    assert validate_inputs(contract({"caption": COMBINED}), {"caption": "toolong"}).rejected == {"caption": "caption must be one of: ok"}
+    short = {"type": "string", "enum": ["okay"], "min_length": 3}
+    assert validate_inputs(contract({"caption": short}), {"caption": "x"}).rejected == {"caption": "caption must be one of: okay"}
+    # A value inside the enum still meets the bound after it.
+    bounded = {"type": "string", "enum": ["toolong"], "max_length": 2}
+    assert validate_inputs(contract({"caption": bounded}), {"caption": "toolong"}).rejected == {"caption": "caption must have at most 2 characters"}
+
+
+def test_a_default_that_breaks_the_enum_and_a_length_bound_gets_the_enum_reason_at_save():
+    from tests.test_workflow_contract import with_input
+    from gateway.workflow_contract import check_contract
+    messages = [e.message for e in check_contract(with_input("x", {**COMBINED, "default": "toolong"})).errors if e.path == ("inputs", "x", "default")]
+    assert messages == ["the value must be one of: ok"]

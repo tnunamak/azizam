@@ -182,6 +182,23 @@ has keywords we must not run (`$ref` to outside, `pattern` on member input, `one
 plus `x-` keywords for `asset`, `generate` and `step`, which is a second grammar in disguise. Instead, the input grammar
 is ours, and the OpenAPI projection (`workflow_openapi._input_schema`) maps it to JSON Schema, as it does today.
 
+As built (S3.7): `validate_inputs` checks an input through its whole tree (`value_problems`) and reports each refusal with
+its path and code. A string is refused in this order: type, enum, then `min_length` and `max_length`, for a caller's value and
+for a default checked at save. `media_bearing` and `asset_leaf_specs` (`gateway/manifests.py`) are a grammar walker for contracts
+that passed the save check. They are not a validator, and a malformed spec can read as media-bearing. The routes pass the
+contract's `accepts` to the resolver; a picture field the contract does not declare takes the wire's `image/*`, and one it
+declares with another shape is refused. An extension request resolves and checks every supplied input before the first engine
+upload, and its leases end on every exit.
+- Known gaps, left as they are: the source-video branch ignores `accepts` and trusts the URI or fetched media type; a stored
+  extension reference still needs the `img_` prefix; opaque JSON has no depth, item or byte budget in this validator (S2.3
+  owns the request limits); declared per-input `max_bytes` is not enforced, only the resolver-wide limits; a request that
+  names no workflow extension does not load the contract on the video create route, so that route keeps the wire's list; the
+  extension path reports a container of assets as rejected text with no structured code (`media_not_resolved` is on
+  `bind_backend_request` only).
+- Deferred: resolving a reference nested in a list or object. A container that holds assets is refused at intake and at bind
+  (`media_not_resolved`), so a required media-container workflow can be saved but not run on these routes. The per-leaf
+  media type check and the atomic upload of nested references come with that resolver.
+
 ### D5. Outputs: declared type, count and JSON shape, checked after selection
 
 An output spec (v2): `media_type` (required), `count: {min, max}`, `schema` (only for `application/json`), `label`,

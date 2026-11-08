@@ -134,8 +134,11 @@ _SPEC_WALK_LIMIT = 8
 
 def asset_leaf_specs(spec: Any, _depth: int = 0) -> Iterator[Mapping[str, Any]]:
     """The ``asset`` specs inside ``spec``, at any depth, following the type grammar: an object's ``properties`` and an
-    array's ``items``. A subtree of the wrong shape (a type that is not a word, children that are not mappings) holds
-    none, so a broken document is answered, not crashed on. Opaque data is never searched."""
+    array's ``items``. This is a walker for contracts that passed the save check, not a validator: a subtree of the
+    wrong shape (a type that is not a word, children that are not mappings) holds none, so a broken document is
+    answered, not crashed on, but a malformed spec can still read as true (for example an object marked opaque that
+    also lists ``properties``, or an asset whose ``accepts`` is not a list). Only the walk of a valid opaque object
+    is guaranteed to find nothing."""
     if not isinstance(spec, Mapping) or _depth > _SPEC_WALK_LIMIT:
         return
     kind = spec.get("type")
@@ -160,7 +163,8 @@ def accepts_of(spec: Any) -> tuple[str, ...]:
 def media_bearing(spec: Any) -> bool:
     """True when the input is an ``asset``, or an ``array`` or ``object`` whose spec holds an ``asset`` at any depth
     (CODE_TO_DATA_S3, D4). The one answer to "does this input carry media" for the source-echo check, the resolver
-    boundary and the OpenAPI projection."""
+    boundary and the OpenAPI projection. It reads the type grammar and does not validate it: for a contract that
+    passed the save check the answer is exact, for a malformed spec it may be true."""
     return next(asset_leaf_specs(spec), None) is not None
 
 
@@ -650,10 +654,6 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     if expected_type == "string":
         if not isinstance(value, str):
             return f"{name} must be a string"
-        if "min_length" in spec and len(value) < spec["min_length"]:
-            return f"{name} must have at least {spec['min_length']} characters"
-        if "max_length" in spec and len(value) > spec["max_length"]:
-            return f"{name} must have at most {spec['max_length']} characters"
     elif expected_type in ("object", "array"):
         # A container is checked through its whole tree; the reason names the first place that fails.
         for path, _code, message in value_problems(spec, value, ()):
@@ -681,6 +681,13 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     enum = spec.get("enum")
     if enum is not None and value not in enum:
         return f"{name} must be one of: {', '.join(map(str, enum))}"
+
+    # The length bounds come after the enum, as the first refusal for a value that breaks both has always been the enum's.
+    if expected_type == "string":
+        if "min_length" in spec and len(value) < spec["min_length"]:
+            return f"{name} must have at least {spec['min_length']} characters"
+        if "max_length" in spec and len(value) > spec["max_length"]:
+            return f"{name} must have at most {spec['max_length']} characters"
 
     if expected_type in {"number", "integer"}:
         minimum = spec.get("minimum")
