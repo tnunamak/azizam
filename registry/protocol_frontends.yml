@@ -922,7 +922,7 @@ frontends:
         aliases: [/openai/v1/images/edits]
         runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: images-variations
-    shape: openai.images.multipart
+    shape: openai.images.variations
     mode: sync
     receipt_protocol: openai.images
     strictness: exact

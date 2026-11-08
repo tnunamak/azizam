@@ -65,7 +65,10 @@ def engine_bodies(obs: Obs, path: str) -> list[Any]:
 
 
 def sleeps(obs: Obs) -> list[float]:
-    return [s["delay"] for s in obs.trace["gateway_sleeps"]]
+    """The gateway's waits that belong to the request. The receipt heartbeat of a handed-off job is infrastructure both
+    routes share; it sleeps one fixed interval and the rig's instant clock makes it spin, so it is left out."""
+    from gateway.receipts import HEARTBEAT_INTERVAL_S
+    return [s["delay"] for s in obs.trace["gateway_sleeps"] if s["delay"] != HEARTBEAT_INTERVAL_S]
 
 
 def receipts(obs: Obs) -> list[dict[str, Any]]:
