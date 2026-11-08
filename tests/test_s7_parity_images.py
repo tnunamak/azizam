@@ -1279,5 +1279,6 @@ def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
         return go
     old = observe(tmp_path, JOB, mk(False), setup, row=False)
     row = observe(tmp_path, JOB, mk(True), setup, row=True)
+    print("DBG", sleeps(old), engine(old), str(doc(old,1))[:600], str(doc(old,2))[:600], old.extra, [c["response"].get("status") for c in old.trace["caller"]])
     old_has(old, "a retry wait", 5.0 in sleeps(old))
     assert_same(old, row, ("job states", _states), ("events", lambda o: doc(o, 2)), sleeps, ("prompts", lambda o: len(engine_bodies(o, "/prompt"))))
