@@ -803,7 +803,8 @@ pytest = 22527
 # Status coverage (2026-11-08): +2 cases in owner-status.spec.tsx (a busy or unchecked engine still serves its capability); measured 3928 (vitest list --root web).
 # Status coverage review (2026-11-08): +9 cases in owner-status.spec.tsx (starting, faulted, other-label and provider spares); measured 3937.
 # Builder A carried test (2026-11-08): +1 case in owner-status.spec.tsx (a degraded spare that shares a label is a fault on record).
-vitest = 3938
+vitest = 3983
+# Builder E2 (2026-11-08): +45 cases in web/src/app/workflows/owner-view.spec.tsx; measured 3983 (vitest run).
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -880,7 +881,8 @@ vitest = 3938
 # Gate lists: playwright.config.ts 667 + live-data 3 + household 18 = 688 (playwright test --list).
 # Trains r114 and r115 (2026-10-30): Try mesh viewer and App request history cases; the r114 gate counted 694.
 # Library pick everywhere (2026-11-06): +35 Playwright cases (library-pick-everywhere.spec.ts across its projects); playwright test --list rose 679 -> 714.
-playwright = 735
+playwright = 736
+# Builder E2 (2026-11-08): +1 case in e2e/workflows-owner.spec.ts (owner flow, chromium only); not yet run, see the report.
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

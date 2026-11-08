@@ -348,18 +348,35 @@ def service_model_names(services: Mapping[str, Any]) -> list[tuple[str, NameOwne
 
 def dynamic_alias_names(model_aliases: Mapping[str, Any] | None) -> list[tuple[str, NameOwner]]:
     """The names of the ``model_aliases`` config section: each operation's stable names and its exact (non-glob) matches.
-    A dynamic alias is its own entity (it resolves per operation, so one name in two operations is one name)."""
-    pairs: list[tuple[str, NameOwner]] = []
+    A dynamic alias resolves per operation, so one name in two operations is one name. Its owner is the model it names
+    when every operation's stable entry names that one model (the services section may declare the same alias with that
+    ``base_model_id``: one owner, no clash); otherwise, or when it points nowhere, it is its own entity."""
+    names: list[str] = []
+    targets: dict[str, set[str]] = {}
     for table in (model_aliases or {}).values():
         if not isinstance(table, Mapping):
             continue
-        names = list((table.get("stable") or {}))
+        stable = table.get("stable") or {}
+        for name, target in (stable.items() if isinstance(stable, Mapping) else ()):
+            names.append(str(name))
+            for value in (target if isinstance(target, list) else [target]):
+                if isinstance(value, str) and value.strip():
+                    targets.setdefault(str(name), set()).add(value.strip())
         for pattern in table.get("openai") or ():
             if isinstance(pattern, Mapping):
                 match = str(pattern.get("match") or "")
                 names += [match] if match and not any(c in match for c in _GLOB_CHARS) else []
                 names += [str(n) for n in (pattern.get("names") or ()) if isinstance(n, str)]
-        pairs += [(str(name), NameOwner("model_alias", str(name))) for name in names if str(name).strip()]
+                # An OpenAI-name pattern points at a stable name, not a model: its names stay their own entity.
+                for name in (n for n in [match, *(pattern.get("names") or ())] if isinstance(n, str)):
+                    targets.setdefault(name, set()).add("\0pattern")
+    pairs: list[tuple[str, NameOwner]] = []
+    for name in names:
+        if not name.strip():
+            continue
+        named = targets.get(name, set())
+        owner = next(iter(named)) if len(named) == 1 and "\0pattern" not in named else name
+        pairs.append((name, NameOwner("model_alias", owner)))
     return pairs
 
 
