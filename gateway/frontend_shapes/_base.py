@@ -163,7 +163,7 @@ class Shape:
         inputs = self.fill_inputs(chosen, inputs, fields)
         key = request.headers.get(IDEMPOTENCY_HEADER) if self.honours_idempotency_key else None
         return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, idempotency_key=key or None,
-                          frontend_id=row.id)
+                          frontend_id=row.id, failure_text=row.job_failure_text)
 
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""

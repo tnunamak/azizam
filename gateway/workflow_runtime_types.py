@@ -402,6 +402,9 @@ class RunRequest:
     # M1). A wire field that is neither an input nor an option (an answer form, the model name) is listed here too. Not
     # part of run identity. Empty: the receipt lists the options, then the inputs, then the media.
     accepted_inputs: tuple[str, ...] = ()
+    # Which text a failed job stores: "adapter" (the adapter's own message) or "category_copy" (the fixed sentence for the
+    # failure's category). It is data of the row (``runtime_policy.job_failure_text``) and not part of run identity.
+    failure_text: str = "adapter"
 
 
 @dataclass(frozen=True)
@@ -566,6 +569,8 @@ class FrontendRow:
     # Where the receipt opens (S7 parity M1): "before_policy" leaves a closed ``rejected`` receipt when the route policy
     # denies the request; "after_policy" (default) leaves none.
     receipt_opens: Literal["before_policy", "after_policy"] = "after_policy"
+    # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
+    job_failure_text: Literal["adapter", "category_copy"] = "adapter"
 
 
 class FrontendShape(Protocol):

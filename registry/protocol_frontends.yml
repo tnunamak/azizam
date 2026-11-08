@@ -941,7 +941,7 @@ frontends:
     routes:
       - methods: [POST]
         canonical: /gateway/v1/media/jobs/image-generations
-        runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {job_failure_text: category_copy, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: audio-generate
     shape: openai.audio.json
     mode: sync

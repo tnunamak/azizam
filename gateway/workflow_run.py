@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 from gateway import generated_defaults, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
+from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
 from gateway.manifests import ContractError, ManifestError, validate_inputs
 from gateway.pinned_definitions import PinnedDefinitions, load_in
@@ -572,7 +573,7 @@ class WorkflowRunCore:
             intent=RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
-                      "frontend": req.frontend_id})
+                      "frontend": req.frontend_id, "failure_text": req.failure_text})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
@@ -705,8 +706,11 @@ class WorkflowRunCore:
             except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
                 delay = policy.delay_after(exc, attempt)
                 if delay is None:
-                    self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
-                               _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
+                    category = str(getattr(exc, "category", "") or "internal")
+                    text, code = media_job_shape.stored_failure(
+                        str((job.get("metadata") or {}).get("failure_text") or "adapter"), category, _client_message(exc),
+                        _code_of(exc), _upstream_status(exc))
+                    self._fail(job_id, code, category, text, retryable=bool(getattr(exc, "retryable", False)),
                                upstream_status=_upstream_status(exc))
                     return
                 caller, payload, problem = await self._before_retry(job_id, exc, attempt, delay, policy)
