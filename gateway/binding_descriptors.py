@@ -287,15 +287,17 @@ def _check_required_inputs_bound(block: Mapping[str, Any], present: list[Binding
                                  inputs: Mapping[str, Any] | None, errors: ErrorCollector) -> None:
     """A binding whose inputs reach the engine only through its input map must map every required input: a required input
     that no target applies could never reach the engine (``input_unbound``, CODE_TO_DATA_S3, D4). An optional input may stay
-    unmapped. A map that did not pass the core check has no keys to read, and is skipped."""
+    unmapped. The check reads the union of every input map the binding holds, so a descriptor with several maps may split
+    the inputs among them. A map that did not pass the core check has no keys to read, and is skipped."""
     if not isinstance(inputs, Mapping):
         return
-    for spec in present:
-        if spec.kind != "input_map" or not isinstance(block[spec.name], Mapping):
-            continue
-        for name, input_spec in inputs.items():
-            if isinstance(input_spec, Mapping) and input_spec.get("required") is True and name not in block[spec.name]:
-                errors.add(at + (spec.name,), "input_unbound", f"the required input {name} is not in this map")
+    # A descriptor may declare several input maps; an input is bound when any map present names it.
+    maps = [spec for spec in present if spec.kind == "input_map" and isinstance(block[spec.name], Mapping)]
+    mapped = {name for spec in maps for name in block[spec.name]}
+    where = at + (maps[0].name,) if maps else at   # one map: the error stays on it; none: on the binding
+    for name, input_spec in inputs.items():
+        if isinstance(input_spec, Mapping) and input_spec.get("required") is True and name not in mapped:
+            errors.add(where, "input_unbound", f"the required input {name} is not in any input map of this binding")
 
 
 def _check_field(spec: BindingField, value: Any, at: tuple[PathPart, ...], inputs: Mapping[str, Any] | None,
