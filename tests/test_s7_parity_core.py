@@ -284,6 +284,17 @@ def test_receipt_writes_name_the_inputs_the_workflow_and_the_adapters_receipt_fa
     assert writes["metadata"] == {"comfyui_models_freed_for_vram": True}
 
 
+def test_a_shape_states_the_receipts_accepted_inputs_in_wire_order():
+    """images-29, writers-03: the image golden lists wire fields that are neither inputs nor options (model,
+    response_format); the shape states them, and they do not change run identity."""
+    e = entry({**CONTRACT, "version": "0.1.0"})
+    stated = request(options={"n": 1}, accepted_inputs=("model", "prompt", "n", "response_format"))
+    writes = workflow_run.receipt_writes(e, stated, {})
+    assert writes["accepted_inputs"] == ["model", "prompt", "n", "response_format"]
+    from gateway.workflow_kernel import run_identity
+    assert run_identity("o", "m", stated) == run_identity("o", "m", request(options={"n": 1}))
+
+
 def test_a_row_says_where_its_receipt_opens():
     """images-29, images-07, images-E12: the image rows open it before the route policy; the default is after."""
     base = {"id": "r", "shape": "s", "mode": "sync", "receipt_protocol": "p", "routes": [{"methods": ["POST"], "canonical": "/x"}]}

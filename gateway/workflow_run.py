@@ -235,8 +235,9 @@ def asset_origin(contract: Mapping[str, Any], request_id: str | None) -> dict[st
 
 
 def receipt_writes(entry: WorkflowEntry, req: RunRequest, result_metadata: Mapping[str, Any]) -> dict[str, Any]:
-    """The fields a request receipt takes from a run (S7 parity M1): what the request supplied (the wire options in the
-    order the shape put them, then the inputs, then the media), the workflow it resolved to and that workflow's manifest
+    """The fields a request receipt takes from a run (S7 parity M1): what the request supplied (the shape's
+    ``accepted_inputs`` when it states them, else the wire options in the order the shape put them, then the inputs, then
+    the media), the workflow it resolved to and that workflow's manifest
     identity, and ``metadata``: the mapping the adapter named ``receipt`` in its result metadata, copied as it is. The core
     does not read inside it."""
     from gateway.manifests import ManifestError, manifest_identity
@@ -247,7 +248,8 @@ def receipt_writes(entry: WorkflowEntry, req: RunRequest, result_metadata: Mappi
         manifest_hash = identity.manifest_hash
     except ManifestError:
         manifest_hash = None
-    return {"accepted_inputs": [*req.options, *req.inputs, *req.media], "resolved_workflow": entry.id,
+    accepted = list(req.accepted_inputs) or [*req.options, *req.inputs, *req.media]
+    return {"accepted_inputs": accepted, "resolved_workflow": entry.id,
             "manifest_id": entry.id, "manifest_version": contract.get("version"), "manifest_hash": manifest_hash,
             "metadata": dict(result_metadata.get("receipt") or {})}
 
