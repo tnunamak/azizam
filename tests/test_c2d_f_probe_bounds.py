@@ -104,12 +104,12 @@ def test_an_observer_that_trickles_is_cut_at_the_total_bound() -> None:
 
     async def go():
         async with httpx.AsyncClient(transport=transport) as client:
-            return await multipart_adapter.read_observer(client, _spec(timeout=0), "http://obs/f")
+            return await multipart_adapter.read_observer(client, _spec(timeout=1), "http://obs/f")
 
     start = time.monotonic()
     with pytest.raises(PoolObserverError):
         _run(go())
-    assert time.monotonic() - start < 1.5
+    assert time.monotonic() - start < 2.5
 
 
 def test_a_good_observer_answer_still_reads() -> None:
