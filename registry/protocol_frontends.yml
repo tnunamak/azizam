@@ -900,6 +900,7 @@ frontends:
   - id: images-generations
     shape: openai.images.json
     mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
@@ -915,6 +916,7 @@ frontends:
   - id: images-edits
     shape: openai.images.multipart
     mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
@@ -930,6 +932,7 @@ frontends:
   - id: images-variations
     shape: openai.images.variations
     mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
@@ -944,6 +947,7 @@ frontends:
   - id: image-jobs
     shape: openai.images.jobs
     mode: job
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
     strictness: exact

@@ -124,7 +124,8 @@ from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.engine_protocol.types import ResultContext
-from gateway.workflow_runtime_types import JobNotFound, MediaRef, ResultUnavailable, RunRefused
+from gateway.workflow_runtime_types import (
+    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -26889,6 +26890,20 @@ def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):
     return _AdaptiveBatching() if "batch_size" in spec else None
 
 
+def _graph_binding_problem(binding: Any) -> str | None:
+    """Why the graph service behind ``binding`` cannot take a run: not configured, switched off, or held out by the operator."""
+    found = _workflow_engine(binding.adapter_id)
+    if found is None:
+        return workflow_run.BINDING_UNAVAILABLE
+    service_id, record, _, _ = found
+    held = str(_operator_service_availability_overrides().get(service_id, {}).get("state") or "").strip().lower()
+    if record.get("enabled", True) is False or held == "disabled":
+        return SERVICE_DISABLED
+    if held in {"maintenance", "draining"}:
+        return SERVICE_NOT_ADMITTING
+    return None
+
+
 def _graph_runner_host() -> node_graph_runner.GraphHost:
     def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext) -> Any:
         from gateway.engine_protocol.media import GatewayAssetStore
@@ -26912,7 +26927,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
 
     return node_graph_runner.GraphHost(
         engine=_workflow_engine, identity=identity,
-        problem=lambda binding: None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE,
+        problem=_graph_binding_problem,
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
         max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},

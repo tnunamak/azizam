@@ -232,7 +232,7 @@ class Shape:
     async def to_response(self, outcome: RunJobView | RunRefused, row: FrontendRow, *, jobs: JobService,
                           caller: CallerContext, request: Any = None) -> Response:
         if isinstance(outcome, RunRefused):
-            return _wire.refused_response(outcome)
+            return _wire.refused_response(outcome, row.refusal_bodies.get(outcome.code))
         if row.mode == "job":
             return self.render_job(outcome)
         try:

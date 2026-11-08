@@ -97,7 +97,7 @@ def error_response(status: int, message: str, *, kind: str = "invalid_request_er
     return JSONResponse({"error": body}, status_code=status, headers=dict(headers or {}))
 
 
-def refused_response(refused: RunRefused) -> Response:
+def refused_response(refused: RunRefused, words: Mapping[str, str] | None = None) -> Response:
     """A ``RunRefused`` in the OpenAI error vocabulary: the status and code of the refusal, the problems by path,
     ``Retry-After`` when the core says when to come back."""
     extra: dict[str, Any] = {}
@@ -105,6 +105,8 @@ def refused_response(refused: RunRefused) -> Response:
         extra["problems"] = [problem.as_dict() for problem in refused.problems]
     seconds = client_errors.retry_after(str(refused.retry_after_s))  # None when the core names no time
     headers = {"Retry-After": seconds} if seconds else None
+    if words:               # the row's own words for this refusal: its message and type, and no code
+        return error_response(refused.http_status, words["message"], kind=words["type"], headers=headers)
     kind = "invalid_request_error" if refused.http_status < 500 else "api_error"
     return error_response(refused.http_status, refused.message, kind=kind, code=refused.code, headers=headers, **extra)
 
