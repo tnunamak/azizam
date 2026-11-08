@@ -173,7 +173,10 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
     }
 
     watch_litellm_config() {
-        trap 'if [ -n "$LITELLM_PID" ]; then kill "$LITELLM_PID" >/dev/null 2>&1 || true; wait "$LITELLM_PID" >/dev/null 2>&1 || true; fi; rm -f "$LITELLM_RUNTIME_HASH_FILE" "${LITELLM_LAUNCH_CONFIG_PATH:-}"; exit 0' EXIT INT TERM
+        # Remove the launch file first: LiteLLM read it at start-up, and systemd may SIGKILL us while we wait for it.
+        trap 'rm -f "$LITELLM_RUNTIME_HASH_FILE" "${LITELLM_LAUNCH_CONFIG_PATH:-}"; if [ -n "$LITELLM_PID" ]; then kill "$LITELLM_PID" >/dev/null 2>&1 || true; wait "$LITELLM_PID" >/dev/null 2>&1 || true; fi; exit 0' EXIT INT TERM
+        # Launch files left by earlier runs (killed before their trap ran); mktemp makes exactly 8 suffix characters.
+        rm -f "${LITELLM_CONFIG_PATH}".launch.????????
         LAST_HASH=""
         LAST_INPUTS=""
         HASH_POLLS=0
