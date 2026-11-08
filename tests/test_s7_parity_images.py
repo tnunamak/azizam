@@ -543,7 +543,7 @@ def test_images_E17_mask_headers(tmp_path):
 
 def test_images_E18_post_composite_mask(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(model="krea2-turbo"), edit_ok)
-    old_has(old, "an answer", status(old) == 200)
+    old_has(old, "an answer", status(old))
     assert_same(old, row, status, ("mask headers", lambda o: headers_with(o, "x-image-mask")), ("warnings", lambda o: receipt_fields(o, "warnings")),
                 ("b64", lambda o: [i.get("b64_json") for i in data_items(o)]))
 
@@ -738,10 +738,14 @@ def test_images_J06_job_row_intent_workflow_payload(tmp_path):
     assert_same(old, row, ("jobs", lambda o: [(j["intent"], j.get("workflow"), j["status"]) for j in media_jobs(o)]))
 
 
+def _job_rows(o):
+    return [{k: v for k, v in j.items() if k != "job_id"} for j in media_jobs(o)]
+
+
 def test_images_J07_job_metadata(tmp_path):
     old, row = job_pair(tmp_path, job_body(n=3, size="512x512"), job_setup(), run=False)
-    old_has(old, "metadata", media_jobs(old) and media_jobs(old)[0].get("metadata"))
-    assert_same(old, row, ("metadata", lambda o: [j.get("metadata") for j in media_jobs(o)]))
+    old_has(old, "a job row", media_jobs(old))
+    assert_same(old, row, ("job rows", _job_rows))
 
 
 def test_images_J08_job_id_forms(tmp_path):
@@ -796,7 +800,7 @@ def test_images_J12_accepted_202_with_links(tmp_path):
 def test_images_J13_a_queued_event_then_scheduling(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/events"), run=False)
     old_has(old, "events", doc(old, 1))
-    assert_same(old, row, ("event kinds", lambda o: [e.get("type") or e.get("status") or e.get("event") for e in ((doc(o, 1) or {}).get("data") or doc(o, 1) or [])] if isinstance(doc(o, 1), (dict, list)) else None))
+    assert_same(old, row, ("events", lambda o: doc(o, 1)), ("scheduled", lambda o: len(o.trace["notes"])))
 
 
 def test_images_J14_refusals_leave_no_job(tmp_path):
@@ -884,7 +888,7 @@ def test_images_J24_concurrency_is_bounded(tmp_path):
 @pytest.mark.parametrize("suffix", ["", "/results", "/events"])
 def test_images_J25_J27_read_routes(tmp_path, suffix):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get(suffix))
-    old_has(old, "an answer", status(old, 1) == 200)
+    old_has(old, "an answer", status(old, 1))
     assert_same(old, row, ("status", lambda o: status(o, 1)), ("keys", lambda o: sorted((doc(o, 1) or {}).keys()) if isinstance(doc(o, 1), dict) else type(doc(o, 1)).__name__))
 
 
@@ -1012,7 +1016,7 @@ def test_images_R07_restart_closes_open_receipts(tmp_path):
     """Allowed delta ``restart_closes_receipt``: the row's receipt is closed by the recovery of the run; the old
     route left it for ``close_orphan``. The test asserts the receipt is no longer open."""
     old, row = restart_pair(tmp_path)
-    assert all(r["status"] != "open" for r in receipts(row)), f"a receipt stayed open on the row path: {receipt_summary(row)}"
+    assert receipts(row) and all(r["status"] != "open" for r in receipts(row)), f"a receipt stayed open on the row path: {receipt_summary(row)}"
 
 
 # ------------------------------------------------------------------------------------------------ 6. failure texts
@@ -1048,7 +1052,7 @@ def test_images_F05_timeout(tmp_path):
 
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
-        base._comfy(rig, comfy_exchanges(strict=False, extra=[
+        base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
             exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an error", (status(old) or 0) >= 500)
