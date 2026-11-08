@@ -119,7 +119,7 @@ def test_a_bundled_workflow_runs_through_the_core_and_the_engine_gets_the_adapte
                     headers={"Prefer": "wait=20"})
     assert response.status_code == 200, response.text
     view = response.json()
-    assert view["status"] == "succeeded" and view["disposition"] == "new", (view, engine.calls, json.dumps(media_jobs.get(view["job_id"], path=world.media), default=str)[:1500])
+    assert view["status"] == "succeeded" and view["disposition"] == "new", (view, engine.calls, {k: v for k, v in media_jobs.get(view["job_id"], path=world.media).items() if "err" in k or "fail" in k or "metadata" in k})
     assert [r["media_type"] for r in view["results"]] == [media_type]
     # The engine got one prompt: the graph the binding compiles for these inputs and the generated values the core drew.
     assert len(engine.prompts) == 1
