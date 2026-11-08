@@ -28184,20 +28184,13 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
     return index
 
 
-_ENGINE_ENTRY_OPERATIONS = {"decision": ("decisions",), "reranking": ("rerank",)}
-
-
 def _engine_operations_of_entry(entry: Mapping[str, Any]) -> tuple[str, ...]:
-    """The engine operations a plain /v1/models entry can belong to, from the `type` and modalities the metadata pass
-    gave it; empty for an ordinary entry (language, image, ...), which an engine's names must not mark."""
-    kind = entry.get("type")
-    if kind == "audio":
-        architecture = entry.get("architecture") if isinstance(entry.get("architecture"), Mapping) else {}
-        inputs = architecture.get("input_modalities")
-        if isinstance(inputs, list) and inputs:
-            return ("transcriptions",) if "audio" in inputs else ("speech",)
-        return ("speech", "transcriptions")
-    return _ENGINE_ENTRY_OPERATIONS.get(kind, ()) if isinstance(kind, str) else ()
+    """The engine operations a plain /v1/models entry can belong to, from the `type` and input modalities the metadata
+    pass gave it, matched against each engine operation's own metadata; empty for an ordinary entry (language,
+    image, ...), which an engine's names must not mark."""
+    architecture = entry.get("architecture") if isinstance(entry.get("architecture"), Mapping) else {}
+    return model_metadata.operations_of(entry.get("type"), architecture.get("input_modalities"),
+                                        among=stable_aliases.ENGINE_OPERATIONS)
 
 
 def _model_entry_availability(

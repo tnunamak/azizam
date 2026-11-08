@@ -211,6 +211,23 @@ def from_operation(operation: str) -> ModelMetadata | None:
     return _OPERATIONS.get(operation)
 
 
+def operations_of(type_: Any, input_modalities: Any = None, among: Iterable[str] | None = None) -> tuple[str, ...]:
+    """The stable-alias operations (of ``among``, default all) whose metadata has this model ``type_``.
+
+    Known input modalities narrow the match to the operations that take exactly those inputs; when none matches
+    them, or they are unknown, every operation of the type is returned."""
+    if not isinstance(type_, str):
+        return ()
+    of_type = [op for op in (_OPERATIONS if among is None else among)
+               if op in _OPERATIONS and _OPERATIONS[op].type == type_]
+    if isinstance(input_modalities, (list, tuple)) and input_modalities:
+        wanted = set(input_modalities)
+        narrowed = [op for op in of_type if set(_OPERATIONS[op].input_modalities) == wanted]
+        if narrowed:
+            return tuple(narrowed)
+    return tuple(of_type)
+
+
 def from_service_capabilities(capabilities: Iterable[str] | None) -> ModelMetadata | None:
     caps = {str(c).strip().lower() for c in (capabilities or ()) if isinstance(c, str)}
     for capability, metadata in _SERVICE_CAPABILITIES:
