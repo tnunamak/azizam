@@ -1581,6 +1581,11 @@ def list_jobs(*args, **kwargs):
     return recent(*args, **kwargs)
 
 
+def is_error_code(code: str) -> bool:
+    """Whether ``code`` is a short lowercase token the job store keeps as a failure code."""
+    return _ERROR_CODE_RE.fullmatch(code) is not None
+
+
 def validate_error_info(info: Mapping[str, Any]) -> dict[str, Any]:
     """Return the typed failure facts, or raise ValueError.
 
