@@ -211,14 +211,14 @@ class OpenAIImagesJson(Shape):
         # An explicit form is what this request asked for; one that was not asked for is the URL when the deployment gives
         # this shape a URL renderer, else the bytes.
         request = (answer or {}).get(REQUEST_KEY)
-        link = self.asset_url or ((lambda ref, _caller: ASSET_URLS["link"](ref, request)) if "link" in ASSET_URLS else None)
+        link = self.asset_url or ((lambda ref, _caller: ASSET_URLS["link"](ref, request)) if request is not None and "link" in ASSET_URLS else None)
         form = (answer or {}).get("response_format") or ("url" if link is not None else "b64_json")
         if form == "url" and link is None:
             return _wire.error_response(400, "response_format 'url' is not available on this route", param="response_format")
         items = []
         for ref in self.media_refs(view):
             item: dict[str, Any] = {"asset_id": ref.asset_id, "media_type": ref.media_type}
-            if "asset" in ASSET_URLS:
+            if request is not None and "asset" in ASSET_URLS:
                 item["asset_url"] = ASSET_URLS["asset"](ref, request)
             if form == "url":
                 item["url"] = link(ref, caller)

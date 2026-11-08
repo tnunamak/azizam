@@ -37,7 +37,7 @@ def test_image_wire_options_reach_run_request() -> None:
                                                            "output_compression": 70}), snap))
     assert low.options == {"n": 1, "quality": "low", "output_format": "png"}
     assert high.options == {"n": 4, "quality": "high", "output_format": "jpeg", "output_compression": 70}
-    assert low.inputs == high.inputs == {"prompt": "p"}                    # the options are not inputs
+    assert low.inputs == high.inputs == {"prompt": "p", "width": 1024, "height": 1024}   # the options are not inputs; the size is the route's 1024 square
     assert "response_format" not in high.options                            # an answer form is not an option
     form = run_request("images-generations", json_request({"prompt": "p"}), snap)
     assert form.options == {}                                               # nothing sent, nothing added
@@ -124,7 +124,7 @@ def test_default_answer_is_route_data_checked_at_load() -> None:
     request = json_request({"prompt": "p"})
     asyncio.run(shape_of("images-generations", asset_url=lambda ref, caller: "u").to_run_request(
         request, bare, snap, spool=__import__("tests.test_frontend_shapes", fromlist=["FakeSpool"]).FakeSpool()))
-    assert request.state.answer_form == {"response_format": None}
+    assert request.state.answer_form == {"response_format": None, "output_format": "png", "size": "1024x1024"}
     # A form the shape does not accept is refused at load, and so is a value on a shape with no answer forms.
     good = {"id": "r", "shape": "openai.images.json", "mode": "sync", "selects": {"ids": ["a"]},
             "routes": [{"methods": ["POST"], "canonical": "/v1/x", "runtime_policy": {"default_answer": "url"}}]}
