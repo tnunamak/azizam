@@ -641,7 +641,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         fields.update(extra)
         job = proxy.media_jobs.MediaJob(
             intent="mesh.generate", workflow="mesh.generate.trellis-2", backend="trellis", status=status,
-            metadata={"mode": proxy.mesh_api.JOB_MODE}, **fields,
+            **fields,
         )
         # The maker stands as set here; a request's own stamp is covered where the mesh route creates the job.
         proxy.media_jobs.create(job, path=self.media_jobs_db, maker_from_request=False)

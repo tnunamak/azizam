@@ -35,7 +35,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
     "/gateway/v1/media/jobs/{job_id}/results/{name:path}": "an authenticated read of one published JSON result of a job, from the job's result bundle; every refusal is one 404; tests/test_media_job_results.py covers it",
-    "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
+    "/v1/3d/generations": "the 3D frontend rows over the run core: POST /v1/3d/generations (the LocalAI wire) and POST /v1/3d/generations/glb (the raw GLB wire); they replace POST /v1/meshes/generate; tests/test_adapter_differential_s7_mesh_rows.py covers them",
     "/admin/api/engines/domains": "owner-only service transition gate: start a transition, read one, read the gate and its lease counts, resolve a held step; tests/test_transition_admin.py covers them",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/categories/plan-reach": "the access plan editor's before-Save preview of who a change to a plan's categories reaches (owner only; it reads the rules and the plan and writes nothing); tests/test_category_audience.py covers it",
