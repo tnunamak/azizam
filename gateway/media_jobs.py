@@ -862,13 +862,13 @@ def create(
             record.finished_at = observed_at
         if record.assets:
             record.first_output_at = observed_at
-        _write_job(conn, record)
+        erased = _write_job(conn, record)
         if envelope is None and require_envelope:
             conn.rollback()
             raise EnvelopeNotRecorded("the job pinned no envelope")
         if envelope is not None:
             try:
-                _record_envelope(conn, record.job_id, envelope, require=require_envelope)
+                _record_envelope(conn, record.job_id, envelope, require=require_envelope, erase=erased)
             except EnvelopeNotRecorded:
                 if conn.in_transaction:
                     conn.rollback()
@@ -877,18 +877,25 @@ def create(
     return record
 
 
-def _record_envelope(conn: sqlite3.Connection, job_id: str, envelope: JobEnvelope, *, require: bool) -> None:
+def _record_envelope(
+    conn: sqlite3.Connection, job_id: str, envelope: JobEnvelope, *, require: bool, erase: bool = False,
+) -> None:
     """Write the envelope in the caller's transaction, inside a savepoint: a failure leaves the job row untouched.
 
     A failure is logged and swallowed, or with ``require`` raised as ``EnvelopeNotRecorded`` for the caller to roll the
-    whole transaction back."""
-    from gateway import definition_store  # imports this module, so it cannot be imported at the top
+    whole transaction back.
+
+    ``erase`` is True when the erasure cutoff covers the job (created at or before it): the job is stored, as its other
+    prompt derivatives are cleared and not refused, and its generated values are written as erased markers."""
+    from gateway import definition_store, generated_defaults  # import this module, so they cannot be imported at the top
 
     conn.execute("SAVEPOINT job_envelope")
     try:
         definition_store.record_envelope_in(
-            conn, job_id, envelope.envelope, generators={}, now=time.time(), blobs=envelope.blobs,
+            conn, job_id, envelope.envelope, generators=generated_defaults.persistence(), now=time.time(), blobs=envelope.blobs,
         )
+        if erase:
+            definition_store.clear_generated_in(conn, job_id)
     except Exception as exc:  # noqa: BLE001 - without ``require`` the job is created as it always was
         if require:
             raise EnvelopeNotRecorded(f"{type(exc).__name__}: {exc}") from exc
@@ -902,7 +909,9 @@ def _record_envelope(conn: sqlite3.Connection, job_id: str, envelope: JobEnvelop
         conn.execute("RELEASE job_envelope")
 
 
-def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False) -> None:
+def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = False) -> bool:
+    """Write the job row. Returns True when the owner's or the wildcard erasure cutoff covered the job, so its prompt
+    derivatives were cleared."""
     job.owner_key_hash = stored_owner_key(job.owner_key_hash, app_id=job.app_id)
     # Serialize cutoff checking with erasure. A worker holding an old job
     # object cannot put a forgotten prompt fingerprint back into the database.
@@ -931,7 +940,8 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
         "SELECT MAX(cutoff_at) FROM media_job_prompt_erasure_cutoffs WHERE owner_key IN (?,?)",
         ("*", job.owner_key_hash),
     ).fetchone()[0]
-    if cutoff is not None and job.created_at <= cutoff:
+    erased = cutoff is not None and job.created_at <= cutoff
+    if erased:
         _clear_prompt_derivatives(job)
     # Update by job_id only. A request ID held by another job raises
     # IntegrityError instead of deleting that job, as INSERT OR REPLACE did.
@@ -976,6 +986,7 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
             "INSERT INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
             [(asset_id, job.job_id, job.creating_receipt_id) for asset_id in sorted(_asset_ids(job.to_dict("internal")))],
         )
+    return erased
 
 
 def _clear_prompt_derivatives(job: MediaJob) -> None:
@@ -1205,20 +1216,23 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
             if not rows:
                 break
             ids = []
+            owned = []
             for job_id, payload in rows:
                 data = _safe_loads(payload)
                 if not isinstance(data, Mapping):
                     continue
-                if (not data.get("input_hash") and "request_hash" not in (data.get("metadata") or {})
-                        and not str(data.get("request_id") or "").startswith("imgjob_seeded_")
-                        and not str(data.get("parent_request_id") or "").startswith("imgjob_seeded_")):
-                    continue
                 owner = stored_owner_key(data.get("owner_key_hash"), app_id=data.get("app_id"))
-                if "*" in owner_keys or owner in owner_keys:
+                if "*" not in owner_keys and owner not in owner_keys:
+                    continue
+                owned.append(job_id)
+                if (data.get("input_hash") or "request_hash" in (data.get("metadata") or {})
+                        or str(data.get("request_id") or "").startswith("imgjob_seeded_")
+                        or str(data.get("parent_request_id") or "").startswith("imgjob_seeded_")):
                     ids.append(job_id)
-            if ids:
+            if owned:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
+                    _clear_generated_in(conn, owned)  # the values the gateway made for these jobs go with the body
                     for job_id in ids:
                         # Re-read under the lock to retain concurrent progress.
                         row = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -1233,6 +1247,17 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
                     raise
             cursor = rows[-1][0]
     return count
+
+
+def _clear_generated_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> None:
+    """Empty each job's envelope ``generated`` block (S3 design, D6), in the caller's transaction. A database that
+    predates the definition tables has none."""
+    from gateway import definition_store  # imports this module, so it cannot be imported at the top
+
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
+        return
+    for job_id in job_ids:
+        definition_store.clear_generated_in(conn, job_id)
 
 
 def _erase_results(conn: sqlite3.Connection, owner_keys: set[str], *, before: int) -> None:

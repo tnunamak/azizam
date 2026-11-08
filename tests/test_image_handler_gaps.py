@@ -17,6 +17,7 @@ import httpx
 import proxy
 from tests.support.config_snapshot import derived_patch
 import pytest
+from gateway import generated_defaults
 from gateway.receipts import RouteReceipt
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
 from tests.support.fake_upstream import fake_upstreams, load_scenario, read_deadline  # noqa: F401
@@ -72,7 +73,8 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             "inputs": {
                 "prompt": {"type": "string"},
                 "source_image": {"type": "asset"},
-                "seed": {"type": "integer", "minimum": 0},
+                "seed": {"type": "integer", "minimum": 0, "generate": {
+                    "generator": "random_integer", "minimum": 0, "maximum": 4294967295}},
             },
             "outputs": {"image": {"media_type": "image/png"}},
             "bindings": {"comfyui": {
@@ -105,6 +107,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
         self.stack.enter_context(derived_patch("COMFY_ENABLED", True))
         self.stack.enter_context(patch.object(proxy.media_delivery, "current", return_value=None))
         self.stack.enter_context(patch.object(proxy.random, "randint", return_value=999))
+        self.stack.enter_context(patch.object(generated_defaults, "secure_source", return_value=999))
         self.stack.enter_context(patch.object(proxy, "_build_image_response_payload",
                                               side_effect=self.payload))
 
@@ -139,7 +142,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 "seed": [{"node": "s", "input": "seed"}],
             }}}}, workflow_name="fixture",
             width=512, height=512, n_requested=2, response_format="b64_json",
-            headers={}, fixed_seed=41,
+            headers={}, generated_values={"seed": 41},
         )
         kwargs.update(overrides)
         return await proxy._generate_images_with_adaptive_batching(**kwargs)
@@ -321,7 +324,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                     body["extensions"] = {"com.azizam.workflow": {"seed": supplied_seed}}
                 request = SimpleNamespace(json=AsyncMock(return_value=body))
                 with patch.object(proxy, "_graph_run_round", side_effect=run), patch.object(
-                    proxy.random, "randint", side_effect=[101, 102],
+                    generated_defaults, "secure_source", return_value=101,
                 ):
                     response = await proxy.proxy_graph_image_request(request, proxy.NO_AUTH_CONTEXT)
                 self.assertEqual(response.status_code, 200, response.body)

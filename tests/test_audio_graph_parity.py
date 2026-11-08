@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import random
 from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import patch
@@ -25,6 +24,7 @@ import pytest
 
 import proxy
 from tests.support.config_snapshot import derived_patch
+from gateway import generated_defaults
 from gateway.engine_protocol import audio_graph, description
 from gateway.engine_protocol.audio_graph import AudioLimits
 from gateway.engine_protocol.node_graph import NodeGraphAdapter
@@ -190,7 +190,7 @@ ROWS = [
 @pytest.mark.parametrize(("model", "body", "with_ui", "pin_random"), ROWS)
 def test_portable_graph_matches_the_graph_the_route_submits(model, body, with_ui, pin_random, fake_upstreams, monkeypatch):
     if pin_random:
-        monkeypatch.setattr(random, "randint", lambda low, high: PINNED_RANDOM_SEED)
+        monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: PINNED_RANDOM_SEED)
     expected = _proxy_submission(model, body, with_ui=with_ui, fake_upstreams=fake_upstreams)
     actual = _adapter_submission(model, body, with_ui=with_ui, fake_upstreams=fake_upstreams)
     assert _canonical(actual) == _canonical(expected)
@@ -237,7 +237,7 @@ def test_the_route_still_submits_the_graph_the_meta_path_submitted(model, body, 
     The goldens were captured from the route before it moved (tests/fixtures/audio_route_graphs.json), so this does not
     compare the new path with itself."""
     if pin_random:
-        monkeypatch.setattr(random, "randint", lambda low, high: PINNED_RANDOM_SEED)
+        monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: PINNED_RANDOM_SEED)
     actual = _proxy_submission(model, body, with_ui=with_ui, fake_upstreams=fake_upstreams)
     assert actual.pop("client_id") == proxy.COMFY_CLIENT_ID  # drawn once per process, so not in the golden
     assert _canonical(actual) == _canonical(GOLDEN[request.node.callspec.id])

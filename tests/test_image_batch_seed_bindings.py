@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 import proxy
+from gateway import generated_defaults
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,10 +33,16 @@ def batch(monkeypatch):
             return None, next(results)
 
         monkeypatch.setattr(proxy, "_graph_run_round", submit)
+        # The route resolves the generated inputs once; a caller's number is the input's own value.
+        values = {}
+        if manifest is not None:
+            values = {"seed": fixed_seed} if fixed_seed is not None else generated_defaults.resolved_values(
+                manifest["inputs"], {})
         response = asyncio.run(proxy._generate_images_with_adaptive_batching(
             request=SimpleNamespace(), client=object(), base_workflow=workflow,
             meta=meta or {}, manifest=manifest, workflow_name=name, width=512, height=512,
-            n_requested=n, response_format="b64_json", headers={}, fixed_seed=fixed_seed,
+            n_requested=n, response_format="b64_json", headers={},
+            fixed_seed=fixed_seed if manifest is None else None, generated_values=values,
             legacy_seed_field=seed_field,
         ))
         assert response.status_code == status
@@ -47,7 +54,9 @@ def batch(monkeypatch):
 
 def manifest_for(field):
     return {"schema_version": 2, "id": "image.generate.seed-fixture", "intent": "image.generate", "capability": "image",
-            "inputs": {"seed": {"type": "integer"}}, "outputs": {},
+            "inputs": {"seed": {"type": "integer", "minimum": 0,
+                                "generate": {"generator": "random_integer", "minimum": 0, "maximum": 4294967295}}},
+            "outputs": {},
             "bindings": {"comfyui": {"map": {"seed": [
                 {"node": "a", "input": field}, {"node": "b", "input": "operator_seed"},
             ]}}}}
@@ -58,7 +67,7 @@ def manifest_for(field):
 @pytest.mark.parametrize("retry", [False, True])
 def test_every_seed_binding_changes_for_batch_items_and_empty_retry_rounds(batch, monkeypatch, field, fixed_seed, retry):
     draws = iter([101, 102, 103])
-    monkeypatch.setattr(proxy.random, "randint", lambda *args: next(draws))
+    monkeypatch.setattr(generated_defaults, "secure_source", lambda *args: next(draws))
     workflow = {"a": {"inputs": {field: 0}}, "b": {"inputs": {"operator_seed": 0}}}
     before = copy.deepcopy(workflow)
     outcomes = [[], [b"a"], [b"b"]] if retry else [[b"a"], [b"b"]]
@@ -215,3 +224,31 @@ def test_manifestless_empty_round_preserves_main_fixed_seed_offset(batch):
     )
     # Main advances fixed seeds by images collected, including zero-image rounds.
     assert [graph["s"]["inputs"]["seed"] for graph in seen] == [41, 41, 42]
+
+
+def ranged_manifest(low, high):
+    manifest = manifest_for("seed")
+    manifest["inputs"]["seed"] = {"type": "integer", "minimum": low, "maximum": high,
+                                  "generate": {"generator": "random_integer", "minimum": low, "maximum": high}}
+    return manifest
+
+
+def bound_values(seen):
+    return [g["a"]["inputs"]["seed"] for g in seen]
+
+
+@pytest.mark.parametrize(("low", "high", "base", "outcomes", "expected"), [
+    (0, 9, 9, [[b"a"], [b"b"]], [9, 0]),                       # the upper bound wraps, it does not reach 10
+    (0, 9, 8, [[b"a", b"b"], [b"c"]], [8, 0]),                  # a round of two images moves the offset by two
+    (0, 9, 9, [[b"a"], [b"b"], [b"c"]], [9, 0, 1]),
+    (4, 4, 4, [[b"a"], [b"b"], [b"c"]], [4, 4, 4]),             # a range of one
+    (3, 4, 4, [[b"a"], [b"b"], [b"c"]], [4, 3, 4]),             # a range of two
+    (0, 4294967295, 4294967295, [[b"a"], [b"b"]], [4294967295, 0]),   # the public maximum does not reach 2**32
+    (0, 9, 9, [[], [b"a"], [b"b"]], [9, 0, 1]),                 # an empty round still moves on
+], ids=["upper-bound", "two-image-round", "three-rounds", "size-one", "size-two", "public-maximum", "empty-round"])
+def test_every_value_bound_to_the_graph_is_inside_the_declared_range(batch, low, high, base, outcomes, expected):
+    workflow = {"a": {"inputs": {"seed": 0}}, "b": {"inputs": {"operator_seed": 0}}}
+    seen = batch(workflow, ranged_manifest(low, high), fixed_seed=base, outcomes=outcomes, n=sum(len(o) for o in outcomes))
+    assert bound_values(seen) == expected
+    assert all(low <= value <= high for value in bound_values(seen))
+    assert [g["b"]["inputs"]["operator_seed"] for g in seen] == expected
