@@ -66,7 +66,9 @@ def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s
     response = _wire.error_response(status if status >= 400 else 502, failure.message,
                                     kind="invalid_request_error" if status < 500 else "api_error", code=failure.code)
     if retry_after_s is not None and failure.retryable:
-        response.headers["Retry-After"] = client_errors.retry_after(str(retry_after_s)) or str(retry_after_s)
+        seconds = client_errors.retry_after(str(retry_after_s))
+        if seconds:
+            response.headers["Retry-After"] = seconds
     return response
 
 

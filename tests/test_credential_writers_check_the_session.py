@@ -85,6 +85,9 @@ NO_BROWSER = {
     "gateway/admin_runtime.py::create_admin_service_account_key": "the operator's CLI",
     "gateway/service_registry.py::ensure_service_registry": "the gateway seeding or backfilling its own registry at start",
     "gateway/workflow_schema_migration.py::ensure": "the gateway converting its own stored workflow records at start (it moves no credential)",
+    "gateway/service_registry.py::ensure_workflow_record_step": (
+        "the gateway's one-time workflow-record-1 step at start, inside ensure_service_registry: it adds state, published, "
+        "incarnation and record_revision to stored workflow records and moves no credential"),
 }
 
 # The guarded writers by the name callers use, and the keyword that carries the sign-in.
@@ -428,6 +431,10 @@ NOT_CREDENTIAL_TABLES = {
     # Pinned workflow definitions and each job's envelope (gateway/definition_store.py): digests, ids and definition bytes.
     # Holds no credential or authority; only the definition store writes them, and nothing reads them to grant access.
     "definition_blob", "definition_ref", "job_envelope",
+    # The run core's idempotency claims (owner scope, maker, key, holder, job id) and deleted-job tombstones (job id and
+    # time), in the media job store (gateway/media_jobs.py). A claim can only refuse a second create for the same key;
+    # a tombstone can only hide a job. Neither holds a secret or grants access.
+    "workflow_run_claim", "workflow_job_tombstone",
     # A person's Library erasures, by creating request: ids and a time. A later history write for an erased request is
     # refused. It can refuse a write but never grant one, and holds no secret. Written only by the Library delete paths.
     "media_library_erasure_fences", "media_volume_identity", "operator_settings_generations",

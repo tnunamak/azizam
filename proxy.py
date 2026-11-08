@@ -26610,8 +26610,10 @@ def _graph_wait_s() -> float:
     return float(DERIVED.COMFY_TIMEOUT)
 
 
-def _graph_service_connection(record: Mapping[str, Any]) -> AdapterConnection:
-    """The connection to one graph service's address, with the run's wait as its read bound."""
+def _graph_service_connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+    """The connection to one graph service's address, with the run's wait as its read bound. A request is about to
+    go to ``service_id``, so this needs its serving lease."""
+    _require_egress_lease(service_id)
     return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
         connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
 
@@ -26748,8 +26750,7 @@ class _WorkflowRunPort:
                                      origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
 
         def connection() -> AdapterConnection:
-            _require_egress_lease(service_id)
-            return _graph_service_connection(record)
+            return _graph_service_connection(service_id, record)
 
         runtime_ = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
@@ -26903,8 +26904,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
                                      origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
 
     def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
-        _require_egress_lease(service_id)
-        return _graph_service_connection(record)
+        return _graph_service_connection(service_id, record)
 
     def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
         found = _workflow_engine(binding.adapter_id)
@@ -27010,7 +27010,8 @@ def _workflow_library_ref(asset_id: str, auth_context: AuthContext) -> MediaRef 
 
 def _workflow_run_response(result: Any, *, status_code: int | None = None) -> Response:
     if isinstance(result, RunRefused):
-        headers = {"Retry-After": str(result.retry_after_s)} if result.retry_after_s is not None else {}
+        seconds = client_errors.retry_after(str(result.retry_after_s))  # None when the core names no time
+        headers = {"Retry-After": seconds} if seconds else {}
         return Response(content=json.dumps(workflow_run.refusal_body(result)), status_code=result.http_status,
                         media_type="application/json", headers=headers)
     created = result.disposition == "new" and result.status in ("queued", "running")

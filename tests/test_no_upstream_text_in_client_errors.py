@@ -36,6 +36,9 @@ ALLOWED: dict[str, str] = {
                                            "spelling and an administrator on the owner's stored key sees nothing (guarded_fetch, WITHHELD_TEXT)",
     "gateway/engine_protocol/node_graph.py::NodeGraphAdapter.results": "the wrong-type reason names a media type that engine_protocol.assets.served_media_type took from its allowlist or its sniffer table, and the type the manifest declares; it holds no text the engine wrote",
     "gateway/engine_protocol/node_graph.py::NodeGraphAdapter.submit": "the text goes into the error's `excerpt`, which no str, repr or log line shows",
+    "gateway/engine_protocol/graph_round.py::run_round": "the engine's refusal text goes into RoundFailure's `excerpt`, which no str, repr "
+                                                         "or log line shows; callers read it only to test for out of memory "
+                                                         "(proxy._round_failure_response, node_graph_runner) and answer with client_errors codes",
     "gateway/workflow_call.py::error_from": "the reply parsed is the gateway's own route answer, already built by gateway.client_errors",
     "proxy.py::create_response": "`upstream` is the gateway's own /v1/chat/completions answer (an engine's words are already replaced there)",
     "proxy.py::_handle_rerank": "RerankUpstreamError and the build_response ValueError carry the fixed sentences of gateway/rerank.py",
@@ -182,6 +185,8 @@ ERROR_TEXT_FIELDS = {"message", "code", "type", "param", "detail", "reason", "ms
 ALLOWED_READS: dict[str, str] = {
     "gateway/config_cli.py::call": "the operator's own command line reads the error of the gateway's own config API (built by config_api._error from fixed sentences and the text of local store or config-layer errors, never an engine's words) to print it to the owner who holds the key; it never reaches an API caller, and the command line must stay standard-library only",
     "gateway/client_errors.py::rewrite_stream_errors": "the helper itself: it reads the fields it replaces",
+    "gateway/workflow_owner_api.py::_clean": "it reads back the message of the gateway's own egress.safe_error_response, built from a gateway sentence a moment before, to send it cleaned the same way",
+    "proxy.py::_refused_from_response": "the response is the gateway's own admission refusal (_media_job_admission_response), built by the gateway from fixed sentences; no engine is asked",
     "gateway/decisions_api.py::_systemone_body_for_client": "the local decision service is dialed with no credential (decision_routing posts no headers but a deadline), so it has none to echo",
     "gateway/mcp_server.py::_normalize_job": "the payload is the gateway's own media job answer, whose error sentence is fixed copy (proxy._media_job_failure)",
     "gateway/mcp_server.py::register_mcp_routes": "the code of the gateway's own JSON-RPC reply",

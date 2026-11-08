@@ -13,6 +13,7 @@ from starlette.formparsers import MultiPartException
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from gateway import client_errors
 from gateway.workflow_kernel import selector_matches
 from gateway.workflow_runtime_types import (
     MEDIA_PATH_UNSUPPORTED,
@@ -49,7 +50,8 @@ def refused_response(refused: RunRefused) -> Response:
     extra: dict[str, Any] = {}
     if refused.problems:
         extra["problems"] = [problem.as_dict() for problem in refused.problems]
-    headers = {"Retry-After": str(refused.retry_after_s)} if refused.retry_after_s is not None else None
+    seconds = client_errors.retry_after(str(refused.retry_after_s))  # None when the core names no time
+    headers = {"Retry-After": seconds} if seconds else None
     kind = "invalid_request_error" if refused.http_status < 500 else "api_error"
     return error_response(refused.http_status, refused.message, kind=kind, code=refused.code, headers=headers, **extra)
 

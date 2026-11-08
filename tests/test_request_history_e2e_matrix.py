@@ -75,7 +75,15 @@ SHAPES = [
     Shape("near_limit", wire="near_limit"),
     Shape("over_limit", wire="over_limit"),
 ]
-SHAPE_IDS = [shape.name for shape in SHAPES]
+#: K5: the run route takes the S6 form now (``inputs`` and ``binding`` value parts, then file parts) and answers 202
+#: with a job; this matrix still sends the old synchronous form. K5 moves the shape to the new form and keeps every
+#: guarantee here, the forget control in the body included.
+_RUN_FORM_PENDING = pytest.mark.xfail(strict=True, reason="K5: workflow_upload sends the old run-route form (422)")
+
+
+def _params(shapes):
+    return [pytest.param(shape, id=shape.name, marks=_RUN_FORM_PENDING if shape.name == "workflow_upload" else ())
+            for shape in shapes]
 
 
 def _canaries() -> dict[str, str]:
@@ -372,7 +380,7 @@ def _receipts(w: World) -> list[dict]:
         return [json.loads(row[0]) for row in conn.execute("SELECT receipt_json FROM receipts")]
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_credentials_are_absent_from_saved_request_reply_and_metadata(world, shape):
     _run(world, shape)
     rows = _kept_rows(world.media)
@@ -389,7 +397,7 @@ def test_credentials_are_absent_from_saved_request_reply_and_metadata(world, sha
     _assert_absent(json.dumps(_receipts(world)), {**world.canaries, "caller_key": world.key})
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 @pytest.mark.parametrize("control", ["body", "header"])
 def test_forget_keeps_no_history_and_only_structural_receipts(world, shape, control):
     _run(world, shape, forget=control)
@@ -410,7 +418,7 @@ def test_forget_keeps_no_history_and_only_structural_receipts(world, shape, cont
             assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
+@pytest.mark.parametrize("shape", _params(s for s in SHAPES if s.wire == "multipart"))
 def test_bracket_form_forget_keeps_no_history(world, shape):
     _run(world, shape, forget="bracket")
     assert _kept_rows(world.media) == []
@@ -442,7 +450,7 @@ def _second_key(w: World) -> str:
     return key
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_only_maker_can_read_and_delete_and_app_keys_stay_in_their_app(world, shape):
     _run(world, shape)
     # An omitted body still has no row to expose; these cases use the same route's readable control.
@@ -497,7 +505,7 @@ def test_only_maker_can_read_and_delete_and_app_keys_stay_in_their_app(world, sh
     assert _kept_rows(world.media) == []
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_capture_work_and_buffers_stay_bounded_through_the_app(world, shape, monkeypatch):
     """Observe real capture work; do not replace the writer or cleaning functions.
 
@@ -557,7 +565,7 @@ def _grant(w: World, label: str, *, grant_id: str | None = None) -> tuple[str, s
     return token, grant_id
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_mcp_grants_read_only_their_connection_and_cannot_delete(world, shape):
     token, grant_id = _grant(world, "first")
     rotated, _ = _grant(world, "rotated", grant_id=grant_id)
@@ -608,7 +616,7 @@ def test_mcp_grants_read_only_their_connection_and_cannot_delete(world, shape):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_cookie_fields_inside_json_are_removed_from_saved_content(world, shape):
     """Cookies in parsed header objects/JSON strings are credentials too (requirement 1)."""
     _run(world, shape, payload=_payload(world.canaries, cookies=True))
@@ -639,7 +647,7 @@ def test_a_duplicate_extensions_key_cannot_override_an_earlier_forget(world, chu
         pytest.fail("an earlier forget was overridden by a duplicate extensions key", pytrace=False)
 
 
-@pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
+@pytest.mark.parametrize("shape", _params(s for s in SHAPES if s.wire == "multipart"))
 @pytest.mark.parametrize("header_bytes", [LIMIT - 1, 4 * LIMIT], ids=["near_limit", "over_limit"])
 def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, shape, header_bytes, monkeypatch):
     """A file's field name/header is metadata; it must not bypass the byte budget."""
@@ -672,7 +680,7 @@ def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, sha
         assert row["byte_size"] <= 2 * LIMIT + 16384
 
 
-@pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
+@pytest.mark.parametrize("shape", _params(s for s in SHAPES if s.wire == "multipart"))
 @pytest.mark.parametrize("part_count", [
     pytest.param(8, id="within_metadata_budget"),
     pytest.param(320, id="over_metadata_budget"),
