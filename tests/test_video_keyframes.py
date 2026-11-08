@@ -1109,3 +1109,29 @@ class KeyframeMcpTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# A role is a node id, and the graph is keyed by strings: a number there would be accepted and then never match a node.
+def _videos_schema_errors(change) -> list[str]:
+    import copy
+
+    import jsonschema
+    import yaml
+
+    schema = json.loads((ROOT / "registry/defaults/videos.schema.json").read_text())
+    document = copy.deepcopy(yaml.safe_load((ROOT / "registry/defaults/videos.yml").read_text()))
+    change(document["workflows"]["video-ltx-2.5-i2v"]["node_roles"])
+    return [e.message for e in jsonschema.Draft202012Validator(schema).iter_errors(document)]
+
+
+def test_the_shipped_node_roles_satisfy_the_schema_including_a_numeric_option_default():
+    assert _videos_schema_errors(lambda roles: None) == []
+    assert _videos_schema_errors(lambda roles: roles.update(image_strength_default=0.5)) == []
+
+
+@pytest.mark.parametrize("key, value", [
+    ("negative_prompt_node", 18), ("prompt_node", True), ("image_node", None), ("size_node", ["20", 21]),
+    ("length_nodes", [22]), ("seed_nodes", "30"), ("frame_rate_nodes", ["23", 1.5]), ("save_node", ["60"]),
+])
+def test_a_node_role_that_is_not_a_node_id_or_a_list_of_ids_is_refused_by_the_schema(key, value):
+    assert _videos_schema_errors(lambda roles: roles.update({key: value}))

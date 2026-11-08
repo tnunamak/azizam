@@ -8203,7 +8203,8 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     chain = (record or {}).get("chain") if isinstance(record, Mapping) else None
     if not isinstance(chain, Mapping):
         return error
-    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "")
+    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "",
+                                         node_prefix=chain.get("node_prefix"))
     if index is None:
         return error
     total = int(chain.get("segments") or 0)
@@ -12939,6 +12940,7 @@ async def _submit_video_chain(
         "segment_frames": [s.frames for s in segments],
         "shots": len(shots),
         "units": built.units,
+        "node_prefix": engine.binding.node_prefix,
         "total_frames": built.total_frames,
         "fps": fps,
         "context_seconds": context_seconds,

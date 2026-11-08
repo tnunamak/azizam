@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 # What a template may read. A name outside these sets is refused at load.
@@ -34,6 +35,7 @@ PARAMETERS = frozenset({
     "context_strength", "first_frame_file", "first_frame_strength", "filename_prefix", "frames_in", "latent_in",
     "source_sound", "frames_out", "sound_out",
 })
+FINISH_ONLY = frozenset({"frames_out", "sound_out"})  # None until every segment is composed
 FACTS = frozenset({"index", "source", "sound", "scaled", "first_frame", "sound_out"})
 EXPORTS = frozenset({"frames", "sound", "latent"})
 _MISSING = object()
@@ -106,18 +108,22 @@ def _positive_int(binding: Mapping[str, Any], key: str) -> int:
     return value
 
 
-def _scan(value: Any, where: str, local: frozenset[str]) -> None:
+def _scan(value: Any, where: str, local: frozenset[str], finish: bool = False) -> None:
     """Refuse a parameter, fact or local link the composer does not provide."""
     if isinstance(value, str):
         if value.startswith("$") and value[1:] not in PARAMETERS:
             raise _bad(where, f"unknown parameter {value}")
+        if value.startswith("$") and value[1:] in FINISH_ONLY and not finish:
+            raise _bad(where, f"{value} is known only in the finish nodes")
     elif isinstance(value, list):
-        if len(value) == 2 and isinstance(value[0], str) and value[0].startswith("@") and isinstance(value[1], int):
-            if value[0][1:] not in local:
+        if len(value) == 2 and isinstance(value[0], str) and isinstance(value[1], int):
+            if isinstance(value[1], bool) or value[1] < 0:
+                raise _bad(where, f"output slot {value[1]!r} of {value[0]} must be a whole number from 0")
+            if value[0].startswith("@") and value[0][1:] not in local:
                 raise _bad(where, f"link to {value[0]}, which is not a node of this variant")
             return
         for item in value:
-            _scan(item, where, local)
+            _scan(item, where, local, finish)
     elif isinstance(value, Mapping):
         if "$if" in value:
             fact = str(value["$if"]).removeprefix("!")
@@ -128,10 +134,10 @@ def _scan(value: Any, where: str, local: frozenset[str]) -> None:
                 raise _bad(where, "an $if holds then and optionally else")
         for key, item in value.items():
             if key != "$if":
-                _scan(item, where, local)
+                _scan(item, where, local, finish)
 
 
-def _scan_nodes(nodes: Any, where: str, *, local: frozenset[str]) -> None:
+def _scan_nodes(nodes: Any, where: str, *, local: frozenset[str], finish: bool = False) -> None:
     if not isinstance(nodes, Mapping):
         raise _bad(where, "must be a mapping of nodes")
     for node_id, node in nodes.items():
@@ -142,7 +148,7 @@ def _scan_nodes(nodes: Any, where: str, *, local: frozenset[str]) -> None:
         for gate in ("if", "unless"):
             if gate in node and node[gate] not in FACTS:
                 raise _bad(spot, f"unknown fact {node[gate]}")
-        _scan(node["inputs"], spot, local)
+        _scan(node["inputs"], spot, local, finish)
 
 
 def _scan_exports(exports: Any, where: str, local: frozenset[str]) -> None:
@@ -196,6 +202,11 @@ def load(document: Mapping[str, Any]) -> ChainTemplate:
         unknown = sorted(set(entry) - {"variant", "index", "source"})
         if unknown:
             raise _bad("binding.rule", f"unknown facts {unknown}")
+        if "source" in entry and not isinstance(entry["source"], bool):
+            raise _bad("binding.rule", "source must be true or false")
+        if "index" in entry and (isinstance(entry["index"], bool) or not isinstance(entry["index"], int)
+                                 or entry["index"] < 0):
+            raise _bad("binding.rule", "index must be a whole number from 0")
     if set(rule[-1]) != {"variant"}:
         raise _bad("binding.rule", "the last entry is the default: it names a variant and no facts")
     for name, variant in variants.items():
@@ -218,11 +229,54 @@ def load(document: Mapping[str, Any]) -> ChainTemplate:
     if join is not None and (not isinstance(join, Mapping) or "{k}" not in str(join.get("id"))
                              or not {"class_type", "first", "next"} <= set(join)):
         raise _bad("template.finish.sound_join", "needs an id with {k}, a class_type, first and next")
-    _scan_nodes(finish.get("nodes"), "template.finish.nodes", local=frozenset())
+    _scan_nodes(finish.get("nodes"), "template.finish.nodes", local=frozenset(), finish=True)
     if finish.get("save_node") not in (finish.get("nodes") or {}):
         raise _bad("template.finish.save_node", "must name a finish node")
-    return ChainTemplate(chain_id, binding, copy.deepcopy(dict(shared)), copy.deepcopy(dict(source)),
-                         copy.deepcopy(dict(variants)), copy.deepcopy(dict(finish)))
+    compiled = ChainTemplate(chain_id, binding, copy.deepcopy(dict(shared)), copy.deepcopy(dict(source)),
+                             copy.deepcopy(dict(variants)), copy.deepcopy(dict(finish)))
+    _check_graphs(compiled)
+    return compiled
+
+
+def _links(value: Any):
+    if isinstance(value, list):
+        if len(value) == 2 and isinstance(value[0], str) and isinstance(value[1], int):
+            yield value[0]
+        else:
+            for item in value:
+                yield from _links(item)
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _links(item)
+
+
+def _check_graphs(template: ChainTemplate) -> None:
+    """Compose a few small requests for every fact the template reads and refuse a link to a node that is not there.
+
+    A node a fact leaves out, or a literal id nothing adds, would otherwise reach the engine as a dangling link.
+    """
+    binding = template.binding
+    step = binding.frame_step
+    named = [entry["index"] for entry in binding.rule if "index" in entry]
+    count = max(named, default=0) + 2
+    sources = (None,
+               SimpleNamespace(filename="source", frames=step * 3, width=64, height=48, has_audio=True),
+               SimpleNamespace(filename="source", frames=step * 3, width=32, height=24, has_audio=False))
+    for source in sources:
+        for first_frame in (None, "first"):
+            spec = SimpleNamespace(
+                segments=[SimpleNamespace(prompt="p", frames=step * 2 + binding.frame_offset if i == 0 else step)
+                          for i in range(count)],
+                width=64, height=48, fps=8.0, seed=1, source=source, first_frame_image=first_frame,
+                first_frame_strength=1.0, context_strength=0.5, filename_prefix="x")
+            try:
+                graph = compose(template, spec, context=binding.default_context_frames, negative="").graph
+            except (KeyError, TypeError, AttributeError, IndexError) as exc:
+                raise _bad("template", f"does not compose ({exc!r})") from exc
+            missing = sorted({t for node in graph.values() for t in _links(node["inputs"]) if t not in graph})
+            if missing:
+                case = f"source={source is not None}, sound={getattr(source, 'has_audio', True)}, first_frame={first_frame is not None}"
+                raise _bad("template", f"dangling link to {missing} when {case}")
 
 
 # --------------------------------------------------------------------------------------------------------- compose

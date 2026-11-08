@@ -560,6 +560,7 @@
           "chain": {
             "context_seconds": 1.0,
             "fps": 10.0,
+            "node_prefix": "s{index}_",
             "segment_frames": [
               16
             ],
