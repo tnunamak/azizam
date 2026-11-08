@@ -433,6 +433,10 @@ which revision ran.
 | `model_metadata._INTENTS`, `_INTENT_ASSET_MODALITY`, `_CAPABILITY_INTENTS`, `_CAPABILITY_INTENT_FAMILIES` | computed from the contract's inputs and outputs (`ExecutionProfile.accepts`/`produces`); OpenAI-style metadata is a lossy edge projection and never gates execution |
 | `local_capabilities._ALIAS_INTENTS` | model aliases in the name view (it resolves a model target, not a route) |
 | `frontend_profiles` (keyed by intent) | `FrontendShape.profile` (I5), run for the rows whose selector selects the workflow |
+| `model_metadata._CAPABILITY_INTENTS` and `_CAPABILITY_INTENT_FAMILIES`, the part not yet computed (builder B, S5) | Not yet computed: capabilities come from services and often declare no modalities, so the table is the only source of their type. The workflow side (`_INTENTS`, `_INTENT_ASSET_MODALITY`) is computed from the contract by `model_metadata.from_contract`. Closing the rest needs the capability producers to declare modalities |
+| `workflow_openapi._ALIAS_OPERATION_INTENTS` (builder B, S5) | Kept for now: a stable alias and its edit twin resolve to workflows that share one short id (`flux2-klein-4b` generate and edit), so the alias's operation is the only datum that picks the workflow kind. It needs the frontend row's `selects` per operation (builder D) |
+| `workflow_openapi` `video.edit` run-route filter and `_route_mapping` (builder B, S5) | Wait for the run frontend row's `selects`, `shape` and route table from builder D; today's `protocol_frontends.yml` rows hold none of them |
+| `local_capabilities._ALIAS_INTENTS` (builder B, S5) | Kept for now: it maps a stable-alias operation to an intent, the modalities and a run mode, and the name view holds names only. It needs the operation's modalities and mode on the model-alias record |
 
 A builder that finds another table keyed by an intent, capability word, model or engine adds it here in the same
 commit. The final review audits every form, not only dict literals: comparisons, `startswith`/`endswith`, set
