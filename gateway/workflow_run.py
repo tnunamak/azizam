@@ -96,6 +96,19 @@ NEEDS_POLICY = "needs_policy"
 CALLER_UNAVAILABLE = "caller_unavailable"
 BINDING_UNAVAILABLE = "binding_unavailable"
 INTERNAL_ERROR = "internal_error"
+FAILED_FALLBACK = "The job failed."
+
+# What a restart says about a job it cannot finish (S7 parity M12), keyed by the reason. One table for every kind of job.
+RESTART_PAYLOAD_MISSING = "Image media job payload missing after proxy restart"
+RESTART_RECOVERY_OFF = "The gateway restarted with job recovery turned off"
+RESTART_CANCEL_UNCONFIRMED = "The gateway restarted before cancellation could be confirmed"
+RESTART_NOT_RUN_AGAIN = "The gateway restarted before completion could be confirmed; this job was not run again"
+RECOVERY_FAILURE_TEXT: Mapping[str, str] = {
+    "interrupted_before_submit": RESTART_PAYLOAD_MISSING,
+    "recovery_off": RESTART_RECOVERY_OFF,
+    "cancel_unconfirmed": RESTART_CANCEL_UNCONFIRMED,
+    "submission_unknown": RESTART_NOT_RUN_AGAIN,
+}
 
 
 # ------------------------------------------------------------------------------------------------------- the port
@@ -127,6 +140,7 @@ class RunContext:
     media: Mapping[str, tuple[MediaRef, ...]]
     generated: Mapping[str, Any]
     spool: JobSpool
+    request_id: str | None = None      # the request the job answers (the Library asset origin names it)
     # The adapter calls it once, with its result metadata, before it commits the bundle (S7 parity M5).
     record_result_metadata: Callable[[Mapping[str, Any]], None] = lambda metadata: None
 
@@ -157,6 +171,9 @@ class RunPort(Protocol):
         ...
     def admission_refusal(self, resource_class: str, caller: CallerContext, *, count_queue: bool) -> RunRefused | None: ...
     def result_limits(self) -> ResultLimits: ...
+    def resume_on_start(self) -> bool:
+        """Whether a restart resumes unfinished jobs (the operator's switch). False fails them with the recovery text."""
+        ...
 
     # what the job pins
     def adapter_identity(self, entry: WorkflowEntry, binding_key: str, binding: BindingDef) -> AdapterIdentity: ...
@@ -177,7 +194,9 @@ class RunPort(Protocol):
     def schedule(self, job_id: str) -> None: ...
     async def run_adapter(self, ctx: RunContext) -> None:
         """Run or poll the job through its pinned adapter. On success the result bundle is committed and the job is
-        terminal. Raises for a failure; ``code`` and ``category`` attributes on the exception become the job's failure.
+        terminal. Raises for a failure. These attributes of the exception become the job's failure: ``code``,
+        ``category``, ``retryable``, ``upstream_status`` and ``client_message`` (the text the caller reads; the exception's
+        own text never reaches the job).
         The adapter gives its result metadata (S7 parity M5) to ``ctx.record_result_metadata`` BEFORE it commits the
         bundle, so a waiter that sees the terminal job also sees the metadata."""
         ...
@@ -204,6 +223,33 @@ class BindingAvailability:
 
 
 # ---------------------------------------------------------------------------------------------------- helpers
+
+
+def asset_origin(contract: Mapping[str, Any], request_id: str | None) -> dict[str, Any]:
+    """What the Library shows about a file a run made (S7 parity M3): the request, the workflow's display name and whether
+    the workflow takes words from the caller. An empty value is left out, except ``takes_text``."""
+    takes_text = any(isinstance(spec, Mapping) and spec.get("type") == "string"
+                     for spec in (contract.get("inputs") or {}).values())
+    origin = {"workflow_name": contract.get("display_name"), "request_id": request_id, "takes_text": takes_text}
+    return {key: value for key, value in origin.items() if value or key == "takes_text"}
+
+
+def receipt_writes(entry: WorkflowEntry, req: RunRequest, result_metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """The fields a request receipt takes from a run (S7 parity M1): what the request supplied (the wire options in the
+    order the shape put them, then the inputs, then the media), the workflow it resolved to and that workflow's manifest
+    identity, and ``metadata``: the mapping the adapter named ``receipt`` in its result metadata, copied as it is. The core
+    does not read inside it."""
+    from gateway.manifests import ManifestError, manifest_identity
+
+    contract = plain(entry.contract)
+    try:
+        identity = manifest_identity(dict(contract))
+        manifest_hash = identity.manifest_hash
+    except ManifestError:
+        manifest_hash = None
+    return {"accepted_inputs": [*req.options, *req.inputs, *req.media], "resolved_workflow": entry.id,
+            "manifest_id": entry.id, "manifest_version": contract.get("version"), "manifest_hash": manifest_hash,
+            "metadata": dict(result_metadata.get("receipt") or {})}
 
 
 def plain(value: Any) -> Any:
@@ -521,10 +567,8 @@ class WorkflowRunCore:
         action = self._classify(job)
         if action == "replay":
             self._finish_from_bundle(job_id)
-        elif action == "submission_unknown":
-            self._fail(job_id, SUBMISSION_UNKNOWN, "upstream", "The engine may have started this job; inspect it before retrying.")
-        elif action == "interrupted_before_submit":
-            self._fail(job_id, SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start again.")
+        elif action in ("submission_unknown", "interrupted_before_submit"):
+            self._fail_at_restart(job_id, action)
         else:
             await self._run(job_id, checks=action == "resume")
 
@@ -570,6 +614,7 @@ class WorkflowRunCore:
             inputs=dict((payload.get("body") or {}).get("inputs") or {}),
             media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
             generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
+            request_id=str(job.get("request_id") or "") or None,
             record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
         try:
             await port.run_adapter(ctx)
@@ -578,9 +623,10 @@ class WorkflowRunCore:
         except media_jobs.CancellationPending:
             with contextlib.suppress(Exception):
                 media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester", path=self._path)
-        except Exception as exc:  # noqa: BLE001 - settled as a failure; the text never reaches the job
+        except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
             self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
-                       "The job failed.", retryable=bool(getattr(exc, "retryable", False)))
+                       _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
+                       upstream_status=_upstream_status(exc))
             return
         self._settle(job_id)
 
@@ -621,13 +667,14 @@ class WorkflowRunCore:
             return refused.code, "capacity", refused.message
         return None
 
-    def _fail(self, job_id: str, code: str, category: str, message: str, *, retryable: bool = False) -> None:
+    def _fail(self, job_id: str, code: str, category: str, message: str, *, retryable: bool = False,
+              upstream_status: int | None = None) -> None:
         category = category if category in media_jobs.ERROR_CATEGORIES else "internal"
         try:
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
                 error_info={"error_code": code, "error_category": category, "retryable": retryable,
-                            "upstream_http_status": None})
+                            "upstream_http_status": upstream_status})
         except ValueError:
             log.info("job %s was already settled when it failed with %s", job_id, code)
         self._port.drop_payload(job_id)
@@ -654,6 +701,25 @@ class WorkflowRunCore:
         self._settle(job_id)
 
     # ------------------------------------------------------------------------------------------ recovery
+
+    def _restart_reason(self, job: Mapping[str, Any], action: str) -> str | None:
+        """Why a restart fails this job instead of running it (a key of ``RECOVERY_FAILURE_TEXT``), or None. The order is
+        the old routes': the request was not kept; the operator turned recovery off; a cancel was waiting; the engine
+        may have started it (a job that was running and never submitted is not run again either)."""
+        if action == "interrupted_before_submit":
+            return action
+        if not self._port.resume_on_start():
+            return "recovery_off"
+        if (job.get("metadata") or {}).get("cancel_requested_at"):
+            return "cancel_unconfirmed"
+        if action == "submission_unknown" or (action == "resume" and job.get("status") == media_jobs.STATUS_RUNNING):
+            return "submission_unknown"
+        return None
+
+    def _fail_at_restart(self, job_id: str, reason: str) -> None:
+        code = SPOOL_MISSING if reason == "interrupted_before_submit" else SUBMISSION_UNKNOWN if reason == "submission_unknown" else reason
+        category = "internal" if reason == "interrupted_before_submit" else "upstream" if reason == "submission_unknown" else "capacity"
+        self._fail(job_id, code, category, RECOVERY_FAILURE_TEXT[reason])
 
     def recover_runs(self, now_s: int) -> RecoveryReport:
         """Section 5.4: decide, for each unfinished workflow job, what restart does. Rows that need no engine are
@@ -687,11 +753,10 @@ class WorkflowRunCore:
             note(action)
             if action == "replay":
                 self._finish_from_bundle(job_id)
-            elif action == "submission_unknown":
-                self._fail(job_id, SUBMISSION_UNKNOWN, "upstream", "The engine may have started this job; inspect it before retrying.")
-                failed.append(job_id)
-            elif action == "interrupted_before_submit":
-                self._fail(job_id, SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start again.")
+                continue
+            reason = self._restart_reason(job, action)
+            if reason is not None:
+                self._fail_at_restart(job_id, reason)
                 failed.append(job_id)
             elif action in ("resume", "poll"):
                 try:
@@ -709,6 +774,17 @@ def _type_fits(media_type: str, accepted: tuple[str, ...]) -> bool:
 def _ref_dict(ref: MediaRef) -> dict[str, Any]:
     return {"digest": ref.digest, "media_type": ref.media_type, "size": ref.size, "filename": ref.filename,
             "wire_media_type": ref.wire_media_type, "asset_id": ref.asset_id, "spool_key": ref.spool_key}
+
+
+def _client_message(exc: BaseException) -> str:
+    """The text a failed job shows its caller: the adapter's own ``client_message``, else the fixed sentence."""
+    message = getattr(exc, "client_message", None)
+    return message if isinstance(message, str) and message.strip() else FAILED_FALLBACK
+
+
+def _upstream_status(exc: BaseException) -> int | None:
+    status = getattr(exc, "upstream_status", None)
+    return status if isinstance(status, int) and not isinstance(status, bool) else None
 
 
 def _code_of(exc: BaseException) -> str:
