@@ -88,6 +88,20 @@ def test_the_gate_asks_the_binding_the_request_chose(db, tmp_path):
     assert isinstance(chosen, RunRefused) and chosen.code == "service_disabled"
 
 
+def test_s7_same_key_replays_after_backend_becomes_unavailable(db, tmp_path):
+    """S7 6.2 (M4), core side: a matching claim answers before the service-state refusal; a new key still gets the 503
+    and no job."""
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    first = submit(core, idempotency_key="same")
+    port.available = BindingAvailability(lambda binding: "service_unhealthy", lambda binding: 10)
+    again = submit(core, idempotency_key="same")
+    assert isinstance(again, RunJobView) and again.disposition == "replay" and again.job_id == first.job_id
+    fresh = submit(core, idempotency_key="new")
+    assert isinstance(fresh, RunRefused) and (fresh.http_status, fresh.code) == (503, "service_unhealthy")
+    with media_jobs.connection(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0] == 1
+
+
 # ------------------------------------------------------------------------------------- M5: result metadata and failure
 
 
@@ -212,6 +226,36 @@ def test_restart_reschedules_a_queued_job(db, tmp_path):
     core, port, job_id = _queued_job(db, tmp_path)
     core.recover_runs(0)
     assert port.scheduled == [job_id] and job_error(db, job_id)[0] == "queued"
+
+
+def _commit_bundle(db, job_id):
+    """A published bundle on a job that is not yet terminal: the crash window recovery's replay row covers."""
+    limits = ResultLimits()
+    with media_jobs.connection(db) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        result_bundle.stage_json_in(conn, job_id, 1, "result", b"{}", limits=limits)
+        result_bundle.publish_in(conn, job_id, 1, limits=limits)
+        conn.commit()
+
+
+@pytest.mark.parametrize("resume,cancel", [(True, False), (False, False), (True, True)])
+def test_s7_recovery_preserves_poll_and_committed_bundle_precedence(db, tmp_path, resume, cancel):
+    """S7 6.1 (M12): a committed bundle is replayed with no engine call, a recorded upstream id is polled with no new
+    submit, and only a job with neither gets the restart text; recovery off or a waiting cancel changes text, not outcome."""
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    replayed, polled, bare = (submit(core, idempotency_key=f"k-{n}").job_id for n in range(3))
+    patch = {"cancel_requested_at": 1} if cancel else {}
+    media_jobs.update_status(replayed, "running", path=db)
+    media_jobs.update_status(polled, "running", path=db, metadata_patch={"protocol_job": "up-1", **patch})
+    media_jobs.update_status(bare, "running", path=db, metadata_patch=patch)
+    _commit_bundle(db, replayed)
+    port.resume = resume
+    port.scheduled.clear()
+    core.recover_runs(0)
+    assert job_error(db, replayed)[0] == "succeeded"
+    assert job_error(db, polled)[0] == "running" and port.scheduled == [polled]
+    assert job_error(db, bare)[0] == "failed"
+    assert port.engine_calls == 0
 
 
 # ------------------------------------------------------------------------------------- M7: JobService.delete

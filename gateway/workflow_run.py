@@ -711,6 +711,8 @@ class WorkflowRunCore:
         may have started it (a job that was running and never submitted is not run again either)."""
         if action == "interrupted_before_submit":
             return action
+        if action == "poll":        # the engine already has the job: polling it is not a resubmit, so no restart text applies
+            return None
         if not self._port.resume_on_start():
             return "recovery_off"
         if (job.get("metadata") or {}).get("cancel_requested_at"):
