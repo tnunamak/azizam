@@ -797,7 +797,7 @@ def _comfy_with_failing_cancel(rig: GatewayRig, *, running_polls: int = 0) -> No
                           repeat=True, required=False) if item["id"] == "cancel" else item for item in exchanges])
 
 
-def test_video_pin_media_job_polls_the_engine_every_5_seconds(tmp_path, monkeypatch):
+def test_video_pin_media_job_polls_the_engine_every_5_seconds(tmp_path):
     """S7 6.8: the video media job keeps its 5 s poll; audio and image keep their own schedules."""
     delays: list[float] = []
     real_sleep = asyncio.sleep
@@ -813,7 +813,9 @@ def test_video_pin_media_job_polls_the_engine_every_5_seconds(tmp_path, monkeypa
         rig.set(proxy, "_schedule_video_media_job", lambda job_id: rig.scheduled.append(job_id) or True)
 
     async def drive(rig):
-        monkeypatch.setattr(proxy.asyncio, "sleep", record_sleep)
+        # The rig taps asyncio.sleep too; patch through the rig so both undo in order (a test-level monkeypatch
+        # would restore the rig's tap after the rig had removed it, leaking it into every later test).
+        rig.set(proxy.asyncio, "sleep", record_sleep)
         response = await rig.call("POST", "/gateway/v1/media/jobs", json_body={
             "intent": "video.generate", "request": {"prompt": "waves", "model": "ltx-2.5-t2v"}})
         seen["accepted"] = response.status_code
