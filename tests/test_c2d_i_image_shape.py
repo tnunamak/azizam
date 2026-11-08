@@ -25,11 +25,16 @@ EDIT_WITH_MASK = {"id": "image.edit.masked", "version": "1", "intent": "image.ed
                   "outputs": {"image": {"media_type": "image/png"}}, "bindings": {"fake": {}}}
 
 
+def ok(run):
+    assert not isinstance(run, Response), run.body
+    return run
+
+
 def test_image_wire_options_reach_run_request() -> None:
     snap = snapshot("flux2-klein")
-    low = run_request("images-generations", json_request({"prompt": "p", "n": 1, "quality": "low", "output_format": "png"}), snap)
-    high = run_request("images-generations", json_request({"prompt": "p", "n": 4, "quality": "high", "output_format": "jpg",
-                                                           "output_compression": 70}), snap)
+    low = ok(run_request("images-generations", json_request({"prompt": "p", "n": 1, "quality": "low", "output_format": "png"}), snap))
+    high = ok(run_request("images-generations", json_request({"prompt": "p", "n": 4, "quality": "high", "output_format": "jpg",
+                                                           "output_compression": 70}), snap))
     assert low.options == {"n": 1, "quality": "low", "output_format": "png"}
     assert high.options == {"n": 4, "quality": "high", "output_format": "jpeg", "output_compression": 70}
     assert low.inputs == high.inputs == {"prompt": "p"}                    # the options are not inputs
