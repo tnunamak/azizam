@@ -8,10 +8,12 @@ import asyncio
 import base64
 import json
 from types import MappingProxyType
+from unittest import mock
 
 import pytest
 from starlette.responses import Response
 
+from gateway.frontend_shapes import shapes as frontend_shapes_module
 from gateway.request_spool import FileRequestSpool
 from tests.test_frontend_shapes import (  # noqa: F401 - the autouse fixture
     CALLER, ROWS, FakeSpool, no_deployment_default, FakeJobService, FakeSnapshot, FakeRunCore, entry, finish, json_request, multipart_request, run_request,
@@ -77,9 +79,10 @@ def test_image_answer_form_is_read_from_each_wire_request() -> None:
     run = run_request("images-generations", json_request({"prompt": "p", "response_format": "url"}), snap)
     view = submit(core, run, snap)
     finish(core, view.job_id, "image", "image/png", b"x")
-    bare = asyncio.run(shape_of("images-generations").to_response(
-        core.jobs[view.job_id], ROWS["images-generations"], jobs=FakeJobService(core), caller=CALLER,
-        request=_carry({"response_format": "url"})))
+    with mock.patch.dict(frontend_shapes_module.ASSET_URLS, clear=True):      # the deployment's renderers are not installed
+        bare = asyncio.run(shape_of("images-generations").to_response(
+            core.jobs[view.job_id], ROWS["images-generations"], jobs=FakeJobService(core), caller=CALLER,
+            request=_carry({"response_format": "url"})))
     assert bare.status_code == 400
 
 
