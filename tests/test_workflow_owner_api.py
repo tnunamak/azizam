@@ -176,7 +176,8 @@ def test_a_bundled_workflow_unpublishes_and_publishes_again_through_the_owner_ap
         return api.post(f"/admin/api/workflows/{BUNDLED_ID}/publish", json={"published": value},
                         headers={"If-Match": os_n(api)})
 
-    assert detail()["published"] is True
+    before = detail()
+    assert before["published"] is True
     off = publish(False)
     assert off.status_code == 200, off.json()
     assert detail()["published"] is False
@@ -184,7 +185,11 @@ def test_a_bundled_workflow_unpublishes_and_publishes_again_through_the_owner_ap
     assert row["published"] is False
     on = publish(True)
     assert on.status_code == 200, on.json()
-    assert detail()["published"] is True
+    after = detail()
+    assert after["published"] is True
+    # The override keeps what the bundled entry runs: its contract, facts and incarnation (a queued job stays valid).
+    assert (after["contract"], after["facts"], after["incarnation"], after["overrides"]) == \
+        (before["contract"], before["facts"], before["incarnation"], BUNDLED_ID)
 
 
 def test_delete_of_a_bundled_id_is_409_id_is_bundled(api):
