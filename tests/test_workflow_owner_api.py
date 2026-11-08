@@ -165,14 +165,12 @@ def test_ids_with_one_token_are_422_id_clash_in_both_orders(api):  # rows 8 and 
 
 
 def _registry_with_alias(client, alias_id: str) -> dict:
-    """The registry as the owner reads it, with one more model alias on a service that serves a model."""
+    """The registry as the owner reads it, with one service that serves a model and one alias of it."""
     registry = client.get("/admin/api/operator/service-registry").json()["service_registry"]
-    for service in registry["services"].values():
-        models = (service.get("config") or {}).get("models")
-        if models and models[0].get("id"):
-            models.append({"id": alias_id, "base_model_id": models[0]["id"]})
-            return registry
-    pytest.skip("this build's release registry serves no model to alias")
+    service = next(iter(registry["services"].values()))
+    service["config"] = {**(service.get("config") or {}), "model_policy_schema_version": 1,
+                         "models": [{"id": "base-model"}, {"id": alias_id, "base_model_id": "base-model"}]}
+    return registry
 
 
 def test_a_model_alias_whose_token_equals_a_workflow_id_is_422_through_the_whole_document_put(api):  # row 22
