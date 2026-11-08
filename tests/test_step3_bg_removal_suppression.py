@@ -46,14 +46,14 @@ class TestBackgroundRemovalOutboundPayload:
         async def active_backend() -> str:
             return "kobold"
 
-        async def model_for_host(_host: str) -> str:
+        async def model_for_backend(_backend: str) -> str:
             return "bg-decider-model"
 
         auth = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
         with patch.object(proxy, "_image_background_removal_enabled", lambda: True), \
              patch.object(proxy, "get_active_backend", active_backend), \
              patch.dict(proxy.DERIVED.LLM_BACKEND_HOSTS, {"kobold": fake.base_url}), \
-             patch.object(proxy, "effective_llm_model_for_host", model_for_host):
+             patch.object(proxy, "current_llm_model_for_backend", model_for_backend):
             decision = asyncio.run(proxy.decide_image_background_removal(prompt, auth_context=auth))
 
         assert (decision.remove_background, decision.source) == (True, "llm")
@@ -97,7 +97,7 @@ class TestBackgroundRemovalGateIsLifecycleData:
         async def active_backend() -> str:
             return service_id
 
-        async def model_for_host(_host: str) -> str:
+        async def model_for_backend(_backend: str) -> str:
             return "bg-decider-model"
 
         auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
@@ -106,7 +106,7 @@ class TestBackgroundRemovalGateIsLifecycleData:
              patch.object(proxy, "get_active_backend", active_backend), \
              patch.dict(proxy.config, {"backends": backends}), \
              patch.dict(proxy.DERIVED.LLM_BACKEND_HOSTS, {service_id: base_url}), \
-             patch.object(proxy, "effective_llm_model_for_host", model_for_host):
+             patch.object(proxy, "current_llm_model_for_backend", model_for_backend):
             return asyncio.run(proxy.decide_image_background_removal("A logo", auth_context=auth))
 
     def test_new_service_id_with_a_swap_driver_is_asked(self, fake_upstreams) -> None:

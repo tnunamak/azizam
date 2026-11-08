@@ -113,3 +113,138 @@ def test_candidate_missing_from_hosts_is_skipped():
         hosts={"b": HOSTS["b"]},
     )
     assert error is None and target.backend == "b"
+
+
+# -- vision gate and background removal use the same selector ------------------------------------------
+
+IMAGE_BODY = {
+    "model": "not-a-local-model",
+    "messages": [{"role": "user", "content": [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+    ]}],
+}
+
+
+def _vision_gate(*, healthy, models, overrides=None, vision_members=("b",)):
+    """Run the vision gate with stubbed seams; returns (error, backends the gate asked about)."""
+    judged: list[Any] = []
+
+    async def health(bid):
+        return bid in healthy
+
+    async def model(bid):
+        return models.get(bid, "")
+
+    def members():
+        return list(vision_members)
+
+    def aux_grants(backend):
+        judged.append(backend)
+        return False
+
+    async def run():
+        with patch.object(proxy, "_llm_backend_candidates", lambda: ["a", "b", "c"]), \
+             patch.object(proxy, "check_service_health", health), \
+             patch.object(proxy, "current_llm_model_for_backend", model), \
+             patch.object(proxy, "_operator_service_availability_overrides", lambda: overrides or {}), \
+             patch.object(proxy, "vision_capable_llm_backends", members), \
+             patch.object(proxy, "_aux_grants_vision", aux_grants), \
+             derived_patch("LLM_BACKEND_HOSTS", HOSTS):
+            return await proxy._prepare_litellm_local_llm_request(
+                proxy.NO_AUTH_CONTEXT, request_path="/v1/chat/completions",
+                body_json=IMAGE_BODY, activate_target=False,
+            )
+
+    error, _ = asyncio.run(run())
+    return error, judged
+
+
+def test_vision_gate_judges_the_second_backend_when_the_first_is_drained():
+    # The drained first backend is text-only; the loaded second backend takes images, so the gate returns early.
+    error, judged = _vision_gate(
+        healthy={"a", "b"}, models={"a": "model-a", "b": "model-b"},
+        overrides={"a": {"state": "draining"}},
+    )
+    assert error is None
+    assert "a" not in judged
+
+
+def test_vision_gate_does_not_pass_on_a_drained_vision_backend():
+    # b is vision capable but drained and a is empty: nothing is servable, so the gate gets no backend.
+    error, judged = _vision_gate(
+        healthy={"a", "b"}, models={"b": "model-b"}, overrides={"b": {"state": "disabled"}},
+    )
+    assert judged == [None]  # no target: the gate judged "no active backend", as before
+
+
+def test_vision_gate_without_any_healthy_backend_keeps_the_no_target_path():
+    error, judged = _vision_gate(healthy=set(), models={})
+    assert judged == [None]
+
+
+def _decide_background(*, healthy, models, overrides=None, local_swap=("a", "b", "c")):
+    """Run the background-removal decision; returns (decision, hosts it posted to, models it sent)."""
+    import httpx
+    posted: list[tuple[str, str]] = []
+
+    async def health(bid):
+        return bid in healthy
+
+    async def model(bid):
+        return models.get(bid, "")
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            posted.append((url, json["model"]))
+            return httpx.Response(200, json={"choices": [{"message": {"content":
+                '{"remove_background": true, "confidence": 0.9, "reason": "logo"}'}}]})
+
+    async def run():
+        with patch.object(proxy, "_image_background_removal_enabled", lambda: True), \
+             patch.object(proxy, "_llm_backend_candidates", lambda: ["a", "b", "c"]), \
+             patch.object(proxy, "check_service_health", health), \
+             patch.object(proxy, "current_llm_model_for_backend", model), \
+             patch.object(proxy, "_operator_service_availability_overrides", lambda: overrides or {}), \
+             patch.object(proxy, "_is_local_swap_backend", lambda bid: bid in local_swap), \
+             patch.object(proxy, "_require_egress_lease", lambda service: None), \
+             patch.object(proxy.engine_egress, "async_client", Client), \
+             derived_patch("LLM_BACKEND_HOSTS", HOSTS):
+            return await proxy.decide_image_background_removal("a logo", auth_context=proxy.NO_AUTH_CONTEXT)
+
+    decision = asyncio.run(run())
+    return decision, posted
+
+
+def test_background_removal_goes_to_the_second_backend_when_the_first_is_drained():
+    decision, posted = _decide_background(
+        healthy={"a", "b"}, models={"a": "model-a", "b": "model-b"},
+        overrides={"a": {"state": "draining"}},
+    )
+    assert decision.source == "llm"
+    assert posted == [(f"{HOSTS['b']}/v1/chat/completions", "model-b")]
+
+
+def test_background_removal_skips_a_non_local_first_backend():
+    decision, posted = _decide_background(
+        healthy={"a", "b"}, models={"a": "model-a", "b": "model-b"}, local_swap={"b"},
+    )
+    assert decision.source == "llm"
+    assert posted == [(f"{HOSTS['b']}/v1/chat/completions", "model-b")]
+
+
+def test_background_removal_with_nothing_servable_falls_back_and_sends_nothing():
+    decision, posted = _decide_background(
+        healthy={"a", "b"}, models={"b": "model-b"}, overrides={"b": {"state": "disabled"}},
+    )
+    assert decision.source == "llm_unavailable"
+    assert posted == []
