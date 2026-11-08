@@ -277,3 +277,36 @@ def test_every_bundled_template_path_is_still_the_path_its_manifest_names(world)
 
 def discovery_manifests() -> dict:
     return discovery.bundled_workflow_manifests()
+
+
+EDIT_ID = "image.edit.flux2-klein-4b"
+
+
+def library_asset(world, seed: int) -> tuple[str, bytes]:
+    """A picture in the caller's Library: the result of an image run, so the caller owns it as the rules say."""
+    data = png_bytes((seed, seed, seed))
+    serve_engine_once(world, FakeGraphEngine(manifest_of(IMAGE_ID), data, "image/png", "out.png"))
+    done = call("post", f"/gateway/v1/workflows/{IMAGE_ID}/run", json={"inputs": {"prompt": f"p{seed}"}},
+                headers={"Prefer": "wait=20"}).json()
+    assert done["status"] == "succeeded", done
+    return done["results"][0]["asset_id"], data
+
+
+def serve_engine_once(world, engine: FakeGraphEngine) -> None:
+    world.fakes.router._routes[ENGINE_HOST] = HandlerTransport(engine)      # replaces the previous engine for the next run
+
+
+def test_a_library_asset_and_an_upload_of_the_same_bytes_are_one_request_identity(world, monkeypatch):  # W6
+    asset_id, data = library_asset(world, 7)
+    other_id, _ = library_asset(world, 8)
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", lambda job_id: None)       # nothing needs to run
+    headers = {"Idempotency-Key": "k-asset"}
+    url = f"/gateway/v1/workflows/{EDIT_ID}/run"
+    named = call("post", url, json={"inputs": {"prompt": "edit", "source_image": {"asset_id": asset_id}}}, headers=headers)
+    assert named.status_code == 202 and named.json()["disposition"] == "new", named.text
+    uploaded = call("post", url, data={"inputs": json.dumps({"prompt": "edit"})},
+                    files={"source_image": ("a.png", data, "image/png")}, headers=headers)
+    assert uploaded.status_code in (200, 202), uploaded.text
+    assert (uploaded.json()["job_id"], uploaded.json()["disposition"]) == (named.json()["job_id"], "replay")
+    different = call("post", url, json={"inputs": {"prompt": "edit", "source_image": {"asset_id": other_id}}}, headers=headers)
+    assert (different.status_code, different.json()["error"]["code"]) == (409, "idempotency_conflict"), different.text
