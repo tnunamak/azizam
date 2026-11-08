@@ -420,6 +420,7 @@ def _inline_template_boundary(metric, limit, excess):
 def test_each_inline_template_bound_has_an_inclusive_edge(configured, metric, excess):
     """Check the real structural bound function independently of graph validity (matrix row 9)."""
     from gateway.workflow_registry_store import bound_problems, bounds_from_config, template_depth
+    from gateway.workflow_runtime_types import BOUND_EXCEEDED
 
     config = {"workflow_execution": {"bounds": {
         "max_template_bytes": 256, "max_nodes": 8, "max_depth": 6,
@@ -438,7 +439,7 @@ def test_each_inline_template_bound_has_an_inclusive_edge(configured, metric, ex
     if excess:
         assert len(problems) == 1, problems
         problem = problems[0]
-        assert problem.code == "bound_exceeded"
+        assert problem.code == BOUND_EXCEEDED
         assert problem.path == ("bindings", "comfyui", "workflow", "inline")
         assert str(limit + 1) in problem.message and str(limit) in problem.message
     else:
