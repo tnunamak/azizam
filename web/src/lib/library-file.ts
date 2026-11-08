@@ -74,6 +74,17 @@ export function libraryDayLabel(
   return date ? dayLabel(date, now) : null;
 }
 
+/** A group key (local YYYY-MM-DD) as a whole date, e.g. "Friday, November 6, 2026", for a day heading's tooltip. */
+export function libraryFullDate(dayKey: string): string {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 /** Keep dated runs in incoming order, with all unknown dates in one final group. */
 export function groupLibraryByDay<T extends Pick<LibraryAsset, "created_at">>(
   assets: T[],

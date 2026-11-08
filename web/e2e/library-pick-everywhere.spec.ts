@@ -644,7 +644,10 @@ for (const view of VIEWPORTS) {
     // The bottom edge shows while more of the list lies below, on the desktop dialog as on the phone sheet, and goes
     // at the end.
     await expect(body).toHaveAttribute("data-more-below", "true");
-    expect(await body.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
+    // A fade into the dialog's surface, drawn over the tiles.
+    const fade = dialog.locator('[data-slot="library-picker-fade"]');
+    await expect(fade).toBeVisible();
+    expect(await fade.evaluate((el) => getComputedStyle(el).backgroundImage)).toContain("gradient");
     if (view.width >= 640) await shot(page, "library-bottom-shadow-1440");
     const close = dialog.getByRole("button", { name: "Close" });
     const before = (await close.boundingBox())!;
@@ -652,8 +655,7 @@ for (const view of VIEWPORTS) {
     await expect.poll(() => body.evaluate((el) => Math.round(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
     await expect(close).toBeInViewport({ ratio: 1 });
     await expect(body).not.toHaveAttribute("data-more-below");
-    // (the edge fades out over the shadow's 150 ms transition)
-    await expect.poll(() => body.evaluate((el) => getComputedStyle(el).boxShadow)).toBe("none");
+    await expect(fade).toBeHidden();
     await expect(header).toHaveAttribute("data-scrolled", "true");
     await expect.poll(edge).not.toBe("rgba(0, 0, 0, 0)");
     expect(await header.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
@@ -1188,4 +1190,81 @@ test("The desktop dialog's top edge stays where it is while a search shrinks the
   }
   expect(new Set(tops.map(Math.round)).size).toBe(1);
   expect(Math.round(tops[0])).toBe(Math.round(full.y));
+});
+
+for (const view of VIEWPORTS) {
+  test(`small days share a row of the one grid on a wide screen, and each day has its own block on a phone, at ${view.name}px`, async ({ page }) => {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.route("**/me/api/workflows", (route) => fulfilJson(route, meshCatalog));
+    // Two pictures today and one yesterday fit one row on a wide screen; four the day before start the next row.
+    const ages = [0, 0, 1, 2, 2, 2, 2];
+    await routeLibrary(page, ages.map((age, index) => ({ ...MANY_PICTURES[index], madeDaysAgo: age })));
+    await page.goto("/try/?capability=mesh");
+    if (view.width >= 640) await page.getByRole("tab", { name: "Photo to 3D" }).click();
+    else await page.getByRole("combobox", { name: "Task", exact: true }).selectOption("mesh");
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    const sections = page.getByRole("dialog").locator("section[data-day]");
+    await expect(sections).toHaveCount(3);
+    const box = async (index: number) => (await sections.nth(index).boundingBox())!;
+    const [today, yesterday, before] = [await box(0), await box(1), await box(2)];
+    if (view.width >= 640) {
+      // Today and yesterday side by side, each under its own heading; the third day starts the next row.
+      expect(Math.abs(today.y - yesterday.y)).toBeLessThanOrEqual(1);
+      expect(yesterday.x).toBeGreaterThan(today.x + today.width);
+    } else {
+      // A phone, as in the Google Photos picker: every day is a full-width block under the one before.
+      expect(yesterday.y).toBeGreaterThan(today.y + today.height);
+      expect(Math.abs(yesterday.x - today.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(yesterday.width - today.width)).toBeLessThanOrEqual(1);
+    }
+    expect(before.y).toBeGreaterThan(today.y + today.height);
+    expect(Math.abs(before.x - today.x)).toBeLessThanOrEqual(1);
+    // A day's name starts on the edge of its first picture, as the audio rows' names do on their icons.
+    const firstTile = (await sections.nth(0).locator("ul button").first().boundingBox())!;
+    const headingText = await sections.nth(0).locator("h3 time").boundingBox();
+    expect(Math.abs(headingText!.x - firstTile.x)).toBeLessThanOrEqual(1);
+    // Every tile has the one grid's width, and the columns line up across days.
+    const tiles = await page.getByRole("dialog").locator("section[data-day] ul button").evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const rect = node.getBoundingClientRect();
+        return { x: Math.round(rect.x), width: Math.round(rect.width) };
+      }),
+    );
+    expect(new Set(tiles.map((tile) => tile.width)).size).toBe(1);
+    const columns = new Set(tiles.map((tile) => tile.x));
+    expect(columns.size).toBe(view.width >= 1024 ? 4 : 3);
+  });
+}
+
+test("a day's heading stays at the top of the scroll area while its pictures pass under it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/me/api/workflows", (route) => fulfilJson(route, meshCatalog));
+  // Four days, the third with enough pictures to run past the top of the scroll area.
+  const ages = [0, 0, 0, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 9, 9, 9];
+  await routeLibrary(page, ages.map((age, index) => ({ ...MANY_PICTURES[index], madeDaysAgo: age })));
+  await page.goto("/try/?capability=mesh");
+  await page.getByRole("combobox", { name: "Task", exact: true }).selectOption("mesh");
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  const dialog = page.getByRole("dialog");
+  const body = dialog.locator('[data-slot="library-picker-body"]');
+  const header = dialog.locator('[data-slot="library-picker-header"]');
+  await expect(dialog.locator("h3[data-stuck]")).toHaveCount(0);
+  // Scrolled into the third day's pictures: its heading is pinned at the top, with the edge under it.
+  const third = dialog.locator("section[data-day]").nth(2);
+  await body.evaluate((el, top) => el.scrollTo(0, top), await third.evaluate((el) => (el as HTMLElement).offsetTop + 120));
+  const pinned = third.locator("h3");
+  await expect(pinned).toHaveAttribute("data-stuck", "true");
+  await expect(dialog.locator("h3[data-stuck]")).toHaveCount(1);
+  const bodyTop = (await body.boundingBox())!.y;
+  expect(Math.abs((await pinned.boundingBox())!.y - bodyTop)).toBeLessThanOrEqual(1);
+  expect(await pinned.evaluate((el) => getComputedStyle(el).borderBottomColor)).not.toBe("rgba(0, 0, 0, 0)");
+  // The fade under it starts below the hairline, so it does not paint over it.
+  expect(await pinned.evaluate((el) => parseFloat(getComputedStyle(el, "::after").top))).toBeGreaterThanOrEqual(
+    await pinned.evaluate((el) => el.clientHeight + 1),
+  );
+  // The heading's surface is opaque, and the header does not draw a second edge above it.
+  expect(await pinned.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+  expect(await header.evaluate((el) => getComputedStyle(el).borderBottomColor)).toBe("rgba(0, 0, 0, 0)");
 });
