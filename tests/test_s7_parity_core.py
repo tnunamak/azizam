@@ -108,22 +108,28 @@ def test_result_metadata_the_adapter_gives_is_on_the_finished_job_view(db, tmp_p
     assert dataclasses.replace(done, result_metadata={}).result_metadata == {}
 
 
-class EngineFailure(Exception):
-    code = "image_generation_timeout"
-    category = "timeout"
-    retryable = True
-    upstream_status = 504
-    client_message = "The engine request timeout"
+def failing_port(db, *, code, category, message, retryable, upstream_status):
+    class EngineFailure(Exception):
+        pass
+
+    failure = EngineFailure("secret engine text http://engine.test:1")
+    failure.code, failure.category, failure.retryable = code, category, retryable
+    failure.upstream_status, failure.client_message = upstream_status, message
+
+    class FailingPort(Port):
+        async def run_adapter(self, ctx):
+            raise failure
+
+    return FailingPort(db)
 
 
-class FailingPort(Port):
-    async def run_adapter(self, ctx):
-        raise EngineFailure("secret engine text http://engine.test:1")
-
-
-def test_a_failed_job_keeps_the_adapters_message_status_and_code(db, tmp_path):
+@pytest.mark.parametrize("code,category,message,retryable,status", [
+    ("image_generation_timeout", "timeout", "Image backend request timeout", False, None),
+    ("upstream_out_of_memory", "upstream", "The engine ran out of memory", True, 502),
+    ("image_client_disconnected", "internal", "Image backend connection dropped", False, None)])
+def test_a_failed_job_keeps_the_adapters_message_status_and_code(db, tmp_path, code, category, message, retryable, status):
     """images-30, images-F01 to F07, audio-72, audio-73, video-23, writers-48, writers-55: the caller reads the old text."""
-    port = FailingPort(db)
+    port = failing_port(db, code=code, category=category, message=message, retryable=retryable, upstream_status=status)
     core, port, _ = make_core(db, tmp_path, snapshot(), port)
     view = submit(core)
     run(core.execute_run(view.job_id))
@@ -131,8 +137,17 @@ def test_a_failed_job_keeps_the_adapters_message_status_and_code(db, tmp_path):
     assert failed.status == "failed"
     failure = failed.failure
     assert (failure.code, failure.category, failure.message, failure.retryable, failure.upstream_status) == (
-        "image_generation_timeout", "timeout", "The engine request timeout", True, 504)
+        code, category, message, retryable, status)
     assert "engine.test" not in failure.message
+
+
+def test_an_upstream_status_on_a_non_upstream_failure_is_dropped_and_the_failure_still_settles(db, tmp_path):
+    """The job store keeps an HTTP status only for an upstream failure; a refused write must not leave the job running."""
+    port = failing_port(db, code="Bad Code!", category="timeout", message="t", retryable=False, upstream_status=504)
+    core, port, _ = make_core(db, tmp_path, snapshot(), port)
+    view = submit(core)
+    run(core.execute_run(view.job_id))
+    assert job_error(db, view.job_id) == ("failed", "t", "internal_error", None)
 
 
 def test_a_failure_without_a_client_message_says_the_fixed_sentence_and_never_the_exceptions_text(db, tmp_path):
@@ -248,8 +263,10 @@ def test_the_origin_is_built_from_the_pinned_contract_and_the_request_id():
 def test_a_run_gives_the_adapter_the_request_the_job_answers(db, tmp_path):
     """writers-34: the origin names the request, which is the job's request id."""
     core, port, job_id = _queued_job(db, tmp_path)
+    with media_jobs.connection(db) as conn:
+        conn.execute("UPDATE media_jobs SET job_json = json_set(job_json, '$.request_id', 'req-7') WHERE job_id = ?", (job_id,))
     run(core.execute_run(job_id))
-    assert port.ran[0].request_id == media_jobs.get(job_id, audience="internal", path=db)["request_id"]
+    assert port.ran[0].request_id == "req-7"
 
 
 # ------------------------------------------------------------------------------------------- M1: receipt fields

@@ -783,13 +783,16 @@ def _client_message(exc: BaseException) -> str:
 
 
 def _upstream_status(exc: BaseException) -> int | None:
+    """The engine's HTTP status. The job store keeps it only for an upstream failure, so another category drops it."""
     status = getattr(exc, "upstream_status", None)
-    return status if isinstance(status, int) and not isinstance(status, bool) else None
+    if getattr(exc, "category", None) != "upstream":
+        return None
+    return status if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599 else None
 
 
 def _code_of(exc: BaseException) -> str:
     code = getattr(exc, "code", None)
-    return code if isinstance(code, str) and code else INTERNAL_ERROR
+    return code if isinstance(code, str) and media_jobs.is_error_code(code) else INTERNAL_ERROR
 
 
 # ------------------------------------------------------------------------------------------------- wire bodies
