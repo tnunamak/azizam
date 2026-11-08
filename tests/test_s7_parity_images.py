@@ -1129,7 +1129,15 @@ def test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels(tmp_pat
     """Section 6.5: masking runs in the adapter before the bundle commits, so the delivered pictures and the stored
     Library file are the masked bytes, and equal to what the old route delivers and stores."""
     request = form(files={"image": IMG, "mask": _half_mask()})
-    old, row = pair(tmp_path, EDIT, request, edit_ok)
+
+    def no_source_alpha(rig):
+        # No shipped edit workflow lacks a mask input, so the rig turns the manifest's mask facts off: the same data
+        # question the route asks (``_manifest_uses_source_alpha_mask``, ``_manifest_route_managed_mask_input``).
+        edit_ok(rig)
+        rig.set(proxy, "_manifest_uses_source_alpha_mask", lambda manifest: False)
+        rig.set(proxy, "_manifest_route_managed_mask_input", lambda manifest: None)
+    old, row = pair(tmp_path, EDIT, request, no_source_alpha)
+    old_has(old, "post-composite", header(old, "x-image-mask") == "post-composite")
     old_has(old, "a picture", _pixels(old))
     engine_output = Image.open(io.BytesIO(base._png((20, 20, 20)))).convert("RGBA").getdata()
     old_has(old, "pixels that the mask changed", set(_pixels(old)[0][2]) != set(engine_output))
