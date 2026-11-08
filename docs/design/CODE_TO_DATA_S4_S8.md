@@ -230,12 +230,6 @@ use full ids and declared aliases only. Two workflows of different intents with 
 | `POST /admin/api/workflows/{id}/restore` | `{record_revision}`, `If-Match` | the `Commit` |
 | `DELETE /admin/api/workflows/{id}` | `If-Match` | the `Commit`; 409 `id_is_bundled` for a bundled id |
 
-Addendum at the freeze (integrator-owned, additive): the list answer also holds `choices`, the closed value sets the
-owner view offers as pick-lists: `exposure`, `trust_tier` and `resource_tier` from `gateway/capabilities.py`, and
-`resource_class` from the policy data (B). The web never spells these values itself. The workflow document is edited
-as JSON with the check route's problems at their paths; pick-lists for the binding identifiers inside the document
-come with the later form train (section 12).
-
 The web owner view (E) is the one client this train ships. The MCP owner tools and a CLI over the same routes follow
 in a later train (cut, section 12): they add no rule and the oracle does not need them.
 

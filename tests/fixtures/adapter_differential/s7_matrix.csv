@@ -1,0 +1,111 @@
+route,outcome,status,file,note
+ig,success,existing,image_sync_b64.json;image_sync_url.json;image_sync_batch.json;image_sync_slow_completion.json,
+ig,upstream_failure,existing,image_comfy_unreachable.json;image_prompt_http_500.json;image_prompt_without_id.json;image_execution_error.json;image_view_missing.json,
+ig,validation_refusal,recorded,s7_ig_validation_refusal.json,
+ig,policy_refusal,recorded,s7_ig_policy_refusal.json,
+ig,admission_refusal,recorded,s7_ig_admission_refusal.json,
+ig,replay_same,recorded,s7_ig_replay_same.json,
+ig,replay_conflict,recorded,s7_ig_replay_conflict.json,
+ig,wait_timeout,recorded,s7_ig_wait_timeout.json,
+ig,cancel_queued,recorded,s7_ig_cancel_queued.json,
+ig,cancel_finished,recorded,s7_ig_cancel_finished.json,
+ig,disconnect,existing,image_client_disconnect_during_poll.json,
+ie,success,existing,image_edit.json,
+ie,upstream_failure,existing,image_edit_upload_refused.json,
+ie,validation_refusal,recorded,s7_ie_validation_refusal.json,
+ie,policy_refusal,recorded,s7_ie_policy_refusal.json,
+ie,admission_refusal,recorded,s7_ie_admission_refusal.json,
+ie,replay_same,recorded,s7_ie_replay_same.json,
+ie,replay_conflict,recorded,s7_ie_replay_conflict.json,
+ie,wait_timeout,recorded,s7_ie_wait_timeout.json,
+ie,cancel_queued,recorded,s7_ie_cancel_queued.json,
+ie,cancel_finished,recorded,s7_ie_cancel_finished.json,
+ie,disconnect,recorded,s7_ie_disconnect.json,
+iv,success,existing,image_variation.json,
+iv,upstream_failure,recorded,s7_iv_upstream_failure.json,
+iv,validation_refusal,recorded,s7_iv_validation_refusal.json,
+iv,policy_refusal,recorded,s7_iv_policy_refusal.json,
+iv,admission_refusal,recorded,s7_iv_admission_refusal.json,
+iv,replay_same,recorded,s7_iv_replay_same.json,
+iv,replay_conflict,recorded,s7_iv_replay_conflict.json,
+iv,wait_timeout,recorded,s7_iv_wait_timeout.json,
+iv,cancel_queued,recorded,s7_iv_cancel_queued.json,
+iv,cancel_finished,recorded,s7_iv_cancel_finished.json,
+iv,disconnect,recorded,s7_iv_disconnect.json,
+ij,success,existing,image_job_succeeds.json;image_job_oom_then_complete.json,
+ij,upstream_failure,existing,image_job_upstream_failure.json,
+ij,validation_refusal,recorded,s7_ij_validation_refusal.json,
+ij,policy_refusal,recorded,s7_ij_policy_refusal.json,
+ij,admission_refusal,recorded,s7_ij_admission_refusal.json,
+ij,replay_same,recorded,s7_ij_replay_same.json,
+ij,replay_conflict,recorded,s7_ij_replay_conflict.json,
+ij,wait_timeout,recorded,s7_ij_wait_timeout.json,
+ij,cancel_queued,recorded,s7_ij_cancel_queued.json,
+ij,cancel_finished,recorded,s7_ij_cancel_finished.json,
+ij,disconnect,recorded,s7_ij_disconnect.json,
+as,success,existing,audio_generate_sync.json;audio_generate_with_object_info.json,
+as,upstream_failure,existing,audio_generate_unreachable.json;audio_generate_execution_error.json,
+as,validation_refusal,recorded,s7_as_validation_refusal.json,
+as,policy_refusal,recorded,s7_as_policy_refusal.json,
+as,admission_refusal,recorded,s7_as_admission_refusal.json,
+as,replay_same,recorded,s7_as_replay_same.json,
+as,replay_conflict,recorded,s7_as_replay_conflict.json,
+as,wait_timeout,recorded,s7_as_wait_timeout.json,
+as,cancel_queued,recorded,s7_as_cancel_queued.json,
+as,cancel_finished,recorded,s7_as_cancel_finished.json,
+as,disconnect,recorded,s7_as_disconnect.json,
+aj,success,existing,audio_generate_job.json,
+aj,upstream_failure,recorded,s7_aj_upstream_failure.json,
+aj,validation_refusal,recorded,s7_aj_validation_refusal.json,
+aj,policy_refusal,recorded,s7_aj_policy_refusal.json,
+aj,admission_refusal,recorded,s7_aj_admission_refusal.json,
+aj,replay_same,recorded,s7_aj_replay_same.json,
+aj,replay_conflict,recorded,s7_aj_replay_conflict.json,
+aj,wait_timeout,recorded,s7_aj_wait_timeout.json,
+aj,cancel_queued,recorded,s7_aj_cancel_queued.json,
+aj,cancel_finished,recorded,s7_aj_cancel_finished.json,
+aj,disconnect,recorded,s7_aj_disconnect.json,
+vc,success,existing,video_lifecycle.json,
+vc,upstream_failure,existing,video_create_unreachable.json;video_execution_error.json,
+vc,validation_refusal,recorded,s7_vc_validation_refusal.json,
+vc,policy_refusal,recorded,s7_vc_policy_refusal.json,
+vc,admission_refusal,recorded,s7_vc_admission_refusal.json,
+vc,replay_same,recorded,s7_vc_replay_same.json,
+vc,replay_conflict,recorded,s7_vc_replay_conflict.json,
+vc,wait_timeout,recorded,s7_vc_wait_timeout.json,
+vc,cancel_queued,recorded,s7_vc_cancel_queued.json,
+vc,cancel_finished,recorded,s7_vc_cancel_finished.json,
+vc,disconnect,recorded,s7_vc_disconnect.json,
+ve,success,recorded,s7_ve_success.json,
+ve,upstream_failure,recorded,s7_ve_upstream_failure.json,
+ve,validation_refusal,recorded,s7_ve_validation_refusal.json,
+ve,policy_refusal,recorded,s7_ve_policy_refusal.json,
+ve,admission_refusal,recorded,s7_ve_admission_refusal.json,
+ve,replay_same,recorded,s7_ve_replay_same.json,
+ve,replay_conflict,recorded,s7_ve_replay_conflict.json,
+ve,wait_timeout,recorded,s7_ve_wait_timeout.json,
+ve,cancel_queued,recorded,s7_ve_cancel_queued.json,
+ve,cancel_finished,recorded,s7_ve_cancel_finished.json,
+ve,disconnect,recorded,s7_ve_disconnect.json,
+ml,success,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,upstream_failure,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,validation_refusal,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,policy_refusal,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,admission_refusal,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,replay_same,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,replay_conflict,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,wait_timeout,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,cancel_queued,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,cancel_finished,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+ml,disconnect,not_recordable,,no route today: LocalAI /v1/3d/generations does not exist before S7; acceptance-only
+mr,success,pending_mesh,,recorded from the mesh wire harness
+mr,upstream_failure,pending_mesh,,recorded from the mesh wire harness
+mr,validation_refusal,pending_mesh,,recorded from the mesh wire harness
+mr,policy_refusal,pending_mesh,,recorded from the mesh wire harness
+mr,admission_refusal,pending_mesh,,recorded from the mesh wire harness
+mr,replay_same,pending_mesh,,recorded from the mesh wire harness
+mr,replay_conflict,pending_mesh,,recorded from the mesh wire harness
+mr,wait_timeout,pending_mesh,,recorded from the mesh wire harness
+mr,cancel_queued,pending_mesh,,recorded from the mesh wire harness
+mr,cancel_finished,pending_mesh,,recorded from the mesh wire harness
+mr,disconnect,pending_mesh,,recorded from the mesh wire harness
