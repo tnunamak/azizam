@@ -145,14 +145,14 @@ async def _probe_get(client: httpx.AsyncClient, url: str, *, timeout: float, rea
     """One GET bounded in total time and, when its body is read, in bytes. The body is streamed, never buffered
     whole; a health answer is judged on its status and its body is dropped unread."""
     async with asyncio.timeout(timeout):
-        # Identity encoding, and the raw stream: a decoder would expand a small reply past the cap before any check.
+        # Identity encoding, and an encoded reply is refused before its body is read: a decoder would expand a small reply past the cap.
         async with client.stream("GET", url, timeout=timeout, headers={"Accept-Encoding": "identity"},
                                  extensions=engine_egress.probe()) as response:
             body = bytearray()
             if read_body and response.status_code == 200:
                 if response.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
                     raise _ProbeBodyTooLarge  # an encoded body is refused undecoded
-                async for chunk in response.aiter_raw():
+                async for chunk in response.aiter_bytes():  # identity only: no decoder runs
                     if len(body) + len(chunk) > MAX_PROBE_BODY_BYTES:
                         raise _ProbeBodyTooLarge
                     body.extend(chunk)
