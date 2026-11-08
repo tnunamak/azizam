@@ -310,3 +310,27 @@ def test_a_library_asset_and_an_upload_of_the_same_bytes_are_one_request_identit
     assert (uploaded.json()["job_id"], uploaded.json()["disposition"]) == (named.json()["job_id"], "replay")
     different = call("post", url, json={"inputs": {"prompt": "edit", "source_image": {"asset_id": other_id}}}, headers=headers)
     assert (different.status_code, different.json()["error"]["code"]) == (409, "idempotency_conflict"), different.text
+
+
+def upload(data: bytes, declared: str, **headers):
+    return call("post", f"/gateway/v1/workflows/{EDIT_ID}/run", data={"inputs": json.dumps({"prompt": "edit"})},
+                files={"source_image": ("a.bin", data, declared)}, headers=headers)
+
+
+def test_the_type_of_an_upload_is_measured_from_its_bytes_not_taken_from_the_caller(world, monkeypatch):  # W7, row 29
+    seen = {}
+
+    async def hold(ctx):          # stands for the engine: it records what the adapter would be given
+        seen["ref"] = ctx.media["source_image"][0]
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "run_adapter", hold)
+    # Text declared as a picture: the measured type is not an image, so the input refuses it and keeps no bytes.
+    refused = upload(b"this is not a picture", "image/png")
+    assert refused.status_code in (415, 422), refused.text
+    assert not [p for p in (world.tmp / "spool").rglob("*") if p.is_file()]
+    # A picture declared as a binary blob: accepted by what it is; the declared type stays for the wire.
+    accepted = upload(png_bytes((3, 3, 3)), "application/octet-stream", Prefer="wait=10")
+    assert accepted.status_code in (200, 202), accepted.text
+    ref = seen["ref"]
+    assert (ref.media_type, ref.wire_media_type) == ("image/png", "application/octet-stream")
