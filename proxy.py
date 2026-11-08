@@ -4048,8 +4048,6 @@ class CurrentLoadedLlmTarget:
     backend: str
     host: str
     model: str
-    # The loaded file path, for a backend that reports its model as a path; None otherwise.
-    loaded_path: str | None = None
 
 
 def _is_use_loaded_model_alias(value: Any) -> bool:
@@ -4134,15 +4132,12 @@ async def _first_servable_loaded_llm_target(
         else:
             refusal = await asyncio.to_thread(_service_availability_response, backend, service_label=backend)
         if refusal is None:
-            # The path comes from the cached loaded-state read the model id below also uses.
-            loaded_path = currently_loaded_model(backend) if _backend_reports_loaded_model_as_path(backend) else None
             loaded_model = await current_llm_model_for_backend(backend)
             if loaded_model:
                 return CurrentLoadedLlmTarget(
                     backend=backend,
                     host=DERIVED.LLM_BACKEND_HOSTS[backend],
                     model=loaded_model,
-                    loaded_path=loaded_path,
                 ), None
             refusal = _current_model_unavailable_response(backend)
         if first_refusal is None:
@@ -27765,13 +27760,20 @@ def _policy_turns_reasoning_off(model_id: str) -> bool:
     return body.get("reasoning_effort") == "none"
 
 
-async def _model_list_served_target() -> CurrentLoadedLlmTarget | None:
-    """The one selector observation a model listing makes; None when nothing is servable or the probe fails."""
+async def _model_list_served_declarations() -> set[str]:
+    """Declaration ids of the model `current` would serve: the one selector observation a listing makes.
+
+    Empty when nothing is servable, the probe fails, or no declaration matches. The loaded
+    path is the entry the selector just read in the cached loaded-state, so no second probe runs.
+    """
     try:
         target, _ = await _first_servable_loaded_llm_target()
+        if target is None:
+            return set()
+        loaded_path = currently_loaded_model(target.backend) if _backend_reports_loaded_model_as_path(target.backend) else None
+        return _declarations_for_loaded_model(target.backend, loaded_path or target.model)
     except Exception:  # noqa: BLE001 - a failed probe leaves the aliases on their own declaration
-        return None
-    return target
+        return set()
 
 
 def _with_loaded_model_inheritance(
@@ -28659,11 +28661,7 @@ async def list_models(request: Request):
     # One selector observation, only when the listing includes an alias that follows it.
     served_ids: set[str] = set()
     if any(isinstance(item, dict) and item.get("id") in USE_LOADED_MODEL_ALIASES for item in data):
-        served_target = await _model_list_served_target()
-        if served_target is not None:
-            served_ids = _declarations_for_loaded_model(
-                served_target.backend, served_target.loaded_path or served_target.model,
-            )
+        served_ids = await _model_list_served_declarations()
     sources, inherited_windows = _with_loaded_model_inheritance(
         await asyncio.to_thread(_model_metadata_sources, origins), served_ids,
     )

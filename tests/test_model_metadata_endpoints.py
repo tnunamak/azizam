@@ -291,7 +291,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
             patch.object(proxy, "currently_loaded_model", side_effect=lambda backend: self.loaded_paths.get(backend)),
             patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}),
-            patch.object(proxy, "_model_list_served_target", proxy._model_list_served_target.real),
+            patch.object(proxy, "_model_list_served_declarations", proxy._model_list_served_declarations.real),
             patch.object(proxy, "_litellm_models_payload", self._catalog_payload),
             patch.object(proxy.httpx, "AsyncClient",
                          side_effect=lambda *args, **kwargs: original_client(
@@ -353,8 +353,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         activation = proxy._configured_litellm_local_model_target("private-public", service_id="kobold")
         self.assertEqual(activation.model, QWEN_PATH)
         # The selector's observation names the declaration through the loaded path.
-        self.assertEqual(target.loaded_path, QWEN_PATH)
-        self.assertEqual(proxy._declarations_for_loaded_model("kobold", target.loaded_path), {"private-public"})
+        self.assertEqual(proxy._declarations_for_loaded_model("kobold", QWEN_PATH), {"private-public"})
+        self.assertEqual(asyncio.run(proxy._model_list_served_declarations()), {"private-public"})
 
     def _served(self, *, headers=None):
         """List the models once, counting selector calls; returns (entries, calls)."""
@@ -434,12 +434,12 @@ class RequestLoadedMetadataTests(unittest.TestCase):
 
     @staticmethod
     async def _no_target():
-        return None
+        return set()
 
     def test_context_probe_cache_is_honored(self) -> None:
         # The selector's own reads are held out; the context-window annotation
         # still probes once on a cold/expired cache.
-        selector = patch.object(proxy, "_model_list_served_target", self._no_target)
+        selector = patch.object(proxy, "_model_list_served_declarations", self._no_target)
         selector.start()
         self.addCleanup(selector.stop)
         for alias in self.backends["kobold"]["models"][1:]:
