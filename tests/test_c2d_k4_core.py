@@ -239,7 +239,7 @@ def test_a_generated_input_refusal_is_scrubbed(db, tmp_path, marker):
     core, _, _ = make_core(db, tmp_path, snap)
 
     def unavailable(inputs, given, **kw):
-        raise generated_defaults.GeneratedValueUnavailable(f"cannot draw {MARKER}")
+        raise generated_defaults.GeneratedValueUnavailable(f"cannot draw {MARKER}", erased=False)
 
     core._generate = unavailable
     refused = run(core.submit_run(request(idempotency_key="gen"), Caller(), snapshot=snap))
