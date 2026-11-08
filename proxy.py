@@ -17568,7 +17568,7 @@ def _workflow_store_snapshot(document, _release, *, generation):
 # The owner's workflow store (CODE_TO_DATA_S4_S8 I2). Its writes reload through reload_runtime_config, the one reload
 # path, which swaps GATEWAY_REGISTRY_PROVIDER.
 WORKFLOW_REGISTRY_STORE = workflow_registry_store.WorkflowRegistryStore(
-    path=ADMIN_DB_PATH, definitions=definition_store.DefinitionStore(media_jobs.DB_PATH),
+    path=lambda: ADMIN_DB_PATH, definitions=definition_store.DefinitionStore(media_jobs.DB_PATH),
     build_snapshot=_workflow_store_snapshot, config=lambda: config, on_changed=lambda: reload_runtime_config(),
 )
 
@@ -26508,11 +26508,30 @@ def _signed_asset_content_response(
 # The snapshot provider (S5) and the projections (S5). A test may set either to None: the route then answers 503.
 WORKFLOW_SNAPSHOTS: Any = GATEWAY_REGISTRY_PROVIDER
 WORKFLOW_PROJECTIONS: Any = workflow_projections.PROJECTIONS
-_WORKFLOW_RUN_SPOOL_ROOT = IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
-_WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_WORKFLOW_RUN_SPOOL_ROOT)
+# Built at first use, not at import, so no setting is read at import (config homes 1.2). A test may set any of them.
+_WORKFLOW_RUN_SPOOL_ROOT: Path | None = None
+_WORKFLOW_JOB_SPOOL: request_spool.JobSpool | None = None
 _workflow_run_tasks: set[asyncio.Task] = set()
 _workflow_run_scheduled: set[str] = set()
-_workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+_workflow_run_semaphore: asyncio.Semaphore | None = None
+
+
+def _workflow_run_spool_root() -> Path:
+    return _WORKFLOW_RUN_SPOOL_ROOT or IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
+
+
+def _workflow_job_spool() -> request_spool.JobSpool:
+    global _WORKFLOW_JOB_SPOOL
+    if _WORKFLOW_JOB_SPOOL is None:
+        _WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_workflow_run_spool_root())
+    return _WORKFLOW_JOB_SPOOL
+
+
+def _workflow_run_slots() -> asyncio.Semaphore:
+    global _workflow_run_semaphore
+    if _workflow_run_semaphore is None:
+        _workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+    return _workflow_run_semaphore
 _workflow_core_cache: tuple[Any, Any, Any] | None = None
 
 
@@ -26793,7 +26812,7 @@ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
     if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
         core = workflow_run.WorkflowRunCore(
             snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
-            spool=_WORKFLOW_JOB_SPOOL, path=media_jobs.DB_PATH)
+            spool=_workflow_job_spool(), path=media_jobs.DB_PATH)
         cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
     return cached[2]
 
@@ -26806,7 +26825,7 @@ async def _run_workflow_job(job_id: str) -> None:
     core = _workflow_run_core()
     if core is None:
         raise RuntimeError("the workflow run core is not configured")
-    async with _workflow_run_semaphore:
+    async with _workflow_run_slots():
         await core.execute_run(job_id)
 
 
@@ -26869,7 +26888,7 @@ def _new_row_spool() -> request_spool.FileRequestSpool:
     limits = _WORKFLOW_RUN_PORT.result_limits()
     # The bytes decide a file's type, as for every other upload: the declared type never makes a file something it is not.
     return request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
+        _workflow_run_spool_root(), max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
         measure=lambda head, _declared: media_inputs.measure(head).media_type)
 
 
@@ -26934,7 +26953,7 @@ async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthC
     snapshot = WORKFLOW_SNAPSHOTS.current()
     result_limits = _WORKFLOW_RUN_PORT.result_limits()
     spool = request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
     with request_spool.request_scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         if isinstance(run_request, Response):
@@ -26971,7 +26990,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
         return _workflow_run_response(refused)
     result_limits = _WORKFLOW_RUN_PORT.result_limits()
     spool = request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
     with request_spool.request_scope(request, spool):
         run_request = await request_spool.read_run_request(
             request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),
