@@ -28,6 +28,7 @@ def inventory(monkeypatch):
         paths={"a": "", "b": "/models/model-b.gguf"},
         active="a",
         health_reads=0,
+        loaded_reads=[],
         declaration_reads=[],
         litellm=False,
     )
@@ -42,7 +43,11 @@ def inventory(monkeypatch):
 
     monkeypatch.setattr(proxy, "_litellm_runtime_config", lambda: SimpleNamespace(enabled=state.litellm))
     monkeypatch.setattr(proxy, "_path_identity_backends", lambda: ["a", "b"])
-    monkeypatch.setattr(proxy, "currently_loaded_model", lambda backend: state.paths.get(backend, ""))
+    def loaded(backend):
+        state.loaded_reads.append(backend)
+        return state.paths.get(backend, "")
+
+    monkeypatch.setattr(proxy, "currently_loaded_model", loaded)
     monkeypatch.setattr(proxy, "get_active_backend", active)
     monkeypatch.setattr(proxy, "USE_LOADED_MODEL_ALIASES", frozenset({"current", "current-fast"}))
     monkeypatch.setattr(
@@ -67,6 +72,7 @@ def test_summaries_name_no_owner_and_make_no_health_probe(inventory):
         assert row["azizam_loaded"] is True
     assert rows["model-b.gguf"]["size"] == rows["model-b.gguf"]["size_vram"] == 456
     assert inventory.health_reads == 0
+    assert inventory.loaded_reads == ["a", "b"]
     assert inventory.declaration_reads == []
 
 
@@ -105,8 +111,11 @@ def test_metadata_read_uses_the_active_backend_only(inventory):
     inventory.paths["a"] = "/models/model-a.gguf"
     metadata: set[str] = set()
     ids = asyncio.run(proxy._current_loaded_llm_model_ids(metadata_ids=metadata))
-    assert {"/models/model-a.gguf", "/models/model-b.gguf", "role-a", "role-b"} <= ids
+    # Metadata declarations never widen the availability ids.
+    assert ids == {"current", "current-fast", "/models/model-a.gguf", "model-a.gguf",
+                   "/models/model-b.gguf", "model-b.gguf", "role-a", "role-b"}
     assert inventory.health_reads == 1
+    assert inventory.loaded_reads == ["a", "b"]
     assert metadata == {"declared-a"}
     assert inventory.declaration_reads == [("a", "/models/model-a.gguf")]
 
@@ -124,3 +133,12 @@ def test_a_given_active_backend_is_not_probed_again(inventory):
     asyncio.run(proxy._current_loaded_llm_model_ids("b", metadata_ids=metadata))
     assert inventory.health_reads == 0
     assert metadata == {"declared-b"}
+
+
+def test_a_named_backend_without_metadata_does_not_narrow_the_ids(inventory):
+    inventory.paths["a"] = "/models/model-a.gguf"
+    every = asyncio.run(proxy._current_loaded_llm_model_ids())
+    assert asyncio.run(proxy._current_loaded_llm_model_ids("a")) == every
+    assert asyncio.run(proxy._current_loaded_llm_model_ids("b")) == every
+    assert {"model-a.gguf", "model-b.gguf"} <= every
+    assert inventory.health_reads == 0
