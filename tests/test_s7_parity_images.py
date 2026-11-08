@@ -163,7 +163,6 @@ def test_images_05_size_text_that_is_not_a_size_falls_back_to_1024(tmp_path):
     assert_same(old, row, status, ("size", lambda o: (doc(o) or {}).get("size")), ("adjusted", lambda o: header(o, "x-azizam-size-adjusted")))
 
 
-@ROW_PENDING
 def test_images_06_missing_prompt_400(tmp_path):
     old, row = pair(tmp_path, GEN, {"json_body": {"response_format": "b64_json", **BG}}, ok)
     old_has(old, "400", status(old) == 400)
@@ -471,7 +470,6 @@ def test_images_E01_disabled_service_503(tmp_path):
     _edit_compare(old, row, ("retry-after", lambda o: header(o, "retry-after")))
 
 
-@ROW_PENDING
 def test_images_E02_invalid_form_400(tmp_path):
     old, row = pair(tmp_path, EDIT, {"content": b"not multipart", "headers": {"content-type": "multipart/form-data; boundary=zz"}}, edit_ok)
     old_has(old, "400", status(old) == 400)
@@ -484,7 +482,6 @@ def test_images_E03_extensions_not_json_400(tmp_path):
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E04_size_grammar(tmp_path):
     old, row = pair(tmp_path, EDIT, form(size="12 by 4"), edit_ok)
     old_has(old, "400", status(old) == 400)
@@ -497,8 +494,7 @@ def test_images_E05_missing_image_400(tmp_path):
     _edit_compare(old, row)
 
 
-@NEEDS_RH
-@pytest.mark.parametrize("model", ["not-a-real-model", "image-identity"])
+@pytest.mark.parametrize("model", ["not-a-real-model", pytest.param("image-identity", marks=NEEDS_RH)])
 def test_images_E06_model_resolution(tmp_path, model):
     old, row = pair(tmp_path, EDIT, edit_masked(model=model), edit_ok)
     old_has(old, "an answer", status(old))
@@ -512,7 +508,6 @@ def test_images_E07_default_size_from_the_input_image(tmp_path):
     _edit_compare(old, row, ("size", lambda o: (doc(o) or {}).get("size")), ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
 
 
-@ROW_PENDING
 def test_images_E08_missing_prompt_400(tmp_path):
     request = form(files={"image": IMG})
     request["data"].pop("prompt")
@@ -521,14 +516,12 @@ def test_images_E08_missing_prompt_400(tmp_path):
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E09_missing_required_image(tmp_path):
     old, row = pair(tmp_path, EDIT, form(files={"mask": MASK}, model="krea2-turbo"), edit_ok)
     old_has(old, "400", status(old) == 400)
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E10_too_many_images(tmp_path):
     request = {"data": form()["data"], "files": [("image", IMG), ("image", IMG), ("image", IMG), ("image", IMG), ("image", IMG)]}
     old, row = pair(tmp_path, EDIT, request, edit_ok)
@@ -643,7 +636,6 @@ def test_images_V01_disabled_service_503(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_V02_invalid_form_400(tmp_path):
     old, row = pair(tmp_path, VAR, {"content": b"nope", "headers": {"content-type": "multipart/form-data; boundary=zz"}}, variation_ok)
     old_has(old, "400", status(old) == 400)
@@ -656,7 +648,6 @@ def test_images_V03_missing_image_400(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_V04_exactly_one_image(tmp_path):
     old, row = pair(tmp_path, VAR, {"data": {"response_format": "b64_json"}, "files": [("image", IMG), ("image", IMG)]}, variation_ok)
     old_has(old, "400", status(old) == 400)
