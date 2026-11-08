@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch  # noqa: E402
 
 HOSTS = {"a": "http://127.0.0.1:59001", "b": "http://127.0.0.1:59002", "c": "http://127.0.0.1:59003"}
 
@@ -35,8 +37,8 @@ def _resolve(*, healthy, models, overrides=None, order=("a", "b", "c"), hosts=No
              patch.object(proxy, "check_service_health", health), \
              patch.object(proxy, "current_llm_model_for_backend", model), \
              patch.object(proxy, "_operator_service_availability_overrides", lambda: overrides or {}), \
-             patch.object(proxy.DERIVED, "LLM_BACKEND_HOSTS", HOSTS if hosts is None else hosts, create=True):
-            return await proxy._current_loaded_llm_target(object())
+             derived_patch("LLM_BACKEND_HOSTS", HOSTS if hosts is None else hosts):
+            return await proxy._current_loaded_llm_target(cast(Any, object()))
 
     target, error = asyncio.run(run())
     return target, error, health_calls, model_calls
