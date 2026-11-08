@@ -410,6 +410,52 @@ def test_a_gateway_started_on_a_registry_with_one_bad_service_serves_the_rest(tm
     assert "bad-engine" in done.stdout  # the loud log line
 
 
+def test_a_gateway_started_with_a_workflow_the_mesh_profile_refuses_serves_the_good_one(tmp_path):
+    """The whole boot, in a fresh process: a stored workflow the general grammar accepts but the mesh frontend
+    profile refuses is left out by name, and the good stored workflow is in what the booted gateway serves."""
+    import json
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    repo = Path(proxy.__file__).resolve().parent
+    script = textwrap.dedent("""
+        import json, os
+        from pathlib import Path
+        from gateway import admin_store
+        from tests.test_service_registry import _stored_with_refused_mesh_workflow
+        db = Path(os.environ["AZIZAM_ADMIN_DB"])
+        admin_store.init_db(db)
+        refused_id, good_id = _stored_with_refused_mesh_workflow(db)
+        import proxy
+        print("RESULT" + json.dumps({
+            "refused": refused_id, "good": good_id, "problem": proxy.REGISTRY_APPLY_PROBLEM,
+            "served": sorted(record.id for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()),
+        }))
+    """)
+    env = dict(os.environ)
+    for name, filename in [("AZIZAM_ADMIN_DB", "admin.db"), ("AZIZAM_METRICS_DB", "metrics.db"),
+                           ("AZIZAM_RECEIPTS_DB", "receipts.db"), ("AZIZAM_MEDIA_JOBS_DB", "media_jobs.db"),
+                           ("AZIZAM_RESPONSES_DB", "responses.db")]:
+        env[name] = str(tmp_path / filename)
+    env.update(PYTHONPATH=str(repo), HOME=str(tmp_path))
+    done = subprocess.run([sys.executable, "-c", script], cwd=repo, env=env, capture_output=True, text=True, timeout=180)
+
+    assert done.returncode == 0, done.stderr[-2000:]
+    result = json.loads(next(line for line in done.stdout.splitlines() if line.startswith("RESULT"))[len("RESULT"):])
+    refused, good, problem = result["refused"], result["good"], result["problem"]
+    assert refused != good
+    assert good in result["served"], (result["served"], done.stdout[-1500:])
+    assert refused not in result["served"]
+    assert problem["mode"] == "partial"
+    reason = problem["left_out"].get(f"workflow:{refused}")
+    assert reason, problem
+    assert not any(good in name for name in problem["left_out"])
+    assert f"[proxy] ERROR: workflow {refused!r} left out of the running config: {reason}" in done.stdout.splitlines()
+
+
 def test_a_failed_reload_after_a_partial_boot_is_reported_as_stale_and_still_names_the_left_out_record(live, monkeypatch):
     partial = {"mode": "partial", "error": "bad", "left_out": {"bad-engine": "x"}, "served": 1}
     monkeypatch.setattr(proxy, "REGISTRY_APPLY_PROBLEM", partial, raising=False)
