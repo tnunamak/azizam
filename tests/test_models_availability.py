@@ -76,10 +76,10 @@ class ModelAvailabilityTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def _judge(self, entry: dict, *, by_name=NAMES, workflows=None, workflow_ids=None, evidence=EVIDENCE,
-               fresh: bool = True, records=REGISTRY):
+               fresh: bool = True, records=REGISTRY, engines_by_op=None):
         return proxy._model_entry_availability(
             entry, by_name=by_name, workflows=workflows or {}, workflow_ids_by_model=workflow_ids or {},
-            service_records=records, evidence=evidence, snapshot_fresh=fresh)
+            service_records=records, evidence=evidence, snapshot_fresh=fresh, engines_by_op=engines_by_op)
 
     def _entries(self, query: str = "") -> dict:
         response = self.client.get("/v1/models" + query)
@@ -339,6 +339,83 @@ class ModelAvailabilityTests(unittest.TestCase):
                     patch.dict(status_endpoint._SNAPSHOT, snapshot, clear=True), \
                     patch.object(proxy, "_cached_status_payload_for_availability", status_endpoint.latest_payload):
                 self.assertEqual(self._entries()["up-model"]["azizam_availability"], expected)
+
+    @staticmethod
+    def _engines(operation: str, *rows: tuple[str, str, bool]) -> dict:
+        """{operation: {engine id: row}} as the alias discovery view lists it: (engine, service, deployed)."""
+        return {operation: {engine: {"engine": engine, "service": service, "model": f"{engine}-weights", "deployed": deployed}
+                            for engine, service, deployed in rows}}
+
+    @staticmethod
+    def _engine_alias(operation: str, candidates: list[str], picked: str | None) -> dict:
+        return {"id": "engine-alias", "azizam_alias": True, "azizam_resolves_to": {operation: picked},
+                "azizam_engine_candidates": {operation: candidates}}
+
+    def test_an_engine_alias_is_judged_by_its_deployed_engine_service(self) -> None:
+        engines = self._engines("speech", ("first", "svc-down", True), ("second", "svc-up", True))
+        # A deployed engine's service is up: the alias is available, though another candidate is down.
+        alias = self._engine_alias("speech", ["first", "second"], "first")
+        self.assertEqual(self._judge(alias, engines_by_op=engines), {"state": "available"})
+        only_up = self._engines("speech", ("first", "svc-up", True))
+        self.assertEqual(self._judge(self._engine_alias("speech", ["first"], "first"), engines_by_op=only_up),
+                         {"state": "available"})
+
+    def test_an_engine_alias_with_every_candidate_service_down_is_unavailable(self) -> None:
+        engines = self._engines("speech", ("first", "svc-down", True), ("second", "svc-down-too", True))
+        alias = self._engine_alias("speech", ["first", "second"], "first")
+        self.assertEqual(self._judge(alias, engines_by_op=engines)["state"], "unavailable")
+        # With no candidate deployed, all of them are judged, so the alias still reads down rather than unmarked.
+        none_deployed = self._engines("speech", ("first", "svc-down", False), ("second", "svc-down-too", False))
+        self.assertEqual(self._judge(self._engine_alias("speech", ["first", "second"], None),
+                                     engines_by_op=none_deployed)["state"], "unavailable")
+
+    def test_an_engine_alias_reads_unknown_without_a_fresh_snapshot(self) -> None:
+        engines = self._engines("speech", ("first", "svc-up", True))
+        alias = self._engine_alias("speech", ["first"], "first")
+        self.assertEqual(self._judge(alias, engines_by_op=engines, fresh=False), {"state": "unknown"})
+        # A service with no row in a fresh snapshot is unknown too.
+        unseen = self._engines("speech", ("first", "svc-unseen", True))
+        self.assertEqual(self._judge(alias, engines_by_op=unseen), {"state": "unknown"})
+
+    def test_an_undeployed_first_candidate_is_skipped(self) -> None:
+        # The undeployed first candidate is up and the deployed second one is down: the request can only reach the
+        # second, so the alias is unavailable. Judging every candidate would call it available.
+        engines = self._engines("transcriptions", ("first", "svc-up", False), ("second", "svc-down", True))
+        alias = self._engine_alias("transcriptions", ["first", "second"], "second")
+        self.assertEqual(self._judge(alias, engines_by_op=engines)["state"], "unavailable")
+        # Several deployed candidates follow the any-available rule.
+        both = self._engines("transcriptions", ("first", "svc-up", False), ("second", "svc-down", True),
+                             ("third", "svc-up", True))
+        self.assertEqual(self._judge(self._engine_alias("transcriptions", ["first", "second", "third"], "second"),
+                                     engines_by_op=both), {"state": "available"})
+
+    def test_a_decision_model_entry_is_judged_by_the_service_that_serves_it(self) -> None:
+        engines = self._engines("decisions", ("decider-x", "svc-up", True), ("decider-y", "svc-down", True))
+        # Its engine id, or the model the engine serves: a plain decision model entry.
+        self.assertEqual(self._judge({"id": "decider-x"}, engines_by_op=engines), {"state": "available"})
+        self.assertEqual(self._judge({"id": "decider-y-weights"}, engines_by_op=engines)["state"], "unavailable")
+        # A name that points at an engine slot (no candidate list) is judged by that slot's service.
+        pointer = {"id": "jev-alias", "azizam_alias": True, "azizam_resolves_to": {"decisions": "decider-y"}}
+        self.assertEqual(self._judge(pointer, engines_by_op=engines)["state"], "unavailable")
+        self.assertIsNone(self._judge({"id": "no-such-model"}, engines_by_op=engines))
+
+    def test_a_decision_provider_catalog_name_maps_to_the_provider_service(self) -> None:
+        registry = {"services": {"prov": {"id": "prov", "kind": "provider", "enabled": True,
+                                           "capabilities": ["typesafe-systemone"],
+                                           "config": {"provider_id": "prov", "base_url": "https://prov.test",
+                                                      "api_key_env": "PROV_TEST_KEY", "cost_class": "paid-remote",
+                                                      "default_models": ["prov/jev-latest"]}}}}
+        with patch.dict(proxy.config, {"backends": {}}):
+            self.assertEqual(REAL_INDEX(registry)["prov/jev-latest"], ["prov"])
+
+    def test_engine_aliases_are_marked_in_the_model_list(self) -> None:
+        engines = {"speech": {"engines": [{"engine": "first", "service": "svc-down", "model": "m", "deployed": False},
+                                          {"engine": "second", "service": "svc-up", "model": "m2", "deployed": True}],
+                              "stable": []}}
+        alias = self._engine_alias("speech", ["first", "second"], "second")
+        with patch.object(proxy, "_gateway_aliases_provider", lambda *_a, **_k: engines):
+            out = proxy._annotate_model_availability([dict(alias)], only_available=False)
+        self.assertEqual(out[0]["azizam_availability"], {"state": "available"})
 
     def test_a_reused_entry_never_keeps_a_stale_field(self) -> None:
         stale = {"state": "available"}
