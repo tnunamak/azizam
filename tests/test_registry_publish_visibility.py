@@ -37,7 +37,9 @@ def _swap(monkeypatch, *, published: bool, contract_edit=None, services=None):
               "policy": {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media", "tags": []}}
     snapshot = rs.build({"workflows": {WORKFLOW_ID: record}, "services": services or {}}, release, generation=2)
     monkeypatch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(snapshot))
-    proxy.app.openapi_schema = None
+    # The cached document and its inputs key belong to this snapshot; the undo hands the next test a cold cache.
+    monkeypatch.setattr(proxy.app, "openapi_schema", None)
+    monkeypatch.setitem(proxy._OPENAPI_INPUTS, 0, "")
     return snapshot
 
 
