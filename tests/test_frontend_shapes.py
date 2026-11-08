@@ -170,7 +170,8 @@ def test_the_rows_that_list_as_models_are_the_ones_today_lists() -> None:
 def test_images_json_fills_the_inputs_of_the_workflow_the_model_names() -> None:
     snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
     run = run_request("images-generations", json_request({"prompt": "a fox", "model": "image.generate.flux2-klein", "size": "512x768",
-                                                          "response_format": "url", "seed": 3}),
+                                                          "response_format": "url",
+                                                          "extensions": {"com.azizam.workflow": {"seed": 3}}}),
                       snap)
     assert run.workflow_id == "image.generate.flux2-klein" and run.frontend_id == "images-generations"
     assert run.inputs == {"prompt": "a fox", "width": 512, "height": 768, "seed": 3}
@@ -247,7 +248,7 @@ def test_a_malformed_json_request_is_the_shapes_own_error(payload: Any, status: 
 def test_a_multipart_file_is_staged_with_the_declared_type_and_fills_the_required_asset_input() -> None:
     snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
     spool = FakeSpool()
-    run = run_request("images-edits", multipart_request({"prompt": "make it night", "steps": "8"},
+    run = run_request("images-edits", multipart_request({"prompt": "make it night", "extensions": '{"com.azizam.workflow": {"steps": 8}}'},
                                                         [("image", "photo.png", "image/webp", b"PIXELS")]), snap, spool)
     assert run.workflow_id == "image.edit.qwen-image-2.1-edit"
     assert spool.staged == [("source_image", b"PIXELS", "photo.png", "image/webp")]

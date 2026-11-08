@@ -135,7 +135,6 @@ def test_images_02_body_not_json_400(tmp_path):
     assert_same(old, row, status, failure, engine)
 
 
-@ROW_PENDING
 def test_images_03_body_not_object_400(tmp_path):
     old, row = pair(tmp_path, GEN, raw_json(b"[1]"), ok)
     old_has(old, "400", status(old) == 400)
@@ -479,7 +478,6 @@ def test_images_E02_invalid_form_400(tmp_path):
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E03_extensions_not_json_400(tmp_path):
     old, row = pair(tmp_path, EDIT, form(extensions="{"), edit_ok)
     old_has(old, "400", status(old) == 400)
@@ -493,7 +491,6 @@ def test_images_E04_size_grammar(tmp_path):
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E05_missing_image_400(tmp_path):
     old, row = pair(tmp_path, EDIT, form(files={"other": ("x.txt", b"x", "text/plain")}), edit_ok)
     old_has(old, "400", status(old) == 400)
@@ -653,7 +650,6 @@ def test_images_V02_invalid_form_400(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_V03_missing_image_400(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(files={"other": ("x.txt", b"x", "text/plain")}), variation_ok)
     old_has(old, "400", status(old) == 400)
@@ -779,7 +775,6 @@ def test_images_J01_body_not_json_400(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_J02_body_not_object_400(tmp_path):
     old, row = pair(tmp_path, JOB, raw_json(b"[1]"), job_setup())
     old_has(old, "400", status(old) == 400)
