@@ -25,7 +25,7 @@ CONTRACT = {
     "capability": "image", "display_name": "Poster", "purpose": "Make a poster", "description": "Make a poster.",
     "inputs": {"prompt": {"type": "string", "required": True}},
     "outputs": {"poster": {"media_type": "image/png"}},
-    "bindings": {"comfyui": {"workflow": "workflows/none.json", "selectors": {"poster": {"node": "1"}}, "map": {"prompt": [{"node": "2", "input": "text"}]}}},
+    "bindings": {"comfyui": {"workflow": "workflows/none.json", "selectors": {"poster": {"node": "1", "key": "images", "from": "output_dir", "decode": "none", "take": "all"}}, "map": {"prompt": [{"node": "2", "input": "text"}]}}},
 }
 
 
