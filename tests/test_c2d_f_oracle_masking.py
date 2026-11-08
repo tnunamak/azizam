@@ -145,7 +145,7 @@ def test_a_repeated_credential_header_keeps_its_count(name):
     once = ad.describe_request_headers([(name, "a")], norm())
     twice = ad.describe_request_headers([(name, "a"), (name, "b")], norm())
     assert once != twice
-    assert "a" not in json.dumps(twice) and "b" not in json.dumps(twice).replace("<present>", "")
+    assert list(twice.values()) == [["<present>", "<present>"]]
 
 
 @pytest.mark.parametrize("name", ["Expires", "Last-Modified"])
