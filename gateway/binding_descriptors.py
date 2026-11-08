@@ -241,6 +241,36 @@ def collect_binding_errors(
             _check_block(descriptor, block, at, inputs, (templates or {}).get(key), services, errors)
 
 
+def template_fields(descriptor: BindingDescriptor, block: Mapping[str, Any]) -> tuple[str, ...]:
+    """The names of the fields of ``block`` that the description declares as a template (``kind: template``), the
+    selected role's fields included."""
+    allowed: dict[str, BindingField] = dict(descriptor.fields)
+    role_field = descriptor.role_field
+    chosen = block.get(role_field) if role_field is not None else None
+    if isinstance(chosen, str) and chosen in descriptor.roles:
+        allowed.update(descriptor.roles[chosen])
+    return tuple(name for name, spec in allowed.items() if spec.kind == "template")
+
+
+def inline_template(descriptor: BindingDescriptor, block: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]] | None:
+    """``(field name, template)`` when the binding carries its template inline in a template field, else None. Which field
+    is the description's data; nothing here names one."""
+    for name in template_fields(descriptor, block):
+        value = block.get(name)
+        if isinstance(value, Mapping) and isinstance(value.get("inline"), Mapping):
+            return name, value["inline"]
+    return None
+
+
+def template_path(descriptor: BindingDescriptor, block: Mapping[str, Any]) -> str | None:
+    """The file reference of a binding that names its template, else None."""
+    for name in template_fields(descriptor, block):
+        value = block.get(name)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _check_block(
     descriptor: BindingDescriptor, block: Mapping[str, Any], at: tuple[PathPart, ...], inputs: Mapping[str, Any] | None,
     template: Mapping[str, Any] | None, services: Collection[str] | None, errors: ErrorCollector,
@@ -306,7 +336,11 @@ def _check_field(spec: BindingField, value: Any, at: tuple[PathPart, ...], input
                  services: Collection[str] | None, errors: ErrorCollector) -> None:
     kind = spec.kind
     limit = spec.maximum
-    if kind == "template":
+    if kind == "template" and isinstance(value, Mapping):
+        # A stored workflow may carry its template in the field instead of naming a file: ``{inline: <object>}`` (5.7).
+        if set(value) != {"inline"} or not isinstance(value["inline"], Mapping) or not value["inline"]:
+            errors.add(at, "template_invalid", "an inline template is {inline: <non-empty object>}")
+    elif kind == "template":
         # An extension package names its own template as ``package://<path>``; the path after the scheme is the reference.
         reference = value.removeprefix("package://") if isinstance(value, str) else value
         if not isinstance(reference, str) or len(reference) > MAX_TEXT or not _TEMPLATE_REF.fullmatch(reference) \

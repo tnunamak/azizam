@@ -11,6 +11,7 @@ import pytest
 
 from gateway import admin_store, discovery, service_registry
 from gateway.definition_store import DefinitionStore
+from gateway.job_envelope import canonical_bytes
 from gateway.workflow_registry_store import (
     Bounds, WorkflowIdIsBundled, WorkflowRegistryStore, bound_problems, bounds_from_config, history_depth_from_config,
     template_depth,
@@ -207,9 +208,18 @@ def _template(nodes: int = 3, depth: int = 1, padding: int = 0) -> dict:
 
 
 def _with_inline(contract: dict, template: dict) -> dict:
+    """The template carried in the binding's own template field (the description's ``kind: template``), not by file."""
     key = next(iter(contract["bindings"]))
-    contract["bindings"][key] = {**contract["bindings"][key], "template": {"inline": template}}
+    contract["bindings"][key] = {**contract["bindings"][key], "workflow": {"inline": template}}
     return contract
+
+
+def bundled_template(workflow_id: str = BUNDLED_ID) -> dict:
+    """The graph the bundled workflow names by file, to carry inline."""
+    import json
+    from gateway.registry_snapshot import ROOT
+    block = next(iter(discovery.bundled_workflow_manifests()[workflow_id]["bindings"].values()))
+    return json.loads((ROOT / block["workflow"]).read_text(encoding="utf-8"))
 
 
 def test_each_bound_is_checked_with_its_path_and_code():  # row 9
@@ -217,7 +227,7 @@ def test_each_bound_is_checked_with_its_path_and_code():  # row 9
     contract = _with_inline(owner_contract(), _template(nodes=9, depth=9, padding=500))
     problems = bound_problems(contract, limits)
     assert [p.code for p in problems] == [BOUND_EXCEEDED] * 3
-    assert all(p.path[-2:] == ("template", "inline") for p in problems)
+    assert all(p.path[-2:] == ("workflow", "inline") for p in problems)
     assert bound_problems(_with_inline(owner_contract(), _template(2, 1)), limits) == []
     assert template_depth({}) == 1 and template_depth(5) == 0 and template_depth({"a": [1, {"b": 2}]}) == 3
 
@@ -328,3 +338,62 @@ def test_every_bundled_contract_passes_the_save_pipeline(store):
         if report.errors:
             failures[workflow_id] = [(e.pointer, e.code) for e in report.errors][:3]
     assert failures == {}
+
+
+# -- W1: history is part of the accepted change -------------------------------------------------------------------------
+
+
+def _state(store, db, definitions):
+    return generation(db), [r.record_revision for r in store.history("owner.test.demo", limit=50)], definitions.holder_shas("registry:owner.test.demo")
+
+
+def test_a_history_write_that_fails_leaves_neither_the_change_nor_a_history_row(parts, monkeypatch):  # W1
+    store, db, definitions, *_ = parts
+    store.put_workflow(owner_contract(), if_match=None, actor=ME)
+    before = _state(store, db, definitions)
+
+    def broken(*_args, **_kwargs):
+        raise OSError("history store down")
+
+    monkeypatch.setattr(definitions, "replace_holder", broken)
+    with pytest.raises(OSError):
+        store.put_workflow(owner_contract(display_name="two"), if_match=generation(db), actor=ME)
+    monkeypatch.undo()
+    assert _state(store, db, definitions) == before
+    assert store.snapshot().get("owner.test.demo").contract["display_name"] != "two"
+
+
+def test_a_registry_commit_that_fails_after_the_history_write_removes_that_history_row(parts, monkeypatch):  # W1
+    store, db, definitions, *_ = parts
+    store.put_workflow(owner_contract(), if_match=None, actor=ME)
+    before = _state(store, db, definitions)
+    real = admin_store.write_service_registry_with_audit
+
+    def failing_commit(*args, also_in_transaction=None, **kwargs):
+        # the history write has run inside the transaction; the commit then fails
+        def then_fail(conn, now):
+            also_in_transaction(conn, now)
+            raise RuntimeError("commit failed")
+        return real(*args, also_in_transaction=then_fail, **kwargs)
+
+    monkeypatch.setattr(admin_store, "write_service_registry_with_audit", failing_commit)
+    with pytest.raises(RuntimeError):
+        store.put_workflow(owner_contract(display_name="two"), if_match=generation(db), actor=ME)
+    monkeypatch.undo()
+    assert _state(store, db, definitions) == before
+
+
+def test_a_history_row_left_by_a_crashed_commit_is_replaced_by_the_next_real_change(parts):  # W1
+    store, db, definitions, *_ = parts
+    store.put_workflow(owner_contract(), if_match=None, actor=ME)
+    # a crash after the history write and before the registry commit leaves a row for revision 2 that never happened
+    body = {"record_revision": 2, "record_digest": "sha256:orphan", "contract_digest": "sha256:orphan", "saved_at_s": 1,
+            "actor": {"kind": "owner", "id": "owner-1", "label": "Owner"}, "change": "update",
+            "record": {"manifest": {"display_name": "never"}}}
+    sha = definitions.put_blob(canonical_bytes(body))
+    definitions.replace_holder("registry:owner.test.demo", [sha, *definitions.holder_shas("registry:owner.test.demo")])
+    store.put_workflow(owner_contract(display_name="real"), if_match=generation(db), actor=ME)
+    rows = store.history("owner.test.demo", limit=50)
+    assert [r.record_revision for r in rows] == [2, 1]
+    assert store.restore("owner.test.demo", 2, if_match=generation(db), actor=ME)
+    assert store.snapshot().get("owner.test.demo").contract["display_name"] == "real"

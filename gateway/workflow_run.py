@@ -196,11 +196,11 @@ class BindingAvailability:
 # ---------------------------------------------------------------------------------------------------- helpers
 
 
-def _plain(value: Any) -> Any:
+def plain(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {str(k): _plain(v) for k, v in value.items()}
+        return {str(k): plain(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_plain(v) for v in value]
+        return [plain(v) for v in value]
     return value
 
 
@@ -411,7 +411,7 @@ class WorkflowRunCore:
 
     def _validate(self, entry: WorkflowEntry, req: RunRequest, profile) -> list[ContractError]:
         """Step 3: the inputs against the current contract and the media against the profile, every problem at once."""
-        contract = _plain(entry.contract)
+        contract = plain(entry.contract)
         generated = generated_defaults.generated_inputs(contract.get("inputs") or {})
         supplied = dict(req.inputs)
         errors: list[ContractError] = []
@@ -461,19 +461,19 @@ class WorkflowRunCore:
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
-            contract = _plain(entry.contract)
+            contract = plain(entry.contract)
             generated = self._generate(contract.get("inputs") or {}, req.inputs)
             identity = port.adapter_identity(entry, binding_key, binding)
             envelope = build_job_envelope(
                 source_kind="workflow", source_id=entry.id, contract=execution_contract(contract),
-                binding=_plain(binding.binding), template=port.template_bytes(binding),
+                binding=plain(binding.binding), template=port.template_bytes(binding),
                 protocol_id=identity.protocol_id, protocol_revision=identity.protocol_revision,
                 adapter_id=identity.adapter_id, interface_version=identity.interface_version,
                 service_id=identity.service_id, origin=identity.origin, generated=generated,
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
             port.save_payload(record.job_id, {
-                "body": {"inputs": _plain(req.inputs)}, "auth": port.caller_payload(caller),
+                "body": {"inputs": plain(req.inputs)}, "auth": port.caller_payload(caller),
                 "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()}}, caller)
             return envelope
 
@@ -580,7 +580,7 @@ class WorkflowRunCore:
         denied = port.dispatch_target_problem(entry, caller)
         if denied is not None:
             return denied, "authorization", "The workflow is not available to this account now."
-        pinned = BindingDef(adapter_id=envelope.adapter_id, binding=pin.binding, binding_digest=envelope.binding)
+        pinned = BindingDef(adapter_id=envelope.binding_key or "", binding=pin.binding, binding_digest=envelope.binding)
         problems = self._projections.binding_problems(pinned, port.available)         # 5. the PINNED binding
         if problems:
             return problems[0], "capacity", "The binding this job pinned cannot run here now."

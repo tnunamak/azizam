@@ -15,7 +15,9 @@ from gateway.admin_runtime import AdminSQLiteStore
 from gateway.definition_store import DefinitionStore
 from gateway.workflow_registry_store import WorkflowRegistryStore
 from tests.registry_test_helpers import write_service_registry_for_test
-from tests.test_workflow_registry_store import BUNDLED_ID, _template, _with_inline, build_snapshot, owner_contract
+from tests.test_workflow_registry_store import (
+    BUNDLED_ID, _template, _with_inline, build_snapshot, bundled_template, owner_contract,
+)
 
 OWNER = AdminContext(subject="owner-1", roles=frozenset({"owner"}), actor_kind="user", actor_label="Owner")
 FACTS_BODY = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "image",
@@ -273,14 +275,16 @@ def test_an_inline_template_over_each_bound_is_422_with_the_bound(api):  # row 9
     response = create(api, _with_inline(owner_contract(), _template(nodes=9, depth=9, padding=600)))
     assert response.status_code == 422
     bounds = [p for p in response.json()["problems"] if p["code"] == "workflow_bound_exceeded"]
-    assert len(bounds) == 3 and {tuple(p["path"][-2:]) for p in bounds} == {("template", "inline")}
+    assert len(bounds) == 3 and {tuple(p["path"][-2:]) for p in bounds} == {("workflow", "inline")}
     assert {m for p in bounds for m in ("bytes", "nodes", "levels") if m in p["message"]} == {"bytes", "nodes", "levels"}
 
 
-@pytest.mark.xfail(strict=True, reason="binding_descriptors reads a template as a path string; an inline template is "
-                                       "refused as template_invalid until the descriptor accepts {inline: ...} (gap for the integrator)")
-def test_an_inline_template_inside_the_bounds_is_accepted(api):
-    assert create(api, _with_inline(owner_contract(), _template(2, 1))).status_code == 201
+def test_an_inline_template_inside_the_bounds_is_accepted(api):  # W2: 5.7, the template travels in the saved document
+    response = create(api, _with_inline(owner_contract(), bundled_template()))
+    assert response.status_code == 201, response.json()
+    entry = api.get(f"/admin/api/workflows/{ID}").json()["workflow"]
+    key = next(iter(entry["contract"]["bindings"]))
+    assert entry["contract"]["bindings"][key]["workflow"] == {"inline": bundled_template()}
 
 
 def test_two_saves_differing_only_in_annotations_are_two_history_rows_and_restore_brings_the_first_back(api):  # rows 11, 21

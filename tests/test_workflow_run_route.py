@@ -159,11 +159,11 @@ def test_a_file_part_below_a_top_level_name_is_media_path_unsupported(served):
     assert served.engine_calls == 0
 
 
-def test_a_file_without_a_known_type_is_415_and_leaves_no_bytes(served, tmp_path):
+def test_a_file_of_no_known_type_is_refused_by_the_input_and_leaves_no_bytes(served, tmp_path):
     response = call("post", ROUTE, data={"inputs": json.dumps({"prompt": "hi"})},
-                    files={"photo": ("p.bin", PNG, "not a type")})
-    assert response.status_code == 415
-    assert not list((tmp_path / "spool").rglob("*.*")) and not [p for p in (tmp_path / "spool").rglob("*") if p.is_file()]
+                    files={"photo": ("p.bin", b"plain words", "image/png")})
+    assert response.status_code == 422          # the declared type is not believed: the bytes are not a picture
+    assert not [p for p in (tmp_path / "spool").rglob("*") if p.is_file()]
     assert served.engine_calls == 0
 
 

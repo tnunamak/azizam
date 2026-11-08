@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
+from gateway.workflow_call import sniff
 from gateway.workflow_runtime_types import MEDIA_PATH_UNSUPPORTED, MediaRef, RunRefused, RunRequest
 
 log = logging.getLogger(__name__)
@@ -34,11 +35,11 @@ _TYPE = re.compile(r"^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$")
 Measure = Callable[[bytes, "str | None"], "str | None"]
 
 
-def declared_type_measure(head: bytes, wire_media_type: str | None) -> str | None:
-    """The default measurement: the declared type when it is well formed. A caller that can read the bytes (a reviewed
-    sniffer) passes its own function; this default does not look at the bytes."""
-    declared = (wire_media_type or "").split(";")[0].strip().lower()
-    return declared if _TYPE.match(declared) else None
+def measured_type(head: bytes, wire_media_type: str | None) -> str | None:
+    """The default measurement: the type the bytes show (the sniffer every upload route uses), never the caller's word.
+    Bytes of no known type measure as the unidentified type, which only an input that names it accepts. The declared
+    type is not read here; the ``MediaRef`` keeps it as ``wire_media_type`` for the wire."""
+    return sniff(head, None)[0]
 
 
 def _safe_key(key: str) -> str:
@@ -93,7 +94,7 @@ class JobSpool:
 class FileRequestSpool:
     """One request's staging directory. Not shared between requests."""
 
-    def __init__(self, root: Path, *, max_bytes: int, measure: Measure = declared_type_measure,
+    def __init__(self, root: Path, *, max_bytes: int, measure: Measure = measured_type,
                  request_id: str | None = None) -> None:
         self._request = request_id or uuid.uuid4().hex
         self._dir = Path(root) / "staging" / self._request
