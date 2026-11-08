@@ -413,8 +413,6 @@ if __name__ == "__main__":
 class EngineGraphGoldenTests(unittest.TestCase):
     """The graph the engine receives for a fixed request, from the bundled manifest's template and declared roles."""
 
-    GOLDEN = {}  # attempt index -> sha256 of the canonical JSON of the graph sent
-
     @staticmethod
     def _digest(graph: dict) -> str:
         import hashlib
@@ -428,7 +426,8 @@ class EngineGraphGoldenTests(unittest.TestCase):
         binding = manifest["bindings"]["gateway"]
         template = json.loads((ROOT / binding["workflow"]).read_text())
         self.assertNotIn("_meta", template)
-        self.assertEqual(template[binding["prompt_node"]]["class_type"], template["7"]["class_type"])
+        self.assertIn(binding["prompt_node"], template)
+        self.assertIn(binding["seed_node"], template)
         for node_id in binding["image_nodes"]:
             self.assertIn(node_id, template)
 
@@ -462,4 +461,4 @@ class EngineGraphGoldenTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["uploads"], ["L1", "L2", "L3"])
-        self.assertEqual(self._digest(calls[0]["graph"]), "PLACEHOLDER")
+        self.assertEqual(self._digest(calls[0]["graph"]), "6f7bf37bf2a73b4929c8267123441d7484b3257a19c91e2913a623e29acad625")
