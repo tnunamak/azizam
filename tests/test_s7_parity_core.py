@@ -214,6 +214,111 @@ def test_restart_reschedules_a_queued_job(db, tmp_path):
     assert port.scheduled == [job_id] and job_error(db, job_id)[0] == "queued"
 
 
+# ------------------------------------------------------------------------------------- M7: JobService.delete
+
+
+def _service(port, db, **kw):
+    return WorkflowJobService(port=port, path=db, **kw)
+
+
+def _finished_job(db, tmp_path, key="d"):
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    view = submit(core, idempotency_key=key)
+    run(core.execute_run(view.job_id))
+    return core, port, view.job_id
+
+
+def test_delete_hides_a_finished_job_from_every_read_and_from_listing_after_a_restart(db, tmp_path):
+    """S7 6.7: tombstone persisted; get, events, open_result, wait and listing no longer show it."""
+    core, port, job_id = _finished_job(db, tmp_path)
+    service = _service(port, db)
+    ref = service.get(job_id, Caller()).results[0]
+    assert service.open_result(job_id, ref, Caller()) is not None
+    service.delete(job_id, Caller())
+    for fresh in (service, _service(port, db)):        # the second is a restart: a new service over the same store
+        assert fresh.get(job_id, Caller()) is None
+        with pytest.raises(workflow_run.JobNotFound):
+            fresh.events(job_id, Caller(), limit=10)
+        with pytest.raises(workflow_run.JobNotFound):
+            fresh.open_result(job_id, ref, Caller())
+        with pytest.raises(workflow_run.JobNotFound):
+            run(fresh.wait(job_id, Caller(), 0))
+        with pytest.raises(workflow_run.JobNotFound):
+            fresh.delete(job_id, Caller())
+    assert job_id not in [j["job_id"] for j in media_jobs.recent(50, path=db)]
+
+
+def test_delete_cancels_a_queued_job_first(db, tmp_path):
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    job_id = submit(core).job_id
+    service = _service(port, db)
+    service.delete(job_id, Caller())
+    assert media_jobs.get(job_id, path=db)["status"] == "canceled" and service.get(job_id, Caller()) is None
+
+
+def test_a_cancel_that_is_not_confirmed_keeps_the_job_and_raises_a_conflict(db, tmp_path):
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    job_id = submit(core).job_id
+    media_jobs.update_status(job_id, "running", path=db)
+    service = _service(port, db)
+    with pytest.raises(workflow_run.JobDeleteConflict):
+        service.delete(job_id, Caller())
+    assert service.get(job_id, Caller()).status == "running" and not media_jobs.tombstoned(job_id, path=db)
+
+
+def test_delete_by_a_caller_who_cannot_read_the_job_is_not_found_and_changes_nothing(db, tmp_path):
+    core, port, job_id = _finished_job(db, tmp_path)
+    with pytest.raises(workflow_run.JobNotFound):
+        _service(port, db).delete(job_id, Caller(scope="someone-else"))
+    assert not media_jobs.tombstoned(job_id, path=db)
+
+
+def test_a_deleted_job_is_reaped_after_the_retention_window_with_its_events_and_claim(db, tmp_path):
+    core, port, job_id = _finished_job(db, tmp_path)
+    now = [1_000_000.0]
+    service = _service(port, db, tombstone_retention_s=100, clock=lambda: now[0])
+    service.delete(job_id, Caller())
+    assert media_jobs.get(job_id, path=db) is not None                # hidden, not yet removed
+    now[0] += 99
+    media_jobs.reap_tombstones(before=int(now[0] - 100), path=db)
+    assert media_jobs.get(job_id, path=db) is not None
+    now[0] += 2
+    assert media_jobs.reap_tombstones(before=int(now[0] - 100), path=db) == 1
+    assert media_jobs.get(job_id, path=db) is None and not media_jobs.tombstoned(job_id, path=db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_job_events WHERE job_id=?", (job_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM workflow_run_claim WHERE job_id=?", (job_id,)).fetchone()[0] == 0
+
+
+def test_a_store_made_before_tombstones_gains_the_table_on_open(tmp_path):
+    old = tmp_path / "old.db"
+    media_jobs.init_db(old)
+    with sqlite3.connect(old) as conn:
+        conn.execute("DROP TABLE workflow_job_tombstone")
+    media_jobs.init_db(old)
+    media_jobs.tombstone_job("mj_x", path=old)
+    assert media_jobs.tombstoned("mj_x", path=old)
+
+
+def test_the_fake_job_service_deletes_like_the_real_one():
+    from tests.workflow_runtime_fakes import FakeJobService, FakeRunCore
+    from gateway.workflow_runtime_types import JobDeleteConflict, JobNotFound
+
+    core = FakeRunCore()
+    jobs = FakeJobService(core)
+    done = RunJobView(job_id="a", status="succeeded", disposition="new", workflow_id="w", record_revision=1, binding_key="b", created_at_s=0, updated_at_s=0)
+    live = RunJobView(job_id="b", status="running", disposition="new", workflow_id="w", record_revision=1, binding_key="b", created_at_s=0, updated_at_s=0)
+    core.jobs.update({"a": done, "b": live})
+    jobs.cancel_fails.add("b")
+    with pytest.raises(JobDeleteConflict):
+        jobs.delete("b", None)
+    assert jobs.get("b", None) is not None
+    jobs.delete("a", None)
+    assert jobs.get("a", None) is None
+    with pytest.raises(JobNotFound):
+        jobs.events("a", None, limit=1)
+
+
 # --------------------------------------------------------------------------------- M3: Library asset origin and names
 
 

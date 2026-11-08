@@ -38,7 +38,7 @@ from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
     ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
-    CallerContext, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
+    CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
     ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
 )
 
@@ -52,6 +52,7 @@ CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to d
 CLAIM_POLL_S = 0.05
 RETRY_AFTER_S = 2
 WAIT_POLL_S = 0.1
+TOMBSTONE_RETENTION_S = 24 * 3600     # a deleted job is hidden at once and removed after this long
 
 # I7: the code's value of each key is its ceiling; the runtime config (section ``workflow_execution``) may only lower it.
 CONFIG_SECTION = "workflow_execution"
@@ -833,13 +834,17 @@ def refusal_body(refused: RunRefused) -> dict[str, Any]:
 class WorkflowJobService:
     """``JobService`` over the job store. Who may read or cancel is the port's decision (the existing media-job rules)."""
 
-    def __init__(self, *, port: RunPort, path: Path | None = None) -> None:
+    def __init__(self, *, port: RunPort, path: Path | None = None,
+                 tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time) -> None:
         self._port = port
         self._path = path or media_jobs.DB_PATH
+        self._retention_s = tombstone_retention_s
+        self._clock = clock
 
     def _readable(self, job_id: str, caller: CallerContext) -> dict[str, Any]:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
-        if job is None or job.get("intent") != RUN_INTENT or not self._port.can_read(job, caller):
+        if (job is None or job.get("intent") != RUN_INTENT or not self._port.can_read(job, caller)
+                or media_jobs.tombstoned(job_id, path=self._path)):
             raise JobNotFound(job_id)
         return job
 
@@ -871,6 +876,20 @@ class WorkflowJobService:
                 self._port.drop_payload(job_id)
             job = current
         return job_view(job, self._path, disposition="replay")
+
+    def delete(self, job_id: str, caller: CallerContext) -> None:
+        job = self._readable(job_id, caller)
+        if not self._port.can_cancel(job, caller):
+            raise JobNotFound(job_id)
+        if not media_jobs.is_terminal(str(job["status"])):
+            with contextlib.suppress(ValueError):       # finished between the read and the cancel: the re-read decides
+                media_jobs.request_cancel(job_id, path=self._path)
+            job = media_jobs.get(job_id, audience="internal", path=self._path) or job
+            if not media_jobs.is_terminal(str(job["status"])):
+                raise JobDeleteConflict(job_id)
+        media_jobs.tombstone_job(job_id, now=int(self._clock()), path=self._path)
+        self._port.drop_payload(job_id)
+        media_jobs.reap_tombstones(before=int(self._clock() - self._retention_s), path=self._path)
 
     def events(self, job_id: str, caller: CallerContext, *, limit: int, after_id: int | None = None,
                after_sequence: int | None = None) -> tuple[JobEvent, ...]:
