@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 import status_endpoint  # noqa: E402
-from gateway import availability  # noqa: E402
+from gateway import availability, decision_provider_execution  # noqa: E402
 from gateway.litellm_substrate import litellm_public_model_service_ids  # noqa: E402
 from tests.test_model_metadata_endpoints import _start_model_list_patches  # noqa: E402
 
@@ -514,6 +514,85 @@ class ModelAvailabilityTests(unittest.TestCase):
         state = self._judge(self._plain("prov/jev-latest"), by_name={"prov/jev-latest": ["prov"]}, records=records,
                             evidence={"prov": {"status": "up"}})
         self.assertEqual(state["state"], "unavailable")
+
+    def test_a_name_the_internal_route_answers_follows_its_resolved_target(self) -> None:
+        # A turned-off service lists a model named like the gateway's own `current` route. The route resolves its target
+        # at request time, so the turned-off record must not mark the name.
+        name = "current"
+        registry = {"services": {
+            **REGISTRY["services"],
+            "svc-off": {"enabled": False, "config": {"protocol": "openai", "model": name}},
+        }}
+        data = [{"id": name, "object": "model", "owned_by": "gateway"}]
+        for target, expected in (("svc-up", "available"), ("svc-down", "unavailable")):
+            with self.subTest(target=target), patch.dict(proxy.config, {"backends": {}}), \
+                    patch.object(proxy, "_model_service_ids_index", REAL_INDEX), \
+                    patch.object(proxy, "_llm_backend_candidates", lambda target=target: [target]), \
+                    patch.object(proxy, "_litellm_models_payload", AsyncMock(return_value={"object": "list", "data": data})), \
+                    patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+                self.assertEqual(self._entries()[name]["azizam_availability"]["state"], expected)
+                self.assertEqual(name in self._entries("?available=true"), expected == "available")
+        # No backend to resolve to: a request is refused, so the name reads unavailable (never the turned-off record).
+        with patch.dict(proxy.config, {"backends": {}}), patch.object(proxy, "_model_service_ids_index", REAL_INDEX), \
+                patch.object(proxy, "_llm_backend_candidates", lambda: []), \
+                patch.object(proxy, "_litellm_models_payload", AsyncMock(return_value={"object": "list", "data": data})), \
+                patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+            state = self._entries()[name]["azizam_availability"]
+            self.assertEqual(state["state"], "unavailable")
+            self.assertNotEqual(state["reason"], "The service is disabled.")
+
+    def test_a_turned_off_listing_does_not_mark_a_name_an_enabled_service_serves(self) -> None:
+        registry = {"services": {
+            "svc-up": {"enabled": True, "config": {"protocol": "openai", "model": "both"}},
+            "svc-off": {"enabled": False, "config": {"protocol": "openai", "model": "both"}},
+            "svc-off-only": {"enabled": False, "config": {"protocol": "openai", "model": "alone"}},
+        }}
+        with patch.dict(proxy.config, {"backends": {}}):
+            index = REAL_INDEX(registry)
+        self.assertEqual(index["both"], ["svc-up"])
+        self.assertEqual(index["alone"], ["svc-off-only"])
+
+    def test_the_operations_of_a_name_are_resolved_each_on_its_own(self) -> None:
+        def engines(speech_state: str, transcription_state: str) -> dict:
+            return {"speech": {"shared": {"engine": "shared", "service": speech_state, "model": "m", "deployed": True}},
+                    "transcriptions": {"shared": {"engine": "shared", "service": transcription_state, "model": "m",
+                                                  "deployed": True}}}
+        evidence = {"svc-up": {"status": "up"}, "svc-down": {"status": "down"}}
+        for architecture in ({}, {"input_modalities": []}, {"input_modalities": ["video"]}):
+            entry = self._plain("shared", "audio", architecture=architecture)
+            for speech, transcription, expected in (("svc-down", "svc-up", "available"),
+                                                    ("svc-up", "svc-down", "available"),
+                                                    ("svc-down", "svc-down", "unavailable"),
+                                                    ("svc-up", "svc-up", "available")):
+                with self.subTest(architecture=architecture, speech=speech, transcription=transcription):
+                    self.assertEqual(self._judge(entry, engines_by_op=engines(speech, transcription),
+                                                 evidence=evidence)["state"], expected)
+
+    def test_a_served_model_name_in_one_operation_beats_nothing_in_the_other(self) -> None:
+        evidence = {"svc-up": {"status": "up"}, "svc-down": {"status": "down"}}
+        # Speech engine `voice` serves model `shared` and is up; the transcription engine id `shared` is down. Each
+        # operation resolves on its own, and one that can serve the name is enough.
+        engines = {"speech": {"voice": {"engine": "voice", "service": "svc-up", "model": "shared", "deployed": True}},
+                   "transcriptions": {"shared": {"engine": "shared", "service": "svc-down", "model": "w", "deployed": True}}}
+        entry = self._plain("shared", "audio", architecture={})
+        self.assertEqual(self._judge(entry, engines_by_op=engines, evidence=evidence), {"state": "available"})
+        # Not merged across engines inside one operation: the exact engine id still wins there.
+        within = {"speech": {"shared": {"engine": "shared", "service": "svc-down", "model": "w", "deployed": True},
+                             "voice": {"engine": "voice", "service": "svc-up", "model": "shared", "deployed": True}}}
+        self.assertEqual(self._judge(entry, engines_by_op=within, evidence=evidence)["state"], "unavailable")
+        # A name that matches in no eligible operation stays unmarked.
+        self.assertIsNone(self._judge(self._plain("other", "audio", architecture={}), engines_by_op=engines,
+                                      evidence=evidence))
+
+    def test_a_turned_off_decision_provider_is_still_excluded_without_the_flag(self) -> None:
+        registry = {"services": {"prov": {"id": "prov", "kind": "provider", "enabled": False,
+                                          "capabilities": ["typesafe-systemone"],
+                                          "config": {"provider_id": "prov", "base_url": "https://prov.test",
+                                                     "api_key_env": "PROV_TEST_KEY", "cost_class": "paid-remote",
+                                                     "default_models": ["prov/jev-latest"]}}}}
+        self.assertEqual(decision_provider_execution.systemone_providers(registry), [])
+        self.assertEqual([p.id for p in decision_provider_execution.systemone_providers(registry, include_disabled=True)],
+                         ["prov"])
 
     def test_stamped_engine_entries_are_marked_through_the_model_list(self) -> None:
         # The entries as the list builder gives them (type from the metadata pass): decision models and speech names.

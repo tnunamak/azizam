@@ -644,8 +644,8 @@
 # S3.7 review fixes: +10 cases (2 enum order, 2 two-input extension, 4 declared non-asset field, 1 video create caller, 1 chain caller); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21696.
 # S3.7 merged with main after train 25; 21661 (main) + 62 (S3.7); 21723, then +1 (a null picture-field declaration is refused): 21724.
 # Train 27: 21908 (main) + watcher refresh setting and fail-safe; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21931.
-# Train 28: 21931 (main) + S3.9 mesh validator deletion and its review fixes + engine alias availability + engine operations from metadata; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22094.
-pytest = 22094
+# Train 28: 21931 (main) + S3.9 mesh validator deletion and its review fixes + engine alias availability + engine operations from metadata; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22094; this slice adds 6 cases (5 availability, 1 boot): 22100.
+pytest = 22100
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

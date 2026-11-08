@@ -69,8 +69,10 @@ as `unknown`. Each list request keeps the snapshot refreshing, so after a quiet 
   only if every way is. A model on gateway lifecycle routing maps to the backend that routing sends it to, not to
   the service that declares it.
   A service that is turned off, or that is a remote provider, still counts for this mapping (a turned-off service
-  reads as `unavailable`). An alias target that maps to no service counts as `unknown`; an entry where nothing
-  maps has no field.
+  reads as `unavailable`). A turned-off service marks a name only when no enabled service serves that name.
+  The names the gateway's own `current` route answers (`current`, `current-fast`) resolve to a backend at request
+  time, so they are judged by the LLM backends that route tries, never by a record that lists the same model id.
+  An alias target that maps to no service counts as `unknown`; an entry where nothing maps has no field.
 - An engine-operation alias (speech, transcriptions, rerank, decisions) resolves to an ordered list of engines,
   each served by one registry service. It maps to the services of its deployed candidates. A candidate that is not
   deployed cannot answer a request. If the alias has known candidates and none is deployed, it reads `unavailable`,
@@ -79,7 +81,8 @@ as `unknown`. Each list request keeps the snapshot refreshing, so after a quiet 
   deployed candidates. A decision, speech, transcription or reranking model entry (by its `type`) maps the same
   way: an engine id, or the model an engine serves, or a name that points at an engine, maps to that engine's
   service. The match stays inside one operation. An engine id wins; the served-model names are searched only when no
-  engine id matched. An entry of any other type (language, image and so on) is never mapped through an engine's
+  engine id matched. An entry that can belong to several operations (audio with no input modality: speech and
+  transcriptions) resolves the name in each operation on its own, then reads `available` if any operation does. An entry of any other type (language, image and so on) is never mapped through an engine's
   names. A decision provider's catalog names map to the provider's service, also when the provider is turned off
   (it then reads `unavailable`).
 - Several services: `available` if any is available (ready, busy, degraded, or startable on demand),
