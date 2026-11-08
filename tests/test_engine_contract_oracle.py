@@ -25,6 +25,7 @@ from gateway.discovery import WorkflowRegistry
 from gateway.manifests import Provenance
 from tests.support.workflow_docs import STANDARD_FACTS, facts
 from tests.test_gateway_api import _sample_capabilities
+from tests.support.registry_provider import provider_of
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "engine_contract_live_shapes.json"
@@ -143,7 +144,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     model_surface = [row for row in model_surface if row[0] not in added]
 
     app = FastAPI()
-    app.include_router(create_gateway_router(_build_registry(), capabilities_provider=lambda _r: _sample_capabilities()))
+    app.include_router(create_gateway_router(provider_of(_build_registry()), capabilities_provider=lambda _r: _sample_capabilities()))
     caps = TestClient(app).get("/gateway/v1/capabilities").json()
 
     catalog = load_engine_catalog()

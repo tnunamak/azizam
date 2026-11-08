@@ -17,6 +17,7 @@ from gateway.admin_api import _RouteError, _validate_media_job_admission_overrid
 from test_decision_routing import BODY, runtime
 from test_dispatch_admission import dispatch_env  # noqa: F401
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - the fixture dispatch_env needs
+from tests.support.registry_provider import provider_of
 
 
 @pytest.mark.parametrize('cancel_before_start', [False, True])
@@ -29,7 +30,7 @@ def test_make_database_cancel_always_settles(tmp_path, cancel_before_start):
     from gateway.api import create_gateway_router
     from gateway.discovery import WorkflowRegistry
     app = FastAPI()
-    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=path))
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry()), media_job_store_path=path))
     client = TestClient(app)
 
     class Runtime:

@@ -18,6 +18,7 @@ from gateway import media_jobs, result_bundle
 from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.result_bundle import Reader, ResultLimits
+from tests.support.registry_provider import provider_of
 
 CANARY = "canary-value-7c1f"
 LIMITS = ResultLimits()
@@ -70,7 +71,7 @@ def client(db: Path) -> TestClient:
 
     app = FastAPI()
     app.include_router(create_gateway_router(
-        WorkflowRegistry(), media_job_store_path=db, record_authorizer=authorizer, result_reader_resolver=reader,
+        provider_of(WorkflowRegistry()), media_job_store_path=db, record_authorizer=authorizer, result_reader_resolver=reader,
         audience_resolver=lambda _request: "client"))
     return TestClient(app)
 
@@ -162,7 +163,7 @@ def test_another_apps_reader_with_the_makers_person_is_refused(db: Path):
     publish(db, job_id)
     app = FastAPI()
     app.include_router(create_gateway_router(
-        WorkflowRegistry(), media_job_store_path=db, result_reader_resolver=lambda _r: Reader("app:app-2", "person-1"),
+        provider_of(WorkflowRegistry()), media_job_store_path=db, result_reader_resolver=lambda _r: Reader("app:app-2", "person-1"),
         audience_resolver=lambda _request: "client"))
     assert TestClient(app).get(f"/gateway/v1/media/jobs/{job_id}/results/answer").status_code == 404
 
@@ -172,7 +173,7 @@ def test_the_record_authorizer_decides_before_the_store_is_read(db: Path):
     publish(db, job_id)
     app = FastAPI()
     app.include_router(create_gateway_router(
-        WorkflowRegistry(), media_job_store_path=db, record_authorizer=lambda *_a: False,
+        provider_of(WorkflowRegistry()), media_job_store_path=db, record_authorizer=lambda *_a: False,
         result_reader_resolver=lambda _r: Reader("app:app-1", "person-1"), audience_resolver=lambda _request: "client"))
     assert TestClient(app).get(f"/gateway/v1/media/jobs/{job_id}/results/answer").status_code == 404
 
@@ -212,7 +213,7 @@ def test_without_a_result_reader_the_route_answers_404(db: Path):
     job_id = make_job(db)
     publish(db, job_id)
     app = FastAPI()
-    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db,
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry()), media_job_store_path=db,
                                              audience_resolver=lambda _request: "client"))
     assert TestClient(app).get(f"/gateway/v1/media/jobs/{job_id}/results/answer").status_code == 404
 

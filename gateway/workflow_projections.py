@@ -11,10 +11,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from gateway.discovery import WorkflowRecord
+from gateway.discovery import WorkflowRecord, summarize_catalog, summarize_workflow
 from gateway.manifests import ManifestIdentity, accepts_of
 from gateway.output_selectors import effective_count
 from gateway.result_bundle import ResultLimits
+from gateway.workflow_policy import PolicyFacts
 from gateway.workflow_kernel import _thaw, generated_names
 from gateway.workflow_openapi import workflow_inputs_schema
 from gateway.workflow_runtime_types import (
@@ -30,7 +31,10 @@ def record_of(entry: WorkflowEntry) -> WorkflowRecord:
     """A plain ``WorkflowRecord`` view of an entry, for the builders that still read records (the OpenAPI schemas)."""
     identity = ManifestIdentity(entry.id, str(entry.contract.get("version") or "") or None, entry.contract_digest,
                                 entry.provenance.trusted, entry.provenance.source)
-    return WorkflowRecord(manifest=_thaw(entry.contract), identity=identity, source_path=Path(entry.provenance.source or ""))
+    facts = None if entry.facts is None else PolicyFacts(
+        entry.facts.exposure, entry.facts.trust_tier, entry.facts.resource_tier, entry.facts.resource_class, tuple(entry.facts.tags))
+    return WorkflowRecord(manifest=_thaw(entry.contract), identity=identity, source_path=Path(entry.provenance.source or ""),
+                          facts=facts)
 
 
 def _binding(entry: WorkflowEntry, binding_key: str) -> BindingDef:
@@ -57,6 +61,32 @@ def _shape_of(spec: Mapping[str, Any], limits: ResultLimits) -> OutputShape:
         return OutputShape("json", media_type, 1, 1)
     low, high = effective_count(spec, limits.max_assets)
     return OutputShape("assets", media_type, low, limits.max_assets if high is None else high)
+
+
+class SnapshotRegistry:
+    """The registry-shaped reader of one snapshot, for the catalog and extension builders that read records. It holds
+    the snapshot it was made from, so every read of a request sees one revision. ``published_only`` hides unpublished
+    workflows (5.9: an unpublished workflow is the owner's alone)."""
+
+    def __init__(self, snapshot: RegistrySnapshot, *, published_only: bool = False) -> None:
+        self._records = {wid: record_of(entry) for wid, entry in sorted(snapshot.workflows.items())
+                         if entry.published or not published_only}
+
+    def records(self) -> list[WorkflowRecord]:
+        return list(self._records.values())
+
+    def get(self, workflow_id: str) -> WorkflowRecord | None:
+        return self._records.get(workflow_id)
+
+    def by_intent(self, intent: str) -> list[WorkflowRecord]:
+        return [r for r in self._records.values() if r.intent == intent]
+
+    def summarize_workflow(self, workflow_id: str, audience: str = "client") -> dict[str, Any] | None:
+        record = self.get(workflow_id)
+        return None if record is None else summarize_workflow(record, audience)
+
+    def summarize_catalog(self, audience: str = "client") -> dict[str, Any]:
+        return summarize_catalog(self.records(), audience)
 
 
 class _Projections:

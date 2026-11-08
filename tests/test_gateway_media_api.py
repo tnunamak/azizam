@@ -22,6 +22,7 @@ from gateway.api import create_gateway_router  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.manifests import Provenance  # noqa: E402
 from tests.support.workflow_docs import STANDARD_FACTS  # noqa: E402
+from tests.support.registry_provider import provider_of
 
 
 SIMPLE_MANIFEST_YAML = textwrap.dedent(
@@ -73,7 +74,7 @@ def _make_client(
     app = FastAPI()
     app.include_router(
         create_gateway_router(
-            registry,
+            provider_of(registry),
             audience_resolver=resolver,
             media_job_store_path=media_job_store_path,
             **overrides,

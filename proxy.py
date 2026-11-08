@@ -17,6 +17,7 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
+from gateway import registry_snapshot
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
@@ -1573,6 +1574,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     updates = _derive_backend_constants(new_cfg, registry=registry)
     # The workflow registry is built whole here too, so a failure leaves the old one serving; ``adopt`` below swaps it in.
     workflow_registry = _load_gateway_workflow_registry(strict=True)
+    # The registry snapshot is built whole here too (strict), so a revision that does not build leaves the old one serving.
+    next_registry_snapshot = _build_registry_snapshot(new_cfg.get("model_aliases"), strict=True)
     # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
     egress = _project_egress(new_cfg.get("backends"))
     # The snapshot is built here too, before anything is published, so a failure leaves the old one serving.
@@ -1614,6 +1617,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
         _g[name] = updates[name]
     # Swapped in place, not assigned: a router and a bound method hold the registry from import (8.4).
     GATEWAY_WORKFLOW_REGISTRY.adopt(workflow_registry)
+    GATEWAY_REGISTRY_PROVIDER.swap(next_registry_snapshot)
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
 
     print(
@@ -14452,6 +14456,28 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
 GATEWAY_WORKFLOW_REGISTRY = _load_gateway_workflow_registry()
 
 
+def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict: bool = False) -> registry_snapshot.Snapshot:
+    """The registry snapshot of the stored document. A boot keeps the bundled release when the stored one does not build;
+    a reload (``strict``) raises instead, so the snapshot that is serving stays."""
+    try:
+        return registry_snapshot.load_current(ADMIN_DB_PATH, model_aliases=model_aliases)
+    except Exception as e:  # noqa: BLE001
+        if strict:
+            raise
+        print(f"[proxy] Registry snapshot unavailable; the bundled release is kept: {e}", flush=True)
+        return registry_snapshot.build({}, registry_snapshot.bundled_release(), generation=0, model_aliases=model_aliases)
+
+
+GATEWAY_REGISTRY_PROVIDER = registry_snapshot.Provider(_build_registry_snapshot(config.get("model_aliases")))
+
+
+@app.middleware("http")
+async def _registry_snapshot_scope(request: Request, call_next):
+    """One registry revision for the life of a request: the first read is taken here, before any handler runs."""
+    registry_snapshot.snapshot_of(request, GATEWAY_REGISTRY_PROVIDER)
+    return await call_next(request)
+
+
 def _auth_context_from_scope(request: Request) -> AuthContext:
     auth_context = request.scope.get("auth_context")
     if isinstance(auth_context, AuthContext):
@@ -15729,7 +15755,7 @@ def _stable_alias_model_entries() -> list[dict[str, Any]]:
 
 app.include_router(
     create_gateway_router(
-        GATEWAY_WORKFLOW_REGISTRY,
+        GATEWAY_REGISTRY_PROVIDER,
         aliases_provider=_gateway_aliases_provider,
         entry_visible=_gateway_discovery_visible,
         alias_resolver=_gateway_alias_resolver,

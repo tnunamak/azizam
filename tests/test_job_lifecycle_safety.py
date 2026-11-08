@@ -11,6 +11,7 @@ from gateway import media_jobs, receipt_store
 from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt
+from tests.support.registry_provider import provider_of
 
 
 @pytest.fixture
@@ -53,7 +54,7 @@ def test_request_id_collision_rejected(db, change):
 def test_api_notes_cannot_forge_lifecycle(db):
     a = job(db)
     app = FastAPI()
-    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db))
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry()), media_job_store_path=db))
     with TestClient(app) as client:
         url = f'/gateway/v1/media/jobs/{a.job_id}/events'
         for event in [{'event_type': 'started'}, {'event_type': 'succeeded'},
@@ -173,7 +174,7 @@ def test_api_conflict_is_409_and_injected_appender_cannot_bypass(db):
     a = job(db, request_id='retry')
     calls = []
     app = FastAPI()
-    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db,
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry()), media_job_store_path=db,
         media_job_event_appender=lambda *args, **kwargs: calls.append(args)))
     with TestClient(app) as client:
         response = client.post('/gateway/v1/media/jobs', json={'intent': 'video.generate', 'request_id': 'retry'})

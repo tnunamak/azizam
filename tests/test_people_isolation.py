@@ -26,6 +26,7 @@ from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from gateway.user_runtime import mint_user_app_key
+from tests.support.registry_provider import provider_of
 
 
 @pytest.fixture
@@ -322,7 +323,7 @@ def test_configured_authorizer_failure_does_not_fall_through_to_all_records(peop
 
     app = FastAPI()
     app.include_router(create_gateway_router(
-        WorkflowRegistry(), record_authorizer=fail,
+        provider_of(WorkflowRegistry()), record_authorizer=fail,
         receipt_store_path=people.paths["receipts"], media_job_store_path=people.paths["jobs"],
     ))
     client = TestClient(app)
@@ -337,7 +338,7 @@ def test_configured_authorizer_failure_does_not_fall_through_to_all_records(peop
 def test_audience_visibility_and_record_authorization_are_independent(people, authorized):
     app = FastAPI()
     app.include_router(create_gateway_router(
-        WorkflowRegistry(), audience_resolver=lambda _request: "internal",
+        provider_of(WorkflowRegistry()), audience_resolver=lambda _request: "internal",
         record_authorizer=lambda _request, _kind, _record: authorized,
         receipt_store_path=people.paths["receipts"], media_job_store_path=people.paths["jobs"],
     ))
