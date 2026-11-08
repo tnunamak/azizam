@@ -20,6 +20,9 @@ from gateway.engine_protocol.node_validation import validate_workflow_graph
 # Hidden engine inputs that make a save node embed `prompt` and `workflow`.
 _EMBEDS_WORKFLOW = "EXTRA_PNGINFO"
 _SKIP_PARTS = {".backup", "_drafts"}
+#: Directories of segment-chain templates (gateway/segment_chain.py). A template holds named segment variants, not
+#: one API graph; the chain composer builds the graph from it per request.
+_TEMPLATE_DIRS = {"chains"}
 
 
 def catalog_workflow_paths(root: Path, binding: str) -> list[Path]:
@@ -27,7 +30,7 @@ def catalog_workflow_paths(root: Path, binding: str) -> list[Path]:
 
     Union of the paths manifests bind (``bindings.<binding>.workflow``, for
     example ``bindings.comfyui.workflow``) and every ``workflows/**/*.json``
-    (dir-loaded names, identity, drafts excluded).
+    (dir-loaded names, identity, drafts and segment-chain templates excluded).
     """
     paths: set[Path] = set()
     for manifest in sorted((root / "manifests" / "workflows").glob("*.yml")):
@@ -39,7 +42,8 @@ def catalog_workflow_paths(root: Path, binding: str) -> list[Path]:
                 paths.add(path)
     for path in (root / "workflows").rglob("*.json"):
         rel = path.relative_to(root).parts
-        if path.name.endswith(".ui.json") or any(p.startswith(s) for p in rel for s in _SKIP_PARTS):
+        if path.name.endswith(".ui.json") or any(p.startswith(s) for p in rel for s in _SKIP_PARTS) \
+                or _TEMPLATE_DIRS & set(rel[:-1]):
             continue
         paths.add(path)
     return sorted(paths)
