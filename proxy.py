@@ -26595,9 +26595,18 @@ def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], A
     for doc in protocol_description.load_registry().values():
         if not binding_key or doc.binding != binding_key:
             continue
+        # A record is the engine for this binding when it names the protocol itself, or when its service id is the
+        # binding key. A record that merely could serve a capability is not: that would pick any service with an address.
+        candidates = []
         for service_id, record in (config.get("backends") or {}).items():
             if not isinstance(record, Mapping) or _backend_address(record) is None:
                 continue
+            connection = record.get("connection")
+            named = next((str(source["protocol"]).strip() for source in (connection if isinstance(connection, Mapping) else {}, record)
+                          if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
+            if named == doc.id or service_id == binding_key:
+                candidates.append((named != doc.id, service_id, record))
+        for _, service_id, record in sorted(candidates, key=lambda item: item[0]):
             for capability in (*doc.serves, ""):
                 try:
                     if reviewed.protocol_for_backend(record, capability).id != doc.id:
