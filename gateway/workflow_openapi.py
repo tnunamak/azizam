@@ -536,14 +536,6 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
 
 # --------------------------------------------------------------------- aliases
 
-_ALIAS_OPERATION_INTENTS = {
-    "images": ("image.generate",),
-    "image_edits": ("image.edit",),
-    "videos": ("video.generate", "video.edit"),
-    "audio_generate": ("audio.generate",),
-}
-
-
 def match_alias_target(
     resolves_to: str, intent: str, shorts: Iterable[str]
 ) -> str | None:
@@ -565,20 +557,18 @@ def match_alias_target(
 def aliases_by_workflow(
     records: Iterable[WorkflowRecord], aliases: Mapping[str, Any] | None
 ) -> dict[str, list[str]]:
-    """``{workflow id: [stable alias, ...]}`` from ``/gateway/v1/aliases`` data."""
+    """``{workflow id: [stable alias, ...]}`` from ``/gateway/v1/aliases`` data. An alias names the workflow whose short
+    id its target resolves to; which operation lists the alias does not decide it."""
     records = list(records)
     out: dict[str, list[str]] = {}
-    for operation, intents in _ALIAS_OPERATION_INTENTS.items():
-        section = (aliases or {}).get(operation) or {}
-        for entry in section.get("stable") or []:
+    for section in (aliases or {}).values():
+        for entry in (section or {}).get("stable") or []:
             target, alias = entry.get("resolves_to"), entry.get("alias")
             if not target or not alias:
                 continue
-            for intent in intents:
-                by_short = {short_id(r): r for r in records if r.intent == intent}
-                hit = match_alias_target(str(target), intent, by_short)
-                if hit:
-                    names = out.setdefault(by_short[hit].id, [])
+            for record in records:
+                if match_alias_target(str(target), record.intent, {short_id(record)}):
+                    names = out.setdefault(record.id, [])
                     if alias not in names:
                         names.append(str(alias))
     return out

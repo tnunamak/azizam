@@ -153,7 +153,7 @@ class DerivationTableTests(unittest.TestCase):
         self.assertEqual(_arch(out["video"]), (["text", "image"], ["video"]))
 
     def test_alias_target_resolves_through_workflow_registry_when_unlisted(self) -> None:
-        manifest = {"intent": "video.edit", "inputs": {"source_video": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}}
+        manifest = {"intent": "video.edit", "inputs": {"prompt": {"type": "string"}, "source_video": {"type": "asset", "accepts": ["video/mp4"]}}, "outputs": {"video": {"media_type": "video/mp4"}}}
         sources = mm.MetadataSources(workflow_for_model={"remix-wf": manifest}.get)
         out = _annotated([{"id": "video-remix", "azizam_resolves_to": {"videos": "remix-wf"}}], sources)
         self.assertEqual(_arch(out["video-remix"]), (["text", "video"], ["video"]))
