@@ -25,7 +25,7 @@ import json
 import re
 import time
 from datetime import datetime
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
