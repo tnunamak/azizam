@@ -419,6 +419,7 @@ class GatewayRig:
         finally:
             await response.aclose()
         body = b"".join(received)
+        self.norm.problems.extend(ad.link_problems(response.headers.multi_items(), body))
         described: dict[str, Any] = {
             "status": response.status_code,
             "headers": ad.describe_response_headers(response.headers.multi_items(), self.norm),
@@ -488,6 +489,7 @@ class GatewayRig:
     def trace(self) -> dict[str, Any]:
         receipts = ad.dump_sqlite(self.receipts_db, self.norm, skip_tables=("receipt_history",))
         jobs = ad.dump_sqlite(self.media_jobs_db, self.norm)
+        self.norm.problems.extend(ad.event_problems(jobs.get("media_job_events", [])))
         return {
             "schema": ad.TRACE_SCHEMA,
             "scenario": self.name,
@@ -538,6 +540,10 @@ def play(name: str, tmp_path: Path, record_testsuite_property, setup, drive, *, 
             setup(rig)
             asyncio.run(drive(rig))
             traces.append(json.loads(ad.dumps(rig.trace())))
+            problems = [*rig.norm.problems, *ad.secret_problems(ad.dumps(traces[-1]))]
+            if problems:
+                pytest.fail(f"{name}: the trace breaks a profile-{ad.PROFILE_VERSION} check:\n  " + "\n  ".join(problems),
+                            pytrace=False)
     record_testsuite_property(f"{ad.JUNIT_PROPERTY}.{name}", json.dumps(traces[0], sort_keys=True))
     for later in traces[1:]:
         if later != traces[0]:

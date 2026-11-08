@@ -6,6 +6,7 @@ names, and a change to any other byte still changes the trace.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import re
@@ -225,7 +226,7 @@ def test_content_length_follows_the_normalised_text_only_when_normalisation_chan
     assert headers["content-length"] == f"<{len(desc['text'].encode())} after normalisation>"
     # a changed non-volatile byte count still shows
     longer = ad.describe_body(body_raw.replace(b'"a"', b'"abc"'), "application/json", norm())
-    other = {"content-length": "x"}
+    other = {"content-length": str(len(body_raw.replace(b'"a"', b'"abc"')))}
     ad.settle_content_length(other, body_raw.replace(b'"a"', b'"abc"'), longer)
     assert other["content-length"] != headers["content-length"]
     # nothing normalised: the real header stays
@@ -330,8 +331,12 @@ def test_junit_extraction_round_trip(tmp_path):
 
 # --------------------------------------------------------------------------- the committed goldens
 
+# Fixtures that are not one trace per scenario: the mesh cells are one document of several cells.
+NOT_A_TRACE = frozenset({"s7_mr_cells"})
+
+
 def golden_files() -> list[Path]:
-    return sorted(FIXTURES.glob("*.json"))
+    return sorted(path for path in FIXTURES.glob("*.json") if path.stem not in NOT_A_TRACE)
 
 
 def scenario_names() -> set[str]:
@@ -340,6 +345,10 @@ def scenario_names() -> set[str]:
         if source.name.endswith("normalizer.py"):
             continue
         names.update(re.findall(r'^\s*play\(\s*"([a-z0-9_]+)"', source.read_text(), re.MULTILINE))
+    # the S7 cells are named by the matrix file (route, outcome), not by a literal play() call
+    for row in csv.DictReader((FIXTURES / "s7_matrix.csv").open(encoding="utf-8")):
+        if row["status"] == "recorded" and row["file"].startswith("s7_"):
+            names.update(Path(name).stem for name in row["file"].split(";"))
     return names
 
 
@@ -368,3 +377,153 @@ def test_goldens_hold_no_volatile_values():
         document = json.loads(text)
         assert document["schema"] == ad.TRACE_SCHEMA and document["scenario"] == path.stem
     assert not found, found
+
+
+# --------------------------------------------------------------------------- profile 2 controls (S7 oracle)
+# Each control names a mutation and goes red on it (golden design section 5, step 2).
+
+TAIL = "ab" * 16
+
+
+def test_profile_two_is_declared():
+    assert ad.PROFILE_VERSION == 2
+
+
+def test_one_job_under_two_prefixes_is_one_token_and_a_problem():
+    n = norm()
+    assert n.text(f"mj_{TAIL} then imgjob_{TAIL}") == "<job:1> then <job:1>"
+    assert n.problems and "mj_" in n.problems[0] and "imgjob_" in n.problems[0]
+
+
+def test_job_prefixes_are_a_side_assertion_in_token_order():
+    n = norm()
+    n.text(f"imgjob_{TAIL} mj_{'cd' * 16} imgjob_{TAIL}")
+    assert n.job_prefixes() == ["imgjob", "mj"] and not n.problems
+
+
+def test_the_same_identity_gets_the_same_token_across_repeats():
+    first, second = norm(), norm()
+    text = f"imgjob_{TAIL} mj_{'cd' * 16}"
+    assert first.text(text) == second.text(text) == "<job:1> <job:2>"
+
+
+def _headers(location):
+    return [("content-type", "application/json"), ("location", location)]
+
+
+def test_location_and_body_naming_one_job_is_clean():
+    body = json.dumps({"id": f"mj_{TAIL}", "job_id": f"mj_{TAIL}", "poll_url": f"/gateway/v1/media/jobs/mj_{TAIL}"}).encode()
+    assert ad.link_problems(_headers(f"/gateway/v1/media/jobs/mj_{TAIL}"), body) == []
+
+
+def test_a_location_naming_another_well_formed_job_is_red():
+    body = json.dumps({"id": f"mj_{TAIL}"}).encode()
+    assert ad.link_problems(_headers(f"/gateway/v1/media/jobs/mj_{'cd' * 16}"), body)
+
+
+def test_a_body_whose_poll_url_names_another_job_is_red():
+    body = json.dumps({"id": f"mj_{TAIL}", "poll_url": f"/gateway/v1/media/jobs/mj_{'cd' * 16}"}).encode()
+    assert ad.link_problems([], body)
+
+
+def test_a_wrong_raw_content_length_is_red_and_cannot_be_settled_away():
+    raw = b'{"k": "a"}'
+    desc = ad.describe_body(raw, "application/json", norm())
+    with pytest.raises(AssertionError, match="content-length"):
+        ad.settle_content_length({"content-length": str(len(raw) + 1)}, raw, desc)
+    ad.settle_content_length({"content-length": str(len(raw))}, raw, desc)
+
+
+def test_repeated_headers_keep_their_cardinality_and_order():
+    out = ad.describe_response_headers([("Set-Cookie", "a=1"), ("set-cookie", "b=2"), ("x-one", "1")], norm())
+    assert out == {"set-cookie": ["a=1", "b=2"], "x-one": "1"}
+
+
+H1, H2 = "1" * 64, "2" * 64
+MIXED = {"jobs": [{"idempotency": "idempotency_key", "request_hash": H1, "input_hash": H2},
+                  {"idempotency": "request", "request_hash": H2, "input_hash": H1}]}
+
+
+def test_replay_hashes_are_judged_per_object_in_a_mixed_document():
+    n = norm()
+    text = json.dumps(MIXED)
+    out = json.loads(n.text(text))
+    assert out["jobs"][0]["request_hash"] == H1 and out["jobs"][1]["request_hash"] == "<random-hash>"
+    assert out["jobs"][0]["input_hash"] == out["jobs"][1]["input_hash"] == "<digest>"
+    # the parsed form agrees with the text form
+    parsed = norm().value(MIXED)
+    assert parsed["jobs"][0]["request_hash"] == H1 and parsed["jobs"][1]["request_hash"] == "<random-hash>"
+
+
+def test_a_changed_deterministic_hash_is_red_and_a_changed_random_one_is_not():
+    def render(det, rand):
+        doc = {"jobs": [{"idempotency": "idempotency_key", "request_hash": det},
+                        {"idempotency": "request", "request_hash": rand}]}
+        return norm().text(json.dumps(doc))
+
+    assert render(H1, H2) != render(H2, H2)
+    assert render(H1, H1) == render(H1, H2)
+
+
+def test_a_new_deterministic_input_hash_stays_exact_only_when_a_scenario_asks():
+    doc = {"idempotency": "idempotency_key", "request_hash": H1, "input_hash": H2}
+    assert norm().value(doc)["input_hash"] == "<digest>"
+    exact = norm()
+    exact.exact_input_hash = True
+    assert exact.value(doc)["input_hash"] == H2 and json.loads(exact.text(json.dumps(doc)))["input_hash"] == H2
+    random_doc = {"idempotency": "request", "input_hash": H2}
+    assert exact.value(random_doc)["input_hash"] == "<digest>"
+    other = {**doc, "input_hash": H1}
+    assert exact.value(doc) != exact.value(other)
+
+
+def _event(i, job="<job:1>", kind="started", sequence=None):
+    return {"id": i, "sequence": sequence or i, "job_id": job, "event_type": kind}
+
+
+def test_events_in_order_are_clean_and_swapped_events_are_red():
+    events = [_event(1, kind="queued"), _event(2), _event(3, kind="succeeded")]
+    assert ad.event_problems(events) == []
+    assert ad.event_problems([events[1], events[0], events[2]])
+
+
+def test_a_second_terminal_event_is_red():
+    events = [_event(1, kind="queued"), _event(2, kind="succeeded"), _event(3, kind="failed")]
+    assert any("terminal" in problem for problem in ad.event_problems(events))
+
+
+def test_events_are_never_sorted_by_the_normaliser():
+    swapped = [{"event_type": "b", "sequence": 2}, {"event_type": "a", "sequence": 1}]
+    assert norm().value(swapped) == swapped
+
+
+def test_clock_units_and_order_are_checked_on_raw_values():
+    assert ad.clock_problems({"created_at_s": 1792355600.5, "updated_at_s": 1792355601.0}) == []
+    assert ad.clock_problems({"created_at_s": 1792355600, "updated_at_s": 1792355599})  # order
+    assert ad.clock_problems({"created_at_s": 1792355600000})  # milliseconds under a seconds key
+    assert ad.clock_problems({"created_at_ms": 1792355600})  # seconds under a milliseconds key
+    assert ad.clock_problems({"created_at": 1792355600, "finished_at": None}) == []  # null is not a reading
+
+
+def test_a_clock_problem_found_while_masking_is_kept():
+    n = norm()
+    assert n.value({"created_at": 1792355600, "finished_at": 1792355000})["finished_at"] == "<time>"
+    assert n.problems
+
+
+def test_waits_and_retry_delays_are_not_masked():
+    out = norm().value({"wait_s": 5, "retry_after_s": 7, "timeout_ms": 1500, "progress": 40})
+    assert out == {"wait_s": 5, "retry_after_s": 7, "timeout_ms": 1500, "progress": 40}
+
+
+def test_base64_media_is_compared_as_the_decoded_bytes():
+    png = b"\x89PNG\r\n\x1a\n" + bytes(range(64))
+    text = json.dumps({"data": [{"b64_json": ad.b64(png)}]})
+    assert ad.decoded_media(text) == [ad.binary_summary(png)]
+    flipped = bytes([png[0] ^ 1]) + png[1:]
+    assert ad.decoded_media(json.dumps({"data": [{"b64_json": ad.b64(flipped)}]})) != ad.decoded_media(text)
+
+
+def test_a_credential_shaped_value_is_red():
+    assert ad.secret_problems("authorization: <present>") == []
+    assert ad.secret_problems("key opk_" + "a1" * 12)
