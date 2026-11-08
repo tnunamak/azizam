@@ -187,9 +187,16 @@ def test_a_bundled_workflow_unpublishes_and_publishes_again_through_the_owner_ap
     assert on.status_code == 200, on.json()
     after = detail()
     assert after["published"] is True
-    # The override keeps what the bundled entry runs: its contract, facts and incarnation (a queued job stays valid).
-    assert (after["contract"], after["facts"], after["incarnation"], after["overrides"]) == \
-        (before["contract"], before["facts"], before["incarnation"], BUNDLED_ID)
+    # The override keeps what the bundled entry runs: its contract, facts and incarnation (a queued job stays valid),
+    # and the provenance it was reviewed under, across both changes.
+    assert (after["contract"], after["facts"], after["incarnation"], after["overrides"], after["provenance"]) == \
+        (before["contract"], before["facts"], before["incarnation"], BUNDLED_ID, before["provenance"])
+    # An edit of the contract is no longer the reviewed bundled one: it drops the bundled provenance.
+    edited = {**after["contract"], "display_name": "Edited by the owner"}
+    saved = api.put(f"/admin/api/workflows/{BUNDLED_ID}", json={"contract": edited, "overrides": BUNDLED_ID},
+                    headers={"If-Match": os_n(api)})
+    assert saved.status_code == 200, saved.json()
+    assert detail()["provenance"] != before["provenance"]
 
 
 def test_delete_of_a_bundled_id_is_409_id_is_bundled(api):
