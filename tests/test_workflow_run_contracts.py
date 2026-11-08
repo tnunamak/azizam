@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ import proxy
 from gateway import discovery, media_jobs, receipt_store, request_spool, service_registry
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol.node_graph import compile_workflow
+from gateway.job_envelope import canonical_bytes
 from tests.media_test_bytes import mp4_bytes, png_bytes
 from tests.support.fake_upstream import FakeUpstreams, HandlerTransport
 from tests.registry_test_helpers import write_service_registry_for_test
@@ -108,9 +110,13 @@ def manifest_of(workflow_id: str) -> dict:
     return discovery.bundled_workflow_manifests()[workflow_id]
 
 
-def template_of(manifest: dict) -> dict:
+def discovery_root():
     from gateway.registry_snapshot import ROOT
-    return json.loads((ROOT / manifest["bindings"]["comfyui"]["workflow"]).read_text(encoding="utf-8"))
+    return ROOT
+
+
+def template_of(manifest: dict) -> dict:
+    return json.loads((discovery_root() / manifest["bindings"]["comfyui"]["workflow"]).read_text(encoding="utf-8"))
 
 
 def generated_of(world, job_id: str) -> dict:
@@ -225,3 +231,28 @@ def test_a_disabled_workflow_refuses_new_runs_and_fails_a_queued_job_at_dispatch
     job = media_jobs.get(job_id, path=world.media)
     assert (job["status"], job["error_code"]) == ("failed", "workflow_disabled")
     assert engine.calls == []
+
+
+def digest(body: bytes) -> str:
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+@pytest.mark.parametrize(("workflow_id", "inputs", "media", "media_type", "filename"), CASES)
+def test_a_finished_run_names_the_contract_binding_and_template_it_ran(  # W5: the provenance the old route tests held
+        world, workflow_id, inputs, media, media_type, filename):
+    manifest = manifest_of(workflow_id)
+    serve_engine(world, FakeGraphEngine(manifest, media(), media_type, filename))
+    response = call("post", f"/gateway/v1/workflows/{workflow_id}/run", json={"inputs": inputs},
+                    headers={"Prefer": "wait=20"})
+    view = response.json()
+    assert response.status_code == 200 and view["status"] == "succeeded", response.text
+    store = DefinitionStore(world.media)
+    envelope = store.envelope(view["job_id"])
+    contract = {key: manifest[key] for key in ("schema_version", "id", "intent", "inputs", "outputs") if key in manifest}
+    template_file = (discovery_root() / manifest["bindings"]["comfyui"]["workflow"]).read_bytes()
+    assert envelope.source_id == workflow_id and envelope.binding_key == "comfyui"
+    assert envelope.contract == digest(canonical_bytes(contract))
+    assert envelope.binding == digest(canonical_bytes(manifest["bindings"]["comfyui"]))
+    assert envelope.template == digest(template_file)
+    assert store.read_blob(envelope.template) == template_file          # the very bytes are kept, not only named
+    assert (view["binding_key"], view["record_revision"]) == (envelope.binding_key, envelope.record_revision)
