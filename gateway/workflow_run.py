@@ -550,7 +550,7 @@ class WorkflowRunCore:
             return lost.refused
         except (ManifestError, generated_defaults.GeneratedValueUnavailable) as exc:
             return RunRefused(422, INVALID_INPUTS, "a generated input could not be filled",
-                              problems=(ContractError(("inputs",), "generated_value_invalid", str(exc)),))
+                              problems=(ContractError(("inputs",), "generated_value_invalid", _wire_text(str(exc))),))
 
     def _validate(self, entry: WorkflowEntry, req: RunRequest, profile) -> list[ContractError]:
         """Step 3: the inputs against the current contract and the media against the profile, every problem at once."""
@@ -565,7 +565,7 @@ class WorkflowRunCore:
         try:
             result = validate_inputs(contract, supplied)
         except ManifestError as exc:
-            return [ContractError(("contract",), "contract_invalid", str(exc))]
+            return [ContractError(("contract",), "contract_invalid", _wire_text(str(exc)))]
         for error in result.errors:
             # A generated input the caller left empty is filled at create; it is not missing.
             if error.code == "required_missing" and len(error.path) == 2 and error.path[1] in generated:
@@ -683,15 +683,35 @@ class WorkflowRunCore:
         if close is None:
             return
         try:
-            job = media_jobs.get(job_id, audience="internal", path=self._path)
-            if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
-                return
-            status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
-            if status == "failed":
-                reason = str(job.get("error_code") or reason)
-            await close(str(job["request_id"]), status, reason)
+            outcome = self._receipt_outcome(job_id)
+            if outcome is not None:
+                await close(*outcome)
         except Exception:  # noqa: BLE001 - a receipt that does not close never changes the job
             log.exception("job %s ended but its receipt was not closed", job_id)
+
+    def _receipt_outcome(self, job_id: str) -> tuple[str, str, str] | None:
+        """``(request_id, status, reason)`` for a terminal job that carries a request receipt, else None."""
+        job = media_jobs.get(job_id, audience="internal", path=self._path)
+        if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
+            return None
+        status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
+        if status == "failed":
+            reason = str(job.get("error_code") or reason)
+        return str(job["request_id"]), status, reason
+
+    def _close_recovered_receipt(self, job_id: str) -> None:
+        """Recovery settled this job from its committed result: close its request receipt with the job's outcome. The
+        port's ``close_recovered_receipt`` is synchronous (startup recovery runs inside the server's loop) and opt-in.
+        Never raises."""
+        close = getattr(self._port, "close_recovered_receipt", None)
+        if close is None:
+            return
+        try:
+            outcome = self._receipt_outcome(job_id)
+            if outcome is not None:
+                close(*outcome)
+        except Exception:  # noqa: BLE001
+            log.exception("job %s was recovered but its receipt was not closed", job_id)
 
     def _classify(self, job: Mapping[str, Any]) -> str:
         from gateway.workflow_envelope import classify_recovery
@@ -945,6 +965,7 @@ class WorkflowRunCore:
             note(action)
             if action == "replay":
                 self._finish_from_bundle(job_id)
+                self._close_recovered_receipt(job_id)
                 continue
             reason = self._restart_reason(job, action)
             if reason is not None:

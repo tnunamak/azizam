@@ -425,6 +425,25 @@ def test_restart_closes_open_row_receipts_without_an_unfinished_job(rig):
     assert receipt_store.get(other)["status"] == "in_progress"
 
 
+def test_restart_leaves_a_receipt_a_live_request_opened_after_recovery_began(rig):
+    """K3 recheck P2: the sweep closes receipts the stopped gateway left, not one a live request opens. Here the request
+    is accepted a minute after recovery starts, so it must stay open and finalize as succeeded."""
+    stopped, live = ("req_" + c * 32 for c in "fg")
+    now_ms = int(time.time() * 1000)
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=stopped), now_ms=now_ms - 5000)
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=live), now_ms=now_ms + 60_000)
+
+    proxy._recover_workflow_runs()
+
+    after = receipt_store.get(stopped)
+    assert (after["status"], reason(after)) == ("failed", GATEWAY_RESTARTED)
+    assert receipt_store.get(live)["status"] == "in_progress"
+    done = {"request_id": live, "status": "succeeded", "updated_at_ms": now_ms + 61_000,
+            "metadata": {"terminal_reason": "succeeded"}}
+    assert receipt_store.finalize(done) is True
+    assert receipt_store.get(live)["status"] == "succeeded"
+
+
 # ------------------------------------------------------------------------------------------------ (d) no domain words
 def test_the_row_module_names_no_domain_literal():
     source = (ROOT / "gateway" / "row_routes.py").read_text(encoding="utf-8")
