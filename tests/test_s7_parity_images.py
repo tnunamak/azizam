@@ -131,18 +131,19 @@ def test_images_04_unknown_field_refused(tmp_path):
     assert_same(old, row, status, failure, engine, ("accepted_inputs", lambda o: receipt_fields(o, "accepted_inputs", "rejected_inputs", "ignored_inputs")))
 
 
-@pytest.mark.parametrize("fields", [{"size": "abc"}, {"background": "purple"}, {"n": 0}, {"response_format": "gif"}], ids=lambda f: next(iter(f)))
+@pytest.mark.parametrize("fields", [{"background": "purple"}, {"n": 0}, {"n": 11}, {"response_format": "gif"}], ids=lambda f: next(iter(f)))
 def test_images_05_validation_before_engine(tmp_path, fields):
+    """``n`` above 10 is a 400 at the route; the clamp to ``MAX_IMAGES_PER_REQUEST`` inside the batching loop is not
+    reachable from the wire."""
     old, row = pair(tmp_path, GEN, body(**fields), ok)
     old_has(old, "a refusal before the engine", status(old) == 400 and not engine(old))
     assert_same(old, row, status, failure, engine)
 
 
-def test_images_05_n_above_ten_is_clamped_with_a_warning(tmp_path):
-    old, row = pair(tmp_path, GEN, body(n=11), lambda rig: ok(rig, 11))
+def test_images_05_size_text_that_is_not_a_size_falls_back_to_1024(tmp_path):
+    old, row = pair(tmp_path, GEN, body(size="abc"), ok)
     old_has(old, "an answer", status(old) == 200)
-    assert_same(old, row, status, ("returned", lambda o: len(data_items(o))), ("warning", lambda o: header(o, "x-proxy-warning")),
-                ("rounds", lambda o: header(o, "x-image-rounds")))
+    assert_same(old, row, status, ("size", lambda o: (doc(o) or {}).get("size")), ("adjusted", lambda o: header(o, "x-azizam-size-adjusted")))
 
 
 def test_images_06_missing_prompt_400(tmp_path):
@@ -398,3 +399,664 @@ def test_images_37_response_headers(tmp_path):
 def test_images_38_sync_route_keeps_no_job_row(tmp_path):
     old, row = pair(tmp_path, GEN, body(), ok)
     assert_same(old, row, ("job rows", lambda o: [(j["intent"], j["status"]) for j in media_jobs(o)]), ("retention", retention_destinations))
+
+
+# ------------------------------------------------------------------------------------------------ 2. images.edit
+MASK = ("mask.png", base._png((255, 255, 255)), "image/png")
+IMG = ("in.png", base._png(), "image/png")
+NOT_AN_IMAGE = ("in.png", b"not an image", "image/png")
+
+
+def edit_form(files=None, **data):
+    out = form(files=files, **data)
+    return out
+
+
+def edit_masked(**data):
+    return form(files={"image": IMG, "mask": MASK}, **data)
+
+
+def _edit_compare(old, row, *extra):
+    assert_same(old, row, status, failure, engine_without_probes, *extra)
+
+
+def test_images_E01_disabled_service_503(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(), disabled)
+    old_has(old, "503", status(old) == 503)
+    _edit_compare(old, row, ("retry-after", lambda o: header(o, "retry-after")))
+
+
+def test_images_E02_invalid_form_400(tmp_path):
+    old, row = pair(tmp_path, EDIT, {"content": b"not multipart", "headers": {"content-type": "multipart/form-data; boundary=zz"}}, edit_ok)
+    old_has(old, "400", status(old) == 400)
+    _edit_compare(old, row)
+
+
+def test_images_E03_extensions_not_json_400(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(extensions="{"), edit_ok)
+    old_has(old, "400", status(old) == 400)
+    _edit_compare(old, row)
+
+
+def test_images_E04_size_grammar(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(size="12 by 4"), edit_ok)
+    old_has(old, "400", status(old) == 400)
+    _edit_compare(old, row)
+
+
+def test_images_E05_missing_image_400(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(files={"other": ("x.txt", b"x", "text/plain")}), edit_ok)
+    old_has(old, "400", status(old) == 400)
+    _edit_compare(old, row)
+
+
+@pytest.mark.parametrize("model", ["not-a-real-model", "image-identity"])
+def test_images_E06_model_resolution(tmp_path, model):
+    old, row = pair(tmp_path, EDIT, edit_masked(model=model), edit_ok)
+    old_has(old, "an answer", status(old))
+    _edit_compare(old, row, ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow")))
+
+
+def test_images_E07_default_size_from_the_input_image(tmp_path):
+    old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
+    old_has(old, "an answer", status(old) == 200)
+    _edit_compare(old, row, ("size", lambda o: (doc(o) or {}).get("size")), ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
+
+
+def test_images_E08_missing_prompt_400(tmp_path):
+    request = form(files={"image": IMG})
+    request["data"].pop("prompt")
+    old, row = pair(tmp_path, EDIT, request, edit_ok)
+    old_has(old, "400", status(old) == 400)
+    _edit_compare(old, row)
+
+
+def test_images_E09_missing_required_image(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(files={"mask": MASK}, model="krea2-turbo"), edit_ok)
+    old_has(old, "400", status(old) == 400)
+    _edit_compare(old, row)
+
+
+def test_images_E10_too_many_images(tmp_path):
+    request = {"data": form()["data"], "files": [("image", IMG), ("image", IMG), ("image", IMG), ("image", IMG), ("image", IMG)]}
+    old, row = pair(tmp_path, EDIT, request, edit_ok)
+    old_has(old, "an answer", status(old))
+    _edit_compare(old, row)
+
+
+def test_images_E11_mask_required_and_missing(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(files={"image": IMG}), edit_ok)
+    old_has(old, "an answer", status(old))
+    _edit_compare(old, row, ("headers", lambda o: headers_with(o, "x-image")))
+
+
+def test_images_E12_policy_and_admission_cells(tmp_path):
+    for outcome in ("policy_refusal", "admission_refusal"):
+        old, row = cell(tmp_path / outcome, "ie", outcome)
+        old_has(old, "a refusal", (status(old) or 0) >= 400)
+        assert_same(old, row, status, failure, engine, receipt_summary, ("retention", retention_destinations))
+
+
+def test_images_E13_refused_image(tmp_path):
+    old, row = cell(tmp_path / "v", "ie", "validation_refusal")
+    assert_same(old, row, status, failure, engine, receipt_summary)
+    old2, row2 = pair(tmp_path / "bad", EDIT, form(files={"image": NOT_AN_IMAGE, "mask": MASK}), edit_ok)
+    old_has(old2, "a refusal", (status(old2) or 0) >= 400)
+    assert_same(old2, row2, status, failure, engine_without_probes)
+    old3, row3 = pair(tmp_path / "mask", EDIT, form(files={"image": IMG, "mask": ("mask.png", b"junk", "image/png")}), edit_ok)
+    assert_same(old3, row3, status, failure, engine_without_probes)
+
+
+def _upload_refused(rig, response=None):
+    base._comfy(rig, comfy_exchanges(strict=False, extra=[
+        exchange("upload-refused", "POST", "/upload/image", response or {"status": 500, "json": {"error": "disk full"}}, times=1)]))
+
+
+def test_images_E14_image_upload_refused_502(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(), _upload_refused)
+    old_has(old, "502", status(old) == 502)
+    _edit_compare(old, row)
+
+
+def test_images_E15_upload_without_filename_502(tmp_path):
+    old, row = pair(tmp_path, EDIT, form(), lambda rig: _upload_refused(rig, {"json": {}}))
+    old_has(old, "an error", (status(old) or 0) >= 400)
+    _edit_compare(old, row)
+
+
+def test_images_E16_mask_upload_failure_502(tmp_path):
+    def setup(rig):
+        base._comfy(rig, comfy_exchanges(strict=False, extra=[
+            exchange("mask-upload-refused", "POST", "/upload/mask", {"status": 500, "json": {"error": "disk full"}}, times=1)]))
+    old, row = pair(tmp_path, EDIT, edit_masked(), setup)
+    old_has(old, "an answer", status(old))
+    _edit_compare(old, row)
+
+
+def test_images_E17_mask_headers(tmp_path):
+    old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
+    old_has(old, "mask headers", headers_with(old, "x-image-mask"))
+    assert_same(old, row, status, ("mask headers", lambda o: headers_with(o, "x-image-mask")), ("warnings", lambda o: receipt_fields(o, "warnings")))
+
+
+def test_images_E18_post_composite_mask(tmp_path):
+    old, row = pair(tmp_path, EDIT, edit_masked(model="krea2-turbo"), edit_ok)
+    old_has(old, "an answer", status(old) == 200)
+    assert_same(old, row, status, ("mask headers", lambda o: headers_with(o, "x-image-mask")), ("warnings", lambda o: receipt_fields(o, "warnings")),
+                ("b64", lambda o: [i.get("b64_json") for i in data_items(o)]))
+
+
+def test_images_E19_response_headers(tmp_path):
+    old, row = pair(tmp_path, EDIT, edit_masked(size="768X512"), edit_ok)
+    old_has(old, "image headers", headers_with(old, "x-image"))
+    assert_same(old, row, ("headers", lambda o: headers_with(o, "x-image", "x-azizam", "x-proxy", "x-comfyui")))
+
+
+def test_images_E20_round_loop_traffic(tmp_path):
+    old, row = pair(tmp_path, EDIT, edit_masked(), lambda rig: base._comfy(rig, comfy_exchanges(
+        views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), running_polls=3)))
+    old_has(old, "polls", len(sleeps(old)) >= 3)
+    assert_same(old, row, status, engine_without_probes, sleeps)
+
+
+def test_images_E21_receipt_records_inputs_and_workflow(tmp_path):
+    old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
+    old_has(old, "a receipt", receipt_row(old))
+    assert_same(old, row, receipt_summary, ("receipt", lambda o: receipt_fields(
+        o, "accepted_inputs", "rejected_inputs", "ignored_inputs", "resolved_workflow", "requested_workflow", "manifest_id", "metadata")),
+                origins, asset_files)
+
+
+# ------------------------------------------------------------------------------------------------ 3. images.variations
+def var_form(files=None, **data):
+    out = {"data": {"response_format": "b64_json", **data}}
+    out["files"] = files if files is not None else {"image": IMG}
+    return out
+
+
+def test_images_V01_disabled_service_503(tmp_path):
+    old, row = pair(tmp_path, VAR, var_form(), disabled)
+    old_has(old, "503", status(old) == 503)
+    assert_same(old, row, status, failure, engine_without_probes)
+
+
+def test_images_V02_invalid_form_400(tmp_path):
+    old, row = pair(tmp_path, VAR, {"content": b"nope", "headers": {"content-type": "multipart/form-data; boundary=zz"}}, variation_ok)
+    old_has(old, "400", status(old) == 400)
+    assert_same(old, row, status, failure, engine_without_probes)
+
+
+def test_images_V03_missing_image_400(tmp_path):
+    old, row = pair(tmp_path, VAR, var_form(files={"other": ("x.txt", b"x", "text/plain")}), variation_ok)
+    old_has(old, "400", status(old) == 400)
+    assert_same(old, row, status, failure, engine_without_probes)
+
+
+def test_images_V04_exactly_one_image(tmp_path):
+    old, row = pair(tmp_path, VAR, {"data": {"response_format": "b64_json"}, "files": [("image", IMG), ("image", IMG)]}, variation_ok)
+    old_has(old, "400", status(old) == 400)
+    assert_same(old, row, status, failure, engine_without_probes)
+
+
+def test_images_V05_delegated_prompt_workflow_and_denoise(tmp_path):
+    old, row = pair(tmp_path, VAR, var_form(), variation_ok)
+    old_has(old, "an answer", status(old) == 200)
+    assert_same(old, row, status, ("prompt bodies", lambda o: engine_bodies(o, "/prompt")), engine_without_probes,
+                ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow", "metadata")))
+
+
+def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
+    old, row = pair(tmp_path, VAR, var_form(), variation_ok)
+    old_has(old, "the metadata key", "variations_delegated_workflow" in json.dumps(receipt_fields(old, "metadata") or {}))
+    assert_same(old, row, ("receipt", lambda o: receipt_fields(o, "metadata")))
+
+
+def test_images_V07_offset_inpaint_needs_its_workflows(tmp_path):
+    old, row = pair(tmp_path, GEN, body(model="flux2-klein-4b-seamless-tile"), ok)
+    old_has(old, "an answer", status(old))
+    assert_same(old, row, status, failure, engine_without_probes)
+
+
+def test_images_V08_offset_inpaint_success_headers(tmp_path):
+    old, row = pair(tmp_path, GEN, body(model="flux2-klein-4b-seamless-tile"), ok)
+    old_has(old, "the strategy header", header(old, "x-image-seamless-tile-strategy"))
+    assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image")))
+
+
+def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
+    failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
+        ["execution_error", {"node_type": "N", "node_id": "7", "exception_message": "gateway tile composition error"}]]}, "outputs": {}}}
+    old, row = pair(tmp_path, JOB, {"json_body": {"prompt": "tile", "response_format": "url", **BG}, "unordered_json": True},
+                    lambda rig: (base._capture_scheduling(rig), base._comfy(rig, comfy_exchanges(history=failed, strict=False))))
+    assert_same(old, row, status)
+
+
+def test_images_V10_size_adjustment_on_variations(tmp_path):
+    old, row = pair(tmp_path, VAR, var_form(size="768X512"), variation_ok)
+    old_has(old, "an answer", status(old) == 200)
+    assert_same(old, row, status, ("header", lambda o: header(o, "x-azizam-size-adjusted")), ("receipt", lambda o: receipt_fields(o, "metadata", "warnings")))
+
+
+# ------------------------------------------------------------------------------------------------ 4. image job route
+def job_body(**fields):
+    return {"json_body": {"prompt": "a green door", "response_format": "url", **BG, **fields}, "unordered_json": True}
+
+
+def job_setup(inner=None):
+    def setup(rig):
+        base._capture_scheduling(rig)
+        (inner or (lambda r: base._comfy(r, comfy_exchanges(views=[(base._png((90, 160, 40)), "image/png")]))))(rig)
+    return setup
+
+
+def _job_id(response):
+    try:
+        data = response.json()
+    except Exception:  # noqa: BLE001
+        return None
+    return (data.get("job_id") or data.get("id")) if isinstance(data, dict) else None
+
+
+def job_flow(request, after=None, run=True):
+    """Submit a job, let its executor finish (the old route's captured scheduler, or the row core), then ``after(rig, id)``."""
+    def mk(use_row):
+        async def go(rig):
+            target = (ROW_PREFIX if use_row else "") + JOB
+            first = await rig.call("POST", target, label="submit", **request)
+            job_id = _job_id(first) if first is not None else None
+            if run:
+                if not use_row and rig.scheduled:
+                    await proxy._run_image_media_job(rig.scheduled[-1])
+                else:
+                    for _ in range(200):
+                        await asyncio.sleep(0)
+            if after is not None and job_id:
+                await after(rig, job_id)
+        return go
+    return mk
+
+
+def job_pair(tmp_path, request, setup, after=None, run=True):
+    mk = job_flow(request, after, run)
+    return (observe(tmp_path, JOB, mk(False), setup, row=False), observe(tmp_path, JOB, mk(True), setup, row=True))
+
+
+def job_get(suffix=""):
+    async def after(rig, job_id):
+        await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}{suffix}", label=f"GET {suffix or 'job'}")
+    return after
+
+
+def job_everything(rig, job_id):
+    async def go():
+        for suffix in ("", "/results", "/events", "/content"):
+            await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}{suffix}", label=f"GET {suffix or 'job'}")
+    return go()
+
+
+def _job_doc(o, i=1):
+    d = doc(o, i) or {}
+    return {k: d.get(k) for k in ("status", "intent", "workflow", "progress", "error", "retryable", "attempts", "mode") if k in d}
+
+
+def test_images_J01_body_not_json_400(tmp_path):
+    old, row = pair(tmp_path, JOB, raw_json(b"{"), job_setup())
+    old_has(old, "400", status(old) == 400)
+    assert_same(old, row, status, failure)
+
+
+def test_images_J02_body_not_object_400(tmp_path):
+    old, row = pair(tmp_path, JOB, raw_json(b"[1]"), job_setup())
+    old_has(old, "400", status(old) == 400)
+    assert_same(old, row, status, failure)
+
+
+def test_images_J03_metadata_control_is_checked(tmp_path):
+    old, row = job_pair(tmp_path, job_body(metadata="nonsense"), job_setup(), run=False)
+    old_has(old, "an answer", status(old))
+    assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
+
+
+def test_images_J04_policy_then_admission(tmp_path):
+    for outcome in ("policy_refusal", "admission_refusal"):
+        old, row = cell(tmp_path / outcome, "ij", outcome)
+        old_has(old, "a refusal", (status(old) or 0) >= 400)
+        assert_same(old, row, status, failure, ("retry-after", lambda o: header(o, "retry-after")), receipt_summary)
+
+
+def test_images_J05_admission_refusal_writes_a_receipt(tmp_path):
+    old, row = cell(tmp_path, "ij", "admission_refusal")
+    old_has(old, "a rejected receipt", receipt_summary(old))
+    assert_same(old, row, receipt_summary, ("resource decision", lambda o: receipt_fields(o, "resource_decision", "metadata")))
+
+
+def test_images_J06_job_row_intent_workflow_payload(tmp_path):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), run=False)
+    old_has(old, "a job row", media_jobs(old))
+    assert_same(old, row, ("jobs", lambda o: [(j["intent"], j.get("workflow"), j["status"]) for j in media_jobs(o)]))
+
+
+def test_images_J07_job_metadata(tmp_path):
+    old, row = job_pair(tmp_path, job_body(n=3, size="512x512"), job_setup(), run=False)
+    old_has(old, "metadata", media_jobs(old) and media_jobs(old)[0].get("metadata"))
+    assert_same(old, row, ("metadata", lambda o: [j.get("metadata") for j in media_jobs(o)]))
+
+
+def test_images_J08_job_id_forms(tmp_path):
+    def kind(o):
+        ids = [j["job_id"] for j in media_jobs(o)]
+        return [i.split("_")[0] + ("_idem" if "_idem_" in i else "_seeded" if "_seeded_" in i else "") for i in ids]
+    keyed = dict(job_body(), headers={"Idempotency-Key": "k-8"})
+    old, row = job_pair(tmp_path / "idem", keyed, job_setup(), run=False)
+    old_has(old, "a job id", kind(old))
+    assert_same(old, row, ("id form", kind))
+    old2, row2 = job_pair(tmp_path / "plain", job_body(), job_setup(), run=False)
+    assert_same(old2, row2, ("id form", kind))
+
+
+def test_images_J09_replay_returns_the_existing_job(tmp_path):
+    old, row = cell(tmp_path, "ij", "replay_same")
+    old_has(old, "two answers", len(old.trace["caller"]) >= 2)
+    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("jobs", lambda o: len(media_jobs(o))),
+                ("notes", lambda o: o.trace["notes"]))
+
+
+def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
+    old, row = cell(tmp_path, "ij", "replay_conflict")
+    old_has(old, "a conflict", status(old, 1) == 409)
+    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("conflict", lambda o: failure(o, 1)))
+
+
+def test_images_J11_job_store_failure_500(tmp_path):
+    from gateway import media_jobs as store
+
+    def setup(rig):
+        job_setup()(rig)
+
+        def boom(*_a, **_k):
+            raise RuntimeError("store down")
+        rig.set(store, "create", boom)
+    old, row = pair(tmp_path, JOB, job_body(), setup)
+    old_has(old, "500", status(old) == 500)
+    assert_same(old, row, status, failure)
+
+
+def test_images_J12_accepted_202_with_links(tmp_path):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), run=False)
+    old_has(old, "202", status(old) == 202)
+    link = lambda o: {"location": (header(o, "location") or "").rsplit("/", 1)[0],
+                      "keys": sorted((doc(o) or {}).keys()),
+                      "poll": ((doc(o) or {}).get("poll_url") or "").rsplit("/", 1)[0],
+                      "content": ((doc(o) or {}).get("content_url") or "").rsplit("/", 2)[0]}
+    assert_same(old, row, status, ("links", link))
+
+
+def test_images_J13_a_queued_event_then_scheduling(tmp_path):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/events"), run=False)
+    old_has(old, "events", doc(old, 1))
+    assert_same(old, row, ("event kinds", lambda o: [e.get("type") or e.get("status") or e.get("event") for e in ((doc(o, 1) or {}).get("data") or doc(o, 1) or [])] if isinstance(doc(o, 1), (dict, list)) else None))
+
+
+def test_images_J14_refusals_leave_no_job(tmp_path):
+    for outcome in ("validation_refusal", "policy_refusal"):
+        old, row = cell(tmp_path / outcome, "ij", outcome)
+        assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))), receipt_summary)
+
+
+def test_images_J15_admission_refusal_leaves_no_job(tmp_path):
+    old, row = cell(tmp_path, "ij", "admission_refusal")
+    assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))), receipt_summary)
+
+
+def test_images_J16_wait_timeout_keeps_the_job(tmp_path):
+    old, row = cell(tmp_path, "ij", "wait_timeout")
+    assert_same(old, row, status, ("job states", lambda o: [(j["status"]) for j in media_jobs(o)]), engine_without_probes)
+
+
+def test_images_J17_cancel_queued_and_finished(tmp_path):
+    for outcome in ("cancel_queued", "cancel_finished"):
+        old, row = cell(tmp_path / outcome, "ij", outcome)
+        old_has(old, "calls", len(old.trace["caller"]) >= 3)
+        assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]),
+                    ("job states", lambda o: [j["status"] for j in media_jobs(o)]), ("cancel notes", lambda o: o.trace["notes"]), receipt_summary)
+
+
+def test_images_J18_disconnect_does_not_cancel_the_job(tmp_path):
+    old, row = cell(tmp_path, "ij", "disconnect")
+    assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), engine_without_probes)
+
+
+def test_images_J19_success_mirrors_assets_and_drops_payload(tmp_path):
+    old, row = cell(tmp_path, "ij", "success")
+    old_has(old, "a succeeded job", any(j["status"] == "succeeded" for j in media_jobs(old)))
+    assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), origins, asset_files, engine_without_probes, receipt_summary)
+
+
+def test_images_J20_failure_records_error_and_event(tmp_path):
+    old, row = cell(tmp_path, "ij", "upstream_failure")
+    old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
+    assert_same(old, row, ("job states", lambda o: [(j["status"], j.get("error")) for j in media_jobs(o)]),
+                ("polls", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("job doc", lambda o: _job_doc(o, 1)))
+
+
+@pytest.mark.parametrize("name,setup", [("execution", EXEC_ERROR), ("unreachable", UNREACHABLE), ("http_500", HTTP_500), ("timeout", timeout)])
+def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
+    old, row = job_pair(tmp_path, job_body(), job_setup(setup), after=job_get())
+    old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
+    assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("errors", lambda o: [(j["status"], j.get("error")) for j in media_jobs(o)]))
+
+
+def test_images_J22_oom_retries_with_events(tmp_path):
+    def inner(rig):
+        base._comfy(rig, comfy_exchanges(views=[(base._png((60, 160, 120)), "image/png")], extra=[
+            exchange("prompt-oom", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=1)]))
+    old, row = job_pair(tmp_path, job_body(), job_setup(inner), after=job_get("/events"))
+    old_has(old, "a retry", any(path == "/free" for _m, path in engine(old)))
+    assert_same(old, row, engine_without_probes, sleeps, ("jobs", lambda o: [j["status"] for j in media_jobs(o)]), ("events", lambda o: doc(o, 1)))
+
+
+def test_images_J23_job_engine_traffic_matches_the_sync_path(tmp_path):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get())
+    sync = observe(tmp_path / "sync", GEN, body(), ok, row=False)
+    assert engine_without_probes(row) == engine_without_probes(sync), "the row job's engine traffic differs from the sync path"
+    assert_same(old, row, engine_without_probes, sleeps)
+
+
+def test_images_J24_concurrency_is_bounded(tmp_path):
+    def two(use_row):
+        async def go(rig):
+            target = (ROW_PREFIX if use_row else "") + JOB
+            ids = [_job_id(await rig.call("POST", target, label=f"submit {i}", **job_body(prompt=f"door {i}"))) for i in range(2)]
+            if not use_row:
+                for scheduled in list(rig.scheduled):
+                    await proxy._run_image_media_job(scheduled)
+            else:
+                for _ in range(300):
+                    await asyncio.sleep(0)
+        return go
+    old = observe(tmp_path, JOB, two(False), job_setup(lambda r: ok(r, 2)), row=False)
+    row = observe(tmp_path, JOB, two(True), job_setup(lambda r: ok(r, 2)), row=True)
+    assert_same(old, row, ("job states", lambda o: sorted(j["status"] for j in media_jobs(o))), engine_without_probes)
+
+
+@pytest.mark.parametrize("suffix", ["", "/results", "/events"])
+def test_images_J25_J27_read_routes(tmp_path, suffix):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get(suffix))
+    old_has(old, "an answer", status(old, 1) == 200)
+    assert_same(old, row, ("status", lambda o: status(o, 1)), ("keys", lambda o: sorted((doc(o, 1) or {}).keys()) if isinstance(doc(o, 1), dict) else type(doc(o, 1)).__name__))
+
+
+def test_images_J25_unknown_job_404(tmp_path):
+    def req(rig):
+        async def go(r):
+            return await r.call("GET", "/gateway/v1/media/jobs/nope", label="unknown job")
+        return go
+    old = observe(tmp_path, JOB, req(None), job_setup(), row=False)
+    row = observe(tmp_path, JOB, req(None), job_setup(), row=True)
+    assert_same(old, row, status, failure)
+
+
+def test_images_J28_cancel_route_answers(tmp_path):
+    async def after(rig, job_id):
+        await rig.call("POST", f"/gateway/v1/media/jobs/{job_id}/cancel", label="cancel the finished job", json_body={})
+        await rig.call("POST", "/gateway/v1/media/jobs/nope/cancel", label="cancel unknown", json_body={})
+        await rig.call("POST", f"/gateway/v1/media/jobs/{job_id}/cancel", label="cancel with a bad body", json_body=[1])
+    old, row = job_pair(tmp_path, job_body(), job_setup(), after=after)
+    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("failures", lambda o: [failure(o, i) for i in range(1, len(o.trace["caller"]))]))
+
+
+def test_images_J29_content_states(tmp_path):
+    async def before_and_after(rig, job_id):
+        await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/content", label="content")
+    old, row = job_pair(tmp_path / "queued", job_body(), job_setup(), after=before_and_after, run=False)
+    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("not ready", lambda o: failure(o, 1)))
+    old2, row2 = job_pair(tmp_path / "failed", job_body(), job_setup(EXEC_ERROR), after=before_and_after)
+    assert_same(old2, row2, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("content", lambda o: failure(o, 1)))
+
+
+def test_images_J30_content_shape(tmp_path):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/content"))
+    old_has(old, "content", data_items(old, 1))
+    assert_same(old, row, ("status", lambda o: status(o, 1)), ("item keys", lambda o: item_keys(o, 1)), ("top keys", lambda o: top_keys(o, 1)))
+
+
+def test_images_J31_progress_when_the_job_starts(tmp_path):
+    old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get())
+    assert_same(old, row, ("progress", lambda o: (doc(o, 1) or {}).get("progress")))
+
+
+# ------------------------------------------------------------------------------------------------ 5. restart and recovery
+def _restart(held_setup, mutate=None):
+    """Submit a job whose execution is held, restart (run the startup recovery), then read the job."""
+    def mk(use_row):
+        async def go(rig):
+            target = (ROW_PREFIX if use_row else "") + JOB
+            if use_row:
+                rig.set(proxy, "_workflow_run_semaphore", asyncio.Semaphore(0))
+            first = await rig.call("POST", target, label="submit", **job_body())
+            job_id = _job_id(first)
+            if mutate is not None:
+                mutate(rig, job_id)
+            proxy._recover_media_jobs()
+            for _ in range(100):
+                await asyncio.sleep(0)
+            if not use_row and rig.scheduled:
+                for scheduled in rig.scheduled[1:]:
+                    await proxy._run_image_media_job(scheduled)
+            if job_id:
+                await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label="job after restart")
+                await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/events", label="events after restart")
+        return go
+    return mk
+
+
+def restart_pair(tmp_path, mutate=None, setup=None):
+    mk = _restart(None, mutate)
+    setup = setup or job_setup()
+    return (observe(tmp_path, JOB, mk(False), setup, row=False), observe(tmp_path, JOB, mk(True), setup, row=True))
+
+
+def _states(o):
+    return [(j["status"], j.get("error")) for j in media_jobs(o)]
+
+
+def test_images_R01_startup_scan_resumes_or_fails_the_job(tmp_path):
+    old, row = restart_pair(tmp_path)
+    old_has(old, "a job", media_jobs(old))
+    assert_same(old, row, ("job states", _states), ("polls", lambda o: _job_doc(o, 1)))
+
+
+def test_images_R02_payload_missing_after_restart(tmp_path):
+    def mutate(rig, job_id):
+        proxy._delete_image_media_job_payload(job_id)
+    old, row = restart_pair(tmp_path, mutate)
+    assert_same(old, row, ("job states", _states))
+
+
+def test_images_R03_recovery_turned_off(tmp_path):
+    def setup(rig):
+        job_setup()(rig)
+        rig.monkeypatch.setitem(proxy.runtime().derived, "JOB_RECOVERY_ENABLED", False)
+    old, row = restart_pair(tmp_path, setup=setup)
+    assert_same(old, row, ("job states", _states))
+
+
+def test_images_R04_restart_during_cancellation(tmp_path):
+    def mutate(rig, job_id):
+        proxy.media_jobs.request_cancel(job_id, path=proxy.media_jobs.DB_PATH) if hasattr(proxy.media_jobs, "request_cancel") else None
+    old, row = restart_pair(tmp_path, mutate)
+    assert_same(old, row, ("job states", _states))
+
+
+def test_images_R05_restart_during_the_run(tmp_path):
+    def mutate(rig, job_id):
+        proxy.media_jobs.mark_running(job_id, path=proxy.media_jobs.DB_PATH) if hasattr(proxy.media_jobs, "mark_running") else None
+    old, row = restart_pair(tmp_path, mutate)
+    assert_same(old, row, ("job states", _states))
+
+
+def test_images_R06_crash_mid_run_copy(tmp_path):
+    def setup(rig):
+        job_setup()(rig)
+
+        async def crash(*_a, **_k):
+            raise RuntimeError("worker died")
+        rig.set(proxy, "proxy_image_request", crash)
+    old, row = job_pair(tmp_path, job_body(), setup, after=job_get())
+    assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("job states", _states))
+
+
+def test_images_R07_restart_closes_open_receipts(tmp_path):
+    """Allowed delta ``restart_closes_receipt``: the row's receipt is closed by the recovery of the run; the old
+    route left it for ``close_orphan``. The test asserts the receipt is no longer open."""
+    old, row = restart_pair(tmp_path)
+    assert all(r["status"] != "open" for r in receipts(row)), f"a receipt stayed open on the row path: {receipt_summary(row)}"
+
+
+# ------------------------------------------------------------------------------------------------ 6. failure texts
+def test_images_F01_engine_unreachable(tmp_path):
+    old, row = pair(tmp_path, GEN, body(), UNREACHABLE)
+    old_has(old, "a 5xx", (status(old) or 0) >= 500)
+    assert_same(old, row, status, failure)
+
+
+def test_images_F02_prompt_http_500(tmp_path):
+    old, row = pair(tmp_path, GEN, body(), HTTP_500)
+    old_has(old, "a 5xx", (status(old) or 0) >= 500)
+    assert_same(old, row, status, failure)
+
+
+def test_images_F03_prompt_without_id(tmp_path):
+    old, row = pair(tmp_path, GEN, body(), NO_PROMPT_ID)
+    old_has(old, "a 5xx", (status(old) or 0) >= 500)
+    assert_same(old, row, status, failure)
+
+
+def test_images_F04_execution_error(tmp_path):
+    old, row = pair(tmp_path, GEN, body(), EXEC_ERROR)
+    old_has(old, "502", status(old) == 502)
+    assert_same(old, row, status, failure)
+
+
+def test_images_F05_timeout(tmp_path):
+    old, row = pair(tmp_path, GEN, body(), timeout)
+    old_has(old, "504", status(old) == 504)
+    assert_same(old, row, status, failure, sleeps)
+
+
+def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
+    def setup(rig):
+        base._comfy(rig, comfy_exchanges(strict=False, extra=[
+            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True)]))
+    old, row = pair(tmp_path, GEN, body(), setup)
+    old_has(old, "an error", (status(old) or 0) >= 500)
+    assert_same(old, row, status, failure, engine_without_probes)
+
+
+def test_images_F07_view_missing(tmp_path):
+    def setup(rig):
+        base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
+            exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1)]))
+    old, row = pair(tmp_path, GEN, body(), setup)
+    old_has(old, "an error", (status(old) or 0) >= 400)
+    assert_same(old, row, status, failure)
