@@ -24697,6 +24697,16 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
+        # An audio job runs from what it pinned at accept, or it fails: never from the live file.
+        pinned_args: dict[str, Any] = {}
+        try:
+            pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
+            pinned_args["pinned_workflow"] = job.get("workflow")
+        except definition_store.DefinitionUnavailable as exc:
+            _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
+            _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
+            return
+
         try:
             media_jobs.update_status(
                 job_id,
@@ -24726,7 +24736,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     response = await proxy_audio_generate(
-                        request_shim, auth_context, store_full=True, receipt=receipt)
+                        request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
@@ -24953,12 +24963,10 @@ async def _submit_audio_media_job(
         except ManifestError as exc:  # the manifest and the deployment's limits disagree, or a generator cannot serve its input
             return _generated_value_fault_response(exc)
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
-    # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
-    # the envelope is required for it. A workflow whose binding has no pin (no graph binding) has no envelope to build;
-    # it keeps the old behaviour and draws at run, as before S3.6.
-    needs_envelope = bool(generated) and _manifest_has_pin(manifest)
+    # The worker runs the job from its pin, so a manifest that has a pin needs its envelope at accept: a job that pinned
+    # nothing could never run. A workflow whose binding has no pin (no graph binding) has no envelope to build.
+    needs_envelope = _manifest_has_pin(manifest)
     if envelope is None and needs_envelope:
-        # A job that holds a generated value must not be accepted without the pin that keeps it: a retry would draw another.
         return _pin_not_recorded_response()
 
     try:
@@ -27317,6 +27325,15 @@ def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any
     if errors:
         raise definition_store.DefinitionUnavailable(f"the pinned graph is invalid: {'; '.join(errors)}")
     return workflow
+
+
+def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
+    """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
+    before it starts. Raises ``DefinitionUnavailable``."""
+    pinned = pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    pinned.manifest(DERIVED._GRAPH_BINDING)
+    _pinned_graph(pinned)
+    return pinned
 
 
 _AUDIO_SUFFIX_BY_CONTENT_TYPE = {

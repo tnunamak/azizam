@@ -856,12 +856,13 @@ def claim_run_key(
             raise
 
 
-def get_run_claim(*, owner_scope: str, maker: str, key: str, path: Path = DB_PATH) -> tuple[str, str | None] | None:
-    """The (holder, job_id) of a claim, or None when it is gone. The wait in step 1 polls this."""
+def get_run_claim(*, owner_scope: str, maker: str, key: str, path: Path = DB_PATH) -> tuple[str, str | None, str] | None:
+    """The (holder, job_id, identity) of a claim, read in one statement, or None when it is gone."""
     with _conn(path) as conn:
-        row = conn.execute("SELECT holder, job_id FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=?",
-                           (owner_scope, maker, key)).fetchone()
-    return (row[0], row[1]) if row else None
+        row = conn.execute(
+            "SELECT holder, job_id, identity FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=?",
+            (owner_scope, maker, key)).fetchone()
+    return (row[0], row[1], row[2]) if row else None
 
 
 def release_run_claim(fence: RunClaimFence, *, path: Path = DB_PATH) -> bool:
@@ -1669,6 +1670,7 @@ def update_status(
     expected_status: str | None = None,
     now: int | None = None,
     before_commit: Callable[[sqlite3.Connection, dict[str, Any]], object] | None = None,
+    committed_bundle: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Apply a status transition. Returns the updated internal job dict.
@@ -1680,6 +1682,9 @@ def update_status(
 
     ``error_info`` holds the typed failure facts (``ERROR_FIELDS``) that go
     with ``error``; ``validate_error_info`` checks them.
+
+    ``committed_bundle`` is for ``settle_committed`` alone: the result is already published, so a pending cancel no
+    longer holds the success back (S7 addendum 6.1: a committed bundle wins).
 
     Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
     are accepted so progress updates during ``running`` are idempotent. With
@@ -1723,7 +1728,7 @@ def update_status(
             raise ValueError(
                 f"illegal status transition {prev_status!r} -> {status!r} for job {job_id!r}"
             )
-        if (status == STATUS_SUCCEEDED
+        if (status == STATUS_SUCCEEDED and not committed_bundle
                 and (current.get("metadata") or {}).get("cancel_requested_at")):
             raise CancellationPending("Cancel requested; waiting for resources to be released")
         current["status"] = status
@@ -1763,6 +1768,17 @@ def update_status(
 
 class CancellationPending(ValueError):
     """Output finished after cancellation; the worker must release before settling."""
+
+
+def settle_committed(job_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Recovery: the job's result bundle is committed, so it succeeds from the bundle, even when a cancel was asked
+    (the ordinary pre-publication cancel guard does not apply to a published result). A terminal job is left alone."""
+    job = get(job_id, audience="internal", path=path)
+    if job is None or is_terminal(str(job["status"])):
+        return job
+    if job["status"] == STATUS_QUEUED:
+        update_status(job_id, STATUS_RUNNING, expected_status=STATUS_QUEUED, path=path)
+    return update_status(job_id, STATUS_SUCCEEDED, progress=100, committed_bundle=True, path=path)
 
 
 def request_cancel(job_id: str, *, reason: str | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
@@ -2220,6 +2236,7 @@ __all__ = [
     "ClaimLost",
     "claim_run_key",
     "get_run_claim",
+    "settle_committed",
     "release_run_claim",
     "CLIENT_VISIBLE_FIELDS",
     "ADMIN_ONLY_FIELDS",

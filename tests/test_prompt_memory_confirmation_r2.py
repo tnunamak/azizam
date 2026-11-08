@@ -301,9 +301,6 @@ def test_async_identity_failure_does_not_save_backend_prompt_echo(household, mon
     assert secret_prompt.encode() not in b"".join(p.read_bytes() for p in hh.root.rglob("*") if p.is_file())
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "K4: S6 deleted compile_from_pin and with it the audio worker's run from the pin; live has "
-    "/compile_from_pin/audio.generate on, so an audio media job must always run from what it pinned at accept"))
 @pytest.mark.parametrize("intent", ["audio.generate", "music.generate", "sfx.generate"])
 def test_successful_audio_worker_preserves_forget_and_releases_payload(
     household, monkeypatch, intent
