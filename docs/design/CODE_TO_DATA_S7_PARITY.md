@@ -120,14 +120,18 @@ that, so the route keeps the answer without a handler.
 
 ### M9. The chain and subject-select graphs become templates (category 3, 4)
 
-Chain (`gateway/video_extend.py`, `gateway/video_extend_h3.py`): each chain workflow becomes a template with one
-declared **segment** sub-graph and node roles (`context_in`, `latent_out`, `prompt`, `seed`, `frames`), plus binding
-data for the frame grid (`frame_step`, `frame_offset`), the context windows, the shot minimum and the negative default.
-A generic segment composer in the gateway-compose protocol (`compose: segment_chain` in
-`registry/protocols/gateway-compose.yml`) repeats the segment `N` times and wires each `latent_out` to the next
-`context_in`. Model files and node classes live in the template JSON. The test: the graph the engine receives for each
-`video_extend*` golden is byte-identical after canonical sorting, as D7 did for identity. Source checks that are
-security or wire limits (`check_source`, 24 fps) stay code.
+Chain (`gateway/video_extend.py`, `gateway/video_extend_h3.py`): the builders emit different node sets for the first
+segment, for a segment added after a source video, and (H3) for a segment that reuses the previous segment's latent;
+the set also changes when the source has no audio. So each chain workflow becomes a template that declares **named
+segment variants** (for example `first`, `added`, `added_from_source`, and an audio and a silent form where they differ),
+each a sub-graph with node roles (`context_in`, `latent_out`, `prompt`, `seed`, `frames`, `audio_in`). Binding data holds
+the frame grid (`frame_step`, `frame_offset`), the context windows, the shot minimum, the negative default, and the
+rule that picks a variant per position (position, source present, source has audio). A generic composer in the
+gateway-compose protocol (`compose: segment_chain` in `registry/protocols/gateway-compose.yml`) plans the segments from
+the grid, picks each variant by that rule, and wires each `latent_out` to the next `context_in`. Model files and node
+classes live in the template JSON. The gate: `tests/test_s7_video_chain_graphs.py` (13 recorded specs over both
+builders, fixture `tests/fixtures/s7_video_chain/graphs.json`) passes unchanged, byte for byte after canonical sorting.
+Source checks that are security or wire limits (`check_source`, 24 fps) stay code.
 
 Subject select (`gateway/video_subject.py`): the node-id constants become node roles in the
 `video-scail-2-replace` binding (it already binds `subject_index`). Selection validation stays code (wire vocabulary).
@@ -188,6 +192,9 @@ and a reason. Nothing else may differ.
 - `persistence_failure_visible`: the old video create swallowed a failed record save and still answered 200
   (video-16); the job store's write is the job, so a failed save is a 500 and no job.
 - `template_role_at_load`: a template missing a declared node role is a load problem, not a request-time 400 (video-114).
+- `restart_closes_receipt`: a sync request cut by a restart left no receipt row (images) or an `in_progress` row that
+  reads as `stale_incomplete` (audio, video) (writers.md, images-R07); every row's receipt is now closed as
+  `GATEWAY_RESTARTED` by startup recovery (M1).
 - `recovery_text_unified`: where audio or video recovery text differs from the image text for the same outcome, the
   image text wins.
 
