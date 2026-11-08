@@ -68,9 +68,7 @@ class OpenAIImagesJson(Shape):
             return _wire.error_response(400, "prompt is required")
         return None
 
-    def no_such_model(self, target: str | None, refusal: Response) -> Response:
-        if json.loads(bytes(refusal.body)).get("error", {}).get("code") != "workflow_not_found":
-            return refusal
+    def no_such_model(self, target: str) -> Response | None:
         return _wire.error_response(404, f"Model '{target}' is not available for image generation.", code="model_not_found",
                                     param="model")
 
@@ -235,11 +233,9 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
         sibling = f"{name.removesuffix('-edit')}-inpaint"
         return sibling if exists(sibling) else name
 
-    def no_such_model(self, target: str | None, refusal: Response) -> Response:
-        if json.loads(bytes(refusal.body)).get("error", {}).get("code") != "workflow_not_found":
-            return refusal
+    def no_such_model(self, target: str) -> Response | None:
         return _wire.error_response(404, f"Model '{target}' is not available for image editing.", code="model_not_found",
-                                    param="model", null_code=True)
+                                    param="model")
 
     def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
         name = entry.id.removeprefix(f"{self.intent}.")

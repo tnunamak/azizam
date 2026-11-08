@@ -171,9 +171,10 @@ class Shape:
                                         _wire.choose_workflow(snapshot, row, target=name, supplied=[], servable=servable), Response))
         pool = _wire.candidates(snapshot, row, servable)
         supplied = [*fields, *(name for entry in pool for name in _wire.asset_input_names(entry) if uploads)]
-        chosen = _wire.choose_workflow(snapshot, row, target=target, supplied=supplied, servable=servable)
+        chosen = _wire.choose_workflow(snapshot, row, target=target, supplied=supplied, servable=servable,
+                                       not_found=self.no_such_model)
         if isinstance(chosen, Response):
-            return self.no_such_model(target, chosen)
+            return chosen
         refused = self.postcheck(chosen, fields, uploads)
         if refused is not None:
             return refused
@@ -208,9 +209,9 @@ class Shape:
         """Hook: the workflow name a request runs, from the name it sent (or the default) and the files it carries."""
         return target
 
-    def no_such_model(self, target: str | None, refusal: Response) -> Response:
-        """Hook: how the wire tells that the chosen name selects nothing (``refusal`` is the common answer)."""
-        return refusal
+    def no_such_model(self, target: str) -> Response | None:
+        """Hook: how the wire tells that a name selects nothing (None: the common answer)."""
+        return None
 
     def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
         """Hook: refusals the wire made once the workflow is known."""

@@ -207,7 +207,8 @@ def required_inputs(entry: WorkflowEntry) -> set[str]:
 
 
 def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str | None, supplied: Sequence[str],
-                    servable: Callable[[WorkflowEntry], bool] | None = None) -> WorkflowEntry | Response:
+                    servable: Callable[[WorkflowEntry], bool] | None = None,
+                    not_found: Callable[[str], Response | None] | None = None) -> WorkflowEntry | Response:
     """The workflow this request runs. A named target resolves through the snapshot's name view (a workflow id or
     alias) and must be one the row selects. With no target the row's selection narrows to the workflows whose
     required inputs the request supplies; exactly one must remain."""
@@ -222,8 +223,8 @@ def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str
         short = [entry for entry in pool if entry.id == f"{entry.contract.get('intent')}.{target}"]
         if len(short) == 1:        # a workflow is also addressed by its id without the intent that starts it
             return short[0]
-        return error_response(404, f"The model {target!r} does not exist or is not available on this route",
-                              code=WORKFLOW_NOT_FOUND, param="model")
+        return (not_found(target) if not_found is not None else None) or error_response(
+            404, f"The model {target!r} does not exist or is not available on this route", code=WORKFLOW_NOT_FOUND, param="model")
     fitting = [entry for entry in pool if required_inputs(entry) <= set(supplied)]
     if len(fitting) == 1:
         return fitting[0]
