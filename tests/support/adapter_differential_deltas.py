@@ -22,6 +22,9 @@ KINDS = frozenset({
     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
     "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait",
 })
+#: Places a moved route keeps identical (golden design section 4): engine requests, every header, the receipt's
+#: accepted inputs and resolved workflow, and the stored asset rows. No kind may name a path through one of them.
+KEPT_IDENTICAL = frozenset({"engine_requests", "headers", "accepted_inputs", "resolved_workflow", "assets"})
 _STEP = re.compile(r"\.([A-Za-z_][A-Za-z0-9_\-]*)|\[(\d+)\]")
 
 
@@ -47,6 +50,16 @@ class Delta:
             out.append(f"{self.path}: old and new are equal, so the entry does nothing")
         if not self.path.startswith("$"):
             out.append(f"{self.path}: a path starts with $")
+        else:
+            try:
+                kept = [step for part in self.path.split("#") for step in _steps(part) if step in KEPT_IDENTICAL]
+            except DeltaError as error:
+                kept = []
+                out.append(str(error))
+            if kept:
+                out.append(f"{self.path}: {kept[0]!r} is kept identical by a moved route; fix the shape, not the golden")
+        if any(isinstance(value, (dict, list)) for value in (self.old, self.new)):
+            out.append(f"{self.path}: a delta names one value, not a subtree")
         return out
 
 
