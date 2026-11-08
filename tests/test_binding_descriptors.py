@@ -635,6 +635,10 @@ def test_the_likeness_route_needs_its_role_and_runs_the_registered_implementatio
 def comfy_places(map_value: Any, template: Any) -> list[tuple[tuple[Any, ...], str]]:
     manifest = manifest_of("flux2-klein-4b-edit")
     manifest["inputs"]["seed"] = {"type": "integer"}
+    # Nothing here is about which inputs the map covers (a required input the map never applies is input_unbound, tested
+    # with the grammar rows), so no input is required and the cases stay about the targets they name.
+    for spec in manifest["inputs"].values():
+        spec.pop("required", None)
     manifest["bindings"]["comfyui"]["map"] = map_value
     return places(manifest, templates={"comfyui": template})
 
@@ -730,3 +734,61 @@ def test_a_falsey_malformed_role_fields_value_is_not_an_empty_mapping() -> None:
                 binding="b", executor="adapter:x", binding_fields={"c": {"kind": "role"}}, roles={"r": {"fields": fields}})
     assert bd.parse_binding_descriptor(
         binding="b", executor="adapter:x", binding_fields={"c": {"kind": "role"}}, roles={"r": {}}).roles == {"r": {}}
+
+
+def test_a_required_input_the_map_never_applies_is_refused_for_any_adapter_that_reads_inputs_by_its_map() -> None:
+    """``input_unbound`` is the descriptor's ``inputs_via: map``, not a rule of one adapter (CODE_TO_DATA_S3, D4)."""
+    manifest = manifest_of("flux2-klein-4b-edit")
+    del manifest["bindings"]["comfyui"]["map"]["source_image"]
+    assert places(manifest) == [(("bindings", "comfyui", "map"), "input_unbound")]
+    assert places(manifest_of("flux2-klein-4b-edit")) == []
+
+
+# ------------------------------------------------- several input maps in one descriptor
+
+def forms_descriptors(*, with_maps: bool = True) -> dict[str, bd.BindingDescriptor]:
+    fields: dict[str, Any] = {"left": {"kind": "input_map"}, "right": {"kind": "input_map"}} if with_maps else {
+        "note": {"kind": "target"}}
+    return {"forms": bd.parse_binding_descriptor(
+        binding="forms", executor="adapter:forms", binding_fields=fields, inputs_via="map", check_targets="split_maps_test")}
+
+
+def forms_manifest(binding: dict[str, Any], **extra_inputs: Any) -> dict[str, Any]:
+    inputs: dict[str, Any] = {"prompt": {"type": "string", "required": True}, "style": {"type": "string", "required": True}}
+    inputs.update(extra_inputs)
+    return {"inputs": inputs, "bindings": {"forms": binding}}
+
+
+@pytest.fixture
+def split_maps_hook() -> Any:
+    binding_registry.register_target_check("split_maps_test", lambda **_: None)
+    yield
+    binding_registry._TARGET_CHECKS.pop("split_maps_test", None)
+
+
+def forms_places(manifest: dict[str, Any], *, with_maps: bool = True) -> list[tuple[tuple[Any, ...], str]]:
+    return places(manifest, descriptors=forms_descriptors(with_maps=with_maps))
+
+
+def test_required_inputs_may_be_split_among_several_input_maps(split_maps_hook: Any) -> None:
+    manifest = forms_manifest({"left": {"prompt": "prompt"}, "right": {"style": "style"}})
+    assert forms_places(manifest) == []
+
+
+def test_a_required_input_in_no_input_map_is_unbound_when_several_maps_exist(split_maps_hook: Any) -> None:
+    manifest = forms_manifest({"left": {"prompt": "prompt"}, "right": {}})
+    assert forms_places(manifest) == [(("bindings", "forms", "left"), "input_unbound")]
+
+
+def test_a_binding_with_no_input_map_present_leaves_a_required_input_unbound(split_maps_hook: Any) -> None:
+    descriptors = {"forms": bd.parse_binding_descriptor(
+        binding="forms", executor="adapter:forms", inputs_via="map", check_targets="split_maps_test",
+        binding_fields={"left": {"kind": "input_map", "required": False}, "right": {"kind": "input_map", "required": False}})}
+    found = places(forms_manifest({}), descriptors=descriptors)
+    assert [code for _, code in found] == ["input_unbound", "input_unbound"]
+    assert {path for path, _ in found} == {("bindings", "forms")}
+
+
+def test_an_unmapped_optional_input_passes_with_several_input_maps(split_maps_hook: Any) -> None:
+    manifest = forms_manifest({"left": {"prompt": "prompt"}, "right": {"style": "style"}}, extra={"type": "string"})
+    assert forms_places(manifest) == []

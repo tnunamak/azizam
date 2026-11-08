@@ -146,14 +146,6 @@ def test_composed_workflows_still_declare_what_they_need(registry: WorkflowRegis
         assert requirements_of(record.contract) == binding["requires"], record.id
 
 
-V1_MESH = Path(__file__).parent / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
-
-
-def _old_mesh(record: WorkflowRecord) -> mesh_manifest.MeshManifest:
-    """The old validator's reading of the frozen schema 1 file. Its hash is the file's, so it takes the record's."""
-    return dataclasses.replace(mesh_manifest.load_mesh_manifest(V1_MESH), manifest_hash=record.identity.manifest_hash)
-
-
 @pytest.mark.parametrize("bindings", [("gateway", "comfyui"), ("comfyui", "gateway"), ("comfyui", "other"), ("gateway", "comfyui", "other")])
 def test_requirements_survive_every_binding_shape_the_validator_accepts(registry: WorkflowRegistry, bindings: tuple[str, ...]) -> None:
     base = registry.get("image.analyze.face-likeness")
@@ -175,17 +167,15 @@ def test_requirements_survive_every_binding_shape_the_validator_accepts(registry
 def test_mesh_route_reads_its_contract_for_the_picture_input(registry: WorkflowRegistry) -> None:
     reads: list[tuple[bool, str]] = []
     record = recorded(registry.get(MESH_ID), reads)
-    old = _old_mesh(record)
-    workflow = mesh_api.mesh_workflow_from_record(record, checked_against=old)
-    assert workflow.image_input == old.image_input == "image"
-    assert workflow.inputs[workflow.image_input]["type"] == "asset"  # the contract's name for the old picture type
+    workflow = mesh_api.mesh_workflow_from_record(record)
+    assert workflow.image_input == "image"
+    assert workflow.inputs[workflow.image_input]["type"] == "asset"  # the contract's name for the picture
     picture = mesh_manifest.ImageAsset(b"x", "input.png", "image/png")
-    supplied = {"resolution": "512", "seed": "7"}
-    request = mesh_manifest.bind_request(workflow, supplied, picture)
-    assert request.values == mesh_manifest.bind_request(old, supplied, picture).values
-    assert mesh_manifest.downstream_form(workflow, request) == mesh_manifest.downstream_form(old, request)
+    request = mesh_manifest.bind_request(workflow, {"resolution": "512", "seed": "7"}, picture)
+    assert request.values == {"resolution": 512, "seed": 7}
+    assert mesh_manifest.downstream_form(workflow, request)[0] == {"seed": "7", "resolution": "512"}
     with pytest.raises(mesh_manifest.MeshInputError):
-        mesh_manifest.bind_request(workflow, supplied, None)
+        mesh_manifest.bind_request(workflow, {"resolution": "512", "seed": "7"}, None)
     assert not {key for _, key in reads} & V1_KEYS_ANYWHERE
 
 
@@ -242,33 +232,6 @@ def test_mesh_refuses_a_malformed_contract_as_a_manifest_error(registry: Workflo
     record = dataclasses.replace(registry.get(MESH_ID), manifest=contract)
     with pytest.raises(mesh_manifest.MeshManifestError):
         mesh_api.mesh_workflow_from_record(record)
-
-
-# A change the profile accepts (the contract is still a valid mesh contract) that the route would act on differently from
-# the old validator's reading of the same file: the cross-check refuses it.
-DRIFT = {
-    "default changed": lambda c: c["inputs"]["resolution"].__setitem__("default", 512),
-    "default removed": lambda c: c["inputs"]["resolution"].pop("default"),
-    "maximum changed": lambda c: c["inputs"]["seed"].__setitem__("maximum", 256),
-    "minimum changed": lambda c: c["inputs"]["seed"].__setitem__("minimum", 5),
-    "enum narrowed": lambda c: c["inputs"]["resolution"].__setitem__("enum", [512, 1024]),
-    "type changed": lambda c: c["inputs"]["bg_removal"].__setitem__("type", "integer"),
-    "input added": lambda c: c["inputs"].__setitem__("extra", {"type": "string"}),
-    "input removed": lambda c: c["inputs"].pop("extensions"),
-    "default null added": lambda c: c["inputs"]["bg_removal"].__setitem__("default", None),
-}
-
-
-@pytest.mark.parametrize("name", sorted(DRIFT))
-def test_mesh_cross_check_compares_the_scalars_the_route_binds(registry: WorkflowRegistry, name: str) -> None:
-    record = registry.get(MESH_ID)
-    old = _old_mesh(record)
-    mesh_api.mesh_workflow_from_record(record, checked_against=old)  # the untouched record agrees
-    contract = _mesh_contract(registry)
-    DRIFT[name](contract)
-    assert mesh_api.mesh_profile_errors(contract) == [], "the profile alone accepts this; only the cross-check can refuse it"
-    with pytest.raises(mesh_manifest.MeshManifestError, match="disagree"):
-        mesh_api.mesh_workflow_from_record(dataclasses.replace(record, manifest=contract), checked_against=old)
 
 
 # --- second fix round ---------------------------------------------------------------------------------------------------
