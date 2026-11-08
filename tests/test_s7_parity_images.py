@@ -109,6 +109,17 @@ def form(files=None, **data):
     return out
 
 
+def _also_switch_off(setup):
+    """The recipe switches the service off in the derived setting alone; an operator does it in the service's record, which
+    the row path reads."""
+    def both(rig):
+        setup(rig)
+        for service_id, record in (proxy.config.get("backends") or {}).items():
+            if isinstance(record, dict) and service_id == proxy._GRAPH_BACKEND_ID:
+                rig.monkeypatch.setitem(record, "enabled", False)
+    return both
+
+
 def cell(tmp_path, code, outcome):
     """One S7 cell (the golden rig's route x outcome recipe) on the old route and on its row."""
     results = []
@@ -117,6 +128,8 @@ def cell(tmp_path, code, outcome):
         if use_row:
             route.path = ROW_PREFIX + route.path
         setup, drive, _ = s7.build(route, outcome)
+        if outcome == "admission_refusal":
+            setup = _also_switch_off(setup)
         results.append(observe(tmp_path, route.path, drive, setup, row=use_row, name=f"{code}-{outcome}"))
     return results
 
