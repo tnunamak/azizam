@@ -371,6 +371,7 @@ def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
       sites of their own."""
     tree = ast.parse(text)
     drawn_names: set[str] = set()
+    random_modules: set[str] = set()
     importers = {"__import__", "import_module"}  # names that load a module by its text, under any alias
     found: dict[tuple[str, str], int] = {}
 
@@ -378,6 +379,8 @@ def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
         found[(path, owner)] = found.get((path, owner), 0) + count
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            random_modules.update(alias.asname or alias.name for alias in node.names if alias.name in DRAW_MODULES)
         if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in DRAW_MODULES:
             for alias in node.names:
                 if alias.name in DRAW_CALLS:
@@ -395,10 +398,17 @@ def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
             elif isinstance(child, ast.ImportFrom) and child.module and child.module.split(".")[0] in DRAW_MODULES \
                     and any(alias.name == "*" for alias in child.names):
                 add(f"<star import from {child.module}>")
+            elif isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "getattr" \
+                    and len(child.args) >= 2 and isinstance(child.args[0], ast.Name) \
+                    and child.args[0].id in random_modules and isinstance(child.args[1], ast.Constant) \
+                    and child.args[1].value in DRAW_CALLS:
+                add(owner)
             elif isinstance(child, ast.Call) and isinstance(child.func, (ast.Name, ast.Attribute)) \
-                    and getattr(child.func, "id", getattr(child.func, "attr", "")) in importers \
-                    and child.args and isinstance(child.args[0], ast.Constant) and child.args[0].value in DRAW_MODULES:
-                add(f"<dynamic import of {child.args[0].value}>")
+                    and getattr(child.func, "id", getattr(child.func, "attr", "")) in importers:
+                module = child.args[0] if child.args else next(
+                    (keyword.value for keyword in child.keywords if keyword.arg == "name"), None)
+                if isinstance(module, ast.Constant) and module.value in DRAW_MODULES:
+                    add(f"<dynamic import of {module.value}>")
             walk(child, scope)
 
     walk(tree, "<module>")
@@ -428,6 +438,9 @@ EVASIONS = {
     "secrets randbits from-import": "from secrets import randbits\ndef f():\n    return randbits(8)\n",
     "secrets randbits aliased from-import": "from secrets import randbits as bits\ndef f():\n    return bits(8)\n",
     "aliased import_module": "from importlib import import_module as load\ndef f():\n    return load('secrets')\n",
+    "keyword aliased import_module": "from importlib import import_module as load\ndef f():\n    return load(name='secrets')\n",
+    "literal getattr draw": "import secrets\ndef f():\n    return getattr(secrets, 'randbits')(8)\n",
+    "literal getattr module alias": "import random as r\ndef f():\n    return getattr(r, 'randint')(1, 2)\n",
     "importlib attribute": "import importlib\ndef f():\n    return importlib.import_module('random')\n",
     "dynamic import": "def f():\n    return __import__('random').randint(1, 2)\n",
 }
@@ -437,6 +450,9 @@ LOOK_ALIKES = {
     "a local function with the name": "def randint(a, b):\n    return a\ndef f():\n    return randint(1, 2)\n",
     "another module's name": "from other import randint as draw\ndef f():\n    return draw(1, 2)\n",
     "aliased import_module of another module": "from importlib import import_module as load\ndef f():\n    return load('json')\n",
+    "getattr unrelated attribute": "import secrets\ndef f():\n    return getattr(secrets, 'token_hex')(8)\n",
+    "getattr unrelated module": "import other\ndef f():\n    return getattr(other, 'randbits')(8)\n",
+    "keyword unrelated function": "def load(name):\n    return name\ndef f():\n    return load(name='secrets')\n",
     "a name that is only like an alias": "from random import randint as draw\ndef f(drawn):\n    return drawn\n",
 }
 
@@ -1005,9 +1021,14 @@ def test_an_audio_job_whose_binding_has_no_pin_is_accepted_without_an_envelope_a
     assert DefinitionStore(jobs_db).envelope(job_id) is None
 
     seen: list[Any] = []
+    drawn_at_run: list[Any] = []
+    effective = audio_graph.effective_manifest(pinless, audio_graph.AudioLimits())
 
     async def route(*args, **kwargs):
-        seen.append(proxy._JOB_GENERATED.get())
+        stored = proxy._JOB_GENERATED.get()
+        seen.append(stored)
+        inputs = audio_graph.manifest_inputs(AUDIO_BODY, manifest=effective, stored=stored)
+        drawn_at_run.append(inputs["seed"])
         return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
 
     async def no_receipt(*args, **kwargs):
@@ -1019,8 +1040,12 @@ def test_an_audio_job_whose_binding_has_no_pin_is_accepted_without_an_envelope_a
     monkeypatch.setattr(media_ingestion, "start_receipt", no_receipt)
     monkeypatch.setattr(media_ingestion, "finish_response", lambda *args, **kwargs: None)
     monkeypatch.setattr(media_ingestion, "finish_receipt", lambda *args, **kwargs: None)
-    asyncio.run(proxy._run_audio_media_job(job_id))
+    source = Recorder(4321)
+    with patch.object(generated_defaults, "secure_source", source):
+        asyncio.run(proxy._run_audio_media_job(job_id))
     assert seen == [{}], "nothing is stored for the run to read, so the route draws"
+    assert source.asked == [(PUBLIC_LOW, PUBLIC_HIGH)], "the audio run draws exactly once"
+    assert drawn_at_run == [4321], "the route uses the value drawn at run, not the accept-time value"
     assert media_jobs.get(job_id, audience="internal", path=jobs_db)["status"] != media_jobs.STATUS_QUEUED
 
 

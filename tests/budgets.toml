@@ -629,7 +629,8 @@
 # S3.6 review fixes (2026-11-07): +70 cases (accept faults, durable storage, read states, batch wrap, same-key race, ratchet controls, clear_generated_in contract); 21634 + 70, measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21704.
 # S3.6 tile fix: +1 (a job whose binding has no pin is still accepted); 21704 + 1 = 21705.
 # S3.6 second review fixes (2026-11-07): +25 cases (erasure cutoff, stored-value validation, ratchet controls, audio non-graph, same-task cleanup, after-write fault); 21705 + 25, measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21730.
-pytest = 21730
+# S3.6 third review: +6 ratchet cases (keyword importer, literal getattr, module alias, three look-alikes); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21736.
+pytest = 21736
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
