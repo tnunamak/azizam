@@ -1,0 +1,662 @@
+{
+ "id": "ltx25_chain",
+ "binding": {
+  "model_family": "ltx-2.5",
+  "stride_reason": "ltx_latent_8np1_stride",
+  "frame_step": 8,
+  "frame_offset": 1,
+  "default_context_frames": 25,
+  "context_windows": [],
+  "min_shot_seconds": 1.0,
+  "options": [
+   "state_ledger",
+   "context_seconds",
+   "context_strength"
+  ],
+  "filename_prefix": "video/ltx-2.5-long",
+  "negative_default": "text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, glitches, watermark, signature, distorted sound, saturated sound",
+  "node_prefix": "s{index}_",
+  "rule": [
+   {
+    "variant": "first",
+    "index": 0,
+    "source": false
+   },
+   {
+    "variant": "added"
+   }
+  ]
+ },
+ "template": {
+  "shared": {
+   "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+     "unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+     "weight_dtype": "default"
+    }
+   },
+   "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+     "vae_name": "ltx-2.5-video-vae-bf16.safetensors"
+    }
+   },
+   "avae": {
+    "class_type": "VAELoader",
+    "inputs": {
+     "vae_name": "ltx-2.5-audio-vae-bf16.safetensors"
+    }
+   },
+   "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+     "clip_name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+     "type": "ltxv",
+     "device": "default"
+    }
+   },
+   "neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+     "clip": [
+      "clip",
+      0
+     ],
+     "text": "$negative"
+    }
+   },
+   "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+     "sampler_name": "euler_ancestral"
+    }
+   },
+   "sigmas": {
+    "class_type": "ManualSigmas",
+    "inputs": {
+     "sigmas": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+    }
+   }
+  },
+  "source": {
+   "nodes": {
+    "src_file": {
+     "class_type": "LoadVideo",
+     "inputs": {
+      "file": "$source_file"
+     }
+    },
+    "src_parts": {
+     "class_type": "GetVideoComponents",
+     "inputs": {
+      "video": [
+       "src_file",
+       0
+      ]
+     }
+    },
+    "src_scale": {
+     "class_type": "ImageScale",
+     "inputs": {
+      "image": [
+       "src_parts",
+       0
+      ],
+      "upscale_method": "lanczos",
+      "width": "$width",
+      "height": "$height",
+      "crop": "center"
+     },
+     "if": "scaled"
+    },
+    "src_audio": {
+     "class_type": "TrimAudioDuration",
+     "inputs": {
+      "audio": [
+       "src_parts",
+       1
+      ],
+      "start_index": 0.0,
+      "duration": "$source_seconds"
+     },
+     "if": "sound"
+    }
+   },
+   "exports": {
+    "frames": {
+     "$if": "scaled",
+     "then": [
+      "src_scale",
+      0
+     ],
+     "else": [
+      "src_parts",
+      0
+     ]
+    },
+    "sound": {
+     "$if": "sound",
+     "then": [
+      "src_audio",
+      0
+     ]
+    }
+   }
+  },
+  "variants": {
+   "first": {
+    "nodes": {
+     "text": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+       "clip": [
+        "clip",
+        0
+       ],
+       "text": "$prompt"
+      }
+     },
+     "cond": {
+      "class_type": "LTXVConditioning",
+      "inputs": {
+       "positive": [
+        "@text",
+        0
+       ],
+       "negative": [
+        "neg",
+        0
+       ],
+       "frame_rate": "$fps"
+      }
+     },
+     "alat": {
+      "class_type": "LTXVEmptyLatentAudio",
+      "inputs": {
+       "frames_number": "$frames",
+       "frame_rate": "$fps_whole",
+       "batch_size": 1,
+       "audio_vae": [
+        "avae",
+        0
+       ]
+      }
+     },
+     "vlat": {
+      "class_type": "EmptyLTXVLatentVideo",
+      "inputs": {
+       "width": "$width",
+       "height": "$height",
+       "length": "$frames",
+       "batch_size": 1
+      }
+     },
+     "image": {
+      "class_type": "LoadImage",
+      "inputs": {
+       "image": "$first_frame_file"
+      },
+      "if": "first_frame"
+     },
+     "prep": {
+      "class_type": "LTXVPreprocess",
+      "inputs": {
+       "image": [
+        "@image",
+        0
+       ],
+       "img_compression": 35
+      },
+      "if": "first_frame"
+     },
+     "i2v": {
+      "class_type": "LTXVImgToVideoInplace",
+      "inputs": {
+       "vae": [
+        "vae",
+        0
+       ],
+       "image": [
+        "@prep",
+        0
+       ],
+       "latent": [
+        "@vlat",
+        0
+       ],
+       "strength": "$first_frame_strength",
+       "bypass": false
+      },
+      "if": "first_frame"
+     },
+     "av": {
+      "class_type": "LTXVConcatAVLatent",
+      "inputs": {
+       "video_latent": {
+        "$if": "first_frame",
+        "then": [
+         "@i2v",
+         0
+        ],
+        "else": [
+         "@vlat",
+         0
+        ]
+       },
+       "audio_latent": [
+        "@alat",
+        0
+       ]
+      }
+     },
+     "guider": {
+      "class_type": "CFGGuider",
+      "inputs": {
+       "model": [
+        "unet",
+        0
+       ],
+       "positive": [
+        "@cond",
+        0
+       ],
+       "negative": [
+        "@cond",
+        1
+       ],
+       "cfg": 1.0
+      }
+     },
+     "noise": {
+      "class_type": "RandomNoise",
+      "inputs": {
+       "noise_seed": "$seed"
+      }
+     },
+     "sample": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+       "noise": [
+        "@noise",
+        0
+       ],
+       "guider": [
+        "@guider",
+        0
+       ],
+       "sampler": [
+        "sampler",
+        0
+       ],
+       "sigmas": [
+        "sigmas",
+        0
+       ],
+       "latent_image": [
+        "@av",
+        0
+       ]
+      }
+     },
+     "sep": {
+      "class_type": "LTXVSeparateAVLatent",
+      "inputs": {
+       "av_latent": [
+        "@sample",
+        0
+       ]
+      }
+     },
+     "decode": {
+      "class_type": "VAEDecodeTiled",
+      "inputs": {
+       "samples": [
+        "@sep",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "tile_size": 512,
+       "overlap": 64,
+       "temporal_size": 64,
+       "temporal_overlap": 16
+      }
+     },
+     "audio": {
+      "class_type": "LTXVAudioVAEDecode",
+      "inputs": {
+       "samples": [
+        "@sep",
+        1
+       ],
+       "audio_vae": [
+        "avae",
+        0
+       ]
+      }
+     }
+    },
+    "unit": {
+     "sample": "sample",
+     "decode": "decode"
+    },
+    "exports": {
+     "frames": [
+      "@decode",
+      0
+     ],
+     "sound": [
+      "@audio",
+      0
+     ]
+    }
+   },
+   "added": {
+    "nodes": {
+     "text": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+       "clip": [
+        "clip",
+        0
+       ],
+       "text": "$prompt"
+      }
+     },
+     "cond": {
+      "class_type": "LTXVConditioning",
+      "inputs": {
+       "positive": [
+        "@text",
+        0
+       ],
+       "negative": [
+        "neg",
+        0
+       ],
+       "frame_rate": "$fps"
+      }
+     },
+     "alat": {
+      "class_type": "LTXVEmptyLatentAudio",
+      "inputs": {
+       "frames_number": "$sampled_frames",
+       "frame_rate": "$fps_whole",
+       "batch_size": 1,
+       "audio_vae": [
+        "avae",
+        0
+       ]
+      }
+     },
+     "tail": {
+      "class_type": "ImageFromBatch",
+      "inputs": {
+       "image": "$frames_in",
+       "batch_index": "$context_start",
+       "length": "$context"
+      }
+     },
+     "enc": {
+      "class_type": "VAEEncode",
+      "inputs": {
+       "pixels": [
+        "@tail",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ]
+      }
+     },
+     "vlat": {
+      "class_type": "EmptyLTXVLatentVideo",
+      "inputs": {
+       "width": "$width",
+       "height": "$height",
+       "length": "$sampled_frames",
+       "batch_size": 1
+      }
+     },
+     "guide": {
+      "class_type": "LTXVAddLatentGuide",
+      "inputs": {
+       "positive": [
+        "@cond",
+        0
+       ],
+       "negative": [
+        "@cond",
+        1
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "latent": [
+        "@vlat",
+        0
+       ],
+       "guiding_latent": [
+        "@enc",
+        0
+       ],
+       "latent_idx": 0,
+       "strength": "$context_strength"
+      }
+     },
+     "av": {
+      "class_type": "LTXVConcatAVLatent",
+      "inputs": {
+       "video_latent": [
+        "@guide",
+        2
+       ],
+       "audio_latent": [
+        "@alat",
+        0
+       ]
+      }
+     },
+     "guider": {
+      "class_type": "CFGGuider",
+      "inputs": {
+       "model": [
+        "unet",
+        0
+       ],
+       "positive": [
+        "@guide",
+        0
+       ],
+       "negative": [
+        "@guide",
+        1
+       ],
+       "cfg": 1.0
+      }
+     },
+     "noise": {
+      "class_type": "RandomNoise",
+      "inputs": {
+       "noise_seed": "$seed"
+      }
+     },
+     "sample": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+       "noise": [
+        "@noise",
+        0
+       ],
+       "guider": [
+        "@guider",
+        0
+       ],
+       "sampler": [
+        "sampler",
+        0
+       ],
+       "sigmas": [
+        "sigmas",
+        0
+       ],
+       "latent_image": [
+        "@av",
+        0
+       ]
+      }
+     },
+     "sep": {
+      "class_type": "LTXVSeparateAVLatent",
+      "inputs": {
+       "av_latent": [
+        "@sample",
+        0
+       ]
+      }
+     },
+     "crop": {
+      "class_type": "LTXVCropGuides",
+      "inputs": {
+       "positive": [
+        "@guide",
+        0
+       ],
+       "negative": [
+        "@guide",
+        1
+       ],
+       "latent": [
+        "@sep",
+        0
+       ]
+      }
+     },
+     "decode": {
+      "class_type": "VAEDecodeTiled",
+      "inputs": {
+       "samples": [
+        "@crop",
+        2
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "tile_size": 512,
+       "overlap": 64,
+       "temporal_size": 64,
+       "temporal_overlap": 16
+      }
+     },
+     "new": {
+      "class_type": "ImageFromBatch",
+      "inputs": {
+       "image": [
+        "@decode",
+        0
+       ],
+       "batch_index": "$context",
+       "length": "$frames"
+      }
+     },
+     "cat": {
+      "class_type": "ImageBatch",
+      "inputs": {
+       "image1": "$frames_in",
+       "image2": [
+        "@new",
+        0
+       ]
+      }
+     },
+     "audio": {
+      "class_type": "LTXVAudioVAEDecode",
+      "inputs": {
+       "samples": [
+        "@sep",
+        1
+       ],
+       "audio_vae": [
+        "avae",
+        0
+       ]
+      },
+      "if": "sound"
+     },
+     "atrim": {
+      "class_type": "TrimAudioDuration",
+      "inputs": {
+       "audio": [
+        "@audio",
+        0
+       ],
+       "start_index": "$context_seconds",
+       "duration": "$segment_seconds"
+      },
+      "if": "sound"
+     }
+    },
+    "unit": {
+     "sample": "sample",
+     "decode": "decode"
+    },
+    "exports": {
+     "frames": [
+      "@cat",
+      0
+     ],
+     "sound": {
+      "$if": "sound",
+      "then": [
+       "@atrim",
+       0
+      ]
+     }
+    }
+   }
+  },
+  "finish": {
+   "sound_join": {
+    "id": "audio_cat{k}",
+    "class_type": "AudioConcat",
+    "first": "audio1",
+    "next": "audio2",
+    "inputs": {
+     "direction": "after"
+    }
+   },
+   "nodes": {
+    "create": {
+     "class_type": "CreateVideo",
+     "inputs": {
+      "images": "$frames_out",
+      "fps": "$fps",
+      "audio": {
+       "$if": "sound_out",
+       "then": "$sound_out"
+      }
+     }
+    },
+    "save": {
+     "class_type": "SaveVideo",
+     "inputs": {
+      "video": [
+       "create",
+       0
+      ],
+      "filename_prefix": "$filename_prefix",
+      "format": "mp4",
+      "codec": "auto"
+     }
+    }
+   },
+   "save_node": "save"
+  }
+ }
+}

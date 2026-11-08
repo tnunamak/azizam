@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+
+import yaml
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 from test_image_prompt_binding import image_round  # noqa: F401
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401
 
-from gateway import video_extend as ve, video_extend_h3 as h3, video_subject as vs  # noqa: E402
+from gateway import video_extend as ve, video_subject as vs  # noqa: E402
 
 SIGNATURES = json.loads((ROOT / "tests/fixtures/comfy_node_signatures.json").read_text())
 # Combos that list files on the host: the value is checked at run time, not here.
@@ -93,7 +95,7 @@ class ChainGraphSignatureTests(unittest.TestCase):
     def _specs(self):
         source = ve.SourceVideo("s.mp4", 193, 24.0, 832, 480, True)
         silent = ve.SourceVideo("s.mp4", 193, 24.0, 960, 512, False)
-        plan = lambda shots, has_source: ve.plan_segments(shots, fps=24.0, has_source=has_source)  # noqa: E731
+        plan = lambda shots, has_source: ve.engine_for("ltx25_chain").plan_segments(shots, fps=24.0, has_source=has_source)  # noqa: E731
         yield "text to video, 3 segments", ve.ChainSpec(plan([("a", 20)], False), 960, 512, 24.0, 1)
         yield "first frame image", ve.ChainSpec(plan([("a", 12)], False), 960, 512, 24.0, 1, first_frame_image="x.png")
         yield "extend, scaled source", ve.ChainSpec(plan([("b", 12)], True), 960, 512, 24.0, 1, source=source)
@@ -103,11 +105,11 @@ class ChainGraphSignatureTests(unittest.TestCase):
     def test_every_chain_graph_passes_the_signature_check(self) -> None:
         for label, spec in self._specs():
             with self.subTest(label):
-                self.assertEqual(check_graph(ve.build_chain_graph(spec).graph), [])
+                self.assertEqual(check_graph(ve.engine_for("ltx25_chain").build(spec).graph), [])
 
     def test_manifest_reference_graph_passes(self) -> None:
         graph = json.loads((ROOT / "workflows/videos/video-ltx-2.5-long.json").read_text())
-        graph.pop("_meta")
+        graph.pop("_meta", None)
         self.assertEqual(check_graph(graph), [])
 
 
@@ -120,7 +122,7 @@ class H3ChainGraphSignatureTests(unittest.TestCase):
         silent = ve.SourceVideo("s.mp4", 244, 24.0, 960, 544, False)
 
         def spec(shots, has_source=False, **kw):
-            segments = h3.plan_segments(shots, fps=24.0, has_source=has_source, max_segment_seconds=10.0)
+            segments = ve.engine_for("h3_chain").plan_segments(shots, fps=24.0, has_source=has_source, max_segment_seconds=10.0)
             return ve.ChainSpec(segments, 960, 544, 24.0, 1, context_frames=kw.pop("context", 22), **kw)
 
         yield "text to video, 3 segments", spec([("a", 25)])
@@ -134,18 +136,21 @@ class H3ChainGraphSignatureTests(unittest.TestCase):
     def test_every_h3_chain_graph_passes_the_signature_check(self) -> None:
         for label, spec in self._specs():
             with self.subTest(label):
-                self.assertEqual(check_graph(h3.build_chain_graph(spec).graph), [])
+                self.assertEqual(check_graph(ve.engine_for("h3_chain").build(spec).graph), [])
 
     def test_manifest_reference_graph_passes(self) -> None:
         graph = json.loads((ROOT / "workflows/videos/video-minimax-h3-long.json").read_text())
-        graph.pop("_meta")
+        graph.pop("_meta", None)
         self.assertEqual(check_graph(graph), [])
+
+
+ROLES = yaml.safe_load((ROOT / "registry" / "defaults" / "videos.yml").read_text())["workflows"]["video-scail-2-replace"]["node_roles"]
 
 
 class ReplaceGraphSignatureTests(unittest.TestCase):
     def _base(self) -> dict:
         graph = json.loads((ROOT / "workflows/videos/video-scail-2-replace.json").read_text())
-        graph.pop("_meta")
+        graph.pop("_meta", None)
         return graph
 
     def test_base_graph(self) -> None:
@@ -153,13 +158,13 @@ class ReplaceGraphSignatureTests(unittest.TestCase):
 
     def test_with_reference_fit(self) -> None:
         graph = self._base()
-        vs.add_reference_fit(graph)
+        vs.add_reference_fit(graph, ROLES)
         self.assertEqual(check_graph(graph), [])
 
     def test_with_point_and_fit(self) -> None:
         graph = self._base()
-        vs.apply_point(graph, {"source_point_x": 0.4, "source_point_y": 0.6}, 832, 448)
-        vs.add_reference_fit(graph)
+        vs.apply_point(graph, {"source_point_x": 0.4, "source_point_y": 0.6}, 832, 448, ROLES)
+        vs.add_reference_fit(graph, ROLES)
         self.assertEqual(check_graph(graph), [])
 
 
@@ -171,7 +176,7 @@ class KeyframeGraphSignatureTests(unittest.TestCase):
                      "video-ltx-2.5-keyframes", "video-ltx-2.5-keyframes-mid"):
             with self.subTest(name):
                 graph = json.loads((ROOT / f"workflows/videos/{name}.json").read_text())
-                graph.pop("_meta")
+                graph.pop("_meta", None)
                 self.assertEqual(check_graph(graph), [])
 
 

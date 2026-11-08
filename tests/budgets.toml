@@ -663,7 +663,7 @@
 # Builder D3, oracle profile 2: +20 cases in test_adapter_differential_normalizer.py, +13 in test_adapter_differential_deltas.py.
 # Builder D5, image routes onto rows: +3 cases in test_frontend_shapes.py (short-form names, the deployment default, wire fields), +4 in test_frontend_row_serving.py.
 # Builder W (2026-11-08): +17 cases: 13 in test_workflow_run_contracts.py (new), 3 in test_workflow_registry_store.py, 1 in test_workflow_registry_names.py (new); the inline-template test replaces the xfail in test_workflow_owner_api.py; measured with --collect-only -q on the touched files.
-pytest = 22601  # D7: +2 in tests/test_identity_api.py (engine graph golden); V: +15 in tests/test_s7_video_chain_graphs.py; K: +32 in tests/test_s7_parity_core.py; integrator: +1 there (accepted_inputs)
+pytest = 22663  # D7: +2 in tests/test_identity_api.py (engine graph golden); V: +15 in tests/test_s7_video_chain_graphs.py; K: +32 in tests/test_s7_parity_core.py; integrator: +1 there (accepted_inputs); V3: +41 in tests/test_s7_parity_video_extra.py, +3 remove-kind tests in tests/test_adapter_differential_deltas.py; V2: +15 in tests/test_segment_chain.py, +3 in tests/test_video_subject.py
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -916,7 +916,7 @@ ad_hoc_upstream_fake_files = 46
 # S3.9 (2026-11-08): -10 where the mesh validator's own type and intent checks left with gateway/mesh_manifest.py's validator.
 # S5, builder B (2026-11-08): 802 - 12 = 790 where model_metadata's workflow intent tables (_INTENTS, _INTENT_ASSET_MODALITY) left for metadata computed from the contract; the new modules add none.
 # S6, builder C (2026-11-08): -10 (run core replaces the compile-from-pin and intent-keyed job paths); 790 - 10.
-domain_literals = 780
+domain_literals = 766
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through

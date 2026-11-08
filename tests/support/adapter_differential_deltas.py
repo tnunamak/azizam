@@ -20,7 +20,7 @@ from typing import Any, Mapping, Sequence
 #: The differences the design allows, and nothing else.
 KINDS = frozenset({
     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
-    "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait",
+    "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "remove",
 })
 #: Places a moved route keeps identical (golden design section 4): engine requests, every header, the receipt's
 #: accepted inputs and resolved workflow, and the stored asset rows. No kind may name a path through one of them.
@@ -34,6 +34,9 @@ class DeltaError(AssertionError):
 
 @dataclass(frozen=True)
 class Delta:
+    """One allowed difference. A ``remove`` deletes the element at ``path`` (a list item or a key); ``old`` is the
+    value the golden holds there, and ``new`` must be None. Removing a list item shifts the items after it, so
+    a manifest lists the removals from the highest index down."""
     kind: str
     path: str
     old: Any
@@ -44,6 +47,8 @@ class Delta:
         out = []
         if self.kind not in KINDS:
             out.append(f"{self.path}: kind {self.kind!r} is not one of the allowed differences")
+        if self.kind == "remove" and self.new is not None:
+            out.append(f"{self.path}: a remove has no new value (new must be None)")
         if not self.reason.strip():
             out.append(f"{self.path}: a delta needs a reason")
         if self.old == self.new:
@@ -93,13 +98,16 @@ def _walk(node: Any, steps: Sequence[str | int], path: str) -> tuple[Any, str | 
     return node, last
 
 
-def _replace(document: Any, path: str, old: Any, new: Any) -> None:
+def _replace(document: Any, path: str, old: Any, new: Any, *, remove: bool = False) -> None:
     outer, _, inner = path.partition("#")
     holder, key = _walk(document, _steps(outer), outer)
     if not inner:
         if holder[key] != old:
             raise DeltaError(f"unmatched delta at {path}: the golden holds {holder[key]!r}, the delta says {old!r}")
-        holder[key] = new
+        if remove:
+            del holder[key]
+        else:
+            holder[key] = new
         return
     text = holder[key]
     if not isinstance(text, str):
@@ -108,7 +116,10 @@ def _replace(document: Any, path: str, old: Any, new: Any) -> None:
     inner_holder, inner_key = _walk(parsed, _steps(inner), path)
     if inner_holder[inner_key] != old:
         raise DeltaError(f"unmatched delta at {path}: the golden holds {inner_holder[inner_key]!r}, the delta says {old!r}")
-    inner_holder[inner_key] = new
+    if remove:
+        del inner_holder[inner_key]
+    else:
+        inner_holder[inner_key] = new
     spaced = '": ' in text
     holder[key] = json.dumps(parsed, ensure_ascii=False, separators=(", ", ": ") if spaced else (",", ":"))
 
@@ -120,7 +131,7 @@ def apply_deltas(golden: Mapping[str, Any], deltas: Sequence[Delta]) -> dict[str
         problems = delta.problems()
         if problems:
             raise DeltaError("; ".join(problems))
-        _replace(document, delta.path, delta.old, delta.new)
+        _replace(document, delta.path, delta.old, delta.new, remove=delta.kind == "remove")
     return document
 
 

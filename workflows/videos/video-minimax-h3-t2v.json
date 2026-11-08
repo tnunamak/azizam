@@ -1,30 +1,4 @@
 {
- "_meta": {
-  "name": "video-minimax-h3-t2v",
-  "description": "MiniMax H3 FL2VA text-to-video with native stereo audio; int8_convrot pruned transformer + nvfp4_awq Qwen3-VL-32B encoder + 8-step turbo LoRA; res_multistep/simple, cfg-free BasicGuider. 24 fps; frame count must be 17k+5 (124 = 5.17 s). License: MiniMax H3 Community License (territory-restricted; owner decision). Tested stable (3/3 t2v + 1 i2v, 960x544 124 frames, 120-250 s) only AFTER GPU0 V/F offset was set to 0 (+200 MHz offset caused Xid 109).",
-  "model_file": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-  "frame_rate": 24,
-  "default_steps": 8,
-  "max_seconds": 10,
-  "default_size": "960x544",
-  "prompt_node": "9",
-  "size_node": [
-   "6",
-   "7"
-  ],
-  "length_nodes": [
-   "8"
-  ],
-  "frame_rate_nodes": [
-   "17"
-  ],
-  "seed_nodes": [
-   "10"
-  ],
-  "save_node": "18",
-  "steps_node": "12",
-  "prompt_field": "prompt"
- },
  "1": {
   "class_type": "VAELoader",
   "inputs": {
