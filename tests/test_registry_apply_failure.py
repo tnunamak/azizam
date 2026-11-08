@@ -467,3 +467,96 @@ def test_a_failed_reload_after_a_partial_boot_is_reported_as_stale_and_still_nam
     assert proxy.REGISTRY_APPLY_PROBLEM["left_out"] == {"bad-engine": "x"}
     proxy.reload_runtime_config()
     assert proxy.REGISTRY_APPLY_PROBLEM is None
+
+
+# --- a reload after boot, with a stored workflow a frontend profile refuses ---------------------------------
+
+def _store_refused_workflow_alongside_good_ones(db) -> tuple[str, str]:
+    """Replace the stored registry (layered form) with a good service, a good workflow and a workflow the mesh
+    profile refuses. Returns (refused id, good id)."""
+    from gateway import mesh_api  # noqa: F401 - registers the profile the refusal comes from
+    from tests.mesh_workflows import SECOND_ID, second_document
+
+    refused = second_document()
+    refused["inputs"]["flag"] = {"type": "boolean"}
+    good = second_document()
+    good["id"] = "mesh.generate.second-engine-good"
+    stored = {
+        "schema_version": service_registry.SERVICE_REGISTRY_SCHEMA_VERSION, "layering": 1,
+        "services": {"good-engine": GOOD}, "protocol_frontends": {}, "capabilities": {}, "tombstones": {},
+        "workflows": {
+            refused["id"]: {"source": "imported", "manifest": refused},
+            good["id"]: {"source": "imported", "manifest": good},
+        },
+    }
+    current = admin_store.get_service_registry_with_generation(path=db)
+    admin_store.write_service_registry_with_audit(
+        stored, expected_generation=current["operator_settings_generation"] if current else 0, updated_by="test",
+        audit_action="test.seed", audit_actor_kind="admin", audit_actor_id="test", audit_actor_label="Test",
+        audit_target_kind="operator_setting", audit_target_id=service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        audit_metadata={}, session=None, path=db, migration_step=None, stored_form=True)
+    assert refused["id"] == SECOND_ID
+    return SECOND_ID, good["id"]
+
+
+def _stored_registry_snapshot(db) -> tuple[str, int]:
+    import json
+
+    stored = admin_store.get_service_registry_with_generation(path=db)
+    return json.dumps(stored["value"], sort_keys=True), stored["operator_settings_generation"]
+
+
+def _served_workflows() -> set[str]:
+    return {record.id for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()}
+
+
+def test_a_reload_after_boot_with_a_workflow_the_mesh_profile_refuses_applies_the_rest_and_leaves_the_store_alone(live, monkeypatch):
+    monkeypatch.setattr(proxy, "REGISTRY_APPLY_PROBLEM", None, raising=False)
+    proxy.reload_runtime_config()  # a healthy gateway first
+    assert proxy.REGISTRY_APPLY_PROBLEM is None and "good-engine" not in proxy.config["backends"]
+    refused_id, good_id = _store_refused_workflow_alongside_good_ones(live)
+    stored_before = _stored_registry_snapshot(live)
+
+    proxy.reload_runtime_config()
+
+    assert "good-engine" in proxy.config["backends"]  # the good service change is live
+    assert good_id in _served_workflows()
+    assert refused_id not in _served_workflows()
+    problem = proxy.REGISTRY_APPLY_PROBLEM
+    assert problem["mode"] == "partial"
+    assert problem["left_out"].get(f"workflow:{refused_id}"), problem
+    assert not any(good_id in name or "good-engine" in name for name in problem["left_out"])
+    assert problem["mode"] != "empty" and "litellm" in proxy.config["backends"]  # served, not substituted by bootstrap or nothing
+    assert _stored_registry_snapshot(live) == stored_before  # the stored JSON and its generation are untouched
+
+
+def test_a_failed_publish_after_a_partial_reload_keeps_the_old_runtime_and_reports_the_left_out_record_as_stale(live, monkeypatch):
+    monkeypatch.setattr(proxy, "REGISTRY_APPLY_PROBLEM", None, raising=False)
+    refused_id, good_id = _store_refused_workflow_alongside_good_ones(live)
+    proxy.reload_runtime_config()
+    left_out = dict(proxy.REGISTRY_APPLY_PROBLEM["left_out"])
+    assert proxy.REGISTRY_APPLY_PROBLEM["mode"] == "partial" and f"workflow:{refused_id}" in left_out
+    config_before, routes_before, served_before = proxy.config, list(proxy.app.router.routes), _served_workflows()
+    stored_before = _stored_registry_snapshot(live)
+
+    def failing(*args, **kwargs):
+        raise RuntimeError("mount failed")
+
+    with monkeypatch.context() as patched:  # undone before the fixture remounts the table
+        patched.setattr(proxy.FRONTEND_MOUNTS, "prepare", failing)
+        with pytest.raises(RuntimeError, match="mount failed"):
+            proxy.reload_runtime_config()
+
+    assert proxy.config is config_before
+    assert proxy.app.router.routes == routes_before
+    assert _served_workflows() == served_before and good_id in served_before and refused_id not in served_before
+    assert proxy.REGISTRY_APPLY_PROBLEM["mode"] == "stale"
+    assert "RuntimeError" in proxy.REGISTRY_APPLY_PROBLEM["error"] or "mount failed" in proxy.REGISTRY_APPLY_PROBLEM["error"]
+    assert proxy.REGISTRY_APPLY_PROBLEM["left_out"] == left_out
+    assert _stored_registry_snapshot(live) == stored_before
+
+    proxy.reload_runtime_config()  # the failure is gone: the refused workflow is still left out, so not healthy
+
+    assert proxy.REGISTRY_APPLY_PROBLEM["mode"] == "partial"
+    assert f"workflow:{refused_id}" in proxy.REGISTRY_APPLY_PROBLEM["left_out"]
+    assert good_id in _served_workflows() and refused_id not in _served_workflows()
