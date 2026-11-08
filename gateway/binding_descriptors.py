@@ -278,8 +278,10 @@ def _check_block(
         for spec in needs_hook:
             hook(field=spec.name, kind=spec.kind, value=block[spec.name], at=at + (spec.name,), inputs=inputs,
                  template=template, errors=errors)
-    if descriptor.inputs_via == "map" and len(errors) == before:
-        # Last, and only on a block with no other error, so a binding keeps the errors it always gave.
+    maps_missing = any(allowed[name].kind == "input_map" for name in missing)
+    if descriptor.inputs_via == "map" and role_known and not maps_missing and len(errors) == before:
+        # Last, and only when the input maps can be read: a missing required map or an unknown role is the one error
+        # about them, and every other field error stays beside it.
         _check_required_inputs_bound(block, present, at, inputs, errors)
 
 
