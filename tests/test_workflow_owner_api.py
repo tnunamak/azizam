@@ -49,7 +49,32 @@ def api(tmp_path, request):
     app.include_router(create_admin_router(AdminSQLiteStore(db), auth=auth, workflow_registry=registry))
     client = TestClient(app, raise_server_exceptions=False)
     client.db, client.config, client.roles, client.registry = db, config, roles, registry
+    client.jobs_db = tmp_path / "jobs.db"
     return client
+
+
+def _restarted(client, release_edits):
+    """The gateway restarted on a newer release: the same admin.db, the bundled workflows of ``release_edits`` changed by
+    their function (id -> manifest -> manifest), everything else as shipped."""
+    from dataclasses import replace
+
+    from gateway import registry_snapshot
+
+    def builder(document, _release, *, generation):
+        release = registry_snapshot.bundled_release()
+        changed = {wid: replace(record, manifest=release_edits[wid](copy.deepcopy(record.manifest)))
+                   if wid in release_edits else record for wid, record in release.workflows.items()}
+        return registry_snapshot.build(document, registry_snapshot.BundledRelease(changed, release.frontends),
+                                       generation=generation)
+
+    registry = WorkflowRegistryStore(path=client.db, definitions=DefinitionStore(client.jobs_db),
+                                     build_snapshot=builder, config=lambda: client.config)
+    app = FastAPI()
+    app.include_router(create_admin_router(AdminSQLiteStore(client.db), auth=lambda _request: OWNER,
+                                           workflow_registry=registry))
+    restarted = TestClient(app, raise_server_exceptions=False)
+    restarted.db, restarted.config, restarted.registry, restarted.jobs_db = client.db, client.config, registry, client.jobs_db
+    return restarted
 
 
 def os_n(client) -> str:
@@ -299,3 +324,84 @@ def test_the_listing_offers_the_closed_fact_values_as_choices(api):  # I6 addend
     assert choices["trust_tier"] == list(TRUST_TIERS)
     assert choices["resource_tier"] == list(RESOURCE_TIERS)
     assert set(known_resource_classes()) <= set(choices["resource_class"]) and choices["resource_class"]
+
+
+# -- a bundled workflow and a later release (contract tests; CODE_TO_DATA S4-S8 integration) ---------------------------
+
+
+def _renamed(title):
+    return lambda manifest: {**manifest, "display_name": title}
+
+
+def _detail(client, workflow_id=BUNDLED_ID):
+    return client.get(f"/admin/api/workflows/{workflow_id}").json()["workflow"]
+
+
+def _post(client, path, body):
+    return client.post(f"/admin/api/workflows/{BUNDLED_ID}/{path}", json=body, headers={"If-Match": os_n(client)})
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_new_release_of_a_bundled_workflow_shows_through_its_run_control_changes(api):
+    # One click must not freeze a bundled workflow: an unpublish or a state change stores the run control only, so the
+    # next release's contract and facts serve under it, with the release's provenance and incarnation.
+    before = _detail(api)
+    assert _post(api, "publish", {"published": False}).status_code == 200
+    assert _post(api, "state", {"state": "disabled"}).status_code == 200
+    newer = _restarted(api, {BUNDLED_ID: _renamed("New in this release")})
+    after = _detail(newer)
+    assert after["contract"]["display_name"] == "New in this release"
+    assert (after["published"], after["state"]) == (False, "disabled")
+    assert (after["provenance"], after["incarnation"], after["facts"]) == \
+        (before["provenance"], before["incarnation"], before["facts"])
+    assert _post(newer, "publish", {"published": True}).status_code == 200
+    assert _post(newer, "state", {"state": "active"}).status_code == 200
+    again = _detail(newer)
+    assert again["contract"]["display_name"] == "New in this release" and again["published"] is True
+    assert again["provenance"] == before["provenance"]
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_contract_override_of_a_bundled_workflow_keeps_its_contract_after_a_new_release(api):
+    # A contract the owner saved on purpose (PUT with overrides) is a fork: a release does not change it, and it is not
+    # reviewed, even when it equals a bundled file.
+    edited = {**_detail(api)["contract"], "display_name": "Mine"}
+    assert put(api, edited, overrides=BUNDLED_ID).status_code == 200
+    newer = _restarted(api, {BUNDLED_ID: _renamed("New in this release")})
+    after = _detail(newer)
+    assert after["contract"]["display_name"] == "Mine"
+    assert after["provenance"]["trusted"] is False
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_a_saved_copy_of_the_bundled_contract_is_not_reviewed(api):
+    # Trust is the release file's: a stored full contract is never reviewed, also when it is the bundled one unchanged.
+    before = _detail(api)
+    assert put(api, before["contract"], overrides=BUNDLED_ID).status_code == 200
+    assert _detail(api)["provenance"]["trusted"] is False
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_delete_of_an_overridden_bundled_id_reverts_it_to_the_bundled_workflow(api):
+    before = _detail(api)
+    edited = {**before["contract"], "display_name": "Mine"}
+    assert put(api, edited, overrides=BUNDLED_ID).status_code == 200
+    assert _post(api, "publish", {"published": False}).status_code == 200
+    reverted = api.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(api)})
+    assert reverted.status_code == 200, reverted.json()
+    after = _detail(api)
+    assert (after["contract"], after["facts"], after["published"], after["state"], after["provenance"],
+            after["incarnation"]) == (before["contract"], before["facts"], True, before["state"], before["provenance"],
+                                      before["incarnation"])
+    # With no override left, a bundled id cannot be deleted: 409 id_is_bundled, as before.
+    again = api.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(api)})
+    assert again.status_code == 409 and again.json()["error"]["code"] == "id_is_bundled"
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_delete_of_a_bundled_id_with_only_run_control_reverts_it(api):
+    before = _detail(api)
+    assert _post(api, "publish", {"published": False}).status_code == 200
+    reverted = api.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(api)})
+    assert reverted.status_code == 200, reverted.json()
+    assert _detail(api)["published"] is True and _detail(api)["provenance"] == before["provenance"]
