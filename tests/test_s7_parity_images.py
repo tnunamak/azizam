@@ -932,7 +932,6 @@ def test_images_J19_success_mirrors_assets_and_drops_payload(tmp_path):
     assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), origins, asset_files, engine_without_probes, receipt_summary)
 
 
-@ROW_PENDING
 def test_images_J20_failure_records_error_and_event(tmp_path):
     old, row = cell(tmp_path, "ij", "upstream_failure")
     old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
@@ -1262,7 +1261,6 @@ def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_
     assert_same(v_old, v_row, sleeps, engine_without_probes)
 
 
-@pytest.mark.xfail(strict=True, reason="the failed-job message: the old job stored a fixed sentence while the sync caller got the engine words (needs two texts, integrator decision); delays, limit and events match")
 def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
     """Section 6.6: a retryable failure is retried on the same job up to the attempt limit, waiting 5 s then doubling
     to at most 30 s, and appends the retry event each time."""
