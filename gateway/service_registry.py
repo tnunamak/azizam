@@ -42,7 +42,7 @@ from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summar
 from gateway.manifests import Provenance, enforce_contract, manifest_identity
 from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, facts_from_mapping, release_facts
 from gateway.transition_gate import ServicePaths, domain_violations
-from gateway import transition_profiles
+from gateway import frontend_profiles, transition_profiles
 
 
 SERVICE_REGISTRY_SETTING_KEY = "service_registry"
@@ -2521,6 +2521,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         }
     manifest_dict = copy.deepcopy(dict(manifest))
     enforce_contract(manifest_dict)   # a save refuses what a load refuses; schema 1 is refused, not converted
+    frontend_profiles.check(manifest_dict)   # and what the frontend that serves its intent cannot carry (D9)
     source = str(raw.get("registry_source") or raw.get("source") or "ui")
     if source not in DATA_OBJECT_SOURCES:
         source = "ui"

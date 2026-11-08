@@ -265,8 +265,8 @@ release claim follows from this branch.
   record fail-closed, resolve the service and capacity fail-closed, open the
   receipt, read and bind the multipart body, take the exclusive lease, post
   downstream, return the GLB. Every refusal is a bounded public error.
-- Manifest `manifests/workflows/mesh.generate.trellis-2.yml`, checked by the closed
-  validator in `gateway/mesh_manifest.py`. It binds one service (`trellis`) over
+- Manifest `manifests/workflows/mesh.generate.trellis-2.yml`, checked by the general
+  workflow grammar and the mesh frontend profile in `gateway/mesh_api.py` (the mesh-only validator was deleted in S3.9). It binds one service (`trellis`) over
   `http-multipart` at `/generate`, maps `image`, `seed`, `resolution` and
   `bg_removal`, and reserves `extensions` as an unmapped object input.
 - Closed multipart executor (`gateway/http_multipart.py`): one POST, no retries,

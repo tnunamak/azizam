@@ -21,13 +21,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+import proxy
 from gateway import route_registry, service_registry
 from gateway.exclusive_pool import ExclusivePoolLeaseManager
 from gateway.mesh_api import MESH_PATH, MeshApiDeps, MeshJobDeps, register_mesh_routes
-from gateway.mesh_manifest import load_mesh_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = load_mesh_manifest(ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml")
+# The route reads the registry's schema 2 record through the mesh frontend profile, as the gateway does: a route that skipped the
+# profile, or read another reading of the file, would not serve these tests (CODE_TO_DATA_S3, S3.9).
+MANIFEST = proxy.current_mesh_workflow()
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 128
 GLB = b"glTF\x02\x00\x00\x00" + b"model-bytes" * 8
 MIB = 1 << 20
@@ -110,7 +112,7 @@ class Harness:
         self.receipt_manifests: list[Any] = []
         self.policy_manifests: list[Any] = []
         # The route's current record; a test may swap it mid-request to show the request keeps the one it read.
-        self.current_manifest: Any = lambda: MANIFEST
+        self.current_manifest: Any = lambda: proxy.current_mesh_workflow()
         # store_output(auth, output) for the library; None stores nothing.
         self.store_output: Any = None
         # The media-job store for ``Prefer: respond-async``; None leaves the async form off.

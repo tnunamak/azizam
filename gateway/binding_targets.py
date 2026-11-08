@@ -9,7 +9,7 @@ it was given, and skips the part that needs it otherwise.
   a target node must exist in the template and be a mapping; a path must start at such a node. Two targets may not
   write one place, and a node list may not repeat a node.
 - ``form``: for adapters that send their inputs as form fields. A target is a plain field name, used once, and an object
-  input has no form field (the rules ``mesh_manifest`` applied to its map).
+  input has no form field (the rules the retired mesh validator applied to its map).
 
 A description picks its hook by name with ``check_targets``.
 """

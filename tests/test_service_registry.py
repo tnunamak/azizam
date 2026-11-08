@@ -1793,3 +1793,59 @@ def test_registry_rejects_a_public_alias_declared_by_two_services() -> None:
                 }
             }
         )
+
+
+# ---------------------------------------------------------------- a frontend profile refusal at start-up
+
+def _stored_with_refused_mesh_workflow(db: Path) -> tuple[str, str]:
+    """A layered store holding one imported schema 2 workflow the mesh profile refuses (an optional boolean input: the
+    general grammar accepts it, the profile does not) next to a good one. Returns (refused id, good id)."""
+    from gateway import mesh_api  # noqa: F401 - registers the profile the refusal comes from
+    from tests.mesh_workflows import SECOND_ID, second_document
+
+    refused = second_document()
+    refused["inputs"]["flag"] = {"type": "boolean"}
+    good = second_document()
+    good["id"] = "mesh.generate.second-engine-good"
+    stored = {
+        "schema_version": service_registry.SERVICE_REGISTRY_SCHEMA_VERSION, "layering": 1,
+        "services": {}, "protocol_frontends": {}, "capabilities": {}, "tombstones": {},
+        "workflows": {
+            refused["id"]: {"source": "imported", "manifest": refused},
+            good["id"]: {"source": "imported", "manifest": good},
+        },
+    }
+    admin_store.write_service_registry_with_audit(
+        stored, expected_generation=0, updated_by="test", audit_action="test.seed", audit_actor_kind="admin",
+        audit_actor_id="test", audit_actor_label="Test", audit_target_kind="operator_setting",
+        audit_target_id=service_registry.SERVICE_REGISTRY_SETTING_KEY, audit_metadata={}, session=None, path=db,
+        migration_step=None, stored_form=True)
+    return SECOND_ID, good["id"]
+
+
+def test_a_workflow_a_frontend_profile_refuses_is_left_out_by_the_servable_part_at_boot(tmp_path: Path) -> None:
+    # The initializer stays strict: the gateway's boot catches the failure and serves the servable part of the
+    # stored registry (proxy._boot_effective_runtime_config), which must keep the good workflow and name the refused one.
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    refused_id, good_id = _stored_with_refused_mesh_workflow(db)
+
+    with pytest.raises(Exception, match="cannot serve this workflow"):
+        service_registry.ensure_service_registry(path=db, actor="startup")
+
+    stored = admin_store.get_service_registry_with_generation(path=db)
+    registry, left_out = service_registry.servable_part_of_registry(stored["value"])
+    assert good_id in registry["workflows"]
+    assert refused_id not in registry["workflows"]
+    assert [name for name in left_out if refused_id in name], left_out
+
+
+def test_an_explicit_save_of_the_workflow_a_frontend_profile_refuses_still_fails(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    _stored_with_refused_mesh_workflow(db)
+    layered = _stored_registry(db)
+    from gateway import registry_layers
+
+    with pytest.raises(Exception, match="cannot serve this workflow"):
+        service_registry.normalize_service_registry(registry_layers.layer(layered, service_registry.release_registry()))

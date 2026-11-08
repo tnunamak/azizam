@@ -31,14 +31,12 @@ from gateway.workflows_catalog import _workflow_row  # noqa: E402
 from gateway.mesh_manifest import (  # noqa: E402
     bind_request,
     downstream_form,
-    load_mesh_manifest,
     sniff_image,
 )
+from gateway.mesh_api import mesh_workflow_from_record  # noqa: E402
 from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
-# The mesh validator reads schema 1 only; the route itself builds from the registry record.
-MESH_MANIFEST = ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 MIB = 1 << 20
 
@@ -288,7 +286,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_mesh_example_fields_bind_through_the_mesh_route(self) -> None:
         example = self.mesh_row()["example_request"]
-        manifest = load_mesh_manifest(MESH_MANIFEST)
+        manifest = mesh_workflow_from_record(self.registry.get("mesh.generate.trellis-2"))
         field_to_input = {field: name for name, field in manifest.mapping.items()}
         self.assertTrue(set(example["form"]) <= set(field_to_input))
         supplied = {field_to_input[field]: value for field, value in example["form"].items()}

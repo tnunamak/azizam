@@ -458,6 +458,28 @@ the wire error codes (`unknown_field`, `missing_image`, `unsupported_input`, `in
 `unsupported_image`), the scalar encoding of form fields (`_canonical_scalar`), the exclusive-pool lease and the
 multipart sender. The PNG, JPEG and WebP sniff moves to the S2.6 resolver, which already knows those types.
 
+**S3.9 result and decisions.** The validator, the hash and the `MeshManifest` dataclass are gone. `mesh_manifest.py` keeps
+the form decoding, the wire codes and the scalar encoding, and now takes the route's `MeshWorkflow` (the registry record
+read through the profile). `mesh_api.mesh_profile_errors` is the profile. It is registered under its intent in
+`gateway/frontend_profiles.py`, a seam that names no intent: `manifests.load_workflow_manifest`,
+`service_registry.normalize_workflow_record` (save) and extension packages call `frontend_profiles.check`, and the route
+calls the same function when it loads the record. A refusal at save is `frontend_profile_refused` at path `intent`; at load
+the route answers 503 `service_unavailable` before it reads the body. `input_unbound` is a generic rule in
+`binding_descriptors._check_block`: for any adapter with `inputs_via: map`, it runs last and only on a block with no other
+error, so no existing binding changes its errors. The sniff uses `media_inputs.measure` (the S2.6 resolver's sniffer).
+
+Risks the oracle left open, decided:
+
+| Risk | Decision |
+|---|---|
+| Integer default past the ceiling | The grammar allows any integer. The profile refuses a minimum, maximum, default or enum value with magnitude of 2**63 or more, because the route reads an integer into a signed 64-bit value. Other workflows are not limited. |
+| Refusal order and wording | The grammar gives its aggregated, sorted list (capped at 100 plus `too_many_errors`); the first error found is the primary one. A binding-stage error hides contract-stage errors. The profile runs after the grammar, so a workflow the grammar refuses never reaches it. Old mesh wording is not kept: nothing is unreleased-compatible (Azizam is unreleased). The wire error bodies of the route are unchanged. |
+| Required scalar inputs | The decoder never checked them. The profile refuses a required input that is not the picture. |
+| Media accepted beyond what the route decodes | The profile requires the picture's `accepts` to be exactly image/png, image/jpeg and image/webp, the types the sniffer reads. |
+| Rules the decoder does not enforce (`step`, `offset`, `generate`, `min_length`, `max_length`) | Refused by the profile, never served with the rule dropped. |
+| Output count | The profile requires one model: a count whose maximum is not 1 is refused. |
+| Surrounding spaces in `id` and `version` | The old loader stripped them. The profile refuses them. |
+
 ### D10. Capability is declared; a missing one is backfilled once, with provenance
 
 - v2 requires `capability`. Its syntax is a token (`[a-z][a-z0-9_-]{0,31}`). The validator does not check it against a
@@ -640,7 +662,7 @@ Every step is additive. Each step has the S2 gate:
 | S3.6 | Generated defaults (D6): the generator registry, `resolve_generated` after idempotency, the envelope `generated` block, the audio and image routes switch to it. The video draws, the tile seam draw and the A1111 frontend draw stay, listed in the ratchet with their reason. | Same ranges as today. The envelope's `generated` block is filled. | Per route, a differential test shows a draw exactly where one was drawn before. A retry and a restart read the stored value. Erasure erases the values of a non-empty `generated` block (closes the S2 matrix 2.3 gap). Controls: put back `if name == "seed"` in a route (the token test fails); remove the stored value read (the replay test fails). |
 | S3.7 | Runtime types (D4): recursive input checking with paths for object, array and asset; `media_bearing` used by the echo check, the resolver and OpenAPI; the routes pass `accepts` from the contract to the resolver; the OpenAPI projection follows the grammar. | Unchanged for bundled workflows: the routes passed `image/*`, and the converted contracts say `image/*`. | Nested refusal paths (for example `inputs.people[2].box`). OpenAPI snapshots unchanged. Controls: pass a constant `accepts` again (a test with a `video/*` input fails); make `media_bearing` look at the top level only (a test with an array of assets mapped to a linked node that is also selected fails to be refused). |
 | S3.8 | Output checks (D5): `check_result` for count and JSON shape, called by both adapters; `selector_cardinality` hooks and the `count_unreachable` save check. | Unchanged for bundled workflows: the default count is today's behaviour, and every bundled selector meets it. | S2 matrix item 5 extended: too few, too many, a JSON value that breaks its `schema`. Nothing published after a refusal. Controls: skip `check_result` (the count tests fail); remove the cardinality check (a `count: {min: 2}` on a `take: single` selector is saved, and its test fails). |
-| S3.9 | Mesh validator deleted (D9): `mesh_manifest.py` keeps only frontend code (form decoding, wire codes, scalar encoding). | Mesh wire byte-identical, GLB included. | The mesh route goldens. A second mesh-shaped workflow registered as data passes the profile. Every former mesh refusal has a test in its new home. Control: register a mesh-shaped workflow with two image inputs; the profile refuses it. |
+| S3.9 (done, see the result under D9) | Mesh validator deleted (D9): `mesh_manifest.py` keeps only frontend code (form decoding, wire codes, scalar encoding). | Mesh wire byte-identical, GLB included. | The mesh route goldens. A second mesh-shaped workflow registered as data passes the profile. Every former mesh refusal has a test in its new home. Control: register a mesh-shaped workflow with two image inputs; the profile refuses it. |
 | S3.10 | Audio profile boundary (D11): the generic-compile test for `duration`; the audio route keeps its profile. | Unchanged. | Control: apply the 30 s default inside the generic compile; the test fails. |
 
 S3.1 to S3.3 can be built in parallel after the error type is agreed: S3.2 and S3.3 touch different files. S3.4 needs
