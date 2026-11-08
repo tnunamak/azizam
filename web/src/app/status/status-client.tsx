@@ -305,6 +305,23 @@ function engineStateKey(engine: EngineView): CapabilityStateKey {
   return "unknown";
 }
 
+/** What another engine tells us about a capability while one engine is
+ * down. "serves": it answers now, idle or busy with other requests.
+ * "unconfirmed": it is enabled but we cannot say it works (it is starting,
+ * or it has no recent check and no fault on record). Anything else, a fault
+ * or off, covers nothing. */
+function spareState(engine: EngineView): "serves" | "unconfirmed" | null {
+  const key = engineStateKey(engine);
+  if (key === "ready" || engine.state === "Busy") return "serves";
+  if (engine.state === "Starting") return "unconfirmed";
+  if (key === "unknown" && engine.health?.tone !== "bad") return "unconfirmed";
+  return null;
+}
+
+function servesLabel(engine: EngineView, label: string): boolean {
+  return (engine.label ? engine.label.split(", ") : []).includes(label);
+}
+
 function stateWordFor(key: CapabilityStateKey) {
   return { word: STATE_WORDS[key].word, tone: STATE_WORDS[key].tone };
 }
@@ -446,16 +463,28 @@ function backendFailures(records: ActivityRecord[], ids: Set<string>) {
 function affectsFact(
   exposed: string[],
   covered: string[],
+  unconfirmed: string[],
   failed: ActivityRecord[],
 ): ReactNode {
+  const lower = (labels: string[]) =>
+    joinNames(labels.map((label) => label.toLowerCase()));
   // More than three names would repeat the Capabilities list on the same
   // screen; count them instead.
   const scope = exposed.length
     ? exposed.length > 3
       ? `${exposed.length} capabilities: no other engine serves them.`
       : `${joinNames(exposed)}: no other engine serves ${exposed.length === 1 ? "it" : "them"}.`
-    : covered.length
-      ? `Nothing yet: another engine still serves ${joinNames(covered.map((label) => label.toLowerCase()))}.`
+    : covered.length || unconfirmed.length
+      ? [
+          covered.length
+            ? `Nothing yet: another engine still serves ${lower(covered)}.`
+            : "",
+          unconfirmed.length
+            ? `Another engine is set up for ${lower(unconfirmed)}, but it is not confirmed working.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
       : "Unknown";
   const people = [
     ...new Set(failed.map((record) => record.person_label).filter(Boolean)),
@@ -593,17 +622,25 @@ function engineProblems(
       records,
       new Set(affected.map((engine) => engine.service.id)),
     );
-    // A capability with another ready engine still works: say so, and keep
-    // it out of the verdict.
-    const covered = labels.filter((label) =>
+    // A capability with another ready or busy engine still works: say so,
+    // and keep it out of the verdict. One whose other engine is unconfirmed
+    // (starting, or no recent check: an engine without a health check reads
+    // Unknown once its last request ages out) may work or not: never call it
+    // unavailable, never call it working.
+    const spares = (state: "serves" | "unconfirmed") => (label: string) =>
       engines.some(
         (engine) =>
           !affected.includes(engine) &&
-          engineStateKey(engine) === "ready" &&
-          (engine.label ? engine.label.split(", ") : []).includes(label),
-      ),
+          spareState(engine) === state &&
+          servesLabel(engine, label),
+      );
+    const covered = labels.filter(spares("serves"));
+    const unconfirmed = labels.filter(
+      (label) => !covered.includes(label) && spares("unconfirmed")(label),
     );
-    const exposed = labels.filter((label) => !covered.includes(label));
+    const exposed = labels.filter(
+      (label) => !covered.includes(label) && !unconfirmed.includes(label),
+    );
     // Scope first: what stops working, for whom, and who already hit it
     // (not the capability name again; the title names the engine).
     const single = affected.length === 1;
@@ -615,7 +652,7 @@ function engineProblems(
       ...(consequence
         ? ([["What's wrong", symptomOf(first)]] as Array<[string, ReactNode]>)
         : []),
-      ["Affects", affectsFact(exposed, covered, failed)],
+      ["Affects", affectsFact(exposed, covered, unconfirmed, failed)],
     ];
     const evidence: Array<[string, ReactNode]> = [];
     let history: ReactNode = null;
@@ -1205,16 +1242,22 @@ export function StatusClient() {
           const service = engines.find(
             (engine) => engine.service.id === provider.id,
           );
-          // A local engine that still serves the same capability keeps it working.
+          // A local engine that still serves the same capability keeps it
+          // working; one that is unconfirmed neither proves nor rules it out.
           const labels = service?.label ? service.label.split(", ") : [];
-          const covered = labels.filter((label) =>
+          const spares = (state: "serves" | "unconfirmed") => (label: string) =>
             tableEngines.some(
               (engine) =>
-                engineStateKey(engine) === "ready" &&
-                (engine.label ? engine.label.split(", ") : []).includes(label),
-            ),
+                engine !== service &&
+                spareState(engine) === state &&
+                servesLabel(engine, label),
+            );
+          const covered = labels.filter(spares("serves"));
+          const unconfirmed = labels.filter(
+            (label) => !covered.includes(label) && spares("unconfirmed")(label),
           );
-          const exposed = labels.length > covered.length;
+          const exposed =
+            labels.length > covered.length + unconfirmed.length;
           const facts: Array<[string, ReactNode]> = [
             [
               "Affects",
@@ -1223,7 +1266,9 @@ export function StatusClient() {
                     .map((label) =>
                       covered.includes(label)
                         ? `${label} (an engine on this computer still serves it)`
-                        : label,
+                        : unconfirmed.includes(label)
+                          ? `${label} (an engine on this computer is set up for it, not confirmed working)`
+                          : label,
                     )
                     .join(", ")
                 : "Requests that use this provider",
