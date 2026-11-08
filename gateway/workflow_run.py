@@ -22,6 +22,7 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -580,7 +581,7 @@ class WorkflowRunCore:
             intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
-                      "frontend": req.frontend_id, "failure_text": req.failure_text})
+                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
@@ -691,6 +692,8 @@ class WorkflowRunCore:
                 self._fail(job_id, *problem)
                 return
         policy = retry_policy(pin.binding)
+        if (job.get("metadata") or {}).get("retries") == "none":
+            policy = dataclasses.replace(policy, max_attempts=1)
         attempt = 1
         while True:
             ctx = RunContext(

@@ -405,6 +405,8 @@ class RunRequest:
     # Which text a failed job stores: "adapter" (the adapter's own message) or "category_copy" (the fixed sentence for the
     # failure's category). It is data of the row (``runtime_policy.job_failure_text``) and not part of run identity.
     failure_text: str = "adapter"
+    # "binding" or "none": see ``FrontendRow.job_retries``. Not part of run identity.
+    retries: str = "binding"
     # The intent the job row is filed under: the one the matched route declares (``runtime_policy.intent``), the same value
     # the request receipt records. Empty: the generic run intent. Not part of run identity.
     intent: str = ""
@@ -574,6 +576,9 @@ class FrontendRow:
     receipt_opens: Literal["before_policy", "after_policy"] = "after_policy"
     # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
     job_failure_text: Literal["adapter", "category_copy"] = "adapter"
+    # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits
+    # on the answer gets the first failure). Data of the row (``runtime_policy.job_retries``).
+    job_retries: Literal["binding", "none"] = "binding"
 
 
 class FrontendShape(Protocol):

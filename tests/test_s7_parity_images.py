@@ -283,6 +283,7 @@ def _failing(history=None, prompt=None, down=False, extra=None):
     def setup(rig):
         if down:
             base._comfy_down(rig)
+            rig.set(proxy, "COMFY_HOST", f"http://{base.COMFY_HOST}:80")      # the record's address names its port
             # The row path finds its engine by a service record, as a deployment declares one; the old route reads COMFY_HOST.
             rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
                 "enabled": True, "host": base.COMFY_HOST, "port": 80, "protocol": "node-graph"}})
