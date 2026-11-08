@@ -120,6 +120,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/images/variations` | OpenAI Images | Routed through a configurable edit-capable workflow (`images.variations.default_workflow` in `proxy_config.yml`) with a fixed generic prompt -- there is no local model dedicated to variations. See "Image variations" below. |
 | `GET /openai/v1/images/{id}/content` | OpenAI Images | Asset retrieval. |
 | `GET /v1/assets/{asset_id}/content` | Native | Signed generated-asset retrieval. |
+| `DELETE /v1/assets/{asset_id}` | Native | Delete an asset the calling App owns (`404 asset_not_found` otherwise). |
 | `GET /gateway/v1/assets/{asset_id}` | Gateway native | Generated-asset metadata and fresh signed content URL. |
 | `GET /gateway/v1/assets/{asset_id}/content` | Gateway native | Signed generated-asset retrieval through the native surface. |
 | `POST /gateway/v1/media/jobs` | Gateway media jobs | Durable async image generation when `intent` is `image.generate` and `request` carries the OpenAI image body. Variations are not available through this durable-job surface; use `POST /v1/images/variations` directly. |
