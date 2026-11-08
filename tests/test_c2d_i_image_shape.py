@@ -133,3 +133,38 @@ def test_default_answer_is_route_data_checked_at_load() -> None:
         bad = {**good, "shape": shape, "routes": [{**good["routes"][0], "runtime_policy": {"default_answer": form}}]}
         with pytest.raises(RowError):
             parse_rows({"frontends": [bad]})
+
+
+# -- the deployment's default model for edits and variations ----------------------------------------------------------
+def _defaults(monkeypatch, **by_key):
+    from gateway import frontend_shapes
+    monkeypatch.setattr(frontend_shapes.shapes, "DEFAULT_WORKFLOWS", {key: (lambda value=value: value) for key, value in by_key.items()})
+
+
+def test_edit_with_no_model_runs_the_deployment_default_and_several_pictures_the_multi_picture_default(monkeypatch) -> None:
+    from gateway.frontend_shapes.shapes import OpenAIImagesMultipart as Edit, SECOND_CHOICE
+    _defaults(monkeypatch, **{Edit.shape_id: "qwen-image-2.1-edit", Edit.shape_id + SECOND_CHOICE: "qwen-image-2.1-edit-multiref"})
+    snap = snapshot("qwen-image-2.1-edit", "qwen-image-2.1-edit-multiref")
+    one = ok(run_request("images-edits", multipart_request({"prompt": "p"}, [("image", "a.png", "image/png", b"A")]), snap, FakeSpool()))
+    two = ok(run_request("images-edits", multipart_request({"prompt": "p"}, [("image", "a.png", "image/png", b"A"),
+                                                                              ("image", "b.png", "image/png", b"B")]), snap, FakeSpool()))
+    assert one.workflow_id == "image.edit.qwen-image-2.1-edit" and two.workflow_id == "image.edit.qwen-image-2.1-edit-multiref"
+
+
+def test_variations_with_no_model_run_the_variations_default_with_its_fixed_prompt(monkeypatch) -> None:
+    from gateway.frontend_shapes import shapes
+    from gateway.frontend_shapes.shapes import OpenAIImagesVariations as Variations
+    _defaults(monkeypatch, **{Variations.shape_id: "qwen-image-2.1"})
+    monkeypatch.setattr(shapes, "FIXED_INPUTS", {Variations.shape_id: lambda: {"prompt": "vary it", "denoise": 0.5}})
+    run = ok(run_request("images-variations", multipart_request({}, [("image", "a.png", "image/png", b"A")]),
+                         snapshot("qwen-image-2.1-edit"), FakeSpool()))
+    assert run.workflow_id == "image.edit.qwen-image-2.1-edit" and run.inputs["prompt"] == "vary it"
+
+
+def test_the_old_refusal_words_for_a_missing_prompt_a_missing_image_and_an_unknown_model() -> None:
+    snap = snapshot("flux2-klein", "qwen-image-2.1-edit")
+    texts = lambda response: json.loads(response.body)["error"]["message"]  # noqa: E731
+    assert texts(run_request("images-generations", json_request({"model": "flux2-klein"}), snap)) == "prompt is required"
+    assert texts(run_request("images-edits", multipart_request({"prompt": "p"}, []), snap, FakeSpool())) == "image is required"
+    assert texts(run_request("images-edits", multipart_request({"prompt": "p", "model": "nope"}, [("image", "a.png", "image/png", b"A")]),
+                             snap, FakeSpool())) == "Model 'nope-edit' is not available for image editing."
