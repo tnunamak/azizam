@@ -68,6 +68,7 @@ import {
   type WorkflowCatalog as WorkflowsCatalog,
 } from "./workflow-api";
 import { RelativeTime } from "@/components/product";
+import { OwnerView } from "./owner-view";
 type WorkflowCapability = Capability | "audio" | "music" | "sfx" | "mesh" | "workflow";
 const EMPTY_WORKFLOWS: WorkflowRow[] = [];
 
@@ -1022,6 +1023,7 @@ export default function WorkflowsPage() {
           )}
         </>
       )}
+      <OwnerView owner={owner} />
       <DetailSheet
         workflow={detail}
         owner={owner}
