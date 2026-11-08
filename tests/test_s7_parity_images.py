@@ -1158,7 +1158,7 @@ def test_images_F05_timeout(tmp_path):
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
-            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True, required=False)]))
+            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=20, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an answer", status(old))
     assert_same(old, row, status, failure, engine_without_probes)
@@ -1259,7 +1259,7 @@ def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
     to at most 30 s, and appends the retry event each time."""
     def setup(rig):
         job_setup(lambda r: base._comfy(r, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
-            exchange("no-prompt-id-always", "POST", "/prompt", {"status": 200, "json": {}}, repeat=True, required=False)])))(rig)
+            exchange("no-prompt-id-always", "POST", "/prompt", {"status": 200, "json": {}}, times=20, required=False)])))(rig)
 
     def mk(use_row):
         async def go(rig):
@@ -1279,6 +1279,5 @@ def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
         return go
     old = observe(tmp_path, JOB, mk(False), setup, row=False)
     row = observe(tmp_path, JOB, mk(True), setup, row=True)
-    print("DBG", sleeps(old), engine(old), str(doc(old,1))[:600], str(doc(old,2))[:600], old.extra, [c["response"].get("status") for c in old.trace["caller"]])
     old_has(old, "a retry wait", 5.0 in sleeps(old))
     assert_same(old, row, ("job states", _states), ("events", lambda o: doc(o, 2)), sleeps, ("prompts", lambda o: len(engine_bodies(o, "/prompt"))))
