@@ -253,6 +253,9 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
     enforce_contract(manifest)
+    from gateway import frontend_profiles
+
+    frontend_profiles.check(manifest)   # and what the frontend that serves its intent cannot carry (S3.9, D9)
     return manifest
 
 

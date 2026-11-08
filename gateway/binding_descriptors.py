@@ -278,6 +278,24 @@ def _check_block(
         for spec in needs_hook:
             hook(field=spec.name, kind=spec.kind, value=block[spec.name], at=at + (spec.name,), inputs=inputs,
                  template=template, errors=errors)
+    if descriptor.inputs_via == "map" and len(errors) == before:
+        # Last, and only on a block with no other error, so a binding keeps the errors it always gave.
+        _check_required_inputs_bound(block, present, at, inputs, errors)
+
+
+def _check_required_inputs_bound(block: Mapping[str, Any], present: list[BindingField], at: tuple[PathPart, ...],
+                                 inputs: Mapping[str, Any] | None, errors: ErrorCollector) -> None:
+    """A binding whose inputs reach the engine only through its input map must map every required input: a required input
+    that no target applies could never reach the engine (``input_unbound``, CODE_TO_DATA_S3, D4). An optional input may stay
+    unmapped. A map that did not pass the core check has no keys to read, and is skipped."""
+    if not isinstance(inputs, Mapping):
+        return
+    for spec in present:
+        if spec.kind != "input_map" or not isinstance(block[spec.name], Mapping):
+            continue
+        for name, input_spec in inputs.items():
+            if isinstance(input_spec, Mapping) and input_spec.get("required") is True and name not in block[spec.name]:
+                errors.add(at + (spec.name,), "input_unbound", f"the required input {name} is not in this map")
 
 
 def _check_field(spec: BindingField, value: Any, at: tuple[PathPart, ...], inputs: Mapping[str, Any] | None,

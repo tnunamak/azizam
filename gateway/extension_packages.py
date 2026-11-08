@@ -24,6 +24,7 @@ import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
+from gateway import frontend_profiles
 from gateway.manifests import ContractErrors, ManifestError, Provenance, enforce_contract, manifest_identity
 from gateway import frontend_mount, projection, record_carriers, record_integrity, service_registry
 
@@ -1071,6 +1072,7 @@ def _normalize_workflow(
     manifest.pop("kind", None)
     try:
         enforce_contract(manifest)   # a package workflow in schema 1 is refused here with schema_version_unsupported
+        frontend_profiles.check(manifest)   # and one the frontend that serves its intent cannot carry
         identity = manifest_identity(manifest, Provenance(trusted=False, source="package"))
     except (ManifestError, ValueError) as exc:
         code = f"{exc.code}: " if isinstance(exc, ContractErrors) else ""
