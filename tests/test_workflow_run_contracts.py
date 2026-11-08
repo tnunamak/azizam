@@ -15,11 +15,12 @@ import httpx
 import pytest
 
 import proxy
-from gateway import discovery, media_jobs, receipt_store, request_spool
+from gateway import discovery, media_jobs, receipt_store, request_spool, service_registry
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol.node_graph import compile_workflow
 from tests.media_test_bytes import mp4_bytes, png_bytes
 from tests.support.fake_upstream import FakeUpstreams, HandlerTransport
+from tests.registry_test_helpers import write_service_registry_for_test
 from tests.support.gateway import gateway_client, use_admin_db
 
 ENGINE_HOST = "engine.fk.test"
@@ -60,9 +61,18 @@ class FakeGraphEngine:
         return [f"{r.method} {r.url.path}" for r in self.requests]
 
 
+def publish(db, workflows: dict) -> None:
+    """The registry the gateway serves: the engine as a service record, and the given owner workflows. Reloaded live."""
+    registry = {"services": {proxy._GRAPH_BACKEND_ID: {"name": "Engine", "config": {
+        "connection": {"protocol": "node-graph", "base_url": f"http://{ENGINE_HOST}:{ENGINE_PORT}"}}}},
+        "workflows": workflows}
+    write_service_registry_for_test(service_registry.normalize_service_registry(registry), path=db)
+    proxy.reload_runtime_config()
+
+
 @pytest.fixture
 def world(monkeypatch, tmp_path):
-    use_admin_db(monkeypatch, tmp_path)
+    db = use_admin_db(monkeypatch, tmp_path)
     media = tmp_path / "media_jobs.db"
     media_jobs.init_db(media)
     monkeypatch.setattr(media_jobs, "DB_PATH", media)
@@ -71,11 +81,14 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", request_spool.JobSpool(tmp_path / "spool"))
     monkeypatch.setattr(proxy, "_workflow_core_cache", None)
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
-    monkeypatch.setitem(proxy.config.setdefault("backends", {}), "comfyui",
-                        {"host": ENGINE_HOST, "port": ENGINE_PORT, "enabled": True})
+    for name in ("config", "VIDEO_ALIASES", "AUDIO_ALIASES"):      # a reload swaps these; the fixture puts them back
+        monkeypatch.setattr(proxy, name, getattr(proxy, name))
+    saved = proxy.GATEWAY_WORKFLOW_REGISTRY.contents()
+    publish(db, {})
     fakes = FakeUpstreams(monkeypatch)
     fakes.router      # build the host router
-    return SimpleNamespace(media=media, tmp=tmp_path, fakes=fakes, monkeypatch=monkeypatch)
+    yield SimpleNamespace(media=media, tmp=tmp_path, fakes=fakes, monkeypatch=monkeypatch, db=db)
+    proxy.GATEWAY_WORKFLOW_REGISTRY.restore(saved)
 
 
 def serve_engine(world, engine: FakeGraphEngine) -> FakeGraphEngine:
