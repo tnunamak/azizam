@@ -31,7 +31,7 @@ from gateway.manifests import ContractErrors, ErrorCollector, PathPart
 
 KINDS = (
     "template", "input_map", "input_list", "target", "target_list", "relative_path", "selectors", "requirements",
-    "service", "role", "text", "enum", "boolean",
+    "service", "role", "text", "enum", "enum_list", "boolean",
 )
 INPUTS_VIA = ("map", "role")
 MAX_TEXT = 256
@@ -105,9 +105,9 @@ def _parse_field(name: Any, raw: Any, where: str, *, in_role: bool) -> BindingFi
         if isinstance(maximum, bool) or not isinstance(maximum, int) or not 1 <= maximum <= MAX_TEXT:
             raise _bad(f"{where} field {name} max must be a whole number from 1 to {MAX_TEXT}")
     values = raw.get("values")
-    if kind == "enum":
+    if kind in ("enum", "enum_list"):
         if not isinstance(values, list) or not values or not all(isinstance(item, str) and item for item in values):
-            raise _bad(f"{where} field {name} of kind enum needs a list of values")
+            raise _bad(f"{where} field {name} of kind {kind} needs a list of values")
     elif values is not None:
         raise _bad(f"{where} field {name} of kind {kind} takes no values")
     return BindingField(name, kind, required, maximum, tuple(values or ()))
@@ -371,6 +371,16 @@ def _check_field(spec: BindingField, value: Any, at: tuple[PathPart, ...], input
     elif kind == "enum":
         if not isinstance(value, str) or value not in spec.values:
             errors.add(at, "enum_invalid", f"this must be one of {list(spec.values)}")
+    elif kind == "enum_list":
+        # An ordered list of names from a closed set; each name is run in turn by reviewed code (no repeats).
+        if not isinstance(value, list) or len(value) > MAX_LIST:
+            errors.add(at, "type_mismatch", f"this must be a list of at most {MAX_LIST} names")
+        else:
+            for index, item in enumerate(value):
+                if item not in spec.values:
+                    errors.add(at + (index,), "enum_invalid", f"this must be one of {list(spec.values)}")
+            if len(set(map(str, value))) != len(value):
+                errors.add(at, "list_duplicate", "a name can appear once")
     elif kind == "boolean":
         if not isinstance(value, bool):
             errors.add(at, "type_mismatch", "this must be true or false")

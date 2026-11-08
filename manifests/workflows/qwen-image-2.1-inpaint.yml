@@ -78,6 +78,7 @@ bindings:
     # This workflow derives its edit mask from source-image alpha. Convert the
     # OpenAI mask upload into alpha on the source image before ComfyUI upload.
     mask_to_source_alpha: true
+    result_processing: [source_alpha_mask]
     map:
       prompt:
         - node: "6"
