@@ -368,3 +368,19 @@ def test_load_current_reads_the_stored_document_and_uses_its_generation_as_the_r
     result = admin_store.write_service_registry(value, expected_generation=written["operator_settings_generation"] if written else 0, path=path)
     second = rs.load_current(path)
     assert second.revision == result["operator_settings_generation"] and second.digest == first.digest
+
+
+def test_the_write_time_name_check_reads_the_dynamic_aliases_as_the_snapshot_does(monkeypatch):
+    # One name source: a dynamic alias that ends at the services model of its name is one owner at write time too, so a
+    # save that adds that service is not refused for a clash the snapshot would not see (the UI oracle's decisions step).
+    from gateway import service_registry
+    from gateway.workflow_kernel import name_clashes
+
+    services = {"decisions": {"config": {"models": [{"id": "decide", "upstream_model": "oracle-decider-v1"}]}}}
+    aliases = {"decisions": {"engines": {"oracle-decider": {"service": "decisions", "model": "oracle-decider-v1"}},
+                             "stable": {"decide": ["oracle-decider"]}}}
+    monkeypatch.setattr(service_registry, "_dynamic_model_aliases", lambda: aliases)
+    assert name_clashes(service_registry.registry_name_pairs({"services": services}, bundled=())) == []
+    elsewhere = {"decisions": {**aliases["decisions"], "engines": {"oracle-decider": {"service": "other", "model": "m"}}}}
+    monkeypatch.setattr(service_registry, "_dynamic_model_aliases", lambda: elsewhere)
+    assert name_clashes(service_registry.registry_name_pairs({"services": services}, bundled=()))

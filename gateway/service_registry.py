@@ -2901,7 +2901,7 @@ def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | No
     from gateway import registry_snapshot
     services = document.get("services") if isinstance(document.get("services"), Mapping) else {}
     pairs.extend(registry_snapshot.service_model_names(services))
-    pairs.extend(registry_snapshot.dynamic_alias_names(dynamic_model_aliases()))
+    pairs.extend(registry_snapshot.dynamic_alias_names(dynamic_model_aliases(), services))
     frontends = document.get("protocol_frontends") if isinstance(document.get("protocol_frontends"), Mapping) else {}
     for key, frontend in frontends.items():
         if not isinstance(frontend, Mapping):
