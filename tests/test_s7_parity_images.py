@@ -52,7 +52,7 @@ def ok(rig, n=1, **kw):
 
 
 def edit_ok(rig):
-    base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13")))
+    base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), strict=False))
 
 
 def variation_ok(rig):
@@ -60,7 +60,7 @@ def variation_ok(rig):
         return proxy.ImageBackgroundRemovalDecision(False)
 
     rig.set(proxy, "resolve_image_background_decision", no_cutout)
-    base._comfy(rig, comfy_exchanges(views=[(base._png((70, 70, 160)), "image/png")], history=history_done(node="10")))
+    base._comfy(rig, comfy_exchanges(views=[(base._png((70, 70, 160)), "image/png")], history=history_done(node="10"), strict=False))
 
 
 def disabled(rig):
@@ -527,7 +527,7 @@ def test_images_E15_upload_without_filename_502(tmp_path):
 def test_images_E16_mask_upload_failure_502(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(strict=False, extra=[
-            exchange("mask-upload-refused", "POST", "/upload/mask", {"status": 500, "json": {"error": "disk full"}}, times=1)]))
+            exchange("mask-upload-refused", "POST", "/upload/image", {"status": 500, "json": {"error": "disk full"}}, times=1)]))
     old, row = pair(tmp_path, EDIT, edit_masked(), setup)
     old_has(old, "an answer", status(old))
     _edit_compare(old, row)
@@ -554,7 +554,7 @@ def test_images_E19_response_headers(tmp_path):
 
 def test_images_E20_round_loop_traffic(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(), lambda rig: base._comfy(rig, comfy_exchanges(
-        views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), running_polls=3)))
+        views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), running_polls=3, strict=False)))
     old_has(old, "polls", len(sleeps(old)) >= 3)
     assert_same(old, row, status, engine_without_probes, sleeps)
 
@@ -645,7 +645,7 @@ def job_body(**fields):
 def job_setup(inner=None):
     def setup(rig):
         base._capture_scheduling(rig)
-        (inner or (lambda r: base._comfy(r, comfy_exchanges(views=[(base._png((90, 160, 40)), "image/png")]))))(rig)
+        (inner or (lambda r: base._comfy(r, comfy_exchanges(views=[(base._png((90, 160, 40)), "image/png")], strict=False))))(rig)
     return setup
 
 
@@ -848,7 +848,7 @@ def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
 
 def test_images_J22_oom_retries_with_events(tmp_path):
     def inner(rig):
-        base._comfy(rig, comfy_exchanges(views=[(base._png((60, 160, 120)), "image/png")], extra=[
+        base._comfy(rig, comfy_exchanges(views=[(base._png((60, 160, 120)), "image/png")], strict=False, extra=[
             exchange("prompt-oom", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=1)]))
     old, row = job_pair(tmp_path, job_body(), job_setup(inner), after=job_get("/events"))
     old_has(old, "a retry", any(path == "/free" for _m, path in engine(old)))
