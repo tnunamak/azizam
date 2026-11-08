@@ -60,12 +60,17 @@ Example:
 the request receipts, the same evidence the capability and Models pages use. The availability pass reads cached
 evidence only: it starts no probe and waits for no status build. (The context-window annotation in the same
 request can still read an engine when its answer is not cached; that is separate.) A missing or old snapshot reads
-as `unknown`.
+as `unknown`. Each list request keeps the snapshot refreshing, so after a quiet spell the first list can read
+`unknown` and the lists after it carry states.
 
-- A name maps to its services by the model name a service serves, by the workflow it is (then to the services
-  that workflow needs, all at once), or through the names an alias resolves to. A service that is turned off, or
-  that is a remote provider, still counts for this mapping (a turned-off service reads as `unavailable`). An
-  alias target that maps to no service counts as `unknown`; an entry where nothing maps has no field.
+- A name maps to its services by the model name a service serves, by the workflow it is, or through the names an
+  alias resolves to. Each backend that can run a workflow is one way to run it: its engine plus every service that
+  backend's binding requires, all needed at once. The workflow is `available` if any way is, and `unavailable`
+  only if every way is. A model on gateway lifecycle routing maps to the backend that routing sends it to, not to
+  the service that declares it.
+  A service that is turned off, or that is a remote provider, still counts for this mapping (a turned-off service
+  reads as `unavailable`). An alias target that maps to no service counts as `unknown`; an entry where nothing
+  maps has no field.
 - Several services: `available` if any is available (ready, busy, degraded, or startable on demand),
   `unavailable` only if all are unavailable, otherwise `unknown`. A workflow that needs several services is
   `unavailable` if any is, even when another requirement cannot be resolved; it is `available` only when all are.

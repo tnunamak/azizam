@@ -384,6 +384,7 @@ from gateway.litellm_substrate import (
     router_reply_timeout,
     litellm_public_model_records,
     litellm_public_model_service_ids,
+    serving_service_id,
     set_own_listen_port,
 )
 from gateway.manifests import (
@@ -27925,10 +27926,19 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
         # already maps. Its raw upstream names would attach it to an unrelated local entry of the same name.
         if not isinstance(service_cfg, Mapping) or service_registry.is_remote_provider_config(service_cfg):
             continue
+        enabled = service_cfg.get("enabled", True) is not False
+        model_id = str(service_cfg.get("model_id") or "")
+        model_id_served = False
         for record in _service_model_records(service_cfg):
-            for key in ("id", "model_group", "public_name"):
-                add(str(record.get(key) or ""), str(service_id))
-        add(str(service_cfg.get("model_id") or ""), str(service_id))
+            # A lifecycle-routed record is answered by its lifecycle backend, as in the LiteLLM part above.
+            serving = serving_service_id(str(service_id), service_cfg, record) if enabled else str(service_id)
+            names = [str(record.get(key) or "") for key in ("id", "model_group", "public_name")]
+            for name in names:
+                add(name, serving)
+            model_id_served = model_id_served or normalize_model_id(model_id) in {normalize_model_id(n) for n in names}
+        # The service's own model name, unless one of its records already names it (and so says who answers it).
+        if not model_id_served:
+            add(model_id, str(service_id))
     return index
 
 
@@ -27957,13 +27967,13 @@ def _model_entry_availability(
         return model_availability(service_ids, service_records=service_records, evidence=evidence,
                                   require_all=require_all, services=services, projected=projected)
 
-    def by_workflow(workflow_id: str) -> dict[str, str] | None:
-        record = workflows.get(workflow_id)
-        if record is None:
-            return None
-        requirements = requirements_of(record.contract)
-        if not isinstance(requirements, Mapping):
-            return judge(list(record.supported_backends))
+    registry_services = service_records.get("services") if isinstance(service_records.get("services"), Mapping) else {}
+
+    def by_backend(backend: str | None, requirements: Mapping[str, Any]) -> dict[str, str] | None:
+        # One way to run the workflow: its engine, when that is a registry service (the gateway composing it itself is
+        # none), and every service it requires, all at once. A known-down part decides, even when another requirement
+        # cannot be resolved.
+        engine = judge([backend]) if backend is not None and backend in registry_services else None
         needed = [str(service) for service in requirements.get("services") or ()]
         unresolved = False
         for required_id in requirements.get("workflows") or ():
@@ -27972,11 +27982,38 @@ def _model_entry_availability(
                 unresolved = True
                 continue
             needed.append(required.supported_backends[0])
-        # A known-down requirement decides the entry even when another requirement cannot be resolved.
-        judged = judge(needed, require_all=True)
-        if unresolved and (judged is None or judged["state"] != "unavailable"):
+        judged = [state for state in (engine, judge(needed, require_all=True)) if state is not None]
+        down = next((state for state in judged if state["state"] == "unavailable"), None)
+        if down is not None:
+            return down
+        if unresolved:
             return {"state": "unknown"}
-        return judged
+        if not judged:
+            return None
+        return {"state": "available"} if all(state["state"] == "available" for state in judged) else {"state": "unknown"}
+
+    def by_workflow(workflow_id: str) -> dict[str, str] | None:
+        record = workflows.get(workflow_id)
+        if record is None:
+            return None
+        # Any one of its backends can run the workflow, each with the requirements its own binding declares (all of
+        # them, when no binding is named after the backend).
+        bindings = record.contract.get("bindings") if isinstance(record.contract.get("bindings"), Mapping) else {}
+        backends = [str(backend) for backend in record.supported_backends] or [None]
+        states = []
+        for backend in backends:
+            own = bindings.get(backend) if backend is not None else None
+            requirements = requirements_of({"bindings": {backend: own}} if isinstance(own, Mapping) else record.contract)
+            states.append(by_backend(backend, requirements or {}))
+        if all(state is None for state in states):
+            return None
+        # A backend nothing can be judged for counts as unknown beside the others.
+        states = [state or {"state": "unknown"} for state in states]
+        if any(state["state"] == "available" for state in states):
+            return {"state": "available"}
+        if all(state["state"] == "unavailable" for state in states):
+            return states[0]
+        return {"state": "unknown"}
 
     def by_name_or_workflow(name: str) -> dict[str, str] | None:
         workflow_id = workflow_ids_by_model.get(name)
@@ -28004,7 +28041,9 @@ def _model_entry_availability(
     return by_name_or_workflow(model_id)
 
 
-def _annotate_model_availability(data: list[Any], *, only_available: bool) -> list[Any]:
+def _annotate_model_availability(
+    data: list[Any], *, only_available: bool, status_payload: Mapping[str, Any] | None = None,
+) -> list[Any]:
     """Set `azizam_availability` on each mappable entry and remove a stale one from each entry that maps to no service;
     with `only_available`, drop the `unavailable` ones.
 
@@ -28013,9 +28052,14 @@ def _annotate_model_availability(data: list[Any], *, only_available: bool) -> li
     try:
         registry = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
+        # Nothing can be judged: a reused entry must not keep the state an earlier request gave it.
+        for item in data:
+            if isinstance(item, dict):
+                item.pop("azizam_availability", None)
         return data
     service_records = _workflow_availability_services(registry)
-    status_payload = _cached_status_payload_for_availability()
+    if status_payload is None:
+        status_payload = _cached_status_payload_for_availability()
     snapshot_fresh = bool(status_payload)
     evidence: dict[str, dict[str, Any]] = {}
     if snapshot_fresh:
@@ -28224,9 +28268,12 @@ async def list_models(request: Request):
     model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
 
     # After the profile filter: `?available=true` hides only entries known to be down. Everything else stays.
+    # The snapshot is read here, on the event loop: only a read on the loop restarts a stopped status refresher, so
+    # a client that only lists models still gets fresh states after an idle spell.
     data = await asyncio.to_thread(
         _annotate_model_availability, data,
         only_available=request.query_params.get("available") == "true",
+        status_payload=_cached_status_payload_for_availability(),
     )
 
     # Resolve metadata against the full catalog, then hide target IDs that the
