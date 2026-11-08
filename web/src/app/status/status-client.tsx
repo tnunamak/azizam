@@ -452,16 +452,28 @@ function backendFailures(records: ActivityRecord[], ids: Set<string>) {
 function affectsFact(
   exposed: string[],
   covered: string[],
+  unconfirmed: string[],
   failed: ActivityRecord[],
 ): ReactNode {
+  const lower = (labels: string[]) =>
+    joinNames(labels.map((label) => label.toLowerCase()));
   // More than three names would repeat the Capabilities list on the same
   // screen; count them instead.
   const scope = exposed.length
     ? exposed.length > 3
       ? `${exposed.length} capabilities: no other engine serves them.`
       : `${joinNames(exposed)}: no other engine serves ${exposed.length === 1 ? "it" : "them"}.`
-    : covered.length
-      ? `Nothing yet: another engine still serves ${joinNames(covered.map((label) => label.toLowerCase()))}.`
+    : covered.length || unconfirmed.length
+      ? [
+          covered.length
+            ? `Nothing yet: another engine still serves ${lower(covered)}.`
+            : "",
+          unconfirmed.length
+            ? `Another engine serves ${lower(unconfirmed)}, but it has not been checked recently.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
       : "Unknown";
   const people = [
     ...new Set(failed.map((record) => record.person_label).filter(Boolean)),
@@ -609,7 +621,23 @@ function engineProblems(
           (engine.label ? engine.label.split(", ") : []).includes(label),
       ),
     );
-    const exposed = labels.filter((label) => !covered.includes(label));
+    // Another enabled engine that serves the label but has no recent check
+    // (an engine without a health check reads Unknown once its last request
+    // ages out) may well work: never call the capability unavailable for it.
+    const unconfirmed = labels.filter(
+      (label) =>
+        !covered.includes(label) &&
+        engines.some(
+          (engine) =>
+            !affected.includes(engine) &&
+            engine.service.enabled &&
+            engineStateKey(engine) === "unknown" &&
+            (engine.label ? engine.label.split(", ") : []).includes(label),
+        ),
+    );
+    const exposed = labels.filter(
+      (label) => !covered.includes(label) && !unconfirmed.includes(label),
+    );
     // Scope first: what stops working, for whom, and who already hit it
     // (not the capability name again; the title names the engine).
     const single = affected.length === 1;
@@ -621,7 +649,7 @@ function engineProblems(
       ...(consequence
         ? ([["What's wrong", symptomOf(first)]] as Array<[string, ReactNode]>)
         : []),
-      ["Affects", affectsFact(exposed, covered, failed)],
+      ["Affects", affectsFact(exposed, covered, unconfirmed, failed)],
     ];
     const evidence: Array<[string, ReactNode]> = [];
     let history: ReactNode = null;

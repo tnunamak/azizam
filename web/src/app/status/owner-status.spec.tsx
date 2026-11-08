@@ -661,9 +661,13 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
   ).toBeVisible();
 });
 
-it("does not call a capability unavailable when another engine is busy serving it", async () => {
+it.each([
+  ["busy", "ok", "Nothing yet: another engine still serves chat."],
+  // No health check: its state is Unknown once its last request ages out.
+  ["unavailable", "neutral", "Another engine serves chat, but it has not been checked recently."],
+])("does not call a capability unavailable when another engine serving it is %s", async (observation, tone, affects) => {
   // Live 2026-11-08: a down test engine said "Chat is unavailable right now"
-  // while the stable chat engine was answering requests (busy).
+  // while the stable chat engine, which has no health check, was unmeasured.
   const engine = (id: string, name: string, observation: string, tone: string, lastError: string | null) => ({
     service_id: id,
     name: `${name} (chat)`,
@@ -691,7 +695,7 @@ it("does not call a capability unavailable when another engine is busy serving i
         observation_available: true,
         services: [
           engine("chat", "Test chat", "down", "warn", "connect refused"),
-          engine("stable", "Stable chat", "busy", "ok", null),
+          engine("stable", "Stable chat", observation, tone, null),
         ],
       },
       backends: [],
@@ -712,7 +716,7 @@ it("does not call a capability unavailable when another engine is busy serving i
     screen.queryByRole("heading", { name: /Chat is unavailable right now/ }),
   ).toBeNull();
   expect(
-    within(card).getByText("Nothing yet: another engine still serves chat."),
+    within(card).getByText(affects),
   ).toBeVisible();
 });
 
