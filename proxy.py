@@ -1655,18 +1655,22 @@ async def get_active_backend() -> Optional[str]:
     Probes all backends in DERIVED.LLM_BACKEND_HOSTS (registry-derived) in priority
     order and returns the id of the first one that answers healthy.
     """
+    for bid in _llm_backend_candidates():
+        if await check_service_health(bid):
+            return bid
+    return None
+
+
+def _llm_backend_candidates() -> list[str]:
+    """The LLM backends a `current` request may resolve to, in the order `get_active_backend` tries them."""
     # Hosts and priorities come from one snapshot, so a reload between the two reads cannot pair them wrongly.
     snapshot = runtime()
     backends = snapshot.config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
-    candidates = sorted(
+    return sorted(
         snapshot.derived["LLM_BACKEND_HOSTS"].keys(),
         key=lambda bid: int((backends.get(bid) or {}).get("priority") or 100),
     )
-    for bid in candidates:
-        if await check_service_health(bid):
-            return bid
-    return None
 
 
 # Generic per-service swap-lock registry.  Keyed by service id (any backend id).  A lock is created lazily on first access.
@@ -28181,6 +28185,14 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
         # The service's own model name, unless one of its records already names it (and so says who answers it).
         if not model_id_served:
             add(model_id, str(service_id))
+    # A turned-off service is reported only for a name nothing enabled serves: the router never sends a request for a
+    # name to a turned-off record, so its listing of the same name must not mark it.
+    services = (registry or {}).get("services") if isinstance((registry or {}).get("services"), Mapping) else {}
+    turned_off = {str(sid) for sid, record in services.items()
+                  if isinstance(record, Mapping) and record.get("enabled", True) is False}
+    for name, service_ids in index.items():
+        if any(sid not in turned_off for sid in service_ids):
+            index[name] = [sid for sid in service_ids if sid not in turned_off]
     return index
 
 
@@ -28205,6 +28217,7 @@ def _model_entry_availability(
     services: Mapping[str, Mapping[str, Any]] | None = None,
     projected: dict[str, Any] | None = None,
     engines_by_op: Mapping[str, Mapping[str, Mapping[str, Any]]] | None = None,
+    internal_route_targets: Mapping[str, list[str]] | None = None,
 ) -> dict[str, str] | None:
     """The `azizam_availability` value for one model entry, or None when no service can be mapped to it.
 
@@ -28212,8 +28225,12 @@ def _model_entry_availability(
     that serve it by name, or through the names an alias resolves to. An engine-operation alias maps to the services
     of its engine candidates (`engines_by_op`: {operation: {engine id: engine row}}, from the alias discovery view):
     the deployed candidates; known candidates with none deployed read `unavailable`, as a request would be refused. It
-    reads evidence only: no probe."""
+    reads evidence only: no probe.
+
+    A name the gateway's own internal route answers (`internal_route_targets`: {normalized name: the services the route
+    resolves it to now}) is judged by those services alone, not by any record that merely lists the same model id."""
     engines_by_op = engines_by_op or {}
+    internal_route_targets = internal_route_targets or {}
 
     def judge(service_ids: list[str], *, require_all: bool = False) -> dict[str, str] | None:
         if not service_ids:
@@ -28275,6 +28292,10 @@ def _model_entry_availability(
         workflow_id = workflow_ids_by_model.get(name)
         if workflow_id:
             return by_workflow(workflow_id)
+        routed = internal_route_targets.get(normalize_model_id(name))
+        if routed is not None:
+            # The route resolves its target at request time. With none to resolve to, a request is refused.
+            return judge(routed) or {"state": "unavailable", "reason": "No service can answer this name now."}
         return judge(by_name.get(normalize_model_id(name), []))
 
     def any_of(states: list[dict[str, str]]) -> dict[str, str]:
@@ -28300,21 +28321,22 @@ def _model_entry_availability(
                              if isinstance(engine_id, str) and engine_id in known])
 
     def by_engine_name(name: str) -> dict[str, str] | None:
-        # Only an entry of an engine operation, and only within one operation, as a request routes: an engine id
-        # selects that engine alone; the model an engine serves is searched only when no engine id matched.
+        # Only an entry of an engine operation. Inside each operation the name resolves as a request routes: an engine
+        # id selects that engine alone; the model an engine serves is searched only when no engine id matched. The
+        # operations then combine: one that can serve the name is enough.
         wanted = normalize_model_id(name)
         if not wanted:
             return None
-        known_by_op = [engines_by_op.get(operation) or {} for operation in _engine_operations_of_entry(entry)]
-        for known in known_by_op:
+        states: list[dict[str, str]] = []
+        for operation in _engine_operations_of_entry(entry):
+            known = engines_by_op.get(operation) or {}
             rows = [row for engine_id, row in known.items() if normalize_model_id(engine_id) == wanted]
-            if rows:
-                return engine_state(rows)
-        for known in known_by_op:
-            rows = [row for row in known.values() if normalize_model_id(str(row.get("model") or "")) == wanted]
-            if rows:
-                return engine_state(rows)
-        return None
+            if not rows:
+                rows = [row for row in known.values() if normalize_model_id(str(row.get("model") or "")) == wanted]
+            state = engine_state(rows) if rows else None
+            if state is not None:
+                states.append(state)
+        return any_of(states) if states else None
 
     workflow_id = entry.get("azizam_workflow_id")
     if isinstance(workflow_id, str) and workflow_id:
@@ -28385,6 +28407,9 @@ def _annotate_model_availability(
         }
     except Exception:  # noqa: BLE001
         engines_by_op = {}
+    # The names the gateway's own `current` route answers resolve at request time, to the backends it tries.
+    candidates = _llm_backend_candidates()
+    internal_route_targets = {normalize_model_id(name): candidates for name in USE_LOADED_MODEL_ALIASES}
     kept: list[Any] = []
     for item in data:
         if isinstance(item, dict):
@@ -28392,6 +28417,7 @@ def _annotate_model_availability(
                 item, by_name=by_name, workflows=workflows, workflow_ids_by_model=workflow_ids_by_model,
                 service_records=service_records, evidence=evidence, snapshot_fresh=snapshot_fresh,
                 services=services, projected=projected, engines_by_op=engines_by_op,
+                internal_route_targets=internal_route_targets,
             )
             if state is None:
                 item.pop("azizam_availability", None)
