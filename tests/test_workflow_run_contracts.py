@@ -500,3 +500,17 @@ def test_owner_control_changes_between_submit_and_dispatch_for_each_capability(
         assert engine.calls.count("POST /prompt") == 1
         retained = definitions.envelope(job_id)
         assert (retained.contract, retained.binding, retained.template) == (pin.contract, pin.binding, pin.template)
+
+
+def test_an_uploaded_source_image_reaches_the_engine_through_the_real_adapter(world):  # c2d-W-contracts-review-1108
+    """The file a run was given is part of the request the adapter sends: the engine must receive its bytes, and the
+    compiled prompt must name the file it holds, not leave the asset input without a value."""
+    manifest = manifest_of(EDIT_ID)
+    engine = serve_engine(world, FakeGraphEngine(manifest, png_bytes((9, 9, 9)), "image/png", "out.png"))
+    data = png_bytes((1, 2, 3))
+    response = call("post", f"/gateway/v1/workflows/{EDIT_ID}/run", data={"inputs": json.dumps({"prompt": "edit"})},
+                    files={"source_image": ("a.png", data, "image/png")}, headers={"Prefer": "wait=20"})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "succeeded", (response.text, engine.calls)
+    sent = b"".join(request.content for request in engine.requests)
+    assert data in sent, engine.calls
