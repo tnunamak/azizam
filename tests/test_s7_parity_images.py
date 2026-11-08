@@ -839,6 +839,7 @@ def test_images_J08_job_id_forms(tmp_path):
 @ROW_PENDING
 def test_images_J09_replay_returns_the_existing_job(tmp_path):
     old, row = cell(tmp_path, "ij", "replay_same")
+    print("DBG9", [status(old,i) for i in range(len(old.trace["caller"]))], [status(row,i) for i in range(len(row.trace["caller"]))], len(media_jobs(old)), len(media_jobs(row)), engine(old), engine(row), old.trace["notes"], row.trace["notes"])
     old_has(old, "two answers", len(old.trace["caller"]) >= 2)
     assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("jobs", lambda o: len(media_jobs(o))),
                 ("notes", lambda o: o.trace["notes"]))
@@ -847,6 +848,7 @@ def test_images_J09_replay_returns_the_existing_job(tmp_path):
 @ROW_PENDING
 def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
     old, row = cell(tmp_path, "ij", "replay_conflict")
+    print("DBG", [status(old,i) for i in range(len(old.trace["caller"]))], [status(row,i) for i in range(len(row.trace["caller"]))], len(media_jobs(old)), len(media_jobs(row)), engine(old), engine(row), failure(row,1))
     old_has(old, "a conflict", status(old, 1) == 409)
     assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("conflict", lambda o: failure(o, 1)))
 
