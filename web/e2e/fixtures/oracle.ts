@@ -330,7 +330,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
       headers: { "if-match": embedding.headers()["etag"] },
     });
     if (enabled.status !== 200) throw new Error(`oracle: enabling the embedding service returned HTTP ${enabled.status}`);
-    await admin.call("POST", "/admin/api/config/reload", { data: {} });
+    record("POST /admin/api/config/reload", await admin.call("POST", "/admin/api/config/reload", { data: {} }), [200]);
     // The household plans grant every item of every capability, so the new
     // services' models need no plan change.
 
