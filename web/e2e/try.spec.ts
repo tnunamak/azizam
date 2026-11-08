@@ -1,7 +1,7 @@
 import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
-import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
+import { fulfilJson, fulfilBytes, primeShape } from "./fixtures/intercept";
 import type { Locator } from "@playwright/test";
 
 /**
@@ -425,6 +425,7 @@ test("try query params select capability and preserve requested model", async ({
 }) => {
   // The first Run mints the Try key, which can outlast a plain wait on a busy machine (see prepareTryKey).
   await prepareTryKey(page);
+  await primeShape(new URL(page.url()).origin, "GET", "/me/api/models/catalog");
   await page.route("**/me/api/models/catalog", (route) =>
     fulfilJson(route, {
       schema_version: 1,
