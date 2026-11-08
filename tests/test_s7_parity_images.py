@@ -1055,7 +1055,7 @@ def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
             exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an error", (status(old) or 0) >= 500)
+    old_has(old, "an answer", status(old))
     assert_same(old, row, status, failure, engine_without_probes)
 
 

@@ -663,7 +663,7 @@
 # Builder D3, oracle profile 2: +20 cases in test_adapter_differential_normalizer.py, +13 in test_adapter_differential_deltas.py.
 # Builder D5, image routes onto rows: +3 cases in test_frontend_shapes.py (short-form names, the deployment default, wire fields), +4 in test_frontend_row_serving.py.
 # Builder W (2026-11-08): +17 cases: 13 in test_workflow_run_contracts.py (new), 3 in test_workflow_registry_store.py, 1 in test_workflow_registry_names.py (new); the inline-template test replaces the xfail in test_workflow_owner_api.py; measured with --collect-only -q on the touched files.
-pytest = 22553  # D7: +2 in tests/test_identity_api.py (engine graph golden)
+pytest = 22678  # builder I: +125 in tests/test_s7_parity_images.py (S7 image parity, one per inventory item; 22553 before)
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
