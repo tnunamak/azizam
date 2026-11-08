@@ -384,6 +384,7 @@ from gateway.litellm_substrate import (
     router_reply_timeout,
     litellm_public_model_records,
     litellm_public_model_service_ids,
+    record_served_model_id,
     serving_service_id,
     set_own_listen_port,
 )
@@ -14689,29 +14690,32 @@ def _role_catalog_ids_for_loaded_path(
 
 
 def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
-    """Match declarations by the activation path, or by the served id for a service that does not load by path. No I/O."""
+    """Match the backend's declarations to what it has loaded, without I/O.
+
+    A backend that loads by path is matched on the activation path, by chat execution's activation
+    resolver. Any other backend reports the id it serves, matched to the records whose deployment
+    asks the engine for that id (record_served_model_id, the deployment compiler's own rule).
+    """
     service_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(service_cfg, Mapping):
         return set()
+    loaded = normalize_model_id(loaded_model)
+    ids: set[str] = set()
+    if not _backend_reports_loaded_model_as_path(backend):
+        for record in _service_model_records(service_cfg):
+            name = str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
+            if name and name not in USE_LOADED_MODEL_ALIASES and normalize_model_id(record_served_model_id(record)) == loaded:
+                ids.add(name)
+        return ids
     names = {
         str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
         for record in _service_model_records(service_cfg)
     }
     if service_cfg.get("model_id"):
         names.add(str(service_cfg["model_id"]))
-    loaded = normalize_model_id(loaded_model)
-    ids: set[str] = set()
     for name in names - USE_LOADED_MODEL_ALIASES - {""}:
         target = _configured_litellm_local_model_target(name, service_id=backend)
         if target and target.model and normalize_model_id(target.model) == loaded:
-            ids.add(name)
-    if ids:
-        return ids
-    # A service that does not load by path reports the id it serves: match the records that serve it.
-    for record in _service_model_records(service_cfg):
-        name = str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
-        served = str(record.get("upstream_model") or name)
-        if name and name not in USE_LOADED_MODEL_ALIASES and normalize_model_id(served) == loaded:
             ids.add(name)
     return ids
 
@@ -27772,15 +27776,20 @@ def _policy_turns_reasoning_off(model_id: str) -> bool:
 async def _model_list_served_declarations() -> set[str]:
     """Declaration ids of the model `current` would serve: the one selector observation a listing makes.
 
-    Empty when nothing is servable, the probe fails, or no declaration matches. The loaded
-    path is the entry the selector just read in the cached loaded-state, so no second probe runs.
+    Empty when nothing is servable, the probe fails, or no declaration matches. For a backend that
+    loads by path, the loaded path is the entry the selector just read in the cached loaded-state, so
+    no second probe runs; if that entry is gone, nothing matches (the served name does not prove
+    which weights are loaded).
     """
     try:
         target, _ = await _first_servable_loaded_llm_target()
         if target is None:
             return set()
-        loaded_path = currently_loaded_model(target.backend) if _backend_reports_loaded_model_as_path(target.backend) else None
-        return _declarations_for_loaded_model(target.backend, loaded_path or target.model)
+        if _backend_reports_loaded_model_as_path(target.backend):
+            loaded = currently_loaded_model(target.backend)
+        else:
+            loaded = target.model
+        return _declarations_for_loaded_model(target.backend, loaded) if loaded else set()
     except Exception:  # noqa: BLE001 - a failed probe leaves the aliases on their own declaration
         return set()
 

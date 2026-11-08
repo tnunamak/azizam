@@ -425,6 +425,17 @@ def routed_models(service_id: str, record: Mapping[str, Any]) -> tuple[list[str]
     return [str(deployment["model_group"]) for deployment in deployments], provider
 
 
+def record_served_model_id(item: Mapping[str, Any]) -> str:
+    """The model id a deployment asks its engine for: the one rule for what an engine serves for a record."""
+    return str(
+        item.get("upstream_model")
+        or item.get("deployment")
+        or item.get("model")
+        or item.get("id")
+        or ""
+    ).strip()
+
+
 def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_id = _provider_id(service, config)
@@ -459,13 +470,7 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
         if item.get("enabled") is False:
             continue
 
-        upstream_model = str(
-            item.get("upstream_model")
-            or item.get("deployment")
-            or item.get("model")
-            or item.get("id")
-            or ""
-        ).strip()
+        upstream_model = record_served_model_id(item)
         if not upstream_model:
             continue
         model_group = str(

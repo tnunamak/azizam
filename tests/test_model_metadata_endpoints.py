@@ -544,6 +544,77 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         declarations = proxy._model_metadata_sources().declared
         _assert_declared_metadata(self, listed["current"], declarations("current"))
 
+    def _list_selecting(self, backend: str, observed: str) -> dict[str, dict]:
+        """List the models with the selector reporting `observed` served on `backend`."""
+        async def selected():
+            return SimpleNamespace(backend=backend, model=observed), None
+
+        with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            return self._list()
+
+    def _assert_aliases(self, listed: dict[str, dict], expected: dict[str, dict]) -> None:
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self._assert_complete_metadata(listed[alias], expected[alias])
+
+    def test_a_path_backend_never_matches_a_declaration_by_its_served_name(self) -> None:
+        # The record's deployment serves a name equal to the loaded path, but it activates other
+        # weights: only the activation path says which weights are loaded.
+        _, fallbacks = self._distinct_metadata()
+        record = self.backends["kobold"]["models"][0]
+        record["activation_model"] = "/weights/different.gguf"
+        record["upstream_model"] = QWEN_PATH
+        self.assertEqual(proxy._declarations_for_loaded_model("kobold", QWEN_PATH), set())
+        with patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
+        self._assert_aliases(listed, fallbacks)
+
+    def test_a_path_backend_whose_loaded_path_is_gone_by_the_lookup_keeps_the_fallback(self) -> None:
+        # The selector saw a served model; the loaded-state entry is gone when the listing maps it.
+        # The served name alone does not prove the weights, so nothing is inherited.
+        _, fallbacks = self._distinct_metadata()
+        self.loaded_paths.pop("kobold")
+        self._assert_aliases(self._list_selecting("kobold", "loaded-kobold"), fallbacks)
+
+    def test_a_non_path_backend_matches_only_the_record_serving_the_observed_id(self) -> None:
+        source, fallbacks = self._distinct_metadata()
+        backend = self.backends["kobold"]
+        backend.pop("loaded_model_identity")
+        backend["models"][0].pop("activation_model")
+        plain = {"type": "language", "input_modalities": ["text"], "output_modalities": ["text"],
+                 "tags": ["tool-use"], "max_tokens": 1024}
+        backend["models"].insert(1, {"id": "plain-kobold", "upstream_model": "served-plain",
+                                     "model_metadata": copy.deepcopy(plain)})
+        cases = (
+            ("served-plain", {alias: plain for alias in DYNAMIC}),
+            ("loaded-kobold", {alias: source for alias in DYNAMIC}),
+            ("not-declared", fallbacks),
+        )
+        for order in ("as declared", "reversed"):
+            if order == "reversed":
+                backend["models"][:2] = backend["models"][1::-1]
+            for observed, expected in cases:
+                with self.subTest(order=order, observed=observed):
+                    self._assert_aliases(self._list_selecting("kobold", observed), expected)
+
+    def test_a_record_without_upstream_model_serves_its_deployment_name_not_its_public_id(self) -> None:
+        # The deployment compiler asks the engine for `model` when upstream_model is absent.
+        source, fallbacks = self._distinct_metadata()
+        backend = self.backends["kobold"]
+        backend.pop("loaded_model_identity")
+        record = backend["models"][0]
+        record.pop("activation_model")
+        record.pop("upstream_model")
+        self.assertEqual(record["model"], "deployment-kobold")
+        for observed, expected in (
+            ("deployment-kobold", {alias: source for alias in DYNAMIC}),
+            ("private-public", fallbacks),
+        ):
+            with self.subTest(observed=observed):
+                self._assert_aliases(self._list_selecting("kobold", observed), expected)
+
     def test_reasoning_follows_alias_policy_in_both_directions_not_alias_spelling(self) -> None:
         source, _ = self._distinct_metadata()
         for disabled in ("current", "current-fast"):
