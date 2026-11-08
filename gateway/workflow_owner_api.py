@@ -16,7 +16,12 @@ from fastapi.responses import JSONResponse
 from gateway import egress, workflow_policy
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS
 from gateway.session_guard import SessionEnded
-from gateway.workflow_registry_store import RegistryNotApplied, WorkflowIdIsBundled, WorkflowRegistryStore
+from gateway.workflow_registry_store import (
+    BundledWorkflowRemoved,
+    RegistryNotApplied,
+    WorkflowIdIsBundled,
+    WorkflowRegistryStore,
+)
 from gateway.workflow_runtime_types import (
     GENERATION_MISMATCH, ID_CLASH, KEEP, Actor, Commit, RegistryConflict, RegistryRefused, WorkflowEntry, WorkflowFacts,
 )
@@ -168,6 +173,10 @@ def register_workflow_owner_routes(
         except WorkflowIdIsBundled as error:
             return egress.error_with_projection(status.HTTP_409_CONFLICT, "id_is_bundled", str(error),
                                                 {"bundled_workflow": error.bundled} if error.bundled else {})
+        except BundledWorkflowRemoved as error:
+            return _error(status.HTTP_409_CONFLICT, "bundled_workflow_removed",
+                          f"workflow {error.workflow_id!r} is no longer a bundled workflow; its run-control revision "
+                          "cannot be restored")
         except RegistryRefused as error:
             return _refused([problem.as_dict() for problem in error.problems])
         except RegistryNotApplied as error:

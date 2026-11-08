@@ -70,6 +70,15 @@ class WorkflowIdIsBundled(Exception):
         self.bundled = copy.deepcopy(dict(bundled)) if isinstance(bundled, Mapping) else None
 
 
+class BundledWorkflowRemoved(Exception):
+    """A restore would write back a run-control patch for an id the release no longer ships (HTTP 409
+    ``bundled_workflow_removed``). The patch names a bundled workflow; with none, there is nothing to patch."""
+
+    def __init__(self, workflow_id: str) -> None:
+        super().__init__(f"workflow {workflow_id!r} is no longer a bundled workflow")
+        self.workflow_id = workflow_id
+
+
 class RegistryNotApplied(RuntimeError):
     """The change is saved (``commit``) but the running gateway could not apply it (a failed hot reload)."""
 
@@ -440,6 +449,8 @@ class WorkflowRegistryStore:
             then = past["record"]
             if service_registry.is_run_control_patch(then):
                 # A past revision that held run control only is written back as that patch.
+                if workflow_id not in self._bundled_ids() or base.get(workflow_id) is None:
+                    raise BundledWorkflowRemoved(workflow_id)
                 record = self._run_control_patch(base.get(workflow_id))
                 record["published"] = bool(then.get("published", True))
                 return record, "restore"
