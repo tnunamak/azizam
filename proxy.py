@@ -17619,6 +17619,9 @@ STT_MEASUREMENTS = stt_measurement.Measurements(ADMIN_STORE, _operator_stt_trans
                                                 preflight=_operator_stt_preflight, active=_operator_stt_owner_active)
 
 
+service_registry.set_dynamic_model_aliases_source(lambda: config.get("model_aliases"))
+
+
 def _workflow_store_snapshot(document, _release, *, generation):
     """The store's prospective snapshot, built by the same builder and bundled release the provider uses."""
     return registry_snapshot.build(document, registry_snapshot.bundled_release(), generation=generation,

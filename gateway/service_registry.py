@@ -2854,6 +2854,19 @@ def workflow_name_pairs(workflow_id: str) -> list[tuple[str, Any]]:
             *((name, NameOwner(kind, workflow_id)) for kind, name in workflow_kernel.generated_names(workflow_id).items())]
 
 
+_dynamic_model_aliases: Callable[[], Mapping[str, Any] | None] = lambda: None
+
+
+def set_dynamic_model_aliases_source(source: Callable[[], Mapping[str, Any] | None]) -> None:
+    """Where the write-time name check reads the ``model_aliases`` config section (the snapshot builder reads the same one)."""
+    global _dynamic_model_aliases
+    _dynamic_model_aliases = source
+
+
+def dynamic_model_aliases() -> Mapping[str, Any] | None:
+    return _dynamic_model_aliases()
+
+
 def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | None = None) -> list[tuple[str, Any]]:
     """Every (name, owner) pair a registry document holds: the workflows it stores and the bundled ones, model ids and
     model aliases of its services, its frontend ids and the routes they register. ``document`` is the effective document."""
@@ -2873,19 +2886,11 @@ def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | No
             contract = shipped.get(workflow_id) if isinstance(shipped, Mapping) else None
         aliases = contract.get("aliases") if isinstance(contract, Mapping) else None
         pairs.extend((str(alias), NameOwner("workflow_alias", workflow_id)) for alias in aliases or () if isinstance(alias, str))
+    # Model ids, model aliases and the dynamic aliases come from the snapshot builder's own functions: one name source.
+    from gateway import registry_snapshot
     services = document.get("services") if isinstance(document.get("services"), Mapping) else {}
-    for service in services.values():
-        config = service.get("config") if isinstance(service, Mapping) else None
-        models = config.get("models") if isinstance(config, Mapping) else None
-        for model in models if isinstance(models, list) else ():
-            if not isinstance(model, Mapping) or not str(model.get("id") or "").strip():
-                continue
-            base = str(model.get("base_model_id") or "").strip()
-            if not base:
-                pairs.append((str(model["id"]), NameOwner("model", str(model["id"]))))
-                continue
-            pairs.extend((str(name), NameOwner("model_alias", base))
-                         for name in (model.get("id"), model.get("model_group")) if str(name or "").strip())
+    pairs.extend(registry_snapshot.service_model_names(services))
+    pairs.extend(registry_snapshot.dynamic_alias_names(dynamic_model_aliases()))
     frontends = document.get("protocol_frontends") if isinstance(document.get("protocol_frontends"), Mapping) else {}
     for key, frontend in frontends.items():
         if not isinstance(frontend, Mapping):
