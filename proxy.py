@@ -26047,6 +26047,19 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
+def _run_job_content(job: Mapping[str, Any]) -> Response | None:
+    """A finished run's content, when it has exactly one result, is that result in its own media type; else None."""
+    assets = [a for a in job.get("assets") or [] if isinstance(a, Mapping) and isinstance(a.get("asset_id"), str)]
+    if len(assets) != 1:
+        return None
+    path = asset_cache_path(assets[0]["asset_id"])
+    if path is None:
+        return JSONResponse({"error": {"message": "media job has no result file", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return FileResponse(path, media_type=str(assets[0].get("media_type") or "application/octet-stream"),
+                        headers={"x-asset-id": assets[0]["asset_id"]})
+
+
 async def gateway_media_job_content(job_id: str, request: Request):
     """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
@@ -26118,6 +26131,10 @@ async def gateway_media_job_content(job_id: str, request: Request):
     intent = str(job.get("intent") or "")
     if intent == mesh_api.MESH_INTENT:
         return _mesh_job_content(job)  # the plan was checked above, with the other kinds
+    if intent == workflow_run.RUN_INTENT:
+        single = _run_job_content(job)
+        if single is not None:
+            return single
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"
