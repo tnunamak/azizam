@@ -727,7 +727,7 @@ backends:
       - generations
       - videos
     managed: false
-  # Image to 3D (TRELLIS.2, trellis.cpp). Serves POST /v1/meshes/generate through the
+  # Image to 3D (TRELLIS.2, trellis.cpp). Serves POST /v1/3d/generations and /v1/3d/generations/glb through the
   # mesh.generate.trellis-2 manifest (manifests/workflows/). The server loads its weights per request on
   # GPU0 and frees them afterwards, so the route needs an exclusive pool. Capacity ships disabled: the
   # route answers 503 until an operator declares the pool exclusive and sets a whole-envelope

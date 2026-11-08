@@ -70,6 +70,7 @@ GOLDEN = FIXTURES / "s7_mesh_rows_cells.json"
 OLD_CELLS = FIXTURES / "s7_mr_cells.json"
 MARK = "S7-MESH-ROWS-RECORD"
 ASYNC = {"Prefer": "respond-async"}
+HANG_BOUND_SECONDS = 30
 TERMINAL = {"succeeded", "failed", "canceled", "cancelled"}
 
 
@@ -193,7 +194,7 @@ class Gate:
 
 def run(harness: Harness, scenario: Callable[[httpx.AsyncClient], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
     async def go() -> dict[str, Any]:
-        async with gateway_client() as client:
+        async with gateway_client() as client, asyncio.timeout(HANG_BOUND_SECONDS):
             facts = await scenario(client)
         return facts
 

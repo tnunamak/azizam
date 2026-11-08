@@ -335,7 +335,7 @@ turns them into core work:
 - Hosted provider marketplace behavior.
 - Full plugin marketplace/signing infrastructure.
 - Scheduler preemption and multi-worker event storage.
-- Trellis mesh route v1 (`POST /v1/meshes/generate`). Partly implemented on
+- Trellis mesh route v1 (now `POST /v1/3d/generations` and `/v1/3d/generations/glb`). Partly implemented on
   `feat/trellis-mesh-route` (unreleased): the route, manifest, multipart
   executor, exclusive pool, and capacity gate exist and are tested. It answers
   503 until an operator declares exclusive capacity for the trellis backend.
