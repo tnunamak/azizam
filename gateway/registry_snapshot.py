@@ -130,6 +130,14 @@ def _route_specs(raw: Mapping[str, Any]) -> tuple[RouteSpec, ...]:
     return tuple(specs)
 
 
+def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> str:
+    value = raw.get("receipt_opens", "after_policy")
+    if value not in ("before_policy", "after_policy"):
+        raise SnapshotBuildError([_problem(("frontends", row_id, "receipt_opens"), "receipt_opens",
+                                           "receipt_opens is before_policy or after_policy")])
+    return value
+
+
 def frontend_row(raw: Mapping[str, Any]) -> FrontendRow:
     """One ``FrontendRow`` from a file record. ``selects`` is kept as the row wrote it and checked with the kernel's
     ``selector_problems`` when it is present."""
@@ -152,6 +160,7 @@ def frontend_row(raw: Mapping[str, Any]) -> FrontendRow:
         mode=mode, receipt_protocol=str(receipt),
         strictness="lenient" if raw.get("strictness") == "lenient" else "exact",
         lists_as_model=bool(raw.get("lists_as_model", False)),
+        receipt_opens=_receipt_opens(row_id, raw),
     )
 
 
@@ -330,10 +339,13 @@ def workflow_names(entry: WorkflowEntry) -> list[tuple[str, NameOwner]]:
 
 def _row_value(row: FrontendRow) -> dict[str, Any]:
     """A frontend row as plain JSON values, for the digest."""
-    return {"id": row.id, "shape": row.shape, "mode": row.mode, "receipt_protocol": row.receipt_protocol,
-            "strictness": row.strictness, "lists_as_model": row.lists_as_model, "selects": row.selects,
-            "routes": [{"methods": list(r.methods), "canonical": r.canonical, "aliases": list(r.aliases),
-                        "runtime_policy": r.runtime_policy} for r in row.routes]}
+    value = {"id": row.id, "shape": row.shape, "mode": row.mode, "receipt_protocol": row.receipt_protocol,
+             "strictness": row.strictness, "lists_as_model": row.lists_as_model, "selects": row.selects,
+             "routes": [{"methods": list(r.methods), "canonical": r.canonical, "aliases": list(r.aliases),
+                         "runtime_policy": r.runtime_policy} for r in row.routes]}
+    if row.receipt_opens != "after_policy":      # the default adds nothing, so existing digests stay as they were
+        value["receipt_opens"] = row.receipt_opens
+    return value
 
 
 def frontend_names(row: FrontendRow) -> list[tuple[str, NameOwner]]:

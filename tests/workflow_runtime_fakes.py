@@ -232,6 +232,21 @@ class FakeStore:
         return lambda: self._listeners.remove(listener)
 
 
+class FakeAvailability:
+    """An ``AdapterAvailability``: ``problems`` maps a binding's adapter id to its reason code, ``retry_after`` to the
+    delay a ``SERVICE_*`` reason carries (S7 parity M4)."""
+
+    def __init__(self, problems: Mapping[str, str] | None = None, retry_after: Mapping[str, int] | None = None) -> None:
+        self.problems = dict(problems or {})
+        self.retry_after = dict(retry_after or {})
+
+    def binding_problem(self, binding: BindingDef) -> str | None:
+        return self.problems.get(binding.adapter_id)
+
+    def binding_retry_after_s(self, binding: BindingDef) -> int | None:
+        return self.retry_after.get(binding.adapter_id)
+
+
 class FakeRunCore:
     """Records submits. The key is bound to ``workflow_kernel.run_identity`` (the caller is the owner scope and maker):
     the same identity replays, another identity is ``idempotency_conflict``. A refusal binds nothing. execute_run marks a
@@ -242,6 +257,8 @@ class FakeRunCore:
         self.submitted: list[RunRequest] = []
         self.jobs: dict[str, RunJobView] = {}
         self.contents: dict[tuple[str, str, int], ResultContent] = {}
+        # What execute_run puts on a job's ``result_metadata`` (S7 parity M5), by workflow id.
+        self.result_metadata: dict[str, Mapping[str, Any]] = {}
         self._keys: dict[tuple[str, str], tuple[str, str]] = {}
 
     async def submit_run(self, req: RunRequest, caller: Any, *, snapshot: Any) -> RunJobView | RunRefused:
@@ -270,7 +287,8 @@ class FakeRunCore:
         if view.status not in ("queued", "running"):
             return
         self.contents[(job_id, "result", 0)] = ResultContent("application/json", value={"ok": True})
-        self.jobs[job_id] = replace(view, status="succeeded", results=(ResultRef("result", 0, "application/json"),))
+        self.jobs[job_id] = replace(view, status="succeeded", results=(ResultRef("result", 0, "application/json"),),
+                                    result_metadata=dict(self.result_metadata.get(view.workflow_id, {})))
 
     def recover_runs(self, now_s: int) -> RecoveryReport:
         return RecoveryReport({})
