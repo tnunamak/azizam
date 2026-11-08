@@ -161,7 +161,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # Re-captured 2026-11-06: config homes C3 serves the aliases from the override store, so the entries of one alias
     # table are listed in name order, not in the startup file's order. The same rows, types and architectures; only the
     # order of image-anime/image-uncensored and of stt-diarize/stt-fast/stt-quality moved. Capabilities and engine did not move.
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "4155396fb568ec2d4313437999281fc4347c3e0f373e5d7a67683f2ac019c379"
+    # Re-captured 2026-11-08 (S5 projections): the face-likeness workflow's output modalities read from its contract and now
+    # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "f358d972e72f0a2ad15acdb6b89ff724b6c8743643afa7724803b2aff82e5517"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:
