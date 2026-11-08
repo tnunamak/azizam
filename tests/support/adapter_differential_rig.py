@@ -432,7 +432,8 @@ class GatewayRig:
         self._last = _Buffered(response, body)
         return self._last  # type: ignore[return-value]
 
-    async def call_disconnecting(self, method: str, path: str, *, label: str, json_body: Any, disconnect_when) -> None:
+    async def call_disconnecting(self, method: str, path: str, *, label: str, json_body: Any, disconnect_when,
+                                 unordered_json: bool = False) -> None:
         """Send a JSON request straight to the app and report the client gone once ``disconnect_when()`` is true.
 
         Unlike ``call(cancel_when=...)`` the handler is not cancelled: its ``receive()`` returns
@@ -477,7 +478,8 @@ class GatewayRig:
             gone.set()
             await task
         described = {"status": out["status"], "headers": ad.describe_response_headers(out["headers"], self.norm),
-                     "body": ad.describe_body(out["body"], dict(out["headers"]).get("content-type"), self.norm),
+                     "body": ad.describe_body(out["body"], dict(out["headers"]).get("content-type"), self.norm,
+                                          unordered_json=unordered_json),
                      "disconnected_by_caller": True}
         ad.settle_content_length(described["headers"], out["body"], described["body"])
         self.calls.append({"label": label, "request": sent, "response": described})

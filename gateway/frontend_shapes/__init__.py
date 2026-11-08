@@ -1,0 +1,113 @@
+"""Frontend rows over reviewed wire shapes (CODE_TO_DATA_S4_S8 I5, section 8).
+
+``registry/protocol_frontends.yml`` holds one row per modality route under ``frontends:``: the shape that speaks its wire,
+the routes, a selector in the kernel's closed schema that says which workflows it serves, and ``mode``. This package
+loads and validates the rows, builds the shapes, and answers ``profile_problems(contract)``: why no bundled row that
+selects a contract can serve it (``gateway.frontend_profiles.check`` calls it at save)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from gateway.frontend_shapes._base import Shape
+from gateway.frontend_shapes.mesh import LocalAI3D, RawGlb
+from gateway.frontend_shapes.shapes import (
+    AudioGenerate,
+    ImageJobs,
+    OpenAIImagesJson,
+    OpenAIImagesMultipart,
+    OpenAIVideoCreate,
+    OpenAIVideoEdit,
+)
+from gateway.workflow_kernel import selector_matches, selector_problems
+from gateway.workflow_runtime_types import FrontendRow, RouteSpec
+
+ROWS_PATH = Path(__file__).resolve().parents[2] / "registry" / "protocol_frontends.yml"
+ROWS_KEY = "frontends"
+
+SHAPE_CLASSES: Mapping[str, Callable[..., Shape]] = {cls.shape_id: cls for cls in (
+    OpenAIImagesJson, OpenAIImagesMultipart, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, LocalAI3D, RawGlb)}
+
+
+class RowError(ValueError):
+    """A frontend row that cannot be used. The message names the row and the rule."""
+
+
+def _row(raw: Mapping[str, Any]) -> FrontendRow:
+    row_id = raw.get("id")
+    if not isinstance(row_id, str) or not row_id:
+        raise RowError(f"a frontend row needs an id: {raw!r}")
+    if raw.get("shape") not in SHAPE_CLASSES:
+        raise RowError(f"{row_id}: unknown shape {raw.get('shape')!r}")
+    if raw.get("mode") not in ("sync", "job"):
+        raise RowError(f"{row_id}: mode must be sync or job")
+    selects = raw.get("selects")
+    if not isinstance(selects, Mapping):
+        raise RowError(f"{row_id}: selects must be a mapping")
+    problems = selector_problems(selects)
+    if problems:
+        raise RowError(f"{row_id}: " + "; ".join(f"{p.pointer or '/'} {p.message}" for p in problems))
+    routes = tuple(RouteSpec(methods=tuple(route["methods"]), canonical=route["canonical"],
+                             aliases=tuple(route.get("aliases") or ()), runtime_policy=dict(route.get("runtime_policy") or {}))
+                   for route in raw.get("routes") or ())
+    if not routes:
+        raise RowError(f"{row_id}: a row needs at least one route")
+    return FrontendRow(id=row_id, shape=raw["shape"], routes=routes, selects=dict(selects), mode=raw["mode"],
+                       receipt_protocol=str(raw.get("receipt_protocol") or ""),
+                       strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)))
+
+
+def parse_rows(document: Mapping[str, Any]) -> tuple[FrontendRow, ...]:
+    """The rows of a release document, validated. Raises ``RowError`` for the first row that is not usable, and for an id
+    used twice."""
+    rows = tuple(_row(raw) for raw in document.get(ROWS_KEY) or ())
+    seen: set[str] = set()
+    for row in rows:
+        if row.id in seen:
+            raise RowError(f"{row.id}: the id is used twice")
+        seen.add(row.id)
+    return rows
+
+
+@lru_cache(maxsize=1)
+def _bundled(signature: tuple[int, int]) -> tuple[FrontendRow, ...]:
+    return parse_rows(yaml.safe_load(ROWS_PATH.read_text(encoding="utf-8")) or {})
+
+
+def bundled_rows() -> tuple[FrontendRow, ...]:
+    stat = ROWS_PATH.stat()
+    return _bundled((stat.st_mtime_ns, stat.st_size))
+
+
+def build_shape(row: FrontendRow, **options: Any) -> Shape:
+    return SHAPE_CLASSES[row.shape](**options)
+
+
+def profile_problems(contract: Mapping[str, Any]) -> tuple[str, ...]:
+    """Why the bundled rows that select this contract cannot serve it, for the rows whose wire is single-purpose
+    (``Shape.save_gate``). Empty when no such row selects it (the generic run route serves it) or when at least one
+    selecting row can serve it. The other shapes' profiles narrow the workflows a request can reach (``to_run_request``)."""
+    if not isinstance(contract, Mapping):
+        return ()
+    identity = contract.get("id") if isinstance(contract.get("id"), str) else ""
+    reasons: list[str] = []
+    for row in bundled_rows():
+        try:
+            selected = selector_matches(row.selects, identity, contract)
+        except (AttributeError, TypeError):
+            selected = False
+        if not selected:
+            continue
+        shape = build_shape(row)
+        if not shape.save_gate:
+            continue
+        found = shape.profile(contract)
+        if not found:
+            return ()
+        reasons.extend(found)
+    return tuple(dict.fromkeys(reasons))

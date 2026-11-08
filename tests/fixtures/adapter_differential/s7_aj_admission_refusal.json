@@ -1,0 +1,192 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "media backend disabled",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"intent\":\"audio.generate\",\"request\":{\"prompt\":\"a door creaks\",\"model\":\"tangoflux\",\"duration\":4}}"
+        },
+        "headers": {
+          "content-length": "97",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/gateway/v1/media/jobs",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"admission\": {\"allowed\": false, \"outcome\": \"denied\", \"reason_codes\": [\"service_unavailable\"], \"reasons\": [\"This service is not available right now.\"], \"retry_after\": 30}, \"error\": {\"code\": \"resource_admission_denied\", \"decision\": {\"next_actions\": [{\"action\": \"wait\", \"deadline\": \"<time>\", \"message\": \"Retry until this deadline, then stop waiting. This is not a start-time estimate.\"}], \"outcome\": \"denied\", \"reasons\": [{\"code\": \"service_unavailable\", \"effect\": \"rejection\", \"message\": \"This service is not available right now.\", \"resource_class\": \"service\"}]}, \"message\": \"This service is not available right now.\"}}"
+        },
+        "headers": {
+          "content-length": "<617 after normalisation>",
+          "content-type": "application/json",
+          "retry-after": "30"
+        },
+        "status": 503
+      }
+    }
+  ],
+  "description": "S7 golden: POST /gateway/v1/media/jobs, outcome admission_refusal, recorded on the unchanged route",
+  "engine_requests": [],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 6
+      }
+    ]
+  },
+  "notes": {
+    "scheduled_jobs": 0
+  },
+  "receipts": {
+    "receipts": [
+      {
+        "api_key_name": "test-app",
+        "app_id": "app_test",
+        "app_profile": null,
+        "created_at": "<time>",
+        "intent": "audio.generate",
+        "job_id": null,
+        "parent_request_id": null,
+        "path": "/gateway/v1/media/jobs",
+        "protocol": "gateway.media",
+        "receipt_json": {
+          "accepted_at_ms": null,
+          "accepted_inputs": [],
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": null,
+          "attempt_number": 1,
+          "backend": null,
+          "client_address": null,
+          "client_hint": null,
+          "connection_id": null,
+          "cost": null,
+          "effective_output_limit": null,
+          "fallback_reasons": [],
+          "finished_at_ms": "<time>",
+          "first_output_at_ms": null,
+          "ignored_inputs": {},
+          "intent": "audio.generate",
+          "job_id": null,
+          "latency_ms": "<duration>",
+          "manifest_hash": null,
+          "manifest_id": null,
+          "manifest_version": null,
+          "metadata": {},
+          "owner_key_hash": "app:app_test",
+          "parent_request_id": null,
+          "path": "/gateway/v1/media/jobs",
+          "policy_decision": null,
+          "policy_reasons": [],
+          "policy_sources": [],
+          "protocol": "gateway.media",
+          "queued_at_ms": null,
+          "rejected_inputs": {},
+          "remote": false,
+          "request_id": "<req:1>",
+          "requested_model": null,
+          "requested_workflow": null,
+          "resolved_model": null,
+          "resolved_workflow": null,
+          "resource_decision": {
+            "facts": [
+              {
+                "name": "available",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "value": false
+              },
+              {
+                "name": "degraded",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "value": false
+              },
+              {
+                "name": "disabled_intents",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "disabled_resource_classes",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "reserved_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "required_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "optional_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "requires_gpu",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": true
+              }
+            ],
+            "outcome": "denied",
+            "reasons": [
+              {
+                "code": "service_unavailable",
+                "effect": "rejection",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "rule": "ComfyUI media backend disabled"
+              }
+            ],
+            "wait_deadline": "<time>"
+          },
+          "retention": [],
+          "source_kind": "app",
+          "source_label": "test-app",
+          "started_at_ms": null,
+          "status": "rejected",
+          "stream": false,
+          "updated_at_ms": "<time>",
+          "usage": null,
+          "visibility": "internal",
+          "warnings": []
+        },
+        "request_id": "<req:1>",
+        "status": "rejected"
+      }
+    ],
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "s7_aj_admission_refusal",
+  "schema": 1
+}
