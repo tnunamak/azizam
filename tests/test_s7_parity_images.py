@@ -135,7 +135,6 @@ def cell(tmp_path, code, outcome):
 
 
 # ------------------------------------------------------------------------------------------------ 1. images.generate
-@ROW_PENDING
 def test_images_01_disabled_service_503(tmp_path):
     old, row = pair(tmp_path, GEN, body(), disabled)
     old_has(old, "503", status(old) == 503)
@@ -186,7 +185,6 @@ def test_images_07_policy_denial_403_with_plan_details(tmp_path):
     assert_same(old, row, status, failure, engine, ("retention facts", retention_destinations))
 
 
-@ROW_PENDING
 def test_images_08_admission_refusal_response(tmp_path):
     old, row = cell(tmp_path, "ig", "admission_refusal")
     assert_same(old, row, status, failure, ("retry-after", lambda o: header(o, "retry-after")), engine)
@@ -465,7 +463,6 @@ def _edit_compare(old, row, *extra):
     assert_same(old, row, status, failure, engine_without_probes, *extra)
 
 
-@ROW_PENDING
 def test_images_E01_disabled_service_503(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), disabled)
     old_has(old, "503", status(old) == 503)
@@ -631,7 +628,6 @@ def var_form(files=None, **data):
     return out
 
 
-@ROW_PENDING
 def test_images_V01_disabled_service_503(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(), disabled)
     old_has(old, "503", status(old) == 503)
