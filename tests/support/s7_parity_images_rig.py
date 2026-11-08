@@ -42,6 +42,8 @@ def mount_rows(rig: GatewayRig) -> None:
         routes.append(Route(ROW_PREFIX + path, row_routes._handler(proxy._ROW_ROUTE_DEPS, row, frontend_shapes.build_shape(row), path),
                             methods=["POST"]))
     rig.monkeypatch.setattr(proxy.app.router, "routes", [*routes, *proxy.app.router.routes])
+    # The run core keeps the job-store path it was first built with: a core an earlier test built must not serve this rig.
+    rig.monkeypatch.setattr(proxy, "_workflow_core_cache", None)
 
 
 @dataclass
