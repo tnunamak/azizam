@@ -356,7 +356,7 @@ LISTED_DRAWS = {
     ("gateway/stt_measure.py", "difference"): (2, "bootstrap resampling in a measurement, not an input"),
     ("gateway/workflow_equality.py", "generated_value"): (1, "the equality tool's reproducible stand-in for a generator, seeded by workflow and input"),
 }
-DRAW_CALLS = {"randint", "randrange", "getrandbits", "randbelow"}
+DRAW_CALLS = {"randint", "randrange", "getrandbits", "randbelow", "randbits"}
 DRAW_MODULES = {"random", "secrets"}
 
 
@@ -371,6 +371,7 @@ def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
       sites of their own."""
     tree = ast.parse(text)
     drawn_names: set[str] = set()
+    importers = {"__import__", "import_module"}  # names that load a module by its text, under any alias
     found: dict[tuple[str, str], int] = {}
 
     def add(owner: str, count: int = 1) -> None:
@@ -381,6 +382,8 @@ def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
             for alias in node.names:
                 if alias.name in DRAW_CALLS:
                     drawn_names.add(alias.asname or alias.name)
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib":
+            importers.update(alias.asname for alias in node.names if alias.name == "import_module" and alias.asname)
 
     def walk(node: ast.AST, owner: str) -> None:
         for child in ast.iter_child_nodes(node):
@@ -393,7 +396,7 @@ def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
                     and any(alias.name == "*" for alias in child.names):
                 add(f"<star import from {child.module}>")
             elif isinstance(child, ast.Call) and isinstance(child.func, (ast.Name, ast.Attribute)) \
-                    and getattr(child.func, "id", getattr(child.func, "attr", "")) in {"__import__", "import_module"} \
+                    and getattr(child.func, "id", getattr(child.func, "attr", "")) in importers \
                     and child.args and isinstance(child.args[0], ast.Constant) and child.args[0].value in DRAW_MODULES:
                 add(f"<dynamic import of {child.args[0].value}>")
             walk(child, scope)
@@ -421,6 +424,11 @@ EVASIONS = {
     "alias used as a value": "from random import randrange as draw\ndef f():\n    return [draw]\n",
     "an instance": "import random\ndef f():\n    return random.SystemRandom().getrandbits(8)\n",
     "star import": "from random import *\n",
+    "secrets randbits attribute": "import secrets\ndef f():\n    return secrets.randbits(8)\n",
+    "secrets randbits from-import": "from secrets import randbits\ndef f():\n    return randbits(8)\n",
+    "secrets randbits aliased from-import": "from secrets import randbits as bits\ndef f():\n    return bits(8)\n",
+    "aliased import_module": "from importlib import import_module as load\ndef f():\n    return load('secrets')\n",
+    "importlib attribute": "import importlib\ndef f():\n    return importlib.import_module('random')\n",
     "dynamic import": "def f():\n    return __import__('random').randint(1, 2)\n",
 }
 LOOK_ALIKES = {
@@ -428,6 +436,7 @@ LOOK_ALIKES = {
     "other function of the module": "import random\nfrom random import seed as reseed\ndef f():\n    random.seed(1)\n    reseed(2)\n",
     "a local function with the name": "def randint(a, b):\n    return a\ndef f():\n    return randint(1, 2)\n",
     "another module's name": "from other import randint as draw\ndef f():\n    return draw(1, 2)\n",
+    "aliased import_module of another module": "from importlib import import_module as load\ndef f():\n    return load('json')\n",
     "a name that is only like an alias": "from random import randint as draw\ndef f(drawn):\n    return drawn\n",
 }
 
@@ -910,28 +919,39 @@ def test_two_concurrent_requests_with_one_key_get_one_job_and_one_stored_value(j
             drawn.append(918273000 + len(drawn) * 111111)
             return drawn[-1]
 
-    results: list[tuple[Any, list[str]]] = []
+    results: list[tuple[Any, None]] = []
+    scheduled: list[str] = []  # every scheduling call, from both requests
+
+    def record_schedule(job_id: str) -> bool:
+        with lock:
+            scheduled.append(job_id)
+        return True
 
     def one_request() -> None:
-        scheduled: list[str] = []
-        with patch.object(proxy, "_schedule_image_media_job", lambda job_id: scheduled.append(job_id) or True):
-            response = asyncio.run(proxy.gateway_image_generations_media_job(
-                StubRequest(IMAGE_BODY, {"host": "gateway.test", "idempotency-key": "race-key"})))
-        results.append((response, scheduled))
+        response = asyncio.run(proxy.gateway_image_generations_media_job(
+            StubRequest(IMAGE_BODY, {"host": "gateway.test", "idempotency-key": "race-key"})))
+        with lock:
+            results.append((response, None))
 
-    with patch.object(media_jobs, "get_by_request_id", both_miss_first), \
+    original_schedule = proxy._schedule_image_media_job
+    # One patch of the scheduler for both threads, installed and restored here, outside them: a patch made inside each
+    # thread lets one restore the other's mock and leak it to later tests.
+    with patch.object(proxy, "_schedule_image_media_job", record_schedule), \
+            patch.object(media_jobs, "get_by_request_id", both_miss_first), \
             patch.object(generated_defaults, "secure_source", distinct_values):
         threads = [threading.Thread(target=one_request) for _ in range(2)]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(60)
+    assert proxy._schedule_image_media_job is original_schedule, "the scheduler patch is gone after both threads joined"
 
     assert len(results) == 2 and len(drawn) == 2, "both requests drew"
     ids = {json.loads(response.body)["job_id"] for response, _ in results}
     assert len(ids) == 1 and all(response.status_code in (200, 202) for response, _ in results)
-    assert sum(len(scheduled) for _, scheduled in results) == 1, "one submission"
+    assert len(scheduled) == 1, "one submission"
     (job_id,) = ids
+    assert scheduled == [job_id]
     stored = kept(jobs_db, job_id)["seed"]["value"]
     assert stored in drawn
     loser = next(value for value in drawn if value != stored)
@@ -940,14 +960,128 @@ def test_two_concurrent_requests_with_one_key_get_one_job_and_one_stored_value(j
     surfaces += [path.read_text(encoding="utf-8", errors="replace") for path in spool_files(tmp_path)]
     assert not any(str(loser) in text for text in surfaces), "the losing request's value reaches nothing"
     assert len(job_rows(jobs_db)) == 1
+    payloads = spool_files(tmp_path)
+    assert len(payloads) == 1, f"the loser's payload file is absent; the spool holds {payloads}"
+    assert str(stored) in payloads[0].read_text(encoding="utf-8", errors="replace") or job_id in payloads[0].name
 
 
-def test_a_job_whose_binding_has_no_pin_is_still_accepted_and_draws_at_run(jobs_db):
+def test_a_job_whose_binding_has_no_pin_is_still_accepted_and_draws_at_run(jobs_db, monkeypatch):
     """A bundled workflow with a generated input and a binding that is not the graph binding (a gateway composition)
-    builds no envelope. Requiring one would refuse every such job; it keeps the behaviour it had before S3.6."""
+    builds no envelope. Requiring one would refuse every such job; it keeps the behaviour it had before S3.6: the value
+    is drawn when the job runs, not stored."""
     manifest = proxy._find_image_manifest("image.generate", TILE_BODY["model"])
     assert manifest is not None and generated_defaults.generated_inputs(manifest.get("inputs") or {})
     assert not proxy._manifest_has_pin(manifest)
     assert proxy._manifest_has_pin(proxy._find_image_manifest("image.generate", IMAGE_BODY["model"]))
     job_id = submit_image(TILE_BODY)
     assert DefinitionStore(jobs_db).envelope(job_id) is None
+
+    drawn_at_run: list[Any] = []
+
+    async def route(request, auth_context, receipt=None):
+        drawn_at_run.append(proxy._image_generated_values(manifest, TILE_BODY))
+        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
+
+    monkeypatch.setattr(proxy, "proxy_image_request", route)
+    monkeypatch.setattr(proxy, "_image_media_job_max_attempts", lambda: 1)
+    source = Recorder(4321)
+    with patch.object(generated_defaults, "secure_source", source):
+        asyncio.run(proxy._run_image_media_job(job_id))
+    assert drawn_at_run == [{"seed": 4321}], "the run drew the value, since nothing was stored"
+    assert len(source.asked) == 1
+    assert proxy._JOB_GENERATED.get() is None
+
+
+def test_an_audio_job_whose_binding_has_no_pin_is_accepted_without_an_envelope_and_draws_at_run(jobs_db, monkeypatch):
+    base = proxy._load_audio_workflow_manifest("tangoflux")
+    assert proxy._manifest_has_pin(base)
+    pinless = {**base, "bindings": {name: binding for name, binding in base["bindings"].items()
+                                    if name != proxy.DERIVED._GRAPH_BINDING}}
+    assert not proxy._manifest_has_pin(pinless)
+    monkeypatch.setattr(proxy, "_load_audio_workflow_manifest", lambda name: pinless)
+    monkeypatch.setattr(proxy, "_compile_from_pin", lambda capability: False)
+    with patch.object(generated_defaults, "secure_source", Recorder(2468)):
+        job_id = submit_audio(AUDIO_BODY)  # asserts a 202: not refused for lacking an envelope
+    assert DefinitionStore(jobs_db).envelope(job_id) is None
+
+    seen: list[Any] = []
+
+    async def route(*args, **kwargs):
+        seen.append(proxy._JOB_GENERATED.get())
+        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
+
+    async def no_receipt(*args, **kwargs):
+        return SimpleNamespace(receipt_id="rcpt_test")
+
+    from gateway import media_ingestion
+
+    monkeypatch.setattr(proxy, "proxy_audio_generate", route)
+    monkeypatch.setattr(media_ingestion, "start_receipt", no_receipt)
+    monkeypatch.setattr(media_ingestion, "finish_response", lambda *args, **kwargs: None)
+    monkeypatch.setattr(media_ingestion, "finish_receipt", lambda *args, **kwargs: None)
+    asyncio.run(proxy._run_audio_media_job(job_id))
+    assert seen == [{}], "nothing is stored for the run to read, so the route draws"
+    assert media_jobs.get(job_id, audience="internal", path=jobs_db)["status"] != media_jobs.STATUS_QUEUED
+
+
+def test_the_context_is_clean_in_the_same_task_after_a_read_failure_and_the_next_job_sees_its_own_value(jobs_db, monkeypatch):
+    """Both jobs run in ONE task. The first cannot be read; the second must neither see its leftovers nor a stale value."""
+    with patch.object(generated_defaults, "secure_source", Recorder(111)):
+        gone = submit_image(IMAGE_BODY)
+    with patch.object(generated_defaults, "secure_source", Recorder(222)):
+        fine = submit_image({**IMAGE_BODY, "prompt": "a second lighthouse"})
+    DefinitionStore(jobs_db).clear_generated(gone)
+    seen: list[Any] = []
+
+    async def route(request, auth_context, receipt=None):
+        seen.append(proxy._JOB_GENERATED.get())
+        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
+
+    monkeypatch.setattr(proxy, "proxy_image_request", route)
+    monkeypatch.setattr(proxy, "_image_media_job_max_attempts", lambda: 1)
+    after: list[Any] = []
+
+    async def both() -> None:
+        await proxy._run_image_media_job(gone)
+        after.append(proxy._JOB_GENERATED.get())
+        await proxy._run_image_media_job(fine)
+        after.append(proxy._JOB_GENERATED.get())
+
+    asyncio.run(both())
+    assert after == [None, None], "the context is empty after the failed read and after the next run"
+    assert [entry["seed"]["value"] for entry in seen] == [222], "only the second job reached its route, with its own value"
+    assert media_jobs.get(gone, audience="internal", path=jobs_db)["status"] == media_jobs.STATUS_FAILED
+
+
+@pytest.mark.parametrize("require", [True, False])
+def test_a_fault_after_the_envelope_is_written_rolls_the_envelope_back(jobs_db, require):
+    """The write succeeds and the record then fails: no envelope and no references are left, and with ``require`` no job row."""
+    from gateway import definition_store
+
+    real = definition_store.record_envelope_in
+
+    def after_write(conn, job_id, envelope, **kwargs):
+        real(conn, job_id, envelope, **kwargs)
+        assert conn.execute("SELECT COUNT(*) FROM job_envelope").fetchone()[0] == 1, "the envelope was written"
+        raise OSError("disk full after the write")
+
+    job = media_jobs.MediaJob(intent="image.generate", workflow="wf-erase", app_id="app_x", request_id="req-after-write")
+    with patch("gateway.definition_store.record_envelope_in", after_write):
+        if require:
+            with pytest.raises(media_jobs.EnvelopeNotRecorded):
+                media_jobs.create(job, envelope=envelope_with(5), path=jobs_db, maker_from_request=False, require_envelope=True)
+            assert job_rows(jobs_db) == []
+        else:
+            media_jobs.create(job, envelope=envelope_with(5), path=jobs_db, maker_from_request=False)
+            assert len(job_rows(jobs_db)) == 1, "best effort: the job stays"
+    assert sqlite_rows(jobs_db, "job_envelope") == [], "the written envelope was rolled back"
+    assert sqlite_rows(jobs_db, "definition_ref") == []
+
+
+@pytest.mark.parametrize("route", ["image", "audio"])
+def test_a_graph_workflow_whose_envelope_fails_to_build_is_still_refused(jobs_db, tmp_path, route):
+    with patch.object(proxy, "_graph_job_envelope", lambda *args, **kwargs: None), \
+            patch.object(proxy, "_compile_from_pin", lambda capability: False), \
+            patch.object(generated_defaults, "secure_source", Recorder(7)):
+        response, scheduled = submit_without_checking(route, ROUTE_BODIES[route])
+    assert response.status_code == 503 and scheduled == [] and job_rows(jobs_db) == [] and spool_files(tmp_path) == []
