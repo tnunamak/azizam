@@ -1,20 +1,63 @@
-"""The S4-S8 interface file and its fakes load and behave as the design says (docs/design/CODE_TO_DATA_S4_S8.md)."""
+"""The S4-S8 interface file, the shared kernel and the fakes behave as the design says
+(docs/design/CODE_TO_DATA_S4_S8.md, sections 3 and 5)."""
 
 import asyncio
 import unittest
 
-from gateway.workflow_runtime_types import Actor, RegistryConflict, RunRequest, WORKFLOW_EXISTS
-from tests.workflow_runtime_fakes import FakeRunCore, FakeStore, entry
+from gateway.workflow_kernel import (
+    canonical_token, execution_digest, generated_names, name_clashes, route_key, selector_matches, selector_problems,
+)
+from gateway.workflow_runtime_types import (
+    ID_CLASH, Actor, NameOwner, RegistryConflict, RunRefused, RunRequest, WORKFLOW_EXISTS,
+)
+from tests.workflow_runtime_fakes import FACTS, FakeJobService, FakeRunCore, FakeStore, entry
 
 DOC = {"schema_version": 2, "id": "poster.generate.demo", "version": "1", "intent": "poster.generate",
-       "capability": "image", "inputs": {}, "outputs": {"image": {"type": "asset"}}, "bindings": {"fake": {}}}
+       "inputs": {"photo": {"type": "asset", "accepts": ["image/*"], "annotations": {"example.org/n": 1}}},
+       "outputs": {"poster": {"media_type": "image/png"}}, "bindings": {"fake": {}}}
 ME = Actor("owner", "o1")
 
 
-class FakeStoreFollowsTheStoreRules(unittest.TestCase):
+class KernelRules(unittest.TestCase):
+    def test_one_token_for_names_that_differ_only_in_case_and_punctuation(self):
+        self.assertEqual(canonical_token(" A.b-C "), "a_b_c")
+        self.assertEqual(canonical_token("a b_c"), canonical_token("A.B.C"))
+        self.assertEqual(generated_names("x.y-z"), {"operation": "run_x_y_z", "component": "x_y_z"})
+        self.assertEqual(route_key("post", "/V1/Images/"), "POST /v1/images")
+
+    def test_two_owners_of_one_token_clash_and_one_owner_never_clashes_with_itself(self):
+        pairs = [("a-b", NameOwner("workflow", "a-b")), ("a.b", NameOwner("workflow", "a.b"))]
+        clash = name_clashes(pairs)
+        self.assertEqual([p.code for p in clash], [ID_CLASH])
+        self.assertIn("a-b", clash[0].message)
+        self.assertEqual(name_clashes([("w", NameOwner("workflow", "w")), ("w", NameOwner("component", "w"))]), ())
+
+    def test_a_workflow_id_clashes_with_a_model_alias_but_not_with_a_route(self):
+        self.assertTrue(name_clashes([("Fast", NameOwner("model_alias", "m")), ("fast", NameOwner("workflow", "fast"))]))
+        self.assertEqual(name_clashes([("fast", NameOwner("workflow", "fast")),
+                                       (route_key("POST", "/fast"), NameOwner("route", "r"))]), ())
+
+    def test_annotations_never_change_the_execution_digest(self):
+        plain = {**DOC, "inputs": {"photo": {"type": "asset", "accepts": ["image/*"]}}}
+        noted = {**DOC, "annotations": {"example.org/why": "x"}}
+        self.assertEqual(execution_digest(plain), execution_digest(noted))
+        self.assertNotEqual(execution_digest(DOC), execution_digest({**DOC, "version": "2"}))
+
+    def test_the_closed_selector_schema(self):
+        self.assertEqual(selector_problems({"ids": ["a"]}), ())
+        self.assertTrue(selector_problems({"ids": ["a"], "match": {"inputs": {}}}))
+        self.assertTrue(selector_problems({"match": {"intent": "poster.generate"}}))
+        by_media = {"match": {"inputs": {"photo": {"media_type": "image/png"}}, "outputs": {"kind": "assets"}}}
+        self.assertEqual(selector_problems(by_media), ())
+        self.assertTrue(selector_matches(by_media, DOC["id"], DOC))
+        self.assertFalse(selector_matches({"match": {"outputs": {"kind": "json"}}}, DOC["id"], DOC))
+        self.assertFalse(selector_matches({"match": {"inputs": {"photo": {"media_type": "audio/*"}}}}, DOC["id"], DOC))
+
+
+class FakesKeepTheContracts(unittest.TestCase):
     def test_compare_and_swap_refuses_a_stale_revision_and_create_refuses_an_existing_id(self):
         store = FakeStore({})
-        first = store.put_workflow(DOC, if_match=None, actor=ME)
+        first = store.put_workflow(DOC, if_match=None, actor=ME, facts=FACTS)
         self.assertEqual(first.revision, 2)
         with self.assertRaises(RegistryConflict) as exists:
             store.put_workflow(DOC, if_match=None, actor=ME)
@@ -23,35 +66,68 @@ class FakeStoreFollowsTheStoreRules(unittest.TestCase):
             store.set_state(DOC["id"], "disabled", if_match=1, actor=ME)
         self.assertEqual(stale.exception.current_revision, 2)
 
-    def test_a_save_is_unpublished_and_a_disabled_entry_is_not_runnable(self):
+    def test_missing_facts_stay_missing_and_an_edit_keeps_state_published_and_incarnation(self):
         store = FakeStore({})
         store.put_workflow(DOC, if_match=None, actor=ME)
-        self.assertFalse(store.snapshot().get(DOC["id"]).published)
+        made = store.snapshot().get(DOC["id"])
+        self.assertTrue(made.needs_configuration)
+        self.assertFalse(made.published)
         store.set_state(DOC["id"], "disabled", if_match=2, actor=ME)
-        self.assertIsNone(store.snapshot().runnable(DOC["id"]))
+        store.put_workflow({**DOC, "version": "2"}, if_match=3, actor=ME, facts=FACTS)
+        edited = store.snapshot().get(DOC["id"])
+        self.assertEqual((edited.state, edited.incarnation), ("disabled", made.incarnation))
+        store.put_workflow({**DOC, "version": "3"}, if_match=4, actor=ME, facts=None)
+        self.assertTrue(store.snapshot().get(DOC["id"]).needs_configuration)
 
-    def test_restore_puts_an_old_version_back_as_a_new_revision(self):
+    def test_delete_and_create_again_is_a_new_incarnation(self):
         store = FakeStore({})
         store.put_workflow(DOC, if_match=None, actor=ME)
-        old = store.snapshot().get(DOC["id"]).contract_digest
-        store.put_workflow({**DOC, "version": "2"}, if_match=2, actor=ME)
-        commit = store.restore(DOC["id"], old, if_match=3, actor=ME)
-        self.assertEqual((commit.revision, commit.contract_digest), (4, old))
+        before = store.snapshot().get(DOC["id"]).incarnation
+        store.delete_workflow(DOC["id"], if_match=2, actor=ME)
+        self.assertIsNone(store.snapshot().get(DOC["id"]))
+        store.put_workflow(DOC, if_match=None, actor=ME)
+        self.assertNotEqual(store.snapshot().get(DOC["id"]).incarnation, before)
 
-    def test_the_snapshot_digest_changes_with_any_entry_and_listeners_see_both_snapshots(self):
+    def test_restore_by_record_revision_tells_annotation_only_saves_apart(self):
+        store = FakeStore({})
+        store.put_workflow(DOC, if_match=None, actor=ME)
+        store.put_workflow({**DOC, "annotations": {"example.org/v": "b"}}, if_match=2, actor=ME)
+        first, second = store.history(DOC["id"])[::-1]
+        self.assertEqual(first.contract_digest, second.contract_digest)
+        self.assertNotEqual(first.record_digest, second.record_digest)
+        commit = store.restore(DOC["id"], first.record_revision, if_match=3, actor=ME)
+        self.assertEqual((commit.revision, commit.record_digest), (4, first.record_digest))
+
+    def test_a_frontend_or_name_change_changes_the_snapshot_digest_and_views_are_read_only(self):
+        a = FakeStore({DOC["id"]: entry(DOC)}).snapshot()
+        b = FakeStore({DOC["id"]: entry(DOC)}, models=(("m", NameOwner("model", "m")),)).snapshot()
+        self.assertNotEqual(a.digest, b.digest)
+        with self.assertRaises(TypeError):
+            a.get(DOC["id"]).contract["id"] = "other"
+
+    def test_a_failing_listener_does_not_stop_the_swap_or_the_next_listener(self):
         store = FakeStore({DOC["id"]: entry(DOC)})
         seen = []
-        store.subscribe(lambda old, new: seen.append((old.digest, new.digest)))
-        store.set_published(DOC["id"], False, if_match=1, actor=ME)
-        self.assertEqual(len(seen), 1)
-        self.assertNotEqual(*seen[0])
+        store.subscribe(lambda old, new: 1 / 0)
+        stop = store.subscribe(lambda old, new: seen.append(new.revision))
+        with self.assertLogs("tests.workflow_runtime_fakes", "ERROR"):
+            store.set_published(DOC["id"], False, if_match=1, actor=ME)
+        stop()
+        store.set_published(DOC["id"], True, if_match=2, actor=ME)
+        self.assertEqual((seen, store.snapshot().revision), ([2], 3))
 
-    def test_the_fake_run_core_accepts_and_finishes(self):
+    def test_the_fake_core_replays_a_key_refuses_a_changed_request_and_the_job_service_cancels(self):
         store = FakeStore({DOC["id"]: entry(DOC)})
-        core = FakeRunCore()
-        accepted = asyncio.run(core.submit_run(RunRequest(DOC["id"], {}), None, snapshot=store.snapshot()))
-        asyncio.run(core.execute_run(accepted.job_id))
-        self.assertEqual((accepted.status, core.status[accepted.job_id]), ("queued", "succeeded"))
+        core, jobs = FakeRunCore(), None
+        jobs = FakeJobService(core)
+        req = RunRequest(DOC["id"], {"text": "a"}, idempotency_key="k1")
+        first = asyncio.run(core.submit_run(req, None, snapshot=store.snapshot()))
+        again = asyncio.run(core.submit_run(req, None, snapshot=store.snapshot()))
+        changed = asyncio.run(core.submit_run(RunRequest(DOC["id"], {"text": "b"}, idempotency_key="k1"), None,
+                                              snapshot=store.snapshot()))
+        self.assertEqual((first.disposition, again.disposition, again.job_id), ("new", "replay", first.job_id))
+        self.assertIsInstance(changed, RunRefused)
+        self.assertEqual(jobs.cancel(first.job_id, None).status, "canceled")
 
 
 if __name__ == "__main__":
