@@ -259,4 +259,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # operations differ. Before it the frozen digest was 393a003ccd60cc336183786a350a2267d28d806460d04d5e38639471bcd80b6c.
     # Re-captured 2026-11-08 for DELETE /v1/assets/{asset_id} and its /openai alias: only those two operations differ.
     # Before it the frozen digest was e22f458536ecd05d42ccd8386fd4219befe891c3a3c79b380bd84e14a6f902ea.
+    # Re-captured 2026-11-08 for the nine /admin/api/workflows owner operations (see ADDED_PATHS): only those six paths
+    # are new. Before it the frozen digest was 2c63428501d78648d12449003431d89f68dc58341751d76db03fcb8642f6305f.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
