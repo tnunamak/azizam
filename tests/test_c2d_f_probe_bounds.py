@@ -134,7 +134,7 @@ def test_probe_rejects_compressed_expansion_before_buffering_excess() -> None:
     class _Gzip(httpx.AsyncBaseTransport):
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return httpx.Response(200, headers={"content-encoding": "gzip"}, content=packed)
+            return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=_Body([packed], 0.0, [0]))
 
     async def go():
         async with httpx.AsyncClient(transport=_Gzip()) as client:
