@@ -163,3 +163,20 @@ def test_last_owner_delete_removes_the_file_after_a_shared_delete(tmp_path, monk
     assert last.status_code == 200 and last.json()["physical_removed"] is True
     assert not proxy.asset_cache_path(asset_id).exists()
     assert proxy._read_asset_metadata(asset_id) == {}
+
+
+def test_asset_owned_only_by_the_callers_own_keys_is_removed(tmp_path, monkeypatch):
+    # Two owner keys, both the caller's (its principal and its credential), and the caller is the
+    # only maker: nobody else holds the file, so the delete removes it instead of keeping it.
+    world = _World(tmp_path, monkeypatch)
+    asset_id = world.make_asset()
+    own_keys = proxy._asset_read_owner_keys(world.maker_auth)
+    assert len(own_keys) >= 2
+    metadata = proxy._read_asset_metadata(asset_id)
+    metadata["owner_key_hashes"] = sorted(own_keys[:2])
+    proxy._write_asset_metadata(asset_id, metadata)
+    response = world.delete(asset_id, world.maker_auth)
+    assert response.status_code == 200 and response.json()["physical_removed"] is True
+    assert not proxy.asset_cache_path(asset_id).exists()
+    assert world.delete(asset_id, world.maker_auth).status_code == 404
+    assert len(world.audit()) == 1

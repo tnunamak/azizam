@@ -796,13 +796,15 @@ def conservative_asset_deleter(
                 for owner in metadata.get("owner_key_hashes") or []
                 if isinstance(owner, str)
             }
-            if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
+            remaining = owners - set(release_owner_keys)
+            makers = [m for m in metadata.get("maker_person_ids") or [] if isinstance(m, str)]
+            # Every owner key and every maker is the caller's: nobody else holds it, so it goes.
+            all_callers = bool(release_owner_keys) and not remaining and all(m == release_person_id for m in makers)
+            if not all_callers and (len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1):
                 released = dict(metadata)
                 # Never release the last owner key: another maker may still read through it.
-                remaining = owners - set(release_owner_keys)
                 if remaining and remaining != owners:
                     released["owner_key_hashes"] = sorted(remaining)
-                makers = [m for m in metadata.get("maker_person_ids") or [] if isinstance(m, str)]
                 # A lone maker stays: dropping them would let every remaining owner key read a private creation.
                 if len(makers) > 1 and release_person_id in makers:
                     released["maker_person_ids"] = [m for m in makers if m != release_person_id]
