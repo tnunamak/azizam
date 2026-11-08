@@ -272,7 +272,7 @@ def test_a_selector_on_a_node_that_an_asset_input_writes_is_an_echo_of_that_inpu
                      map={"photo": [{"node": "5", "input": "file"}]})
     assert save(plain, template=template)
     # The path form of a mapping names its node first.
-    by_path = manifest(selectors={"first": selector(node="5")}, inputs={"photo": {"type": "image"}},
+    by_path = manifest(selectors={"first": selector(node="5")}, inputs={"photo": {"type": "asset"}},
                        map={"photo": [{"path": "5.inputs.file"}]})
     refused(by_path, "selector_echoes_source", template=template)
 

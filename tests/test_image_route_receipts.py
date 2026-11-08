@@ -422,7 +422,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         raw = _png_bytes((7, 8, 9, 255))
         asset_id = proxy.store_image_bytes(raw)
 
-        content, filename = await proxy._resolve_input_reference({"asset_id": asset_id})
+        content, filename = await proxy._resolve_input_reference({"asset_id": asset_id}, accepts=("image/*",))
 
         self.assertEqual(content, raw)
         self.assertTrue(filename.startswith(asset_id))
@@ -435,6 +435,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         content, _ = await proxy._resolve_input_reference(
             {"asset_id": asset_id},
             proxy.AuthContext(identity=_identity("alice")),
+            accepts=("image/*",),
         )
         self.assertEqual(content, raw)
 
@@ -445,6 +446,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             await proxy._resolve_input_reference(
                 {"asset_id": asset_id},
                 proxy.AuthContext(identity=_identity("bob")),
+                accepts=("image/*",),
             )
 
     def test_asset_content_route_accepts_signed_url_without_bearer(self) -> None:

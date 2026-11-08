@@ -40,6 +40,7 @@ from gateway.workflow_view import settable_inputs
 from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
 from gateway.discovery import WorkflowRecord
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
+from gateway.manifests import media_bearing
 from gateway.video_extensions import ROUTE_MANAGED_VIDEO_INPUTS
 from gateway.video_limits import limits_for_workflow
 
@@ -72,8 +73,6 @@ _IMAGE_EDIT_MANAGED = frozenset(
 # The multipart part the OpenAI-compatible edit route reads pictures from. One
 # part per picture, in submission order; the field repeats.
 _IMAGE_EDIT_IMAGE_PART = "image[]"
-# Contract input types that carry a picture or media reference (the mesh route's single picture is one).
-_MEDIA_INPUT_TYPES = frozenset({"asset"})
 _MESH_PATH = "/v1/meshes/generate"
 
 _JSON_TYPES = {
@@ -113,8 +112,11 @@ def _ref(name: str) -> dict[str, str]:
 
 
 def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
+    """JSON Schema for one input spec, following the type grammar (CODE_TO_DATA_S3, D4): an object lists its closed
+    ``properties``, an array its ``items``, and an asset is a media reference wherever it sits. A form request marks the
+    asset itself as a binary part, never the array or object that holds it."""
     kind = str(spec.get("type", "string"))
-    if kind in _MEDIA_INPUT_TYPES:
+    if kind == "asset":
         if form:
             out: dict[str, Any] = {"type": "string", "format": "binary"}
         else:
@@ -126,8 +128,27 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
                 ),
             }
         out["x-azizam-asset"] = True
+    elif kind == "array":
+        out = {"type": "array"}
+        for key, word in (("min_items", "minItems"), ("max_items", "maxItems")):
+            if key in spec:
+                out[word] = spec[key]
+        if isinstance(spec.get("items"), Mapping):
+            out["items"] = _input_schema(spec["items"], form=form)
     else:
         out = {"type": _JSON_TYPES.get(kind, "string")}
+        properties = spec.get("properties")
+        if kind == "object" and isinstance(properties, Mapping):
+            children = {str(name): child for name, child in properties.items() if isinstance(child, Mapping)}
+            out["properties"] = {name: _input_schema(child, form=form) for name, child in children.items()}
+            out["additionalProperties"] = False
+            required = [name for name, child in children.items() if child.get("required")]
+            if required:
+                out["required"] = required
+        if kind == "string":
+            for key, word in (("min_length", "minLength"), ("max_length", "maxLength")):
+                if key in spec:
+                    out[word] = spec[key]
     for key in ("minimum", "maximum", "enum", "default"):
         if key in spec:
             out[key] = copy.deepcopy(spec[key])
@@ -229,6 +250,9 @@ def gateway_owned_inputs(record: WorkflowRecord) -> frozenset[str]:
 def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, Any]]:
     """Where each manifest input goes in a request for ``mode``.
 
+    An input that holds media inside a list or object is ``{"in": "none"}`` on every route: no route resolves the
+    references inside a container yet, so none can honestly advertise one.
+
     ``mode`` is ``sync`` or ``async``. Each entry is one of
 
     * ``{"in": "body", "field": f}``: a top-level JSON (or form) field;
@@ -243,10 +267,19 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     * ``{"in": "form", "field": name}``: a plain multipart form field (run route);
     * ``{"in": "none"}``: accepted by the manifest, not settable on this route.
     """
+    out = _route_mapping(record, mode)
+    for name, spec in settable_inputs(record.contract).items():
+        if media_bearing(spec) and spec.get("type") != "asset":
+            out[name] = {"in": "none"}
+    return out
+
+
+def _route_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, Any]]:
     inputs = settable_inputs(record.contract)
     intent = record.intent
     out: dict[str, dict[str, Any]] = {}
-    is_asset = {n: (s or {}).get("type") in _MEDIA_INPUT_TYPES for n, s in inputs.items()}
+    # One reference per input: a scalar asset is a file part. A container that holds assets is not (the caller above sets it aside).
+    is_asset = {n: media_bearing(s) and (s or {}).get("type") == "asset" for n, s in inputs.items()}
 
     if mode == "sync" and gateway_route(record):  # a native route: plain multipart form
         for name in inputs:

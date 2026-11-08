@@ -85,7 +85,7 @@ def test_public_media_reference_uses_safe_fetch_boundary(monkeypatch, redirect):
     ))
     url = "https://media.example/source.png" if redirect else "http://127.0.0.1/private.png"
     with pytest.raises(proxy._InputReferenceError, match="blocked network"):
-        asyncio.run(proxy._resolve_input_reference(url, access_context()))
+        asyncio.run(proxy._resolve_input_reference(url, access_context(), accepts=("image/*",)))
     assert len(contacted) == (1 if redirect else 0)
 
 
@@ -216,7 +216,7 @@ def test_jpeg_base64_starting_with_slash_remains_accepted():
     Image.new("RGB", (1, 1), "red").save(image, format="JPEG")
     encoded = base64.b64encode(image.getvalue()).decode("ascii")
     assert encoded.startswith("/")
-    data, _ = asyncio.run(proxy._resolve_input_reference(encoded))
+    data, _ = asyncio.run(proxy._resolve_input_reference(encoded, accepts=("image/*",)))
     assert data == image.getvalue()
 
 
@@ -240,13 +240,13 @@ def test_gateway_signed_image_url_resolves_without_network_with_ownership(monkey
     if route == "gateway/assets":
         url = url.replace("/v1/assets/", "/gateway/v1/assets/")
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no network for own media")):
-        data, filename = asyncio.run(proxy._resolve_input_reference(url, owner, request=request))
+        data, filename = asyncio.run(proxy._resolve_input_reference(url, owner, request=request, accepts=("image/*",)))
         assert data == image.getvalue()
         assert filename.endswith(".png")
         with pytest.raises(proxy._InputReferenceError, match="not accessible"):
-            asyncio.run(proxy._resolve_input_reference(url, other, request=request))
+            asyncio.run(proxy._resolve_input_reference(url, other, request=request, accepts=("image/*",)))
         with pytest.raises(proxy._InputReferenceError, match="signature"):
-            asyncio.run(proxy._resolve_input_reference(url.replace("sig=", "sig=invalid"), owner, request=request))
+            asyncio.run(proxy._resolve_input_reference(url.replace("sig=", "sig=invalid"), owner, request=request, accepts=("image/*",)))
 
 
 def test_gateway_video_asset_signed_url_resolves_internally(monkeypatch, tmp_path):
