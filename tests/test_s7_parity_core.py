@@ -17,9 +17,8 @@ from gateway import media_jobs, result_bundle
 from gateway.engine_protocol.media import GatewayAssetStore
 from gateway.registry_snapshot import frontend_row
 from gateway.result_bundle import ResultLimits
-from gateway.workflow_run import (
-    BindingAvailability, WorkflowJobService, asset_origin, receipt_writes,
-)
+from gateway import workflow_run
+from gateway.workflow_run import BindingAvailability, WorkflowJobService
 from gateway.workflow_runtime_types import RunJobView, RunRefused
 from tests.test_workflow_run import CONTRACT, Caller, Port, db, make_core, request, run, snapshot  # noqa: F401
 from tests.workflow_runtime_fakes import entry
@@ -241,9 +240,9 @@ def test_a_saved_file_carries_the_origin_the_old_route_wrote():
 
 
 def test_the_origin_is_built_from_the_pinned_contract_and_the_request_id():
-    assert asset_origin({"display_name": "Krea", "inputs": {"prompt": {"type": "string"}}}, "req-1") == {
+    assert workflow_run.asset_origin({"display_name": "Krea", "inputs": {"prompt": {"type": "string"}}}, "req-1") == {
         "workflow_name": "Krea", "request_id": "req-1", "takes_text": True}
-    assert asset_origin({"inputs": {"photo": {"type": "asset"}}}, None) == {"takes_text": False}
+    assert workflow_run.asset_origin({"inputs": {"photo": {"type": "asset"}}}, None) == {"takes_text": False}
 
 
 def test_a_run_gives_the_adapter_the_request_the_job_answers(db, tmp_path):
@@ -260,7 +259,7 @@ def test_receipt_writes_name_the_inputs_the_workflow_and_the_adapters_receipt_fa
     """writers-03, writers-04, writers-07, images-14, images-31, images-E21."""
     e = entry({**CONTRACT, "version": "0.1.0"})
     req = request(options={"size": "512x512", "n": 1})
-    writes = receipt_writes(e, req, {"receipt": {"comfyui_models_freed_for_vram": True}, "rounds": 2})
+    writes = workflow_run.receipt_writes(e, req, {"receipt": {"comfyui_models_freed_for_vram": True}, "rounds": 2})
     assert writes["accepted_inputs"] == ["size", "n", "prompt"]
     assert (writes["resolved_workflow"], writes["manifest_id"], writes["manifest_version"]) == ("demo.run", "demo.run", "0.1.0")
     assert writes["metadata"] == {"comfyui_models_freed_for_vram": True}
