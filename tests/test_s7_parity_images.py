@@ -186,7 +186,7 @@ def test_images_08_admission_refusal_response(tmp_path):
 def test_images_09_model_resolves_to_a_workflow_on_the_receipt(tmp_path):
     old, row = pair(tmp_path, GEN, body(model="krea2-turbo"), ok)
     old_has(old, "a receipt", receipt_row(old))
-    assert_same(old, row, status, ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow", "manifest_id", "manifest_hash", "manifest_version")))
+    assert_same(old, row, status, ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow", "manifest_id", "manifest_version")))  # manifest_hash: delta contract_manifest_hash
 
 
 def test_images_10_b64_json_answer(tmp_path):
