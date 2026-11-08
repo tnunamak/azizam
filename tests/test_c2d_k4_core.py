@@ -217,23 +217,26 @@ def _stored_failure_and_view(db, tmp_path, port_change):
     return json.dumps(stored), json.dumps(view_body(shown))
 
 
-@pytest.mark.xfail(strict=True, reason="K4: failure and refusal text is not scrubbed")
-def test_every_failure_and_refusal_text_is_scrubbed(db, tmp_path, marker):
-    # A dispatch refusal (``_dispatch_problem``) is stored on the job and shown in its view.
+@pytest.mark.xfail(strict=True, reason="K4: a dispatch refusal message is stored and shown unscrubbed")
+def test_a_dispatch_refusal_message_is_scrubbed(db, tmp_path, marker):
     stored, shown = _stored_failure_and_view(
         db, tmp_path, lambda port: setattr(port, "refusal", RunRefused(503, "queue_full", f"full {MARKER}")))
     assert MARKER not in stored and MARKER not in shown
     assert "queue_full" in stored                                   # the failure is still the dispatch refusal
 
-    # A ContractError message and a refusal message cross the wire through ``refusal_body``.
+
+@pytest.mark.xfail(strict=True, reason="K4: refusal_body copies a refusal and a ContractError message unscrubbed")
+def test_a_refusal_body_is_scrubbed(marker):
     body = refusal_body(RunRefused(422, "invalid_inputs", f"bad {MARKER}",
                                    problems=(ContractError(("inputs", "prompt"), "value_invalid", f"seen {MARKER}"),)))
     assert MARKER not in json.dumps(body)
     assert body["error"]["code"] == "invalid_inputs"
 
-    # A generated-input exception reaches the caller as a problem message.
+
+@pytest.mark.xfail(strict=True, reason="K4: a generated-input exception reaches the caller unscrubbed")
+def test_a_generated_input_refusal_is_scrubbed(db, tmp_path, marker):
     snap = snapshot()
-    core, _, _ = make_core(db, tmp_path / "gen", snap)
+    core, _, _ = make_core(db, tmp_path, snap)
 
     def unavailable(inputs, given, **kw):
         raise generated_defaults.GeneratedValueUnavailable(f"cannot draw {MARKER}")
