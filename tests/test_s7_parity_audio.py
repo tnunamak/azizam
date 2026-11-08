@@ -17,13 +17,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 from fastapi import Response
 
 import proxy
-from gateway import media_jobs, receipt_store
+from gateway import media_jobs, media_metadata, provenance, receipt_store, result_bundle
 from tests import test_adapter_differential as base
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential import dump_sqlite
@@ -103,6 +104,45 @@ async def _submit_job(rig, body: dict[str, Any] | None = None):
 
 def _job_id(response) -> str:
     return response.json()["job_id"]
+
+
+def _engine_sampler(rig) -> dict[str, Any]:
+    """The inputs of the one sampler node in the prompt the route submitted to the engine."""
+    prompt = next(e for e in rig.recorder.engine if e["path"] == "/prompt")
+    graph = json.loads(prompt["body"]["text"])["prompt"]
+    (node,) = [n for n in graph.values() if n.get("class_type") == "TangoFluxSampler"]
+    return node["inputs"]
+
+
+def _provenance(content: bytes) -> dict[str, Any]:
+    """The provenance record embedded in delivered WAV bytes (the comment tag, written when metadata is delivered)."""
+    tags = media_metadata.read_media_tags(content, ".wav")
+    return json.loads(tags["comment"].removeprefix(f"{provenance.PROVENANCE_KEY}="))
+
+
+def _submit_and_run(rig, body: dict[str, Any]) -> str:
+    """Submit through the route, then run the job through the real scheduler, so the runner keeps the submit's request
+    context (its delivery choice) the way production does. Returns the job id once it is terminal."""
+    async def flow() -> str:
+        r = await rig.call("POST", JOBS, label="submit", json_body=body, unordered_json=True)
+        assert r.status_code == 202, r.text
+        job_id = _job_id(r)
+        assert REAL_SCHEDULE_AUDIO_MEDIA_JOB(job_id) is True
+        for _ in range(1000):
+            if _stored(rig, job_id)["status"] in (media_jobs.STATUS_SUCCEEDED, media_jobs.STATUS_FAILED,
+                                                  media_jobs.STATUS_CANCELED):
+                break
+            await asyncio.sleep(0.01)
+        return job_id
+
+    return asyncio.run(flow())
+
+
+def _content_md(rig, job_id: str, query: str = "") -> str:
+    """The md= mode of the first signed content handle the content route answers for the job."""
+    got = asyncio.run(rig.call("GET", f"{JOBS}/{job_id}/content{query}", label="content"))
+    assert got.status_code == 200, got.text
+    return parse_qs(urlsplit(got.json()["data"][0]["url"]).query)["md"][0]
 
 
 # =========================================================================== R1: POST /v1/audio/generate (sync)
@@ -275,23 +315,28 @@ def test_audio_13_type_goes_to_the_header_and_provenance(tmp_path):
 
 
 def test_audio_14_duration_reaches_the_engine_request(tmp_path):
-    """audio-14: duration goes into the engine prompt the route submits."""
+    """audio-14: the caller's duration is the number 4 in the sampler input of the engine prompt (a number, not a
+    substring of some other node's text)."""
     with GatewayRig("audio-14", tmp_path) as rig:
         _ok(rig)
         r = asyncio.run(rig.call("POST", SYNC, label="generate", json_body=BODY))
         assert r.status_code == 200
-        prompt = next(e for e in rig.recorder.engine if e["path"] == "/prompt")
-        assert "4" in json.dumps(prompt["body"]) or 4 in json.dumps(prompt["body"])
+        duration = _engine_sampler(rig)["duration"]
+        assert isinstance(duration, (int, float)) and not isinstance(duration, bool)
+        assert duration == 4
 
 
 def test_audio_15_seed_is_generated_and_reaches_the_engine_request(tmp_path):
-    """audio-15: a seed is generated when the caller gives none, and it is in the engine prompt."""
+    """audio-15: a seed is generated when the caller gives none; the engine's sampler seed is that integer, and the
+    delivered provenance names the same seed."""
     with GatewayRig("audio-15", tmp_path) as rig:
         _ok(rig)
+        rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
         r = asyncio.run(rig.call("POST", SYNC, label="generate", json_body=BODY))
         assert r.status_code == 200
-        prompt = next(e for e in rig.recorder.engine if e["path"] == "/prompt")
-        assert "seed" in json.dumps(prompt["body"])
+        seed = _engine_sampler(rig)["seed"]
+        assert isinstance(seed, int) and not isinstance(seed, bool)
+        assert _provenance(r.content)["seed"] == seed
 
 
 def test_audio_16_manifest_input_outside_its_bound_is_refused_with_param(tmp_path):
@@ -432,13 +477,23 @@ def test_audio_27_normalize_peak_db_rewrites_the_bytes_before_delivery(tmp_path)
 
 
 def test_audio_28_delivery_carries_provenance_and_the_sync_asset(tmp_path):
-    """audio-28: a sync success delivers the bytes and leaves an audio asset with provenance in the cache."""
+    """audio-28: a sync success under full metadata delivers bytes whose provenance names the audio kind, the workflow,
+    the models, the engine's seed and duration, and the response's type; the sync asset is stored as a WAV."""
     with GatewayRig("audio-28", tmp_path) as rig:
         _ok(rig)
+        rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
         r = asyncio.run(rig.call("POST", SYNC, label="generate", json_body=BODY))
         assert r.status_code == 200
-        assets = [a for a in rig.trace()["assets"] if a.get("kind") == "audio" or str(a.get("name", "")).endswith(".wav")]
-        assert assets
+        record = _provenance(r.content)
+        sampler = _engine_sampler(rig)
+        assert record["kind"] == "audio"
+        assert record["workflow_id"] == "audio.generate.tangoflux"
+        assert record["requested_model"] == record["resolved_model"] == "tangoflux"
+        assert record["request_id"].startswith("audio_")
+        assert record["seed"] == sampler["seed"]
+        assert record["parameters"]["duration"] == sampler["duration"]
+        assert record["parameters"]["type"] == r.headers["x-audio-type"] == "music"
+        assert list(rig.cache.glob("*.wav"))
 
 
 def test_audio_29_metadata_rewrite_failure_is_502(tmp_path):
@@ -471,13 +526,23 @@ def test_audio_30_success_returns_bytes_with_content_type_and_headers(tmp_path):
 
 
 def test_audio_31_library_asset_row_is_kind_aud_with_audio_suffix(tmp_path):
-    """audio-31: with a receipt, the stored Library asset is kind aud with an audio suffix (.wav here)."""
+    """audio-31: with a receipt, the sync result becomes a Library media job whose asset is kind audio, file audio.wav
+    (stored as aud), and whose asset origin is the receipt's request id. The stored bytes sit beside it as a WAV."""
     with GatewayRig("audio-31", tmp_path) as rig:
         _ok(rig)
         r = asyncio.run(rig.call("POST", SYNC, label="generate", json_body=BODY))
         assert r.status_code == 200
-        names = [a["name"] for a in rig.trace()["assets"]]
-        assert any(name.endswith(".wav") for name in names)
+        [receipt] = _receipts(rig)
+        [job] = _jobs(rig)
+        assert job["intent"] == "audio.generate"
+        [asset] = job["job_json"]["assets"]
+        assert asset["kind"] == "audio"
+        assert asset["filename"] == "audio.wav"
+        assert asset["media_type"] == "audio/wav"
+        assert asset["asset_id"].startswith("aud_")
+        assert _rows(rig, rig.media_jobs_db, "media_job_asset_origins") == [
+            {"asset_id": asset["asset_id"], "job_id": job["job_id"], "origin_id": receipt["request_id"]}]
+        assert [p.name for p in rig.cache.glob("*.wav")] == [f"{asset['asset_id'].removeprefix('aud_')}.wav"]
 
 
 def test_audio_32_retention_facts_are_captured_before_the_submit(tmp_path):
@@ -518,12 +583,17 @@ def test_audio_34_unsupported_intent_is_400_with_the_supported_list(tmp_path):
 
 def test_audio_35_invalid_body_is_accepted_and_fails_later(tmp_path):
     """audio-35 (base behaviour; the row refuses at submit, delta submit_validation): an invalid audio body gets 202
-    from the job route and fails in the runner."""
+    from the job route, and the runner drives that job to failed with its error (not succeeded, not queued)."""
     with GatewayRig("audio-35", tmp_path) as rig:
         _jobs_ok(rig)
         r = asyncio.run(rig.call("POST", JOBS, label="invalid body", json_body={"intent": "audio.generate",
                                                                              "request": {**BODY, "prompt": ""}}))
         assert r.status_code == 202
+        job_id = _job_id(r)
+        asyncio.run(_run_job(rig, job_id))
+        job = _stored(rig, job_id)
+        assert job["status"] == media_jobs.STATUS_FAILED
+        assert job["error"] == "prompt, input, or tags is required"
 
 
 @pytest.mark.xfail(strict=True, reason="delta submit_validation: lands with the move")
@@ -641,17 +711,18 @@ def test_audio_03_restart_closes_the_open_run_receipt_as_gateway_restarted(tmp_p
             "metadata", {}).get("terminal_reason")) == "gateway_restarted"
 
 
-@pytest.mark.xfail(strict=True, reason="needs RH open_receipt")
 def test_audio_41_admission_refusal_on_the_job_route_writes_a_rejected_receipt(tmp_path):
-    """audio-41 (M1): a job-route admission refusal leaves one closed rejected receipt (and still no job row)."""
+    """audio-41 (M1): a job-route admission refusal leaves one closed rejected receipt, no job row and no engine call.
+    The refusal is the real admission decision: the operator has disabled the audio intent (resource_admission)."""
     with GatewayRig("audio-41-receipt", tmp_path) as rig:
         _jobs_ok(rig)
-        refusal = Response(content=b'{"error":{"message":"busy","type":"api_error"}}', status_code=503,
-                           media_type="application/json")
-        with patch.object(proxy, "_media_job_admission_response", lambda *a, **k: refusal):
-            r = asyncio.run(rig.call("POST", JOBS, label="admission refused", json_body=JOB_BODY))
+        overrides = {"media_job_admission": {"disabled_intents": ["audio.generate"]}}
+        rig.monkeypatch.setattr(proxy.ADMIN_STORE, "operator_overrides", lambda: overrides)
+        r = asyncio.run(rig.call("POST", JOBS, label="admission refused", json_body=JOB_BODY))
         assert r.status_code == 503
+        assert r.json()["error"]["code"] == "resource_admission_denied"
         assert _jobs(rig) == []
+        assert rig.recorder.engine == []
         receipts = _receipts(rig)
         assert len(receipts) == 1
         assert receipts[0]["status"] == "rejected"
@@ -847,14 +918,20 @@ def test_audio_56_a_job_the_caller_cannot_read_is_not_found(tmp_path):
 
 
 def test_audio_57_list_defaults_to_50_and_caps_at_200(tmp_path):
-    """audio-57: the job list defaults to 50 items and caps the limit at 200."""
+    """audio-57: with more readable jobs than the cap, an omitted limit answers 50 items, limit=200 answers 200, and a
+    limit over the cap is refused (422)."""
     with GatewayRig("audio-57", tmp_path) as rig:
         _jobs_ok(rig)
-        over = asyncio.run(rig.call("GET", JOBS, label="list over the cap", params={"limit": 999}))
-        assert over.status_code == 422
+        for _ in range(210):
+            _submit(rig)
+        default = asyncio.run(rig.call("GET", JOBS, label="list with the default limit"))
+        assert default.status_code == 200
+        assert len(default.json()["jobs"]) == 50
         at_cap = asyncio.run(rig.call("GET", JOBS, label="list at the cap", params={"limit": 200}))
         assert at_cap.status_code == 200
-        assert at_cap.json()["jobs"] == []
+        assert len(at_cap.json()["jobs"]) == 200
+        over = asyncio.run(rig.call("GET", JOBS, label="list over the cap", params={"limit": 999}))
+        assert over.status_code == 422
 
 
 def test_audio_58_list_returns_only_readable_jobs(tmp_path):
@@ -888,25 +965,79 @@ def test_audio_60_content_404_texts_for_missing_and_unreadable_jobs(tmp_path):
         assert missing.json()["error"]["message"] == "media job 'mj_missing' not found"
 
 
-def test_audio_61_content_handles_carry_the_job_delivery_mode(tmp_path):
-    """audio-61: signed content handles carry the delivery mode: the GET's override, else the job's submit mode."""
+def test_audio_61_content_handle_is_none_for_a_job_submitted_with_none(tmp_path):
+    """audio-61: a job submitted with metadata 'none' hands out a content handle with md=none, although the caller's
+    plan delivers full metadata. The job row not recording the submit's choice, and the handle ignoring the GET
+    override and the caller's default, are the two strict xfails below."""
     with GatewayRig("audio-61", tmp_path) as rig:
         _jobs_ok(rig)
-        r = asyncio.run(rig.call("POST", JOBS, label="submit", json_body={**JOB_BODY, "metadata_mode": "none"},
-                                 unordered_json=True))
-        job_id = _job_id(r)
-        job = media_jobs.get(job_id, audience="internal", path=rig.media_jobs_db)
-        assert job["metadata"].get("metadata_mode", "none") in ("none", "full")
+        rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
+        job_id = _submit_and_run(rig, {**JOB_BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}})
+        assert _stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED
+        assert _content_md(rig, job_id) == "none"
 
 
-def test_audio_62_results_route_is_always_404(tmp_path):
-    """audio-62: GET results/{name} is always 404 media_job_result_not_found, with Cache-Control private, no-store."""
-    with GatewayRig("audio-62", tmp_path) as rig:
+@pytest.mark.xfail(strict=True, reason="audio-61 defect: the audio job route opens no delivery context "
+                                       "(_submit_audio_media_job), so the submit's metadata choice is never stored on the job")
+def test_audio_61_delta_job_records_the_submit_metadata_choice(tmp_path):
+    """audio-61 (inventory: the job keeps the submit's metadata choice for its content GET). Observed: the job row has no
+    metadata_mode after a submit that asked for none."""
+    with GatewayRig("audio-61-job", tmp_path) as rig:
+        _jobs_ok(rig)
+        job_id = _submit_and_run(rig, {**JOB_BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}})
+        assert _stored(rig, job_id)["metadata"]["metadata_mode"] == "none"
+
+
+@pytest.mark.xfail(strict=True, reason="audio-61 defect: _media_job_asset_items signs content handles without the "
+                                       "delivery mode, so every handle is md=none (proxy.py _media_job_asset_items)")
+def test_audio_61_delta_content_handles_carry_the_get_override_and_the_caller_default(tmp_path):
+    """audio-61 (inventory: the GET's override, else the submit's mode, else the caller's default). The caller's plan
+    delivers full metadata. A job submitted with none, read with ?metadata=full, must hand out md=full (the override
+    wins); a job with no submit choice must hand out md=full (the caller's default)."""
+    with GatewayRig("audio-61-delta", tmp_path) as rig:
+        _jobs_ok(rig)
+        rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
+        submitted_none = _submit_and_run(rig, {**JOB_BODY, "extensions": {"com.azizam.workflow": {"metadata": "none"}}})
+        assert _content_md(rig, submitted_none, "?metadata=full") == "full"
+        no_choice = _submit_and_run(rig, JOB_BODY)
+        assert _content_md(rig, no_choice) == "full"
+
+
+def test_audio_62_results_route_is_404_for_a_missing_job(tmp_path):
+    """audio-62 (missing-job branch): GET results/{name} for a job that does not exist is 404 media_job_result_not_found,
+    and the answer carries no Cache-Control header. The completed-job branch is the next test."""
+    with GatewayRig("audio-62-missing", tmp_path) as rig:
         _jobs_ok(rig)
         r = asyncio.run(rig.call("GET", f"{JOBS}/mj_x/results/anything", label="result"))
         assert r.status_code == 404
         assert r.json()["error"]["code"] == "media_job_result_not_found"
         assert "cache-control" not in r.headers
+
+
+def test_audio_62_results_route_is_404_for_an_owned_completed_job(tmp_path):
+    """audio-62 (completed-job branch): an owned, completed audio job with assets is still refused. The route asks for
+    the job's real result name, the one a success writes, and gets the same 404 as a missing job."""
+    with GatewayRig("audio-62-completed", tmp_path) as rig:
+        _jobs_ok(rig)
+        job_id = _submit_and_run(rig, JOB_BODY)
+        assert _stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED
+        assert _stored(rig, job_id)["assets"]
+        r = asyncio.run(rig.call("GET", f"{JOBS}/{job_id}/results/{result_bundle.DEFAULT_NAME}", label="result"))
+        assert r.status_code == 404
+        assert r.json()["error"]["code"] == "media_job_result_not_found"
+
+
+@pytest.mark.xfail(strict=True, reason="audio-62 inventory delta: the refusal is documented as Cache-Control private, "
+                                       "no-store, but the refused response sets no header (gateway/api.py refused)")
+def test_audio_62_delta_refusal_for_a_completed_job_is_private_no_store(tmp_path):
+    """audio-62 (inventory: Cache-Control: private, no-store on the refusal). Observed: the refused answer for an owned
+    completed job carries no Cache-Control header."""
+    with GatewayRig("audio-62-delta", tmp_path) as rig:
+        _jobs_ok(rig)
+        job_id = _submit_and_run(rig, JOB_BODY)
+        r = asyncio.run(rig.call("GET", f"{JOBS}/{job_id}/results/{result_bundle.DEFAULT_NAME}", label="result"))
+        assert r.status_code == 404
+        assert r.headers.get("cache-control") == "private, no-store"
 
 
 def test_audio_63_events_list_shows_the_job_events(tmp_path):
@@ -1220,15 +1351,34 @@ def test_audio_83_a_crash_in_the_task_marks_the_job_failed(tmp_path):
 
 
 def test_audio_84_cancel_while_running_wins_over_success(tmp_path):
-    """audio-84: a cancel requested while running is honoured when the next status update tries to succeed: the job
-    settles canceled, not succeeded."""
+    """audio-84: the engine is held after real dispatch. A cancel sent over HTTP while the engine's answer is pending is
+    accepted (202); when the engine then releases a successful result, the job settles canceled, not succeeded, with
+    no asset and no published result bundle."""
     with GatewayRig("audio-84", tmp_path) as rig:
-        _jobs_ok(rig)
+        # Still running when released: the engine answers "not in history yet" 50 times, then succeeds. Non-strict,
+        # because a cancel can end the run before the engine's last answers are asked for.
+        base._audio_comfy(rig, running_polls=50, strict=False)
+        base._capture_scheduling(rig)
         job_id = _submit(rig)
-        media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=rig.media_jobs_db)
-        media_jobs.request_cancel(job_id, path=rig.media_jobs_db)
-        asyncio.run(_run_job(rig, rig.scheduled[0]))
-        assert _stored(rig, job_id)["status"] == media_jobs.STATUS_CANCELED
+
+        async def cancel_while_the_engine_is_pending() -> None:
+            while not any(e["path"] == "/history/p1" for e in rig.recorder.engine):
+                await asyncio.sleep(0)
+            cancel = await rig.call("POST", f"{JOBS}/{job_id}/cancel", label="cancel while pending", json_body={})
+            assert cancel.status_code == 202, cancel.text
+
+        async def run_and_cancel() -> None:
+            await asyncio.gather(_run_job(rig, job_id), cancel_while_the_engine_is_pending())
+
+        asyncio.run(run_and_cancel())
+        job = _stored(rig, job_id)
+        assert job["status"] == media_jobs.STATUS_CANCELED
+        assert job["error"] == "Canceled by requester"
+        assert not job.get("assets")
+        with media_jobs.connection(rig.media_jobs_db) as conn:
+            published = conn.execute("SELECT COUNT(*) FROM result_stage WHERE job_id = ? AND state = 'published'",
+                                     (job_id,)).fetchone()[0]
+        assert published == 0
 
 
 # =========================================================================== section 6 answers owned by builder A
@@ -1254,20 +1404,27 @@ def test_s7_audio_delivery_container_does_not_change_run_identity(tmp_path):
 
 
 def test_s7_audio_normalize_peak_db_preserves_output_samples(tmp_path):
-    """6.5: a workflow with normalize_peak_db delivers the engine's samples scaled to the target peak: same frame count,
-    same sample rate, peak at the target. The stage is the adapter's result processing (design 6.5)."""
+    """6.5: a workflow with normalize_peak_db delivers the engine's samples scaled to the target peak. Every delivered
+    sample is the engine's sample times one gain (to the nearest LSB), the peak sits at the target, the frame count and
+    rate hold, and the stored Library WAV holds the same samples."""
     import io
     import math
     import wave
 
+    def pcm_samples(content: bytes) -> list[int]:
+        with wave.open(io.BytesIO(content), "rb") as handle:
+            raw = handle.readframes(handle.getnframes())
+        return [int.from_bytes(raw[i:i + 2], "little", signed=True) for i in range(0, len(raw), 2)]
+
     # A quiet fixture (peak near -84 dBFS) is under the normaliser's silence floor and comes back unchanged, so the
-    # engine output here is a louder tone (peak about -20 dBFS).
+    # engine output here is a louder tone (peak about -20 dBFS). Alternating signs catch a sign-changing corruption.
+    engine_samples = [3000 if i % 2 else -3000 for i in range(1600)]
     loud = io.BytesIO()
     with wave.open(loud, "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
         handle.setframerate(16000)
-        handle.writeframes(b"".join(int(3000 if i % 2 else -3000).to_bytes(2, "little", signed=True) for i in range(1600)))
+        handle.writeframes(b"".join(v.to_bytes(2, "little", signed=True) for v in engine_samples))
     with GatewayRig("s7-audio-normalize", tmp_path) as rig:
         base._comfy(rig, comfy_exchanges(history=history_done("audios", "tone_00001_.wav", node="3"),
                                          views=[(loud.getvalue(), "audio/wav")]))
@@ -1279,12 +1436,19 @@ def test_s7_audio_normalize_peak_db_preserves_output_samples(tmp_path):
         with wave.open(io.BytesIO(r.content), "rb") as out:
             frames = out.getnframes()
             rate = out.getframerate()
-            raw = out.readframes(frames)
-        samples = [int.from_bytes(raw[i:i + 2], "little", signed=True) for i in range(0, len(raw), 2)]
+        delivered = pcm_samples(r.content)
         assert frames == 1600
         assert rate == 16000
-        peak_db = 20 * math.log10(max(abs(v) for v in samples) / 32767)
+        assert len(delivered) == len(engine_samples)
+        # One gain for the whole clip: fitted from the loudest sample, then every sample checked against it.
+        gain = max(abs(v) for v in delivered) / max(abs(v) for v in engine_samples)
+        worst = max(abs(out - src * gain) for out, src in zip(delivered, engine_samples))
+        assert worst <= 1.0, f"largest deviation from a pure gain of {gain:.4f} is {worst:.2f} LSB"
+        peak_db = 20 * math.log10(max(abs(v) for v in delivered) / 32767)
         assert abs(peak_db - (-1.0)) < 0.5
+        stored = list(rig.cache.glob("*.wav"))
+        assert len(stored) == 1
+        assert pcm_samples(stored[0].read_bytes()) == delivered
 
 
 def test_s7_audio_poll_schedule_is_two_seconds_with_six_hundred_polls(tmp_path):
