@@ -66,6 +66,62 @@
    "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz"
   ]
  },
+ "cancel_finished": {
+  "after": {
+   "assets": 1,
+   "cancel_requested": false,
+   "error": null,
+   "status": "succeeded"
+  },
+  "before": {
+   "assets": 1,
+   "cancel_requested": false,
+   "error": null,
+   "status": "succeeded"
+  },
+  "cancel": {
+   "refused": "This job has already finished"
+  },
+  "cancel_again": {
+   "refused": "This job has already finished"
+  },
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   }
+  ],
+  "stored": [
+   "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz"
+  ],
+  "submit": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "id": "JOB",
+    "object": "media.job",
+    "request_id": "req-test",
+    "status": "running"
+   },
+   "location": "/gateway/v1/media/jobs/JOB",
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 202
+  }
+ },
  "cancel_queued": {
   "after": {
    "assets": 0,
