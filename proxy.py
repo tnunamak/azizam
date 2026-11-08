@@ -14689,7 +14689,7 @@ def _role_catalog_ids_for_loaded_path(
 
 
 def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
-    """Match declarations using chat execution's activation resolver, without I/O."""
+    """Match declarations by the activation path, or by the served id for a service that does not load by path. No I/O."""
     service_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(service_cfg, Mapping):
         return set()
@@ -14699,10 +14699,19 @@ def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
     }
     if service_cfg.get("model_id"):
         names.add(str(service_cfg["model_id"]))
+    loaded = normalize_model_id(loaded_model)
     ids: set[str] = set()
     for name in names - USE_LOADED_MODEL_ALIASES - {""}:
         target = _configured_litellm_local_model_target(name, service_id=backend)
-        if target and target.model and normalize_model_id(target.model) == normalize_model_id(loaded_model):
+        if target and target.model and normalize_model_id(target.model) == loaded:
+            ids.add(name)
+    if ids:
+        return ids
+    # A service that does not load by path reports the id it serves: match the records that serve it.
+    for record in _service_model_records(service_cfg):
+        name = str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
+        served = str(record.get("upstream_model") or name)
+        if name and name not in USE_LOADED_MODEL_ALIASES and normalize_model_id(served) == loaded:
             ids.add(name)
     return ids
 

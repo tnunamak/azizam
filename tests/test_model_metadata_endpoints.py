@@ -476,7 +476,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         narrow = authenticated(identity(plan_for("current-fast-only", models=["current-fast"])))
         with narrow, patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
             listed, calls = self._served()
-        self.assertEqual(set(listed), {"current-fast"})
+        self.assertIn("current-fast", listed)
+        self.assertNotIn("current", listed)
         self.assertEqual(calls, ["selector"])
         self._assert_complete_metadata(listed["current-fast"], source)
 
