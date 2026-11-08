@@ -193,6 +193,19 @@ def test_a_dynamic_alias_that_does_not_name_the_same_one_model_still_clashes(ali
     assert [p.code for p in caught.value.problems] == [ID_CLASH]
 
 
+def test_an_engine_table_alias_that_ends_at_the_services_model_of_its_name_is_one_owner():
+    # The UI oracle: the decisions service declares public "decide" over upstream "oracle-decider-v1", and the decisions
+    # table maps "decide" to the engine entry naming that service and upstream model.
+    services = {"decisions": {"config": {"models": [{"id": "decide", "upstream_model": "oracle-decider-v1"}]}}}
+    aliases = {"decisions": {"engines": {"oracle-decider": {"service": "decisions", "model": "oracle-decider-v1"}},
+                             "stable": {"decide": ["oracle-decider"]}}}
+    assert build({"services": services}, model_aliases=aliases).names.owner("model_alias", "decide") == \
+        NameOwner("model_alias", "decide")
+    elsewhere = {"decisions": {**aliases["decisions"], "engines": {"oracle-decider": {"service": "other", "model": "m"}}}}
+    with pytest.raises(rs.SnapshotBuildError):
+        build({"services": services}, model_aliases=elsewhere)
+
+
 def test_a_dynamic_alias_over_a_plain_model_of_its_name_clashes():
     services = {"svc": {"config": {"models": [{"id": "coder"}, {"id": "qwen-coder"}]}}}
     with pytest.raises(rs.SnapshotBuildError):
