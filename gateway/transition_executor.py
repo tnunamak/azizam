@@ -754,8 +754,7 @@ class Executor:
             if current.state != "running":
                 current = await asyncio.to_thread(self.store.resume, op_id)
             held = StepIntent(step="open", effect_key=f"{op_id}:open", expected_incarnation=None)
-            await asyncio.to_thread(self.store.write_intent, op_id, held)
-            await asyncio.to_thread(self.store.write_outcome, op_id, "open",
+            await asyncio.to_thread(self.store.write_intent, op_id, held,
                                     EffectResult(outcome="unknown", evidence_ref="load_unverified_at_resume"))
             await asyncio.to_thread(self.store.finish, op_id, "reconciling", "reconciling")
             return
@@ -793,8 +792,8 @@ class Executor:
         revalidate = StepIntent(step=operation.step_intent.step,  # type: ignore[arg-type]
                                 effect_key=f"{operation.op_id}:{operation.step_intent.step}:revalidate",
                                 expected_incarnation=operation.step_intent.expected_incarnation)
-        await asyncio.to_thread(self.store.write_intent, operation.op_id, revalidate)
-        await asyncio.to_thread(self.store.write_outcome, operation.op_id, revalidate.step, EffectResult(
+        # One transaction: a crash between two writes would lose the recorded evidence the next judgment needs.
+        await asyncio.to_thread(self.store.write_intent, operation.op_id, revalidate, EffectResult(
             outcome="unknown", evidence_ref=f"{REVALIDATE}{operation.evidence_ref or ''}"))
 
     async def _revalidate(self, operation: Operation, adapter: TransitionAdapter, policy: Mapping[str, object]) -> None:

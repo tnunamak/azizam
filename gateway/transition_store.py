@@ -153,14 +153,18 @@ class SqliteOperationStore:
             self.gates.note_write(domain, "closed")
         return result
 
-    def write_intent(self, op_id: str, intent: StepIntent) -> Operation:
+    def write_intent(self, op_id: str, intent: StepIntent, held: Optional[EffectResult] = None) -> Operation:
         def work(connection: sqlite3.Connection) -> Operation:
             current = self._fetch(connection, "op_id = ?", (op_id,))
             if current is None or current.state != "running":
                 raise StaleOutcome(f"operation {op_id} is not running; intent for {intent.step} refused")
+            if held is not None and held.outcome != "unknown":
+                raise ValueError("an intent is born holding only an unknown outcome")
             connection.execute(
-                "UPDATE transition_op SET step = ?, step_intent = ?, step_outcome = NULL, evidence_ref = NULL, "
-                "updated = ? WHERE op_id = ?", (intent.step, _intent_json(intent), self._clock(), op_id))
+                "UPDATE transition_op SET step = ?, step_intent = ?, step_outcome = ?, evidence_ref = ?, "
+                "updated = ? WHERE op_id = ?",
+                (intent.step, _intent_json(intent), held.outcome if held else None,
+                 held.evidence_ref if held else None, self._clock(), op_id))
             return self._fetch(connection, "op_id = ?", (op_id,))  # type: ignore[return-value]
 
         return self._transaction(work)
