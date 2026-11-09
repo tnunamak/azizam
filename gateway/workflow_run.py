@@ -1256,12 +1256,11 @@ def assert_rollback_ready(path: Path | None = None) -> None:
         )]
         if running:
             raise RollbackRefused("running_jobs", running)
-        if "workflow_job_tombstone" not in tables:
-            return
+        # A store without the tombstone table has no retained deletes, but its queued jobs still need the check below.
         retained = [row[0] for row in conn.execute(
             "SELECT j.job_id FROM media_jobs AS j "
             "JOIN workflow_job_tombstone AS t ON t.job_id=j.job_id ORDER BY j.job_id"
-        )]
+        )] if "workflow_job_tombstone" in tables else []
         if retained:
             raise RollbackRefused("retained_deleted_jobs", retained)
     unreadable = [row["job_id"] for row in rollback_job_inventory(store) if row["reason"] == DEFINITION_UNAVAILABLE]

@@ -1087,6 +1087,9 @@ class JobRunExampleTests(unittest.TestCase):
                 self.assertIn("--globoff", line)
         self.assertIn("remaining < 60 ? remaining : 60", example["curl"])
         self.assertIn("remaining < 300 ? remaining : 300", example["curl"])
+        # A download cut off by --max-time never takes the output name.
+        part = example["curl"].index("--output workflow-output.bin.part")
+        self.assertLess(part, example["curl"].index("mv workflow-output.bin.part workflow-output.bin"))
         js = example["javascript"]
         order = ["const timeLeft", "checkedGet(contentUrl, jobHeaders, Math.min(60000, timeLeft()))",
                  "checkedGet(assetUrl, {}, Math.min(300000, timeLeft()))", "timeLeft();", "writeFile("]

@@ -586,6 +586,23 @@ def test_rollback_ready_reads_uninitialized_and_legacy_schemas(legacy_rollback_d
     assert _rollback_dump(path) == before
 
 
+@pytest.mark.parametrize("envelope_json", [json.dumps({"envelope_version": 2, "source": {"kind": "workflow", "id": "w"}}), "not json"])
+def test_rollback_refuses_unreadable_queued_jobs_without_a_tombstone_table(tmp_path, envelope_json):
+    path = tmp_path / "queued-legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE media_jobs (job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)")
+        conn.execute("CREATE TABLE job_envelope (job_id TEXT PRIMARY KEY, envelope_json TEXT)")
+        conn.execute("INSERT INTO media_jobs VALUES ('queued-v2', 'saved.workflow', 'queued', '{}')")
+        conn.execute("INSERT INTO job_envelope VALUES ('queued-v2', ?)", (envelope_json,))
+    before = _rollback_dump(path)
+
+    with pytest.raises(workflow_run.RollbackRefused) as refusal:
+        workflow_run.assert_rollback_ready(path)
+    assert refusal.value.code == "queued_jobs_unreadable_by_older_build"
+    assert refusal.value.job_ids == ["queued-v2"]
+    assert _rollback_dump(path) == before
+
+
 @pytest.mark.parametrize("with_envelope", [False, True])
 def test_rollback_running_jobs_still_refuse_without_a_tombstone_table(tmp_path, with_envelope):
     path = tmp_path / "running-legacy.db"

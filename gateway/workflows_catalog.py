@@ -724,7 +724,9 @@ def _curl_job_example(submit: str, poll_url: str, content_url: str) -> str:
         "remaining=$((deadline - SECONDS))",
         "if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
         "# Signed asset URLs are fetched without the API bearer token.",
-        "curl --fail --silent --show-error --globoff --location --max-time \"$(( remaining < 300 ? remaining : 300 ))\" --url \"$asset_url\" --output workflow-output.bin",
+        "curl --fail --silent --show-error --globoff --location --max-time \"$(( remaining < 300 ? remaining : 300 ))\" --url \"$asset_url\" --output workflow-output.bin.part",
+        "# Only a complete download takes the output name.",
+        "mv workflow-output.bin.part workflow-output.bin",
     ])
 
 
