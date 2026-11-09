@@ -219,3 +219,112 @@ def test_a_live_wal_is_read_not_ignored_and_the_store_and_wal_are_untouched(tmp_
         assert list(temporary.iterdir()) == []
     finally:
         connection.close()
+
+
+def directory_state(path):
+    """Include directory mtime to catch even a companion created then removed."""
+    return path.stat().st_mtime_ns, {
+        item.name: source_state(item) for item in path.iterdir()
+    }
+
+
+def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tmp_path):
+    source_directory = tmp_path / "locked-source"
+    source_directory.mkdir()
+    path = source_directory / "locked.db"
+    temporary = tmp_path / "temporary-snapshots"
+    temporary.mkdir()
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        connection.execute(
+            "CREATE TABLE media_jobs "
+            "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+        )
+        connection.execute("INSERT INTO media_jobs VALUES ('locked', 'w', 'running', '{}')")
+        connection.commit()
+        # Establish SHM before taking exclusive locking mode. This must exercise
+        # the existing live-source backup path, not the private missing-SHM copy.
+        assert Path(str(path) + "-wal").stat().st_size > 0
+        assert Path(str(path) + "-shm").exists()
+        assert connection.execute("PRAGMA locking_mode=EXCLUSIVE").fetchone() == ("exclusive",)
+        connection.execute("BEGIN EXCLUSIVE")
+        connection.execute("UPDATE media_jobs SET workflow = 'held'")
+        connection.commit()
+        assert Path(str(path) + "-shm").exists()
+        before = directory_state(source_directory)
+        # run_path returns a namespace copy; patch the function's actual globals.
+        wrapper = (
+            "import runpy, sys\n"
+            "namespace = runpy.run_path(sys.argv[1], run_name='readiness_deadline_test')\n"
+            "main = namespace['main']\n"
+            "main.__globals__['BACKUP_TIMEOUT_SECONDS'] = 0.2\n"
+            "raise SystemExit(main(sys.argv[2:]))\n"
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", wrapper, str(SCRIPT), "--store", str(path)],
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=3,
+                env=dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
+                         TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+            )
+        finally:
+            # The parent still holds the exclusive lock at every assertion.
+            assert directory_state(source_directory) == before
+            assert list(temporary.iterdir()) == []
+        assert result.returncode == 3, result.stdout
+        assert result.stdout.splitlines() == ["REFUSED store_unreadable"]
+        assert result.stderr == ""
+    finally:
+        connection.close()
+
+
+def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_path):
+    seed_directory = tmp_path / "seed"
+    source_directory = tmp_path / "source"
+    seed_directory.mkdir()
+    source_directory.mkdir()
+    seed_path = seed_directory / "seed.db"
+    path = source_directory / "copy ?#%.db"
+    connection = sqlite3.connect(seed_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        connection.execute("PRAGMA wal_autocheckpoint=0")
+        connection.execute(
+            "CREATE TABLE media_jobs "
+            "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+        )
+        connection.execute("INSERT INTO media_jobs VALUES ('wal-only', 'w', 'running', '{}')")
+        connection.commit()
+        seed_wal = Path(str(seed_path) + "-wal")
+        assert seed_wal.stat().st_size > 0
+        # Copy while the writer is still open, before its final-close checkpoint.
+        path.write_bytes(seed_path.read_bytes())
+        Path(str(path) + "-wal").write_bytes(seed_wal.read_bytes())
+    finally:
+        connection.close()
+    assert not Path(str(path) + "-shm").exists()
+    assert sorted(item.name for item in source_directory.iterdir()) == [
+        path.name, path.name + "-wal",
+    ]
+    before = directory_state(source_directory)
+    # This is the same committed store after its final-close checkpoint.
+    expected = run_cli(tmp_path, seed_path, "--json")
+    assert expected.returncode == 2
+    expected_body = json.loads(expected.stdout)
+    assert expected_body["job_ids"] == ["wal-only"]
+    temporary = tmp_path / "temporary-snapshots"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--store", str(path), "--json"],
+            cwd=ROOT, text=True, capture_output=True, check=False, timeout=30,
+            env=dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
+                     TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
+        )
+    finally:
+        assert directory_state(source_directory) == before, "source companion or bytes changed"
+        assert list(temporary.iterdir()) == [], "temporary copy or snapshot was not deleted"
+    assert result.stderr == ""
+    assert result.returncode == expected.returncode
+    assert json.loads(result.stdout) == expected_body
+    assert len(result.stdout.splitlines()) == 1
