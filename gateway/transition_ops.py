@@ -87,6 +87,11 @@ class StepIntent:
         by the restore's failure semantics."""
         return "reset" if self.step == "restore" and self.effect_key.endswith(":reset") else self.step
 
+    @property
+    def profile_block(self) -> str:
+        """The reviewed profile block that speaks for this effect's failure semantics."""
+        return "restore.reset" if self.effect == "reset" else self.step
+
 
 @dataclass(frozen=True)
 class Operation:
