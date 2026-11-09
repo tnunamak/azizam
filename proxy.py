@@ -11388,6 +11388,26 @@ def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
     return response
 
 
+async def _run_core_video_source(video_id: str, auth_context: AuthContext | None) -> "video_source.VideoSource | video_source.SourceRefused | None":
+    """The source a run-core video id names (the job store's form), or None for an older engine-prompt id."""
+    shape = _video_wire_shape()
+    if shape is None or not _names_a_video_job(shape, video_id):
+        return None
+    job_id = shape.job_id_of(video_id)
+    if job_id is None:
+        return None
+    return await video_source.resolve_source(job_id, video_id, auth_context, _workflow_job_service())
+
+
+async def _video_source_unknown(video_id: str, prompt_id: str, auth_context: AuthContext | None) -> bool:
+    """True when the caller must get 404 for a source id: the job store does not hold it for them, or (older id) the
+    older record is hidden from them."""
+    found = await _run_core_video_source(video_id, auth_context)
+    if found is None:
+        return _video_job_blocked(prompt_id, auth_context)
+    return isinstance(found, video_source.SourceRefused) and found.http_status == 404
+
+
 async def _load_completed_video_bytes(
     video_id: str,
     auth_context: AuthContext | None,
@@ -11403,6 +11423,14 @@ async def _load_completed_video_bytes(
     prompt_id = _prompt_id_from_video_id(video_id)
     if not prompt_id:
         raise _VideoAssetError("invalid video_id", param=param)
+    core = await _run_core_video_source(video_id, auth_context)
+    if isinstance(core, video_source.SourceRefused):
+        raise _VideoAssetError(core.message, param=param, status=core.http_status, code=core.code)
+    if core is not None:
+        data = await asyncio.to_thread(_WORKFLOW_RUN_PORT.read_asset, core.asset_id, auth_context)
+        if data is None:
+            raise _VideoAssetError("Source video has no output", param=param, status=404)
+        return data, f"{video_id}.mp4"
     if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
@@ -12960,12 +12988,14 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
         if not prompt_id:
             return _json_error(400, "invalid video id", param="video")
         async with _video_progress_lock:
-            if _video_job_blocked(prompt_id, auth_context):
+            if await _video_source_unknown(source_id, prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
     # Without `model`, a video is extended by the model that made it (when that
     # model can extend), else by the configured default.
+    core_source = await _run_core_video_source(source_id, auth_context) if source_id else None
     source_model = (
-        (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model")
+        (core_source.model if isinstance(core_source, video_source.VideoSource)
+         else (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model"))
         if source_id else None)
     requested = body.get("model")
     if not requested:
@@ -13741,7 +13771,7 @@ async def proxy_graph_video_remix(
             media_type="application/json"
         )
     async with _video_progress_lock:
-        if _video_job_blocked(prompt_id, auth_context):
+        if await _video_source_unknown(video_id, prompt_id, auth_context):
             return _json_error(404, "video_id not found", kind="not_found")
     if not _video_remix_workflow():
         return _json_error(
@@ -13802,7 +13832,7 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
         if not prompt_id:
             return _json_error(400, "invalid video id", param="video")
         async with _video_progress_lock:
-            if _video_job_blocked(prompt_id, auth_context):
+            if await _video_source_unknown(source_id, prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
         source: Any = {"video_id": source_id}
     else:
