@@ -282,3 +282,14 @@ def test_an_enabled_backend_with_a_health_check_is_still_a_target():
 def test_join_base_path_merges_the_two_queries(base, endpoint, expected):
     from gateway import service_registry
     assert service_registry.join_base_path(base, endpoint) == expected
+
+
+@pytest.mark.parametrize("base,endpoint,name", [
+    ("https://h/p?tenant=old", "/health?%74enant=new", "tenant"),
+    ("https://h/p?a+b=old", "/health?a%20b=new", "a b"),
+], ids=["percent-encoded-name", "plus-versus-percent-space"])
+def test_join_base_path_endpoint_overrides_decoded_parameter_name(base, endpoint, name):
+    from urllib.parse import parse_qsl, urlsplit
+    from gateway import service_registry
+    joined = service_registry.join_base_path(base, endpoint)
+    assert [v for k, v in parse_qsl(urlsplit(joined).query) if k == name] == ["new"]

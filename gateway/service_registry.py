@@ -29,7 +29,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from typing import Any
 
 import yaml
@@ -1962,8 +1962,9 @@ def join_base_path(base: str, endpoint: str) -> str:
     parts = urlsplit(base)
     ep = urlsplit(endpoint)
     path = parts.path.rstrip("/") + "/" + ep.path.lstrip("/")
-    own = {item.split("=", 1)[0] for item in ep.query.split("&") if item}
-    kept = [item for item in parts.query.split("&") if item and item.split("=", 1)[0] not in own]
+    # Names compare decoded (``%74enant`` and ``tenant`` are one name to a server); the pairs are kept as written.
+    own = {unquote_plus(item.split("=", 1)[0]) for item in ep.query.split("&") if item}
+    kept = [item for item in parts.query.split("&") if item and unquote_plus(item.split("=", 1)[0]) not in own]
     query = "&".join([*kept, *(item for item in ep.query.split("&") if item)])
     return urlunsplit((parts.scheme, parts.netloc, path, query, ""))
 
