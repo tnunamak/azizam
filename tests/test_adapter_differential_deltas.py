@@ -126,12 +126,12 @@ def test_a_delta_with_a_missing_old_value_adds_a_key_and_only_where_the_golden_h
 
 
 def test_an_object_value_needs_the_subtree_mark_and_the_old_value_must_still_match():
-    plain = delta("$.caller[0].response.status", 200, {"a": 1})
+    plain = delta("$.scenario", "x", {"a": 1})
     assert any("not a subtree" in problem for problem in plain.problems())
-    marked = Delta("envelope_v2", "$.caller[0].response.status", 200, {"a": 1}, "r", subtree=True)
-    assert listed.apply_deltas(GOLDEN, [marked])["caller"][0]["response"]["status"] == {"a": 1}
+    marked = Delta("envelope_v2", "$.scenario", "x", {"a": 1}, "r", subtree=True)
+    assert listed.apply_deltas(GOLDEN, [marked])["scenario"] == {"a": 1}
     with pytest.raises(DeltaError, match="unmatched"):
-        listed.apply_deltas(GOLDEN, [Delta("envelope_v2", "$.caller[0].response.status", 201, {"a": 1}, "r", subtree=True)])
+        listed.apply_deltas(GOLDEN, [Delta("envelope_v2", "$.scenario", "y", {"a": 1}, "r", subtree=True)])
 
 
 def test_an_engine_request_delta_names_the_prompt_session_id_and_nothing_else():
@@ -145,7 +145,7 @@ def test_an_engine_request_delta_names_the_prompt_session_id_and_nothing_else():
 
 
 def test_the_image_case_entries_name_only_the_approved_kinds():
-    approved = {"idempotency_conflict", "job_create_failure_text", "executor_crash_text", "engine_session_id", "job_row_metadata"}
+    approved = {"engine_session_id", "job_row_metadata"}      # J10, J11 and R06 are not listed: the guard refuses their kinds
     seen = {delta.kind for name, entries in listed.MANIFEST.items() if name.startswith("s7_parity_images/") for delta in entries}
     assert seen == approved
     assert not {"job_submit_refuses_unknown_field", "receipt_closes_with_job_outcome", "job_one_receipt", "masked_edit_source"} & listed.KINDS

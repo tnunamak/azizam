@@ -44,6 +44,9 @@ BG = base.BG
 NEEDS_RH = pytest.mark.xfail(strict=True, reason="needs RH open_receipt")
 # The row path does not yet match the old route: builder I's steps 2-4 (node-graph runner, result-processing stages,
 # VRAM and batching hooks, the route move) turn these green, and remove the mark on each one that passes.
+GUARD_REFUSES = pytest.mark.xfail(
+    strict=True, reason="open: the delta guard refuses a delta that changes an error body or a refusal status, so this case's "
+                        "listed difference is not allowed; the old behaviour must hold in the product, or a ruling must allow it")
 ROW_PENDING = pytest.mark.xfail(strict=True, reason="row path pending: builder I steps 2-4")
 
 
@@ -957,6 +960,7 @@ def test_images_J09_replay_returns_the_existing_job(tmp_path):
                 ("notes", lambda o: {k: v for k, v in o.trace["notes"].items() if k != "scheduled_jobs"}))
 
 
+@GUARD_REFUSES
 def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
     """Delta ``idempotency_conflict`` (acceptance matrix row 18): the old route gave the first job back for a repeated key
     whatever the body; the row refuses a repeated key with a different body (409) and runs the engine once."""
@@ -966,6 +970,7 @@ def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
                 ("second answer", lambda o: failure(o, 1)), ("jobs", lambda o: len(media_jobs(o))), engine_without_probes)
 
 
+@GUARD_REFUSES
 def test_images_J11_job_store_failure_500(tmp_path):
     """Delta ``job_create_failure_text``: both answer 500 ``api_error`` and store no job; the old text named the exception
     class (``Could not create image media job: RuntimeError``), the row says a fixed sentence with a code and logs the class."""
@@ -1230,6 +1235,7 @@ def test_images_R05_restart_during_the_run(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
+@GUARD_REFUSES
 def test_images_R06_crash_mid_run_copy(tmp_path):
     """Delta ``executor_crash_text``: a worker that dies with an unexpected error. The old job stored "Image media job
     executor error: <type>" with HTTP 502 and retried; the core stores its fixed sentence for an unexpected failure and does

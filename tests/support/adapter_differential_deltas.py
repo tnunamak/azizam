@@ -329,33 +329,9 @@ def apply_deltas(golden: Mapping[str, Any], deltas: Sequence[Delta]) -> dict[str
 #: trace as that case observes it, not to a golden file (docs/design/CODE_TO_DATA_S7_PARITY.md section 4).
 _IMAGES = "s7_parity_images/"
 MANIFEST: dict[str, tuple[Delta, ...]] = {
-    # Acceptance matrix row 18: the same key with another body is a conflict, not the first job again.
-    _IMAGES + "J10": (
-        Delta("idempotency_conflict", "$.caller[1].response.status", 202, 409,
-              "the same Idempotency-Key with another body answers 409 (acceptance matrix row 18), not the first job"),
-        Delta("idempotency_conflict", "$.caller[1].response.body.text#$.error", None,
-              {"code": "idempotency_conflict", "message": "this Idempotency-Key was used for a different request",
-               "type": "invalid_request_error"},
-              "the answer is the conflict error; the old answer was the first job, whose error field is null", subtree=True),
-    ),
-    # Run-core rule 7d3eb681a: a failure category is a word from the job store's list, so no client text names an exception.
-    _IMAGES + "J11": (
-        Delta("job_create_failure_text", "$.caller[0].response.body.text#$.error.message",
-              "Could not create image media job: RuntimeError", "the job could not be created",
-              "the client text no longer names the exception class (run-core rule 7d3eb681a); the class is logged"),
-        Delta("job_create_failure_text", "$.caller[0].response.body.text#$.error.code", MISSING, "job_not_created",
-              "the refusal carries the stable code the run core names for a job that was not stored"),
-    ),
-    # Run-core rule 7d3eb681a and the S7 addendum's job-retry rule: an unexpected error is not retried and stores the
-    # fixed sentence of the failure's category; only an adapter's named retry reason retries.
-    _IMAGES + "R06": (
-        Delta("executor_crash_text", "$.media_jobs.media_jobs[0].error", "Image media job executor error: RuntimeError", "The job failed.",
-              "an unexpected error stores the fixed sentence, not the exception class (run-core rule 7d3eb681a)"),
-        Delta("executor_crash_text", "$.caller[1].response.body.text#$.error", "Image media job executor error: RuntimeError",
-              "The job failed.", "the same sentence, as the job document shows it"),
-        Delta("executor_crash_text", "$.caller[1].response.body.text#$.retryable", None, False,
-              "an unexpected error is not retried, so the job states that it is not retryable (S7 addendum, job-retry rule)"),
-    ),
+    # J10 (a different body under one Idempotency-Key answers 409, not the first job), J11 (the job-store failure text) and R06 (the
+    # executor-crash text) are NOT listed: each changes an error body or a refusal status, which the guard refuses for every kind.
+    # Their cases are strict xfails in tests/test_s7_parity_images.py until the old behaviour holds in the product or a ruling allows them.
     # The adapter's session id in the engine prompt; the event wait needs it. Engine-facing only.
     _IMAGES + "E07b": (
         Delta("engine_session_id", "$.engine_requests[3].body.text#$.client_id", MISSING, "<hex32:1>",
