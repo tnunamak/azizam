@@ -702,3 +702,150 @@ def test_video_128_list_cursor_and_delete_require_video_id(tmp_path, value):
         assert deleted.status_code == 400 and deleted.json()["error"]["message"] == "invalid video_id"
         assert not w.engine.requests
     run(tmp_path, exercise)
+
+
+# ---- V3b contract tests from the video parity oracle audit ----
+
+
+@pytest.mark.parametrize("cancel_error,cancelled", [(False, True), (False, False), (True, True)])
+def test_video_83_delete_while_running_cancels_before_the_tombstone(tmp_path, cancel_error, cancelled):
+    """video-83..87: a running video is cancelled on the engine before the tombstone; a failed cancel is 409 and keeps it."""
+    async def exercise(w):
+        vid = await w.create()
+        w.state(vid, "running")
+        before = await w.status(vid)
+        assert before.status_code == 200
+        assert before.json()["status"] == "in_progress"
+        assert w.record(vid).get("deleted_at") is None
+        w.engine.cancel_error = cancel_error
+        w.engine.cancelled = cancelled
+        observed = []
+        w.engine.before_cancel = lambda: observed.append(w.record(vid).get("deleted_at"))
+        answer = await asyncio.wait_for(w.delete(vid), timeout=5)
+        assert observed == [None]
+        assert len(w.engine.calls("POST", f"/api/jobs/{vid[6:]}/cancel")) == 1
+        if cancel_error:
+            assert answer.status_code == 409
+            assert answer.json()["error"]["code"] == "video_cancel_failed"
+            assert w.record(vid).get("deleted_at") is None
+            assert not w.engine.calls("POST", "/history")
+            assert (await w.status(vid)).status_code == 200
+        else:
+            assert answer.status_code == 200
+            assert answer.json() == {"id": vid, "object": "video", "deleted": True}
+            assert w.record(vid)["deleted_at"] is not None
+            assert (await w.status(vid)).status_code == 404
+            assert (await w.content(vid)).status_code == 404
+            listing = await w.listing()
+            assert vid not in {x["id"] for x in listing.json()["data"]}
+    run(tmp_path, exercise)
+
+
+@pytest.mark.parametrize("state,wire", [("completed", "completed"), ("failed", "failed")])
+def test_video_83_each_terminal_state_deletes_without_trying_cancel(tmp_path, state, wire):
+    async def exercise(w):
+        vid = await w.create()
+        w.state(vid, state)
+        status = await w.status(vid)
+        assert status.status_code == 200 and status.json()["status"] == wire
+        w.engine.cancel_error = True
+        answer = await asyncio.wait_for(w.delete(vid), timeout=5)
+        assert answer.status_code == 200
+        assert not [r for r in w.engine.requests if r.url.path.endswith("/cancel")]
+        assert w.record(vid)["deleted_at"] is not None
+        assert (await w.status(vid)).status_code == 404
+    run(tmp_path, exercise)
+
+
+def test_video_73_content_keeps_the_decoded_frames_and_the_exact_library_identity(tmp_path):
+    """video-73/74/100, writers-33/34/40: the served clip decodes to the engine's frames, is stored under the hash of its
+    bytes, and the delivery row, the sidecar and the record agree on the asset."""
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("content parity requires the hermetic ffmpeg fixture")
+
+    def decoded_video(data):
+        result = subprocess.run(
+            [ffmpeg, "-nostdin", "-v", "error", "-i", "pipe:0", "-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "rgb24",
+             "pipe:1"], input=data, capture_output=True, check=True, timeout=30)
+        if not result.stdout:
+            raise RuntimeError("fixture had no decoded video frames")
+        return result.stdout
+
+    async def exercise(w):
+        vid = await w.create()
+        w.state(vid, "completed")
+        source_frames = decoded_video(w.engine.clip)
+        response = await asyncio.wait_for(w.content(vid), timeout=40)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "video/mp4"
+        assert response.headers["content-disposition"] == 'inline; filename="clip.mp4"'
+        assert "x-request-id" not in response.headers
+        assert int(response.headers["content-length"]) == len(response.content)
+        assert decoded_video(response.content) == source_frames
+        files = w.video_files()
+        assert len(files) == 1
+        filename, stored = next(iter(files.items()))
+        assert stored == response.content
+        digest = hashlib.sha256(stored).hexdigest()
+        aid = "vid_" + digest
+        assert filename == digest + ".mp4"
+        assert w.record(vid)["asset_id"] == aid
+        sidecars = [json.loads(p.read_text()) for p in w.rig.cache.glob("*.meta.json")]
+        matching = [m for m in sidecars if m.get("asset_id") == aid]
+        assert len(matching) == 1
+        assert not matching[0].get("origin")  # the old video stores no workflow-output origin
+        with sqlite3.connect(w.rig.media_jobs_db) as db:
+            raw = db.execute("SELECT job_json FROM media_jobs WHERE request_id = ?", (vid,)).fetchall()
+        assert len(raw) == 1
+        job = json.loads(raw[0][0])
+        assert job["status"] == "succeeded" and job["progress"] == 100
+        assert job["intent"] == "video.generate"
+        assert job["metadata"]["mode"] == "sync_video_delivery"
+        assert len(job["assets"]) == 1
+        assert job["assets"][0]["asset_id"] == aid
+        assert job["assets"][0]["media_type"] == "video/mp4"
+        again = await asyncio.wait_for(w.content(vid), timeout=40)
+        assert again.status_code == 200 and again.content == response.content
+        assert w.video_files() == files
+        with sqlite3.connect(w.rig.media_jobs_db) as db:
+            count = db.execute("SELECT COUNT(*) FROM media_jobs WHERE request_id = ?", (vid,)).fetchone()[0]
+        assert count == 1
+    run(tmp_path, exercise)
+
+
+def test_video_77_list_default_limit_is_20_and_the_largest_page_100(tmp_path):
+    async def exercise(w):
+        ids = []
+        for index in range(101):
+            vid = await w.create(prompt=f"page item {index}")
+            w.state(vid, "completed")
+            ids.append(vid)
+            w.now += 1
+        default = await w.listing()
+        assert default.status_code == 200
+        assert [x["id"] for x in default.json()["data"]] == ids[::-1][:20]
+        assert default.json()["has_more"] is True
+        maximum = await w.listing(limit="100")
+        assert maximum.status_code == 200
+        assert [x["id"] for x in maximum.json()["data"]] == ids[::-1][:100]
+        assert maximum.json()["has_more"] is True
+    run(tmp_path, exercise)
+
+
+def test_video_80_list_error_names_the_failed_node(tmp_path):
+    async def exercise(w):
+        vid = await w.create()
+        w.state(vid, "failed")
+        listed = await w.listing()
+        assert listed.status_code == 200
+        entries = {entry["id"]: entry for entry in listed.json()["data"]}
+        assert set(entries) == {vid}
+        assert entries[vid]["status"] == "failed"
+        rendered = json.dumps(entries[vid]["error"])
+        assert "ComfyUI LTXVConcatAVLatent node 12: execution failed" in rendered or "node 12" in rendered
+        assert "oom" not in rendered
+    run(tmp_path, exercise)

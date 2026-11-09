@@ -655,3 +655,153 @@ def test_video_100_media_job_mirrors_typed_library_assets(world):
         assert any(json.loads(path.read_text()).get("asset_id") == asset["asset_id"]
                    for path in world.rig.cache.glob("*.meta.json"))
     run(drive())
+
+
+# ---- V3b contract tests from the video parity oracle audit (pinned on the old route; the move pairs them with deltas) ----
+
+
+def test_video_16_record_save_failure_is_swallowed_on_the_old_create(world):
+    """video-16: a failed record save does not abort the create answer. The row path makes this a visible failure
+    (allowed delta ``persistence_failure_visible``); this test is replaced by that delta's fault test at the move."""
+    async def drive():
+        first = await create(world)
+        assert first.json()["id"] == "video_p1"
+        assert len(rows(world.rig.media_jobs_db, "video_job_records")) == 1
+        with sqlite3.connect(world.rig.media_jobs_db) as db:
+            db.execute("""
+                CREATE TRIGGER parity_refuse_video_insert
+                BEFORE INSERT ON video_job_records
+                BEGIN SELECT RAISE(ABORT, 'parity record write failure'); END
+            """)
+        try:
+            second = await create(world, prompt="second accepted engine request")
+            assert second.json()["id"] == "video_p2"
+            assert set(world.engine.prompts) == {"p1", "p2"}
+            kept = rows(world.rig.media_jobs_db, "video_job_records")
+            assert len(kept) == 1 and kept[0]["prompt_id"] == "p1"
+            assert receipt(world, second.headers["x-request-id"])["status"] == "succeeded"
+        finally:
+            with sqlite3.connect(world.rig.media_jobs_db) as db:
+                db.execute("DROP TRIGGER IF EXISTS parity_refuse_video_insert")
+    run(asyncio.wait_for(drive(), timeout=20))
+
+
+@pytest.mark.parametrize("seconds,frames", [("2", 49), ("5", 121), ("10", 241)])
+def test_video_06_frame_grid_and_dimensions_are_in_the_submitted_graph(world, seconds, frames):
+    """video-06/08/113: the engine receives the frame count and rate for the asked length, with no ``_meta`` left in."""
+    async def drive():
+        response = await create(world, seconds=seconds)
+        assert list(world.engine.prompts) == ["p1"]
+        graph = world.engine.prompts["p1"]["prompt"]
+        assert "_meta" not in graph
+        assert graph["5"]["inputs"]["text"] == CREATE["prompt"]
+        assert graph["22"]["inputs"]["value"] == frames
+        assert graph["23"]["inputs"]["value"] == 24
+        assert response.json()["seconds"] == seconds
+        assert response.json()["actual_seconds"] == pytest.approx(frames / 24, abs=0.00005)
+    run(asyncio.wait_for(drive(), timeout=20))
+
+
+def test_video_07_clamped_default_size_is_the_size_in_the_graph(world):
+    """video-07: an unparsable size answers the default size and renders at that size."""
+    async def drive():
+        response = await create(world, size="bad")
+        assert response.json()["size"] == "1024x704"
+        graph = world.engine.prompts["p1"]["prompt"]
+        assert graph["20"]["inputs"]["value"] == 1024
+        assert graph["21"]["inputs"]["value"] == 704
+    run(asyncio.wait_for(drive(), timeout=20))
+
+
+def test_video_17_request_receipt_is_open_while_the_engine_holds_the_submit_and_finishes_once(world):
+    """writers-12/18/19: one receipt, in_progress with its facts before the engine answers, the same one closed after."""
+    async def drive():
+        world.engine.submit_release = asyncio.Event()
+        task = asyncio.create_task(create(world))
+        try:
+            async def accepted_by_engine():
+                while not world.engine.prompts:
+                    if task.done():
+                        await task
+                        raise RuntimeError("create ended before the engine accepted")
+                    await REAL_SLEEP(0)
+            await asyncio.wait_for(accepted_by_engine(), timeout=5)
+            in_flight = rows(world.rig.receipts_db, "receipts")
+            assert len(in_flight) == 1
+            opened = json.loads(in_flight[0]["receipt_json"])
+            assert opened["status"] == "in_progress"
+            assert opened["accepted_at_ms"] is not None
+            assert opened["attempt_number"] == 1
+            assert opened["intent"] == "video.generate"
+            assert opened["protocol"] == "openai.video"
+            assert opened["requested_model"] == MODEL
+            rid = opened["request_id"]
+            world.engine.submit_release.set()
+            response = await asyncio.wait_for(task, timeout=10)
+            assert response.headers["x-request-id"] == rid
+            closed = receipt(world, rid)
+            assert len(rows(world.rig.receipts_db, "receipts")) == 1
+            assert closed["status"] == "succeeded"
+            assert closed["metadata"]["status_code"] == 200
+            assert closed["backend"] == "comfyui"
+            assert closed["finished_at_ms"] >= closed["accepted_at_ms"]
+        finally:
+            world.engine.submit_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    run(asyncio.wait_for(drive(), timeout=20))
+
+
+def test_video_96_media_job_ids_are_unique_and_link_the_runner_receipt(world):
+    """video-96, writers-13/43: job_id is ``mj_<uuid4 hex>``, request_id ``vidjob_<uuid4 hex>``; the row, the job document
+    and the runner receipt agree."""
+    import re
+    import uuid
+
+    async def drive():
+        seen_job_ids, seen_request_ids = set(), set()
+        for prompt in ("first maker request", "second maker request"):
+            submitted = await submit_job(world, prompt=prompt)
+            body = submitted.json()
+            jid, rid = body["job_id"], body["request_id"]
+            assert re.fullmatch(r"mj_[0-9a-f]{32}", jid)
+            assert re.fullmatch(r"vidjob_[0-9a-f]{32}", rid)
+            assert uuid.UUID(jid.split("_", 1)[1]).version == 4
+            assert uuid.UUID(rid.split("_", 1)[1]).version == 4
+            assert jid not in seen_job_ids and rid not in seen_request_ids
+            seen_job_ids.add(jid)
+            seen_request_ids.add(rid)
+            assert submitted.headers["location"] == f"/gateway/v1/media/jobs/{jid}"
+            done = await terminal_job(world, jid)
+            assert done["status"] == "succeeded"
+            matching = [r for r in rows(world.rig.media_jobs_db, "media_jobs") if r["job_id"] == jid]
+            assert len(matching) == 1 and matching[0]["request_id"] == rid
+            stored = json.loads(matching[0]["job_json"])
+            assert stored["job_id"] == jid and stored["request_id"] == rid
+            assert stored["metadata"]["mode"] == "async_video_generation"
+            recorded = receipt(world, rid)
+            assert recorded["job_id"] == jid
+            assert recorded["request_id"] == rid
+            assert recorded["path"] == "/gateway/v1/media/jobs"
+            assert recorded["status"] == "succeeded"
+    run(asyncio.wait_for(drive(), timeout=40))
+
+
+def test_video_05_old_route_ignores_the_key_even_for_a_different_body(world):
+    """video-05 (old behaviour, with the dedupe delta replacing it at the move): the same key with another body is two
+    separate engine submissions."""
+    async def drive():
+        answers = []
+        for prompt in ("first prompt", "different prompt"):
+            response = await world.rig.call(
+                "POST", "/v1/videos", json_body={**CREATE, "prompt": prompt},
+                headers={"Idempotency-Key": "legacy-key-conflict"})
+            if response.status_code != 200:
+                raise RuntimeError(f"legacy create failed: {response.status_code} {response.text}")
+            answers.append(response.json())
+        assert [r["id"] for r in answers] == ["video_p1", "video_p2"]
+        assert len(world.engine.prompts) == 2
+        assert world.engine.prompts["p1"]["prompt"]["5"]["inputs"]["text"] == "first prompt"
+        assert world.engine.prompts["p2"]["prompt"]["5"]["inputs"]["text"] == "different prompt"
+    run(asyncio.wait_for(drive(), timeout=20))

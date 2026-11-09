@@ -373,7 +373,8 @@ def test_video_1_02_non_string_prompt_is_refused_before_the_engine(tmp_path):
     assert "POST /prompt" not in seen["engine"]
 
 
-@pytest.mark.xfail(strict=True, reason="delta idempotency_acceptance: lands with the videos.create move")
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason="delta idempotency_acceptance: lands with the videos.create move")
 def test_video_1_05_same_idempotency_key_twice_submits_once(tmp_path):
     """video-05 (decided: the `idempotency_acceptance` delta, S7 parity section 4): the old direct route ignored the key
     and sent two engine prompts. The row path dedupes: one engine prompt, and the replay answers the same video id.
@@ -387,6 +388,7 @@ def test_video_1_05_same_idempotency_key_twice_submits_once(tmp_path):
         body = {"prompt": "waves", "model": "ltx-2.5-t2v"}
         first = await rig.call("POST", "/v1/videos", json_body=body, headers={"Idempotency-Key": "k-video-05"})
         second = await rig.call("POST", "/v1/videos", json_body=body, headers={"Idempotency-Key": "k-video-05"})
+        assert (first.status_code, second.status_code) == (200, 200), (first.text, second.text)
         seen["ids"] = (first.json().get("id"), second.json().get("id"))
         seen["prompts"] = sum(1 for p in _engine_paths(rig) if p == "POST /prompt")
 
@@ -828,11 +830,10 @@ def test_video_pin_media_job_polls_the_engine_every_5_seconds(tmp_path):
     assert set(seen["polls"]) == {5.0}
 
 
-@pytest.mark.xfail(strict=True, reason="core JobService.delete")
-def test_s7_legacy_video_delete_survives_restart_and_cancel_failure_keeps_record(tmp_path):
-    """S7 6.7: a delete whose cancel fails answers 409 and keeps the job; a delete that succeeds stays deleted after a
-    restart. Red until the core's JobService.delete lands; the legacy reader may then mark an existing row deleted."""
-    from gateway import video_job_records
+def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path):
+    """S7 6.7: a delete whose cancel fails answers 409 and keeps the video. (The restart half of the old test never
+    restarted, and its legacy row belonged to a principal nobody authenticated as; it proved nothing and is gone. A
+    real restart test needs the process-restart fixture the lifecycle file lists as missing.)"""
     seen = {}
 
     def setup(rig):
@@ -844,14 +845,10 @@ def test_s7_legacy_video_delete_survives_restart_and_cancel_failure_keeps_record
         failed = await rig.call("DELETE", f"/v1/videos/{video_id}", label="delete with a failing cancel")
         seen["failed_status"] = failed.status_code
         seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code
-        video_job_records.save("p_legacy", {"owner_key_hash": "sha256:legacy", "created_at": 1, "status": "completed"},
-                               path=rig.media_jobs_db)
-        seen["legacy_delete"] = (await rig.call("DELETE", "/v1/videos/video_p_legacy")).status_code
 
-    _run(tmp_path, "s7-7-legacy-delete", setup, drive)
+    _run(tmp_path, "s7-7-cancel-failure", setup, drive)
     assert seen["failed_status"] == 409
     assert seen["kept_after_failure"] == 200
-    assert seen["legacy_delete"] == 200
 
 
 def test_video_source_owner_boundary_answers_as_an_unknown_id(tmp_path):
@@ -1484,3 +1481,233 @@ def test_video_provenance_embeds_the_prompt_only_when_the_plan_allows(tmp_path, 
     else:
         assert b"azizam.provenance" not in body
         assert b"make it dusk" not in body
+
+
+# ---- V3b contract tests from the video parity oracle audit ----
+
+
+def _audit_record(rig, video_id):
+    import json
+    with sqlite3.connect(rig.media_jobs_db) as db:
+        row = db.execute("SELECT record_json FROM video_job_records WHERE prompt_id = ?",
+                         (video_id.removeprefix("video_"),)).fetchone()
+    assert row is not None, video_id
+    return json.loads(row[0])
+
+
+@lru_cache(maxsize=None)
+def _audit_frames(clip):
+    with tempfile.TemporaryDirectory() as directory:
+        source, output = Path(directory) / "in.mp4", Path(directory) / "out.rgb"
+        source.write_bytes(clip)
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source), "-map", "0:v:0", "-f", "rawvideo",
+                        "-pix_fmt", "rgb24", str(output)], capture_output=True, check=True, timeout=30)
+        frames = output.read_bytes()
+    assert frames, "No decoded fixture frames"
+    return frames
+
+
+@lru_cache(maxsize=None)
+def _audit_clip(color, seconds):
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "clip.mp4"
+        subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        f"color=c={color}:s=16x16:d={seconds}:r=24", "-c:v", "mpeg4", str(output)],
+                       capture_output=True, check=True, timeout=30)
+        return output.read_bytes()
+
+
+async def _audit_call(rig, method, path, **kwargs):
+    return await asyncio.wait_for(rig.call(method, path, **kwargs), timeout=20)
+
+
+async def _audit_source(rig):
+    response = await _audit_call(rig, "POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == "video_p1"
+    return response.json()["id"]
+
+
+async def _audit_content(rig, vid):
+    status = await _audit_call(rig, "GET", f"/v1/videos/{vid}")
+    assert status.status_code == 200, status.text
+    body = status.json()
+    assert (body["id"], body["status"], body["azizam_status"]) == (vid, "completed", "succeeded")
+    content = await _audit_call(rig, "GET", f"/v1/videos/{vid}/content")
+    assert content.status_code == 200, content.text[:200]
+    assert content.headers["content-type"] == "video/mp4"
+    assert content.content[4:8] == b"ftyp"
+    return content.content
+
+
+async def _audit_child(rig, route, source, prompt="make it dusk", **kwargs):
+    if route == "extend":
+        return await _audit_call(rig, "POST", "/v1/videos/extensions",
+                                 json_body={"video": {"id": source}, "prompt": prompt, "seconds": "2"}, **kwargs)
+    body = {"prompt": prompt, "seconds": 4, "extensions": REMIX_EXTENSIONS}
+    if route == "edit":
+        return await _audit_call(rig, "POST", "/v1/videos/edits", json_body={**body, "video": {"id": source}}, **kwargs)
+    assert route == "remix"
+    return await _audit_call(rig, "POST", f"/v1/videos/{source}/remix", json_body=body, **kwargs)
+
+
+def _audit_asset(rig, vid, delivered):
+    import json
+    record = _audit_record(rig, vid)
+    aid = record["asset_id"]
+    assert aid.startswith("vid_")
+    sidecars = [json.loads(p.read_text()) for p in rig.cache.glob("*.meta.json")]
+    assert len([s for s in sidecars if s.get("asset_id") == aid]) == 1
+    assert delivered in [p.read_bytes() for p in rig.cache.glob("*.mp4")]
+    with sqlite3.connect(rig.media_jobs_db) as db:
+        raw = db.execute("SELECT intent, job_json FROM media_jobs WHERE request_id = ?", (vid,)).fetchall()
+    jobs = [json.loads(value) for intent, value in raw if intent == "video.generate"]
+    assert len(jobs) == 1 and jobs[0]["status"] == "succeeded"
+    assert any(a.get("asset_id") == aid and a.get("kind") == "video" for a in jobs[0]["assets"])
+    return aid
+
+
+@pytest.mark.parametrize("route", ["edit", "remix", "extend"])
+@pytest.mark.parametrize("outcome", ["done", "failed"])
+def test_video_child_preserves_exact_source_and_owns_only_its_result(tmp_path, route, outcome):
+    """video-23/43/44/46/55: a child is its own video with its own clip and asset; the source clip, record and asset
+    do not change, whether the child finishes or fails."""
+    source_clip = _audit_clip("black", 5)
+    child_clip = _audit_clip("white", 7 if route == "extend" else 4)
+
+    def setup(rig):
+        if route != "extend":
+            _configured_remix(rig)
+        _scripted_engine(rig, [("p1", source_clip, "done"), ("p2", child_clip if outcome == "done" else None, outcome)],
+                         node="save" if route == "extend" else "60")
+
+    async def drive(rig):
+        source = await _audit_source(rig)
+        before = await _audit_content(rig, source)
+        assert _audit_frames(before) == _audit_frames(source_clip)
+        old_record = _audit_record(rig, source)
+        files_before = {p.name: p.read_bytes() for p in rig.cache.glob("*.mp4")}
+        response = await _audit_child(rig, route, source)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["id"] == "video_p2"
+        assert (body["object"], body["status"], body["progress"]) == ("video", "queued", 0)
+        lineage = "extended_from_video_id" if route == "extend" else "remixed_from_video_id"
+        assert body[lineage] == source
+        if outcome == "done":
+            child = await _audit_content(rig, "video_p2")
+            assert _audit_frames(child) == _audit_frames(child_clip)
+            assert _audit_frames(child) != _audit_frames(before)
+            assert _audit_asset(rig, "video_p2", child) != _audit_asset(rig, source, before)
+        else:
+            status = await _audit_call(rig, "GET", "/v1/videos/video_p2")
+            assert status.status_code == 200
+            failure = status.json()
+            assert (failure["id"], failure["status"], failure["azizam_status"]) == ("video_p2", "failed", "failed")
+            assert failure["error"]["code"] == "video_generation_failed"
+            assert failure["error"]["message"]
+            content = await _audit_call(rig, "GET", "/v1/videos/video_p2/content")
+            assert content.status_code >= 400
+            assert isinstance(content.json().get("error"), dict)
+            assert not _audit_record(rig, "video_p2").get("asset_id")
+            assert {p.name: p.read_bytes() for p in rig.cache.glob("*.mp4")} == files_before
+        assert await _audit_content(rig, source) == before
+        new_record = _audit_record(rig, source)
+        for field in ("owner_key_hash", "asset_id", "remixed_from_video_id", "extended_from_video_id"):
+            assert new_record.get(field) == old_record.get(field)
+        assert _engine_paths(rig).count("POST /prompt") == 2
+
+    _run(tmp_path, f"audit-child-{route}-{outcome}", setup, drive)
+
+
+def test_video_all_extension_children_complete_with_consistent_real_durations(tmp_path):
+    """video-32/35/53/56/58: an extension of an extension keeps its source, whether or not the first child was read first."""
+    clips = {"video_p1": _audit_clip("black", 5), "video_p2": _audit_clip("white", 7),
+             "video_p3": _audit_clip("red", 9), "video_p4": _audit_clip("green", 9)}
+
+    def setup(rig):
+        _scripted_engine(rig, [(vid.removeprefix("video_"), clip, "done") for vid, clip in clips.items()], node="save")
+
+    async def drive(rig):
+        source = await _audit_source(rig)
+        source_before = await _audit_content(rig, source)
+        first = await _audit_child(rig, "extend", source, "more waves")
+        assert first.status_code == 200
+        first_body = first.json()
+        assert (first_body["id"], first_body["extended_from_video_id"], first_body["total_seconds"],
+                first_body["segments"]) == ("video_p2", source, 7.0, 1)
+        ready = await _audit_call(rig, "GET", "/v1/videos/video_p2")
+        assert ready.status_code == 200 and ready.json()["status"] == "completed"
+        early = await _audit_child(rig, "extend", "video_p2", "before reading")
+        assert early.status_code == 200
+        first_bytes = await _audit_content(rig, "video_p2")
+        late = await _audit_child(rig, "extend", "video_p2", "after reading")
+        assert late.status_code == 200
+        for response, expected in ((early, "video_p3"), (late, "video_p4")):
+            body = response.json()
+            assert (body["id"], body["extended_from_video_id"], body["total_seconds"], body["segments"]) == (
+                expected, "video_p2", 9.0, 1)
+        delivered = {"video_p1": source_before, "video_p2": first_bytes,
+                     "video_p3": await _audit_content(rig, "video_p3"), "video_p4": await _audit_content(rig, "video_p4")}
+        for vid, content in delivered.items():
+            assert _audit_frames(content) == _audit_frames(clips[vid])
+        assert await _audit_content(rig, source) == source_before
+        assert len({_audit_asset(rig, vid, data) for vid, data in delivered.items()}) == 4
+        assert _engine_paths(rig).count("POST /prompt") == 4
+
+    _run(tmp_path, "audit-every-extension-child", setup, drive)
+
+
+@pytest.mark.parametrize("route", ["edit", "remix"])
+@pytest.mark.parametrize("second_prompt", ["make it dusk", "make it dawn"])
+def test_video_configured_child_replay_submits_again_under_old_contract(tmp_path, route, second_prompt):
+    """video-51/52 (old behaviour; the dedupe delta replaces it at the move): the same key twice, with the same or another
+    body, makes two children."""
+    def setup(rig):
+        _configured_remix(rig)
+        _scripted_engine(rig, [("p1", SOURCE_CLIP, "done"), ("p2", CHILD_CLIP, "done"), ("p3", SECOND_EXTENSION, "done")],
+                         unread=("p2", "p3"))
+
+    async def drive(rig):
+        source = await _audit_source(rig)
+        before = await _audit_content(rig, source)
+        headers = {"Idempotency-Key": "configured-replay"}
+        first = await _audit_child(rig, route, source, "make it dusk", headers=headers)
+        second = await _audit_child(rig, route, source, second_prompt, headers=headers)
+        assert first.status_code == second.status_code == 200
+        assert first.json()["id"] == "video_p2"
+        assert second.json()["id"] == "video_p3"
+        assert first.json()["remixed_from_video_id"] == second.json()["remixed_from_video_id"] == source
+        assert _engine_paths(rig).count("POST /prompt") == 3
+        listed = await _audit_call(rig, "GET", "/v1/videos")
+        assert listed.status_code == 200
+        assert {v["id"] for v in listed.json()["data"]} == {"video_p1", "video_p2", "video_p3"}
+        assert await _audit_content(rig, source) == before
+
+    _run(tmp_path, f"audit-configured-replay-{route}-{second_prompt}", setup, drive)
+
+
+@pytest.mark.parametrize("route", ["edit", "remix", "extend"])
+def test_video_source_ownership_refusal_has_an_independent_404_control(tmp_path, route):
+    """video-41/54: a foreign source answers exactly as an unknown source does, and the unknown source is itself a 404."""
+    def setup(rig):
+        _configured_remix(rig)
+        _scripted_engine(rig, [("p1", SOURCE_CLIP, "done")], unread=("p1",))
+
+    async def drive(rig):
+        source = await _audit_source(rig)
+        own = await _audit_call(rig, "GET", f"/v1/videos/{source}")
+        assert own.status_code == 200
+        before = len(_engine_paths(rig))
+        unknown = await _audit_child(rig, route, "video_does_not_exist")
+        assert unknown.status_code == 404
+        assert isinstance(unknown.json().get("error"), dict)
+        other = identity(everything(), name="foreign-video-maker", key_hash="sha256:foreign", app_id="app_foreign")
+        with authenticated(other):
+            foreign = await _audit_child(rig, route, source)
+        assert foreign.status_code == 404
+        assert foreign.json() == unknown.json()
+        assert len(_engine_paths(rig)) == before
+        assert (await _audit_call(rig, "GET", f"/v1/videos/{source}")).status_code == 200
+
+    _run(tmp_path, f"audit-source-boundary-{route}", setup, drive)
