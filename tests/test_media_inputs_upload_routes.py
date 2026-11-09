@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import media_fetch, media_inputs
 from tests.support.access import access, access_context, authenticated, identity, plan_for
+from tests.support.video_row_files import patch_video_row_files_in_a_temporary_tree
 from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
 from tests.test_image_route_receipts import _MultipartRequest, _MultipartUpload
 from tests.test_media_inputs_image_route import (  # noqa: F401  (rig is a fixture)
@@ -221,6 +222,7 @@ def video_rig(rig, isolated_receipts):
         stack.enter_context(p)
     stack.enter_context(authenticated(identity(**OWNER)))
     stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
+    patch_video_row_files_in_a_temporary_tree(stack)
     for name in ("_video_job_records", "_video_progress", "_video_workflows"):
         saved = dict(getattr(proxy, name))
         getattr(proxy, name).clear()
@@ -251,7 +253,7 @@ def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt, r
     response = post_video(video_rig, data_uri(data, f"image/{fmt.lower()}"))
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
-    assert video_rig.comfy.uploads == [(f"input_reference.{ext}", data, "image/png")]
+    assert video_rig.comfy.uploads == [(f"input.{ext}", data, "image/png")]
     assert resolver_calls == ["resolve_upload"] and ended(video_rig)
 
 
@@ -261,7 +263,7 @@ def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt, res
     response = post_video(video_rig, files={"input_reference": (f"ref{SUFFIX[fmt]}", data, f"image/{fmt.lower()}")})
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
-    assert video_rig.comfy.uploads == [(f"input_reference.{ext}", data, "image/png")]
+    assert video_rig.comfy.uploads == [(f"input.{ext}", data, "image/png")]
     assert resolver_calls == ["resolve_upload"] and ended(video_rig)
 
 

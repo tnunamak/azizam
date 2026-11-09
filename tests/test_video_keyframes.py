@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.video_row_files import patch_video_row_files  # noqa: E402
 from gateway import media_ingestion, media_jobs, media_metadata  # noqa: E402
 from gateway.workflow_openapi import ROOT_EXTENSION, schema_name  # noqa: E402
 from gateway.manifests import load_workflow_manifest  # noqa: E402
@@ -331,13 +332,7 @@ class KeyframeRouteBase(unittest.TestCase):
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
         spool = tempfile.TemporaryDirectory()
         self.addCleanup(spool.cleanup)
-        self.stack.enter_context(patch.object(proxy, "_WORKFLOW_RUN_SPOOL_ROOT", Path(spool.name) / "spool"))
-        self.stack.enter_context(patch.object(proxy, "_WORKFLOW_JOB_SPOOL", None))        # built from the root above, at first use
-        self.stack.enter_context(patch.object(proxy, "_workflow_core_cache", None))        # the core holds the job spool
-        self.stack.enter_context(patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", Path(spool.name) / "payloads"))
-        media_db = Path(spool.name) / "media.db"
-        media_jobs.init_db(media_db)
-        self.stack.enter_context(patch.object(media_jobs, "DB_PATH", media_db))   # a row job lands here, not in the shared file
+        patch_video_row_files(self.stack, Path(spool.name))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()

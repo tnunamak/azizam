@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from tests.support.config_snapshot import section_key_published  # noqa: E402
 from tests.support.access import authenticated  # noqa: E402
+from tests.support.video_row_files import patch_video_row_files_in_a_temporary_tree  # noqa: E402
 from tests.media_test_bytes import png_bytes  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
@@ -56,6 +57,7 @@ class RemixReplaceBase(unittest.TestCase):
             self.stack.enter_context(p)
         self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
+        patch_video_row_files_in_a_temporary_tree(self.stack)       # a plain create is a row job: it keeps its files here
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
