@@ -528,6 +528,10 @@ class OpenAIVideoCreate(Shape):
         from gateway.frontend_shapes import video_create
         return await video_create.to_run_request(self, request, row, snapshot, spool=spool)
 
+    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
+        from gateway.frontend_shapes import video_create
+        return await video_create.legacy_route(self, request, row, snapshot)
+
     async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
         if isinstance(outcome, RunRefused):
             return await super().to_response(outcome, row, jobs=jobs, caller=caller, request=request)
@@ -637,6 +641,9 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         return await Shape.to_response(self, outcome, row, jobs=jobs, caller=caller, request=request)
 
     async def after_submit(self, request, view, caller) -> None:
+        return None
+
+    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
         return None
 
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]

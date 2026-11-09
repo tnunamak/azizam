@@ -103,6 +103,57 @@ def _beyond(seconds: Any, limit: float) -> bool:
         return False
 
 
+Picked = tuple[WorkflowEntry, "video_grid.VideoManifest", str, str]
+
+
+def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, snapshot: RegistrySnapshot,
+           hooks: Any) -> Picked | LegacyRoute | Response:
+    """The workflow a create runs, or the reason it does not run here: a refusal, or a hand-off to the old pipeline for what the
+    data path does not serve yet (a chain, workflow extensions, a reference it cannot read). Reads nothing but the body and the
+    registry, so the row can ask it before it opens a receipt."""
+    named = body.get("model") or shape.default_target()
+    public_model = str(named) if named is not None else ""
+    resolved = hooks.resolve_model(public_model)
+    if isinstance(resolved, Response):
+        return resolved
+    chosen = _wire.choose_workflow(snapshot, row, target=resolved or None, supplied=["prompt"], not_found=lambda target: refuse(
+        404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found"))
+    if isinstance(chosen, Response):
+        return chosen
+    from gateway.frontend_shapes import shapes
+    manifest = video_grid.video_facts(chosen, shapes.REFERENCE_KIND)
+    reference = body.get("input_reference")
+    if manifest is None or manifest.chain:
+        return LegacyRoute(LEGACY_CREATE, body)
+    variant = snapshot.get(manifest.reference_variant) if reference and manifest.reference_variant else None
+    if variant is not None and video_grid.video_facts(variant, shapes.REFERENCE_KIND) is not None:
+        chosen, manifest = variant, video_grid.video_facts(variant, shapes.REFERENCE_KIND)
+    name = short_name(chosen)
+    if manifest.needs_reference and not reference:
+        return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
+    seconds = body.get("seconds")
+    if body.get("shots") is not None or _beyond(seconds, manifest.max_seconds):
+        if manifest.variants.get("long"):
+            return LegacyRoute(LEGACY_CREATE, body)
+        return refuse(400, f"Model {name} cannot render shots or clips longer than {manifest.max_seconds:g} s; use a long-video model",
+                      param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
+    if (manifest.other_requires or manifest.select_subject or body.get("inputs") or _workflow_block(body)
+            or (reference is not None and _reference_bytes(reference) is None)):
+        return LegacyRoute(LEGACY_CREATE, body)
+    return chosen, manifest, name, public_model
+
+
+async def legacy_route(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot) -> LegacyRoute | None:
+    """Whether the old pipeline serves this create. The row asks before it enforces the route policy or opens a receipt, so the
+    old handler alone owns its policy check, its one receipt and its request id. Any refusal is left to ``to_run_request``."""
+    from gateway.frontend_shapes import shapes
+    body = await read_body(shape, request)
+    if isinstance(body, Response):
+        return None
+    picked = select(shape, body, row, snapshot, shapes.VIDEO_HOOKS or shapes.VideoHooks())
+    return picked if isinstance(picked, LegacyRoute) else None
+
+
 async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                          spool: RequestSpool) -> RunRequest | LegacyRoute | Response:
     from gateway.frontend_shapes import shapes
@@ -128,37 +179,13 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     if raw_prompt is not None and not isinstance(raw_prompt, str):
         return refuse(400, "prompt must be a string", param="prompt")
     prompt = (raw_prompt or "").strip()
-    named = body.get("model") or shape.default_target()
-    public_model = str(named) if named is not None else ""
     if not prompt and body.get("shots") is None:
         return refuse(400, "prompt is required")
-
-    resolved = hooks.resolve_model(public_model)
-    if isinstance(resolved, Response):
-        return resolved
-    chosen = _wire.choose_workflow(snapshot, row, target=resolved or None, supplied=["prompt"], not_found=lambda target: refuse(
-        404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found"))
-    if isinstance(chosen, Response):
-        return chosen
-    manifest = video_grid.video_facts(chosen, shapes.REFERENCE_KIND)
-    reference = body.get("input_reference")
-    if manifest is None or manifest.chain:
-        return LegacyRoute(LEGACY_CREATE, body)
-    variant = snapshot.get(manifest.reference_variant) if reference and manifest.reference_variant else None
-    if variant is not None and video_grid.video_facts(variant, shapes.REFERENCE_KIND) is not None:
-        chosen, manifest = variant, video_grid.video_facts(variant, shapes.REFERENCE_KIND)
-    name = short_name(chosen)
-    if manifest.needs_reference and not reference:
-        return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
-    seconds = body.get("seconds")
-    if body.get("shots") is not None or _beyond(seconds, manifest.max_seconds):
-        if manifest.variants.get("long"):
-            return LegacyRoute(LEGACY_CREATE, body)
-        return refuse(400, f"Model {name} cannot render shots or clips longer than {manifest.max_seconds:g} s; use a long-video model",
-                      param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
-    if (manifest.other_requires or manifest.select_subject or body.get("inputs") or _workflow_block(body)
-            or (reference is not None and _reference_bytes(reference) is None)):
-        return LegacyRoute(LEGACY_CREATE, body)
+    picked = select(shape, body, row, snapshot, hooks)
+    if isinstance(picked, (Response, LegacyRoute)):
+        return picked
+    chosen, manifest, name, public_model = picked
+    reference, seconds = body.get("input_reference"), body.get("seconds")
 
     try:
         seconds_value = float(seconds) if seconds is not None else min(DEFAULT_SECONDS, manifest.max_seconds)

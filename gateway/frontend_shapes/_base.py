@@ -252,6 +252,11 @@ class Shape:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""
         return inputs
 
+    async def legacy_route(self, request: Any, row: FrontendRow, snapshot: RegistrySnapshot) -> "LegacyRoute | None":
+        """Hook: a request the old pipeline serves, asked before the row enforces the route policy or opens a receipt (the old
+        handler owns both). None: the data path serves it."""
+        return None
+
     async def after_submit(self, request: Any, view: RunJobView, caller: CallerContext) -> None:
         """Hook: what the wire does once a job was submitted (``view.disposition`` tells a new job from a replay)."""
         return None

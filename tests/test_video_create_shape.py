@@ -453,15 +453,71 @@ def test_the_facts_wait_for_the_wire_id_and_the_drawn_seed_by_named_refs_that_ne
     from gateway.workflow_kernel import run_identity
     from gateway.workflow_run import resolve_fact_refs
     run_request = read({"prompt": "x", "model": "ltx-2.5-t2v"})
-    assert run_request.facts["provenance"]["request_id"] is None and run_request.facts["provenance"]["seed"] is None
+    assert run_request.facts["provenance"].get("request_id") is None and run_request.facts["provenance"].get("seed") is None
     assert {(ref.path, ref.source) for ref in run_request.fact_refs} == {
         (("provenance", "request_id"), "job_id"), (("seed",), "generated:seed"), (("provenance", "seed"), "generated:seed")}
     resolved = resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={"seed": 11})
     assert resolved["seed"] == 11 and resolved["provenance"]["seed"] == 11 and resolved["provenance"]["request_id"] == "video_mj_a"
-    assert run_request.facts["provenance"]["request_id"] is None                       # the request itself is not changed
+    assert run_request.facts["provenance"].get("request_id") is None                    # the request itself is not changed
     import dataclasses
     assert run_identity("s", "m", dataclasses.replace(run_request, fact_refs=())) == run_identity("s", "m", run_request)
     explicit = read({"prompt": "x", "model": "ltx-2.5-t2v", "seed": 5})
     assert explicit.facts["seed"] == 5 and explicit.facts["provenance"]["seed"] == 5
     assert all(ref.source != "generated:seed" for ref in explicit.fact_refs)
-    assert resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={})["provenance"]["seed"] is None
+    assert resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={})["provenance"].get("seed") is None
+
+
+# ----------------------------------------- a chain is the old handler's alone: no row policy, no row receipt (review 13)
+
+
+def _row_app(calls: dict[str, list], snapshot=SNAP):
+    from fastapi import FastAPI
+    from gateway import row_routes
+
+    async def legacy(request, caller, body):
+        calls["legacy"].append((caller, dict(body)))
+        return Response("old", status_code=200)
+
+    class _Owner:
+        def report(self, **_): calls["report"].append(1)
+        def handoff(self): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+
+    deps = row_routes.RowRouteDeps(
+        authenticate=lambda request, path: calls["auth"].append(path) or "caller-1",
+        enforce_policy=lambda caller, path: calls["policy"].append(path),
+        core=lambda: object(), snapshot=lambda: snapshot, jobs=lambda: None, new_spool=FakeSpool,
+        scope=lambda request, spool: __import__("contextlib").nullcontext(), refused=lambda r: Response("refused", status_code=r.http_status),
+        new_request_id=lambda: "req-1", open_receipt=lambda *a: calls["receipt"].append(a) or _Owner(),
+        name_receipt=lambda *a: None, pinned=lambda job_id: None, legacy={_base_legacy(): legacy})
+    app = FastAPI()
+    row_routes.mount_rows(app, deps, ("videos-create",))
+    return app
+
+
+def _base_legacy() -> str:
+    from gateway.frontend_shapes import video_create
+    return video_create.LEGACY_CREATE
+
+
+def test_a_chain_create_reaches_the_old_handler_with_no_row_policy_and_no_row_receipt() -> None:
+    from starlette.testclient import TestClient
+    calls: dict[str, list] = {key: [] for key in ("auth", "policy", "receipt", "report", "legacy")}
+    client = TestClient(_row_app(calls))
+    answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-long"})
+    assert answer.status_code == 200 and answer.text == "old"
+    assert calls["auth"] == ["/v1/videos"]                    # authenticated once, by the row
+    assert calls["policy"] == [] and calls["receipt"] == [] and calls["report"] == []     # the old handler owns both
+    assert [body["prompt"] for _, body in calls["legacy"]] == ["x"]
+    shots = client.post("/openai/v1/videos", json={"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]})
+    assert shots.text == "old" and len(calls["legacy"]) == 2 and calls["receipt"] == []
+
+
+def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_receipt_after_the_policy() -> None:
+    from starlette.testclient import TestClient
+    calls: dict[str, list] = {key: [] for key in ("auth", "policy", "receipt", "report", "legacy")}
+    client = TestClient(_row_app(calls))
+    answer = client.post("/v1/videos", json={"model": "nope-model", "prompt": "x"})
+    assert answer.status_code == 404 and answer.json()["error"]["code"] == "model_not_found"
+    assert calls["legacy"] == [] and len(calls["policy"]) == 1 and len(calls["receipt"]) == 1

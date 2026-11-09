@@ -27204,10 +27204,14 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
                                            admin_path=ADMIN_STORE.path, created_at=memory.created_at))
 
 
-async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapping[str, Any], owner: Any) -> Response:
-    """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline, on
-    the body already read, under the receipt the row opened. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
-    return await proxy_graph_video_create(request, caller, body_override=body, receipt=owner.receipt)
+async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapping[str, Any]) -> Response:
+    """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline on the body
+    already read. It enforces the route policy and opens its one receipt itself, as the removed route did, because the row has
+    opened none. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
+    policy_response = await asyncio.to_thread(_enforce_runtime_route_policy, caller, "/v1/videos")
+    if policy_response is not None:
+        return policy_response
+    return await proxy_graph_video_create(request, caller, body_override=body)
 
 
 frontend_wire_shapes.VIDEO_HOOKS = _DeploymentVideoHooks()
