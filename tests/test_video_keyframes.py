@@ -329,6 +329,9 @@ class KeyframeRouteBase(unittest.TestCase):
             self.stack.enter_context(p)
         self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
+        spool = tempfile.TemporaryDirectory()
+        self.addCleanup(spool.cleanup)
+        self.stack.enter_context(patch.object(proxy, "_WORKFLOW_RUN_SPOOL_ROOT", Path(spool.name) / "spool"))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()

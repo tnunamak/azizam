@@ -278,7 +278,15 @@ def test_an_unknown_file_field_is_a_400() -> None:
     assert response.status_code == 400 and json.loads(response.body)["error"]["param"] in ("a", "b")
 
 
-def test_a_video_edit_names_its_source_video_and_fills_the_asset_input_by_reference() -> None:
+def test_a_video_edit_names_its_source_video_and_fills_the_asset_input_by_reference(monkeypatch) -> None:
+    from gateway.frontend_shapes import shapes
+    from gateway.video_source import VideoSource
+
+    class Hooks(shapes.VideoHooks):
+        async def source(self, job_id, wire_id, caller):
+            return VideoSource(wire_id, wire_id, None, None, None, None, None, None)
+
+    monkeypatch.setattr(shapes, "VIDEO_HOOKS", Hooks())
     snap = FakeSnapshot(1, MappingProxyType({"video.edit.demo": entry(VIDEO_EDIT)}))
     run = run_request("videos-edit", json_request({"prompt": "night", "video": {"id": "vid_9"}}), snap)
     assert run.workflow_id == "video.edit.demo" and run.inputs == {"prompt": "night"}

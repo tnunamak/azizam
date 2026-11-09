@@ -163,11 +163,12 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
         return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
     seconds = body.get("seconds")
     limit = manifest.length.max_seconds
-    if body.get("shots") is not None or _beyond(seconds, limit):
+    shots = body.get("shots") is not None
+    if shots or (_beyond(seconds, limit) and manifest.variants.get("long")):
         if manifest.variants.get("long"):
             return LegacyRoute(LEGACY_CREATE, body)
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
-                      param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
+                      param="shots", code="long_video_not_supported")
     block = _workflow_block(body)
     if ((manifest.requires - {kind, "extensions"}) or manifest.select_subject or body.get("inputs")
             or ("extensions" in manifest.requires and not block)
