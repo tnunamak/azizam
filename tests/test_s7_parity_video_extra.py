@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import re
 import sqlite3
 import subprocess
@@ -30,6 +31,7 @@ from pathlib import Path
 import pytest
 
 import proxy
+from tests.support.video_rig import video_job_rows
 from tests.support.access import authenticated, everything, identity, plan_for
 from tests.support.adapter_differential_rig import GatewayRig
 from tests.support.config_snapshot import publish_section
@@ -1424,8 +1426,13 @@ def _audit_record(rig, video_id):
     the public job service. An extension is still an old record; its row is the only place its asset id lives."""
     import json
     if JOB_ID.match(video_id):
-        results = _job_view(video_id).results or ()
-        return {"asset_id": results[0].asset_id if len(results) == 1 else None}
+        view = _job_view(video_id)
+        results = tuple(view.results or ())
+        if view.status == "succeeded":
+            assert len(results) == 1, f"a finished video has exactly one result, not {len(results)}: {results}"
+            return {"asset_id": results[0].asset_id}
+        assert results == (), f"a {view.status} job-backed video has no results, not {results}"
+        return {"asset_id": None}
     with sqlite3.connect(rig.media_jobs_db) as db:
         row = db.execute("SELECT record_json FROM video_job_records WHERE prompt_id = ?",
                          (video_id.removeprefix("video_"),)).fetchone()
@@ -1509,7 +1516,9 @@ def _audit_asset(rig, vid, delivered):
     assert len([s for s in sidecars if s.get("asset_id") == aid]) == 1
     assert delivered in [p.read_bytes() for p in rig.cache.glob("*.mp4")]
     if JOB_ID.match(vid):
-        view = _job_view(vid)       # the job is the delivery row
+        view = _job_view(vid)       # the job is the delivery row, and the only one for this video
+        mine = [job for job in video_job_rows(rig) if aid in [a.get("asset_id") for a in job.get("assets") or ()]]
+        assert len(mine) == 1 and mine[0]["status"] == "succeeded", mine
         assert view.status == "succeeded" and [(r.media_type, r.asset_id) for r in view.results] == [("video/mp4", aid)]
         return aid
     with sqlite3.connect(rig.media_jobs_db) as db:
@@ -1518,6 +1527,32 @@ def _audit_asset(rig, vid, delivered):
     assert len(jobs) == 1 and jobs[0]["status"] == "succeeded"
     assert any(a.get("asset_id") == aid and a.get("kind") == "video" for a in jobs[0]["assets"])
     return aid
+
+
+FOREIGN = identity(everything(), name="foreign-video-maker", key_hash="sha256:foreign", app_id="app_foreign")
+_LINEAGE = ("remixed_from_video_id", "extended_from_video_id")
+
+
+async def _public_snapshot(rig, vid):
+    """What the maker's public surface says about a video: its status word, lineage fields and (for a job) request
+    facts. Compared before and after a child, so a child that rewrites the source's lineage shows up."""
+    response = await _audit_call(rig, "GET", f"/v1/videos/{vid}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    snapshot = {"status": body["status"], "lineage": {key: body.get(key) for key in _LINEAGE}}
+    if JOB_ID.match(vid):
+        facts = proxy._workflow_job_service().request_facts(vid.removeprefix("video_"), proxy.AuthContext(identity=RIG_OWNER))
+        assert facts is not None
+        snapshot["facts"] = json.dumps(dict(facts), sort_keys=True, default=str)
+    return snapshot
+
+
+async def _assert_foreign_caller_sees_nothing(rig, vid):
+    """Design 5.1: a caller who is not the maker gets 404 on a video's status and its content."""
+    with authenticated(FOREIGN):
+        for suffix in ("", "/content"):
+            response = await _audit_call(rig, "GET", f"/v1/videos/{vid}{suffix}")
+            assert response.status_code == 404, (vid, suffix, response.status_code)
 
 
 @pytest.mark.parametrize("route", ["edit", "remix", "extend"])
@@ -1539,6 +1574,8 @@ def test_video_child_preserves_exact_source_and_owns_only_its_result(tmp_path, r
         before = await _audit_content(rig, source)
         assert _audit_frames(before) == _audit_frames(source_clip)
         old_record = _audit_record(rig, source)
+        old_public = await _public_snapshot(rig, source)
+        await _assert_foreign_caller_sees_nothing(rig, source)
         files_before = {p.name: p.read_bytes() for p in rig.cache.glob("*.mp4")}
         response = await _audit_child(rig, route, source)
         assert response.status_code == 200, response.text
@@ -1562,12 +1599,17 @@ def test_video_child_preserves_exact_source_and_owns_only_its_result(tmp_path, r
             content = await _audit_call(rig, "GET", f"/v1/videos/{child_id}/content")
             assert content.status_code >= 400
             assert isinstance(content.json().get("error"), dict)
+            if JOB_ID.match(child_id):
+                assert tuple(_job_view(child_id).results or ()) == (), "a failed job-backed child has no results"
             assert not _audit_record(rig, child_id).get("asset_id")
             assert {p.name: p.read_bytes() for p in rig.cache.glob("*.mp4")} == files_before
         assert await _audit_content(rig, source) == before
         new_record = _audit_record(rig, source)
-        for field in ("owner_key_hash", "asset_id", "remixed_from_video_id", "extended_from_video_id"):
-            assert new_record.get(field) == old_record.get(field)
+        assert new_record.get("asset_id") == old_record.get("asset_id")
+        assert await _public_snapshot(rig, source) == old_public
+        # Neither the source nor the child (done or failed) is visible to a caller who did not make it.
+        await _assert_foreign_caller_sees_nothing(rig, source)
+        await _assert_foreign_caller_sees_nothing(rig, child_id)
         assert _engine_paths(rig).count("POST /prompt") == 2
 
     _run(tmp_path, f"audit-child-{route}-{outcome}", setup, drive)

@@ -19,10 +19,35 @@ def delta(kind, path, old, new):
     return Delta(kind, path, old, new, "the video moved to the job store")
 
 
-@pytest.mark.parametrize("kind", VIDEO_KINDS)
-def test_each_video_kind_is_an_allowed_difference(kind):
+ALLOWED = {
+    "video_id_namespace": ("$.caller[0].response.body.text#$.id", "video_p1", "video_mj_x"),
+    "record_store_moved": ("$.records[0].owner", "a", "b"),
+    "orphan_marked_by_runner": ("$.records[0].marked_by", "reconcile", "runner"),
+    "receipt_names_job": ("$.receipts[0].job_id", None, "mj_x"),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(ALLOWED))
+def test_each_wire_kind_is_an_allowed_difference_on_its_own_leaf(kind):
     assert kind in KINDS
-    assert delta(kind, "$.caller[0].response.body.text#$.id", "video_p1", "video_mj_x").problems() == []
+    assert delta(kind, *ALLOWED[kind]).problems() == []
+
+
+@pytest.mark.parametrize("kind", sorted(ALLOWED))
+@pytest.mark.parametrize("path", ["$.caller[0].response.body.text#$.status", "$.caller[0].response.body.text#$.url",
+                                  "$.receipts[0].accepted_inputs_count", "$.caller[0].response.body.text#$.created_at"])
+def test_a_kind_cannot_change_a_leaf_of_another_family(kind, path):
+    if path == ALLOWED[kind][0]:
+        return
+    assert delta(kind, path, "x", "y").problems(), (kind, path)
+
+
+@pytest.mark.parametrize("path", [ALLOWED[k][0] for k in ALLOWED] + ["$.caller[0].response.body.text#$.status"])
+def test_status_follows_runner_is_test_mechanics_and_authorizes_no_trace_change(path):
+    problems = delta("status_follows_runner", path, "queued", "completed").problems()
+    assert problems and any("test mechanics" in p for p in problems)
+    with pytest.raises(DeltaError):
+        apply_deltas(GOLDEN, [delta("status_follows_runner", "$.caller[0].response.body.text#$.status", "queued", "completed")])
 
 
 def test_a_video_id_delta_changes_the_id_in_the_body_text_and_nothing_else():
@@ -50,8 +75,3 @@ def test_no_video_kind_may_hide_a_status_an_error_a_header_an_engine_request_or_
     assert delta(kind, path, old, new).problems(), path
     with pytest.raises(DeltaError):
         apply_deltas(GOLDEN, [delta(kind, path, old, new)])
-
-
-def test_a_video_status_word_inside_the_body_is_not_the_http_status():
-    """`#$.status` is the video object's status word, not the HTTP status; a delta on it is a body change a reviewer sees."""
-    assert delta("status_follows_runner", "$.caller[0].response.body.text#$.status", "queued", "in_progress").problems() == []

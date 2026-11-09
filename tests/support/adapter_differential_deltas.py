@@ -51,7 +51,7 @@ class Delta:
 
     def _video_problems(self) -> list[str]:
         try:
-            return _video_problems_of(self.path)
+            return _video_problems_of(self.path, self.kind)
         except DeltaError:
             return []                       # the malformed path is reported by ``problems``
 
@@ -85,13 +85,36 @@ class Delta:
         return out
 
 
-def _video_problems_of(path: str) -> list[str]:
+#: What each video-move kind may touch (design 5.4). A leaf family is the first step of the path (a trace section) or the
+#: last step (the field). A kind not listed, or a path outside its families, is refused. ``status_follows_runner`` is
+#: test mechanics only: it changes no trace value, so it has no family and every delta of that kind is refused.
+KIND_LEAVES: dict[str, dict[str, frozenset[str]]] = {
+    "video_id_namespace": {"last": frozenset({"id", "video_id", "after", "first_id", "last_id",
+                                              "remixed_from_video_id", "extended_from_video_id"})},
+    "record_store_moved": {"first": frozenset({"records", "request_facts"})},
+    "orphan_marked_by_runner": {"last": frozenset({"marked_by", "marked_at"})},
+    "receipt_names_job": {"first": frozenset({"receipts"}), "last": frozenset({"job_id", "workflow"})},
+    "status_follows_runner": {},
+}
+
+
+def _video_problems_of(path: str, kind: str) -> list[str]:
     steps = [step for part in path.split("#") for step in _steps(part)]
     out = []
     if any(a == "response" and b == "status" for a, b in zip(steps, steps[1:])):
         out.append(f"{path}: a video-move delta cannot change an HTTP status")
     if "error" in steps:
         out.append(f"{path}: a video-move delta cannot change an error body")
+    families = KIND_LEAVES.get(kind, {})
+    if not families:
+        out.append(f"{path}: {kind} is test mechanics (drive, not a wire change) and authorizes no trace change")
+        return out
+    first = next((s for s in steps if isinstance(s, str)), None)
+    last = next((s for s in reversed(steps) if isinstance(s, str)), None)
+    if "first" in families and first not in families["first"]:
+        out.append(f"{path}: {kind} may only change {sorted(families['first'])} sections, not {first!r}")
+    if "last" in families and last not in families["last"]:
+        out.append(f"{path}: {kind} may only change {sorted(families['last'])} fields, not {last!r}")
     return out
 
 

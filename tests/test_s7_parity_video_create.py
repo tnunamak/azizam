@@ -34,6 +34,7 @@ from tests.support.access import authenticated, everything, identity, plan_for
 from tests.support.adapter_differential_rig import GatewayRig
 from tests.support.config_snapshot import publish_section
 from tests.support.fake_upstream import HandlerTransport
+from tests.support.video_rig import video_job_rows
 
 HOST = "comfy.fk.test"
 MODEL = "ltx-2.5-t2v"
@@ -373,12 +374,12 @@ def test_video_15_receipt_pins_writer_inventory_not_unwritten_fields(world):
         kept = receipt(world, response.headers["x-request-id"])
         assert kept["requested_model"] == MODEL and kept["backend"] == "comfyui"
         assert kept["policy_decision"] == "allowed"
-        assert kept["rejected_inputs"] == {}
+        # Integrator decision: create keeps the old receipt, closed at submit with nothing resolved. Only the job_id
+        # link (receipt_names_job, video-14) and the named contract_manifest_hash delta differ from the old receipt.
+        assert kept["accepted_inputs"] == [] and kept["rejected_inputs"] == {}
+        assert kept["resolved_model"] is None and kept["resolved_workflow"] is None
+        assert kept["manifest_hash"] is None
         assert kept["metadata"]["status_code"] == 200
-        # Deltas: the receipt now names the workflow it ran and the accepted wire fields (receipt_names_job); the old
-        # receipt left them empty. manifest_hash is the contract hash (contract_manifest_hash).
-        assert kept["accepted_inputs"] and "prompt" in json.dumps(kept["accepted_inputs"])
-        assert kept["resolved_workflow"] and kept["resolved_workflow"].startswith("video.generate.")
     run(drive())
 
 
@@ -395,6 +396,11 @@ def test_video_18_content_delivery_indexes_the_video_in_library(world):
         assert job.json()["intent"] == "video.generate" and job.json()["status"] == "succeeded"
         assert len(job.json()["assets"]) == 1 and job.json()["assets"][0]["kind"] == "video"
         assert any(row.get("asset_id") == job.json()["assets"][0]["asset_id"] for row in metadata)
+        again = await world.rig.call("GET", f"/v1/videos/{video_id}/content")
+        assert again.status_code == 200
+        # Exactly one video row after both fetches: a delivery must not add a second job (design 5.4).
+        listed = video_job_rows(world.rig)
+        assert [(row["request_id"], row["status"]) for row in listed] == [(listed[0]["request_id"], "succeeded")], listed
     run(drive())
 
 
@@ -760,14 +766,15 @@ def test_video_07_clamped_default_size_is_the_size_in_the_graph(world):
 
 def test_video_17_request_receipt_closes_with_the_answer_not_with_the_engine(world):
     """writers-12/18/19, video-17: one receipt, opened with its facts and closed once with the create answer. The job's
-    runner, not the request, waits for the engine, so a submit the engine holds does not hold the receipt open
-    (the old request held it: restart_closes_receipt family; reported as a design question)."""
+    runner, not the request, waits for the engine, so a submit the engine holds does not hold the receipt open. The
+    receipt is read while the engine holds the submit reply and read again after the runner finished the job; it is the
+    same single row both times (the old request held it open: restart_closes_receipt family; a design question)."""
     async def drive():
         world.engine.submit_release = asyncio.Event()
         try:
             response = await asyncio.wait_for(create_unawaited(world), timeout=5)
             rid = response.headers["x-request-id"]
-            assert not world.engine.prompts            # the engine still holds the submit
+            await submitted(world, 1)                  # the engine has the prompt and holds its reply
             closed = receipt(world, rid)
             assert len(rows(world.rig.receipts_db, "receipts")) == 1
             assert closed["status"] == "succeeded" and closed["metadata"]["status_code"] == 200
@@ -777,7 +784,11 @@ def test_video_17_request_receipt_closes_with_the_answer_not_with_the_engine(wor
             assert closed["finished_at_ms"] >= closed["accepted_at_ms"]
         finally:
             world.engine.submit_release.set()
-        await submitted(world, 1)
+        video_id = response.json()["id"]
+        await await_status(world, video_id)
+        final = receipt(world, rid)
+        assert len(rows(world.rig.receipts_db, "receipts")) == 1
+        assert final == closed, "the runner's work rewrote or reopened the create receipt"
     run(asyncio.wait_for(drive(), timeout=20))
 
 

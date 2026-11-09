@@ -288,3 +288,10 @@ def run(tmp_path: Path, exercise) -> None:
         install_runner_clock(world)
         asyncio.run(exercise(world))
         assert engine.unexpected == [], engine.unexpected
+
+
+def video_job_rows(rig: GatewayRig) -> list[dict[str, Any]]:
+    """Every video job the Library and History read, through the media-jobs listing API (not SQL): the video's one job
+    and any delivery job a content fetch added. A second row for one video is a duplicate delivery (design 5.4)."""
+    return [job for job in media_jobs.recent(1000, include_active=True, path=rig.media_jobs_db)
+            if job.get("intent") == "video.generate"]

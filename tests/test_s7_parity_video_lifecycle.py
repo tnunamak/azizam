@@ -35,7 +35,7 @@ import pytest
 
 from tests.support.access import identity
 from tests.support.legacy_video import legacy_video_record
-from tests.support.video_rig import ALICE, BOB, MODEL, PLAN, drive, engine_prompt_of, run, settled
+from tests.support.video_rig import ALICE, BOB, MODEL, PLAN, drive, engine_prompt_of, run, settled, video_job_rows
 
 JOB_ID = re.compile(r"^video_mj_[0-9a-f]{32}$")
 
@@ -691,6 +691,10 @@ def test_video_73_content_keeps_the_decoded_frames_and_the_exact_library_identit
         again = await asyncio.wait_for(w.content(vid), timeout=40)
         assert again.status_code == 200 and again.content == response.content
         assert w.video_files() == files
+        # Exactly one row for the video after both fetches: no delivery job beside the run job (video-18, design 5.4).
+        rows = video_job_rows(w.rig)
+        assert [(job["request_id"], job["status"]) for job in rows] == [(rows[0]["request_id"], "succeeded")], rows
+        assert [a["asset_id"] for a in rows[0]["assets"]] == [aid]
         assert [x["id"] for x in (await w.listing()).json()["data"]] == [vid]
     run(tmp_path, exercise)
 
