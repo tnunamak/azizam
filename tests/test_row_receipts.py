@@ -206,7 +206,7 @@ def test_a_busy_pool_answers_503_and_closes_one_receipt_failed(rig):
 
 
 @pytest.mark.parametrize("name", ["seed_negative", "missing_image", "not_multipart", "not_a_picture"])
-def test_a_refused_body_closes_one_receipt_failed(rig, name):
+def test_a_refused_body_closes_one_receipt_rejected(rig, name):
     bodies = {
         "seed_negative": dict(form("-1")),
         "missing_image": dict(files={"seed": (None, "1")}),
@@ -220,7 +220,7 @@ def test_a_refused_body_closes_one_receipt_failed(rig, name):
 
     status, receipt = run_async(go)
     assert status in (400, 422)
-    assert receipt["status"] == "failed"
+    assert receipt["status"] == "rejected"      # a refusal of the request, not a failure of the work (I2 decision 1)
     assert len(receipts(RAW)) == 1
     assert rig.downstream == []
 

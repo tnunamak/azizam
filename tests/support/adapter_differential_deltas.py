@@ -20,7 +20,7 @@ from typing import Any, Mapping, Sequence
 #: The differences the design allows, and nothing else.
 KINDS = frozenset({
     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
-    "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "remove",
+    "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "receipt_status_words", "remove",
 })
 #: Places a moved route keeps identical (golden design section 4): engine requests, every header, the receipt's
 #: accepted inputs and resolved workflow, and the stored asset rows. No kind may name a path through one of them.

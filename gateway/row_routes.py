@@ -126,6 +126,12 @@ def _outcome(view: RunJobView | None, *, waited: bool = True) -> tuple[str, str]
     return "failed", "wait_timeout"
 
 
+def refusal_status(http_status: int) -> str:
+    """How a refusal closes its receipt: a refusal of the request (a 4xx) is ``rejected``; a refusal by the service or the
+    gateway (a 5xx) is ``failed``. The same split the HTTP status draws."""
+    return "rejected" if 400 <= int(http_status) < 500 else "failed"
+
+
 def route_backend(row: FrontendRow, path: str) -> str | None:
     """The service the matched route declares its receipt files under (``runtime_policy.backend``); None when it declares none."""
     route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
@@ -150,7 +156,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
             async with deps.open_receipt(caller, request_id, canonical, row) as owner:
                 denied = await asyncio.to_thread(deps.enforce_policy, caller, canonical)
                 if denied is not None:
-                    owner.report(status="failed", reason="policy_denied")
+                    owner.report(status=refusal_status(denied.status_code), reason="policy_denied")
                     denied.headers[REQUEST_ID_HEADER] = request_id
                     return denied
                 response = await answer(request, caller, owner, request_id)
@@ -168,7 +174,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         core = deps.core()
         if core is None:
             response = deps.refused(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
-            owner.report(status="failed", reason="workflow_runtime_unavailable")
+            owner.report(status=refusal_status(response.status_code), reason="workflow_runtime_unavailable")
             return response
         snapshot = deps.snapshot()
         spool = deps.new_spool()
@@ -188,7 +194,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         record_inputs(deps, owner, request)
         if isinstance(run_request, Response):
-            owner.report(status="failed", reason=f"http_{run_request.status_code}")
+            owner.report(status=refusal_status(run_request.status_code), reason=f"http_{run_request.status_code}")
             return run_request
         entry = snapshot.get(run_request.workflow_id)
         facts: dict[str, str] = {}
@@ -202,7 +208,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
     if isinstance(outcome, RunRefused):
         refusal = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
-        owner.report(status="failed", reason=outcome.code)
+        owner.report(status=refusal_status(refusal.status_code), reason=outcome.code)
         return refusal
     if outcome.disposition == "replay":
         facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome)

@@ -80,8 +80,17 @@ def receipt_row(obs: Obs, i: int = 0) -> dict[str, Any] | None:
     return rows[i] if len(rows) > i else None
 
 
+# Allowed delta ``receipt_status_words``: a row receipt says succeeded where the old route said ok, and failed (with
+# terminal_reason) where it said error. A refusal says rejected on both. The readers name the row's words.
+RECEIPT_WORDS = {"ok": "succeeded", "error": "failed"}
+
+
+def receipt_status(row: dict[str, Any]) -> Any:
+    return RECEIPT_WORDS.get(row["status"], row["status"])
+
+
 def receipt_summary(obs: Obs) -> list[tuple[Any, ...]]:
-    return [(r["status"], r["protocol"], r["intent"], r["path"]) for r in receipts(obs)]
+    return [(receipt_status(r), r["protocol"], r["intent"], r["path"]) for r in receipts(obs)]
 
 
 def receipt_fields(obs: Obs, *keys: str, i: int = 0) -> dict[str, Any] | None:
