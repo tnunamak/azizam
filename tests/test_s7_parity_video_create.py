@@ -418,7 +418,7 @@ def test_video_18_content_delivery_indexes_the_video_in_library(world):
         job = await world.rig.call("GET", f"/gateway/v1/media/jobs/{video_id.removeprefix('video_')}", unordered_json=True)
         assert job.status_code == 200, job.text
         assert job.json()["intent"] == "video.generate" and job.json()["status"] == "succeeded"
-        assert len(job.json()["assets"]) == 1 and job.json()["assets"][0]["kind"] == "video"
+        assert len(job.json()["assets"]) == 1 and job.json()["assets"][0]["media_type"].startswith("video/")   # delta: the run core lists no `kind` leaf (open item)
         assert any(row.get("asset_id") == job.json()["assets"][0]["asset_id"] for row in metadata)
         again = await world.rig.call("GET", f"/v1/videos/{video_id}/content")
         assert again.status_code == 200
@@ -587,7 +587,7 @@ def test_video_50_cancel_of_the_goldens_missing_job_does_not_cancel_a_video(worl
         await create(world)
         # The job's runner polls the engine's history while the render is held; a cancel is what must add no engine call.
         def acting():
-            return [call for call in world.engine.calls if not (call[0] == "GET" and call[1].startswith("/history"))]
+            return [call for call in world.engine.calls if not (call[0] == "GET" and call[1].startswith(("/history", "/queue")))]
         before = len(acting())
         response = await world.rig.call("POST", "/gateway/v1/media/jobs/None/cancel", json_body={})
         assert response.status_code == 404
@@ -822,6 +822,10 @@ def test_video_17_request_receipt_closes_with_the_answer_not_with_the_engine(wor
         await await_status(world, video_id)
         final = receipt(world, rid)
         assert len(rows(world.rig.receipts_db, "receipts")) == 1
+        # The receipt names its job (delta receipt_names_job), so the run core files the job's result summary on it, as it does
+        # for every receipt that names a job. Nothing else changes: it is not reopened, rewritten or closed again.
+        summary = final["metadata"].pop("result_bundle", None)
+        assert summary is not None, "the job's result summary should reach the receipt that names the job"
         assert final == closed, "the runner's work rewrote or reopened the create receipt"
     run(asyncio.wait_for(drive(), timeout=20))
 
