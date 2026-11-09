@@ -13,7 +13,7 @@ are record data, read from ``record.facts`` and ``record.identity``), and each r
 The golden moved at S3.5a, when the bundled files became schema 2. Only the entries below moved; every other entry is
 byte for byte what the readers gave before the switch:
 
-- ``schema_version`` 1 to 2 and the new ``manifest_hash`` in the three summaries of all 38 workflows (the file changed);
+- ``schema_version`` 1 to 2 and the new ``manifest_hash`` in the three summaries of all 39 workflows (the file changed);
 - the capability of the 33 workflows that did not declare one (``capabilities`` and ``projected``): the converter wrote
   the inferred capability into the file, so it is declared now;
 - the mesh workflow: its picture input is an ``asset`` accepting three types (design open question 6), so its summary
