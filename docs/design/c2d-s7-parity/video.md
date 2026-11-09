@@ -338,3 +338,11 @@ No golden or test covers these. Each needs a parity test before the row path shi
 - Pins were checked by test name and golden name, not by running the suite.
 - Spike results are from `vdiff.txt` and are only as good as the spike's own scenario setup. The `s7_ve_success` baseline (0 assets in golden) is itself suspect, so the ve success comparison is weak evidence.
 - Stale comment: `_unfinished_openai_video_jobs` (proxy.py:20271) says records are in-memory. They are persisted (video-99, video-124).
+
+---
+
+## V5d: row-path status after the test rewrite
+
+The parity tests now run the new path: a new video is a run-core job (`video_mj_<32 hex>`), and engine state is driven through the runner by the rig helper `drive`. Rows keep their old pins. Where the new path differs, the row path is one of the five delta kinds in `tests/support/adapter_differential_deltas.py`: `video_id_namespace`, `record_store_moved`, `orphan_marked_by_runner`, `receipt_names_job`, `status_follows_runner`. None may hide an HTTP status, error body, header, engine request or asset row. Refusal texts: `video-texts.md`.
+
+Rows changed by the rewrite: video-05 (still strict xfail), video-10 to video-17 (create waits for the runner's prompt; the receipt names the job), video-61 to video-63 (status follows the runner; a finished video survives an engine outage), video-72 to video-75 and video-80 to video-91 (delete, cancel and delivery through the job), video-121 to video-125 (ids and facts through public routes). Legacy-id cases use `legacy_video_record`.

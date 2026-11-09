@@ -21,7 +21,13 @@ from typing import Any, Mapping, Sequence
 KINDS = frozenset({
     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
     "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "remove",
+    # The video move (CODE_TO_DATA_S7_VIDEO_MOVE.md section 5.4). Each names one thing that differs and nothing else.
+    "video_id_namespace", "record_store_moved", "orphan_marked_by_runner", "receipt_names_job", "status_follows_runner",
 })
+#: The video-move kinds. None of them may change an HTTP status or an error body: a delta of one of these kinds whose
+#: path goes through a ``status`` that follows ``response`` (the HTTP status) or through an ``error`` is refused.
+VIDEO_KINDS = frozenset({"video_id_namespace", "record_store_moved", "orphan_marked_by_runner", "receipt_names_job",
+                         "status_follows_runner"})
 #: Places a moved route keeps identical (golden design section 4): engine requests, every header, the receipt's
 #: accepted inputs and resolved workflow, and the stored asset rows. No kind may name a path through one of them.
 KEPT_IDENTICAL = frozenset({"engine_requests", "headers", "accepted_inputs", "resolved_workflow", "assets"})
@@ -43,6 +49,51 @@ class Delta:
     new: Any
     reason: str
 
+    def _video_problems(self) -> list[str]:
+        try:
+            return _video_problems_of(self.path, self.kind)
+        except DeltaError:
+            return []                       # the malformed path is reported by ``problems``
+
+    def _steps_or_none(self) -> list[str | int] | None:
+        try:
+            return [step for part in self.path.split("#") for step in _steps(part)]
+        except DeltaError:
+            return None                     # the malformed path is reported by ``problems``
+
+    def _wire_problems(self) -> list[str]:
+        """Checks that hold for EVERY kind: no delta rewrites an error body, and none moves a refusal status."""
+        steps = self._steps_or_none()
+        if steps is None:
+            return []
+        out = []
+        if "error" in steps:
+            out.append(f"{self.path}: no delta may change an error body")
+        if any(a == "response" and b == "status" for a, b in zip(steps, steps[1:])):
+            for value in (self.old, self.new):
+                if not isinstance(value, int) or isinstance(value, bool) or value >= 400:
+                    out.append(f"{self.path}: no delta may change a refusal status (400 and above) or a status that is not a number")
+                    break
+        return out
+
+    def _remove_problems(self) -> list[str]:
+        """A remove drops a list item inside a body's JSON, or one scalar leaf under a response body. It never drops a
+        whole observation, a header, an engine request or a subtree that holds one."""
+        steps = self._steps_or_none()
+        if steps is None:
+            return []
+        out = []
+        in_json_text = "#" in self.path
+        leaf_in_body = ("body" in steps and isinstance(steps[-1], str) and not isinstance(self.old, (dict, list)))
+        item_in_json = in_json_text and isinstance(steps[-1], int)
+        if not (item_in_json or leaf_in_body):
+            out.append(f"{self.path}: a remove may only drop a list item inside a body's JSON text or one scalar leaf "
+                       "under a response body")
+        protected = _protected_inside(self.old)
+        if protected:
+            out.append(f"{self.path}: the removed value holds {protected!r}, which no delta may change")
+        return out
+
     def problems(self) -> list[str]:
         out = []
         if self.kind not in KINDS:
@@ -63,12 +114,74 @@ class Delta:
                 out.append(str(error))
             if kept:
                 out.append(f"{self.path}: {kept[0]!r} is kept identical by a moved route; fix the shape, not the golden")
+            out.extend(self._wire_problems())
+            if self.kind == "remove":
+                out.extend(self._remove_problems())
+            if self.kind in VIDEO_KINDS:
+                out.extend(self._video_problems())
         # A remove of a list item names that whole item as its old value (a replay drops one engine call or one
         # listed job); every other delta names one leaf value, so it cannot hide a change inside a subtree.
         removes_list_item = self.kind == "remove" and self.path.endswith("]")
+        # No kind replaces a subtree: an ancestor of a protected leaf (``$.caller[0].response``) is refused the same way.
         if any(isinstance(value, (dict, list)) for value in (self.new,) + (() if removes_list_item else (self.old,))):
             out.append(f"{self.path}: a delta names one value, not a subtree")
         return out
+
+
+#: What each video-move kind may touch (design 5.4). A leaf family is the first step of the path (a trace section) or the
+#: last step (the field). A kind not listed, or a path outside its families, is refused. ``status_follows_runner`` is
+#: test mechanics only: it changes no trace value, so it has no family and every delta of that kind is refused.
+KIND_LEAVES: dict[str, dict[str, frozenset[str]]] = {
+    "video_id_namespace": {"last": frozenset({"id", "video_id", "after", "first_id", "last_id",
+                                              "remixed_from_video_id", "extended_from_video_id"})},
+    # A relocation names where a field is read from, never what it holds: owner, person, model and every other
+    # meaning-bearing value are refused. The same value at its new home is not a difference, so it needs no delta.
+    "record_store_moved": {"first": frozenset({"records", "request_facts"}),
+                           "last": frozenset({"store", "source", "table", "read_from"})},
+    "orphan_marked_by_runner": {"last": frozenset({"marked_by", "marked_at"})},
+    "receipt_names_job": {"first": frozenset({"receipts"}), "last": frozenset({"job_id", "workflow"})},
+    "status_follows_runner": {},
+}
+
+
+_PROTECTED_KEYS = KEPT_IDENTICAL | {"error"}
+
+
+def _protected_inside(value: Any) -> str | None:
+    """The first protected key found anywhere inside ``value``, looking through nested objects, lists and JSON text."""
+    if isinstance(value, str) and _is_json_document_text(value):
+        value = json.loads(value)
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key in _PROTECTED_KEYS:
+                return key
+            found = _protected_inside(inner)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for inner in value:
+            found = _protected_inside(inner)
+            if found:
+                return found
+    return None
+
+
+def _video_problems_of(path: str, kind: str) -> list[str]:
+    steps = [step for part in path.split("#") for step in _steps(part)]
+    out = []
+    if any(a == "response" and b == "status" for a, b in zip(steps, steps[1:])):
+        out.append(f"{path}: a video-move delta cannot change an HTTP status")
+    families = KIND_LEAVES.get(kind, {})
+    if not families:
+        out.append(f"{path}: {kind} is test mechanics (drive, not a wire change) and authorizes no trace change")
+        return out
+    first = next((s for s in steps if isinstance(s, str)), None)
+    last = next((s for s in reversed(steps) if isinstance(s, str)), None)
+    if "first" in families and first not in families["first"]:
+        out.append(f"{path}: {kind} may only change {sorted(families['first'])} sections, not {first!r}")
+    if "last" in families and last not in families["last"]:
+        out.append(f"{path}: {kind} may only change {sorted(families['last'])} fields, not {last!r}")
+    return out
 
 
 def _steps(path: str) -> list[str | int]:

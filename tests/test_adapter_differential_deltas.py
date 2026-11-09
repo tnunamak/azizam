@@ -89,11 +89,11 @@ def test_a_remove_deletes_a_list_item_the_golden_holds():
 
 
 def test_a_remove_deletes_a_key_and_checks_its_old_value():
-    golden = {"caller": [{"response": {"status": 200, "extra": "x"}}]}
-    out = listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.extra", "x", None, "not on the new wire")])
-    assert out["caller"][0]["response"] == {"status": 200}
+    golden = {"caller": [{"response": {"status": 200, "body": {"extra": "x"}}}]}
+    out = listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.body.extra", "x", None, "not on the new wire")])
+    assert out["caller"][0]["response"] == {"status": 200, "body": {}}
     with pytest.raises(DeltaError, match="unmatched"):
-        listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.extra", "y", None, "not on the new wire")])
+        listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.body.extra", "y", None, "not on the new wire")])
 
 
 def test_a_remove_with_a_new_value_is_malformed():
