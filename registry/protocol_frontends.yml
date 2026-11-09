@@ -78,6 +78,8 @@ records:
         translator: identity
         intent: audio.speech
         canonical: /v1/audio/speech
+        extensions: [com.azizam.prompts]
+        extension_order: 70
         operation: speech
         model_metadata:
           type: audio
@@ -108,6 +110,12 @@ records:
         translator: identity
         intent: audio.generate
         canonical: /v1/audio/generate
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 60
+        route_inputs: [prompt, tags, lyrics, duration, seed]
+        workflow_targets:
+          intent_prefixes: [audio.]
+          route_intent: audio.generate
         operation: audio_generate
         model_metadata:
           type: audio
@@ -125,6 +133,12 @@ records:
         translator: identity
         intent: images.generate
         canonical: /v1/images/generations
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 10
+        route_inputs: [prompt, source_image, width, height]
+        workflow_targets:
+          intent_prefixes: [image.generate]
+          route_intent: image.generate
         operation: images
         model_metadata:
           type: image
@@ -135,6 +149,12 @@ records:
         translator: identity
         intent: images.edit
         canonical: /v1/images/edits
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 20
+        route_inputs: [prompt, source_image, width, height, mask, source_mask, mask_asset]
+        workflow_targets:
+          intent_prefixes: [image.edit]
+          route_intent: image.edit
         operation: image_edits
         model_metadata:
           type: image
@@ -166,6 +186,12 @@ records:
         translator: identity
         intent: videos.create
         canonical: /v1/videos
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 30
+        route_inputs: [prompt, negative_prompt, width, height, length, frame_rate, seed, image, image_strength]
+        workflow_targets:
+          intent_prefixes: [video.]
+          route_intent: video.generate
         operation: videos
         model_metadata:
           type: video
@@ -228,12 +254,16 @@ records:
         translator: identity
         intent: videos.extend
         canonical: /v1/videos/extensions
+        extensions: [com.azizam.prompts]
+        extension_order: 40
         alias: /openai/v1/videos/extensions
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
         translator: identity
         intent: responses.create
         canonical: /v1/responses
+        extensions: [com.azizam.prompts, com.azizam.chat, com.azizam.routing]
+        extension_order: 80
         alias: /openai/v1/responses
       - methods: [GET]
         translator: identity
@@ -249,6 +279,8 @@ records:
         translator: identity
         intent: chat.completions
         canonical: /v1/chat/completions
+        extensions: [com.azizam.chat, com.azizam.routing]
+        extension_order: 75
         operation: chat
         model_metadata:
           type: language

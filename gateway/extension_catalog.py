@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping
+
+import yaml
 
 from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
@@ -15,34 +20,108 @@ from gateway.chat_extensions import (
 )
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
-from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
-from gateway.video_extensions import ROUTE_MANAGED_VIDEO_INPUTS
 from gateway.prompt_memory import NAMESPACE as PROMPT_MEMORY_NAMESPACE
 
 
-_WORKFLOW_ROUTES = (
-    ("/v1/images/generations", ("image.generate",), "image.generate"),
-    ("/v1/images/edits", ("image.edit",), "image.edit"),
-    ("/v1/videos", ("video.",), "video.generate"),
-    ("/v1/audio/generate", ("audio.",), "audio.generate"),
+_EXTENSION_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "protocol_frontends.yml"
+_EXTENSION_NAMESPACES = (
+    PROMPT_MEMORY_NAMESPACE, WORKFLOW_EXTENSION_NAMESPACE,
+    CHAT_EXTENSION_NAMESPACE, ROUTING_EXTENSION_NAMESPACE,
 )
 
-_ROUTE_MANAGED_WORKFLOW_INPUTS: dict[str, frozenset[str]] = {
-    "image.generate": frozenset({"prompt", "source_image", "width", "height"}),
-    "image.edit": frozenset(
-        {
-            "prompt",
-            "source_image",
-            "width",
-            "height",
-            "mask",
-            "source_mask",
-            "mask_asset",
-        }
-    ),
-    "audio.generate": ROUTE_MANAGED_AUDIO_INPUTS,
-    "video.generate": ROUTE_MANAGED_VIDEO_INPUTS,
-}
+
+@dataclass(frozen=True)
+class ExtensionRoute:
+    route: str
+    order: int
+    route_inputs: frozenset[str] = frozenset()
+    intent_prefixes: tuple[str, ...] = ()
+    route_intent: str | None = None
+
+
+# No registered rows: the workflow-id route is dynamic; media jobs lives only
+# under frontends. Keep their existing prompt-policy positions without fake rows.
+_RESIDUAL_EXTENSION_ROUTES = (
+    (PROMPT_MEMORY_NAMESPACE, ExtensionRoute("/v1/videos/workflows/{workflow_id}", 50)),
+    (PROMPT_MEMORY_NAMESPACE, ExtensionRoute("/gateway/v1/media/jobs/image-generations", 90)),
+)
+
+
+def _string_list(value: Any, name: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"{name} must be a list of strings")
+    return tuple(value)
+
+
+def load_extension_routes(
+    path: str | Path = _EXTENSION_ROWS_PATH,
+) -> Mapping[str, tuple[ExtensionRoute, ...]]:
+    """Read release registered_routes once; expose immutable, explicitly ordered facts."""
+    document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, Mapping) or not isinstance(document.get("records"), list):
+        raise ValueError("extension routes require a records list")
+    found: dict[str, list[ExtensionRoute]] = {namespace: [] for namespace in _EXTENSION_NAMESPACES}
+    orders: set[int] = set()
+    for namespace, residual in _RESIDUAL_EXTENSION_ROUTES:
+        found[namespace].append(residual)
+        orders.add(residual.order)
+    for record in document["records"]:
+        if not isinstance(record, Mapping):
+            raise ValueError("extension route record must be a mapping")
+        rows = record.get("registered_routes", [])
+        if not isinstance(rows, list):
+            raise ValueError("registered_routes must be a list")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise ValueError("registered route must be a mapping")
+            if not any(key in row for key in (
+                "extensions", "extension_order", "route_inputs", "workflow_targets",
+            )):
+                continue
+            namespaces = _string_list(row.get("extensions"), "extensions")
+            if not namespaces:
+                raise ValueError("extensions must not be empty")
+            for namespace in namespaces:
+                if namespace not in found:
+                    raise ValueError(f"unknown extension namespace: {namespace!r}")
+            if len(set(namespaces)) != len(namespaces):
+                raise ValueError("duplicate extension namespace")
+            order = row.get("extension_order")
+            if type(order) is not int:
+                raise ValueError("extension_order must be an integer")
+            if order in orders:
+                raise ValueError(f"duplicate extension_order: {order}")
+            orders.add(order)
+            route = row.get("canonical")
+            if not isinstance(route, str) or not route.startswith("/"):
+                raise ValueError("extension route needs a canonical path")
+            route_inputs = frozenset(_string_list(row.get("route_inputs", []), "route_inputs"))
+            prefixes: tuple[str, ...] = ()
+            route_intent: str | None = None
+            if WORKFLOW_EXTENSION_NAMESPACE in namespaces:
+                targets = row.get("workflow_targets")
+                if not isinstance(targets, Mapping):
+                    raise ValueError("workflow_targets must be a mapping")
+                route_intent = targets.get("route_intent")
+                if not isinstance(route_intent, str) or not route_intent:
+                    raise ValueError("workflow_targets needs route_intent")
+                prefixes = _string_list(targets.get("intent_prefixes"), "intent_prefixes")
+                if not prefixes:
+                    raise ValueError("intent_prefixes must not be empty")
+                if "route_inputs" not in row:
+                    raise ValueError("workflow route needs route_inputs")
+            elif "workflow_targets" in row or "route_inputs" in row:
+                raise ValueError("workflow_targets and route_inputs need the workflow extension")
+            entry = ExtensionRoute(route, order, route_inputs, prefixes, route_intent)
+            for namespace in namespaces:
+                found[namespace].append(entry)
+    return MappingProxyType({
+        namespace: tuple(sorted(rows, key=lambda row: row.order))
+        for namespace, rows in found.items()
+    })
+
+
+EXTENSION_ROUTES = load_extension_routes()
 
 
 def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str, Any]:
@@ -59,13 +138,8 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                 "description": "Per-request prompt retention choice; this control is removed before backend dispatch.",
                 "gateway_controls": [{"name": "mode", "values": ["forget"], "default": "member and household settings"}],
                 "routes": [
-                    {"route": route, "target": "gateway_prompt_policy", "controls": ["mode"]}
-                    for route in (
-                        "/v1/images/generations", "/v1/images/edits", "/v1/videos",
-                        "/v1/videos/extensions", "/v1/videos/workflows/{workflow_id}",
-                        "/v1/audio/generate", "/v1/audio/speech", "/v1/responses",
-                        "/gateway/v1/media/jobs/image-generations",
-                    )
+                    {"route": row.route, "target": "gateway_prompt_policy", "controls": ["mode"]}
+                    for row in EXTENSION_ROUTES[PROMPT_MEMORY_NAMESPACE]
                 ],
             },
             {
@@ -85,15 +159,15 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                 ],
                 "routes": [
                     {
-                        "route": route,
+                        "route": row.route,
                         "target": "workflow_manifest_inputs",
                         "targets": _targets_for_route(
                             workflow_targets,
-                            prefixes,
-                            route_intent=route_intent,
+                            row.intent_prefixes,
+                            route_inputs=row.route_inputs,
                         ),
                     }
-                    for route, prefixes, route_intent in _WORKFLOW_ROUTES
+                    for row in EXTENSION_ROUTES[WORKFLOW_EXTENSION_NAMESPACE]
                 ],
             },
             {
@@ -101,15 +175,11 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                 "description": "Gateway-owned chat diagnostics controls.",
                 "routes": [
                     {
-                        "route": "/v1/chat/completions",
+                        "route": row.route,
                         "target": "chat_extension_inputs",
                         "controls": _spec_names(CHAT_EXTENSION_SPECS),
-                    },
-                    {
-                        "route": "/v1/responses",
-                        "target": "chat_extension_inputs",
-                        "controls": _spec_names(CHAT_EXTENSION_SPECS),
-                    },
+                    }
+                    for row in EXTENSION_ROUTES[CHAT_EXTENSION_NAMESPACE]
                 ],
             },
             {
@@ -117,15 +187,11 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                 "description": "Gateway-owned routing hints that cannot override app profile policy.",
                 "routes": [
                     {
-                        "route": "/v1/chat/completions",
+                        "route": row.route,
                         "target": "routing_extension_inputs",
                         "controls": _spec_names(ROUTING_EXTENSION_SPECS),
-                    },
-                    {
-                        "route": "/v1/responses",
-                        "target": "routing_extension_inputs",
-                        "controls": _spec_names(ROUTING_EXTENSION_SPECS),
-                    },
+                    }
+                    for row in EXTENSION_ROUTES[ROUTING_EXTENSION_NAMESPACE]
                 ],
             },
         ],
@@ -171,10 +237,10 @@ def _targets_for_route(
     targets: Iterable[dict[str, Any]],
     prefixes: tuple[str, ...],
     *,
-    route_intent: str,
+    route_inputs: frozenset[str],
 ) -> list[dict[str, Any]]:
     return [
-        _with_route_owned_controls_removed(target, route_intent)
+        _with_route_owned_controls_removed(target, route_inputs)
         for target in targets
         if any(str(target["intent"]).startswith(prefix) for prefix in prefixes)
     ]
@@ -197,15 +263,14 @@ def _workflow_extension_controls(manifest: dict[str, Any]) -> list[str]:
 
 def _with_route_owned_controls_removed(
     target: dict[str, Any],
-    route_intent: str,
+    route_inputs: frozenset[str],
 ) -> dict[str, Any]:
-    route_managed = _ROUTE_MANAGED_WORKFLOW_INPUTS.get(route_intent, frozenset())
     workflows = []
     for workflow in target.get("workflows", []):
         controls = [
             name
             for name in workflow.get("controls", [])
-            if name not in route_managed
+            if name not in route_inputs
         ]
         workflows.append({"id": workflow["id"], "controls": controls})
     return {**target, "workflows": workflows}

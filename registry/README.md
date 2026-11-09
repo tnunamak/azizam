@@ -101,3 +101,34 @@ once from release data, in stable-alias roster order. Metadata is not inferred
 from route intent: the rerank row declares `type: reranking` even though its
 runtime policy shares the embeddings intent. Changing these rows requires a
 process restart; they are not owner-config metadata overrides.
+
+## Extension catalog route facts
+
+Serving `registered_routes` rows in `protocol_frontends.yml` may declare:
+
+- `extensions`: a nonempty list of known namespaces: `com.azizam.prompts`,
+  `com.azizam.workflow`, `com.azizam.chat`, `com.azizam.routing`.
+- `extension_order`: a globally unique integer that fixes public catalog order
+  independently of YAML row order. A row shared by namespaces has one position.
+- `route_inputs`: string input names owned by the route, excluded from workflow
+  extension controls. Required with the workflow extension.
+- `workflow_targets`: required with the workflow extension; `intent_prefixes`
+  is a nonempty string list and `route_intent` is a nonempty string. These are
+  discovery facts, not changes to runtime route policy.
+
+Rows without extension facts omit these keys. The loader rejects unknown
+namespaces, non-string inputs, missing route intents and duplicate order values
+(including residual positions), as well as malformed containers. Workflow-only
+keys require the workflow namespace. Audio/video inputs remain equal to their
+binder constants, enforced by `tests/test_extension_catalog_rows.py`.
+
+`gateway.extension_catalog.load_extension_routes(path)` reads only shipped
+`records[].registered_routes`, not `frontends` or owner configuration. The module
+builds its index once at import; the mapping, row tuples and row fields are
+read-only. Changes require a process restart.
+
+Two routes have no registered row: the dynamic workflow-video route and the
+media-jobs image-generations frontend. They remain in the named
+`_RESIDUAL_EXTENSION_ROUTES` tuple at orders 50 and 90 respectively; no registry
+rows are invented for them. Every other extension route fact belongs on its
+serving registered row.
