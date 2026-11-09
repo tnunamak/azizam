@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,12 @@ def _string_list(value: Any, name: str) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _route_identity(route: str) -> str:
+    """One route however it is spelled: no trailing slash, path parameters unnamed. Letter case stays (paths are
+    case-sensitive)."""
+    return re.sub(r"\{[^}/]*\}", "{}", route.rstrip("/") or "/")
+
+
 def load_extension_routes(
     path: str | Path = _EXTENSION_ROWS_PATH,
 ) -> Mapping[str, tuple[ExtensionRoute, ...]]:
@@ -66,7 +73,7 @@ def load_extension_routes(
     for namespace, residual in _RESIDUAL_EXTENSION_ROUTES:
         found[namespace].append(residual)
         orders.add(residual.order)
-        identities.add((namespace, residual.route))
+        identities.add((namespace, _route_identity(residual.route)))
     for record_number, record in enumerate(document["records"], start=1):
         if not isinstance(record, Mapping):
             raise ValueError("extension route record must be a mapping")
@@ -116,7 +123,7 @@ def load_extension_routes(
                 raise ValueError("workflow_targets and route_inputs need the workflow extension")
             entry = ExtensionRoute(route, order, route_inputs, prefixes, route_intent)
             for namespace in namespaces:
-                identity = (namespace, route)
+                identity = (namespace, _route_identity(route))
                 if identity in identities:
                     raise ValueError(
                         f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
