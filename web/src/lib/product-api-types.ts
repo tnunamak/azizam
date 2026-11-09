@@ -94,6 +94,13 @@ export interface CostHint {
   price_usd: number | null;
 }
 
+export interface RequiredMediaInput {
+  name: string;
+  label: string;
+  modality: string;
+  accepts: Array<string>;
+}
+
 export interface HomeCapability {
   capability_title?: string;
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
@@ -130,6 +137,7 @@ export interface HomeCapability {
   typical_seconds: number | null;
   cost_hint: CostHint;
   required_input_modalities: Array<string>;
+  required_media_inputs?: Array<RequiredMediaInput>;
   action_label: string;
   prompt_hint: string | null;
   input_words: Record<string, string>;

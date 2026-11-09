@@ -1062,3 +1062,125 @@ def test_owner_name_never_publishes_an_email(home_case):
     admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
                                  display_name="Robin", path=c.db)
     assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": "Robin"}
+
+# Required media inputs are per manifest input, not one per modality.
+def _required_media_case(manifest, monkeypatch):
+    from gateway import home_api
+
+    record = SimpleNamespace(id=manifest["id"], contract=manifest)
+    cap = Capability(intent=manifest["intent"], backend="service", workflow=record.id, policy_available=True,
+                     input_modalities=home_api._derive_input_modalities(
+                         home_api.settable_inputs(manifest), intent=manifest["intent"]))
+    # This slice projects already-visible capabilities, independently of engine availability.
+    monkeypatch.setattr(home_api, "project_capabilities", lambda caps, **_kwargs: list(caps))
+    return home_api, cap, record
+
+
+@pytest.mark.parametrize("filename,expected", [
+    ("video-ltx-2.5-keyframes.yml", [
+        {"name": "image", "label": "a starting picture", "modality": "image", "accepts": ["image/*"]},
+        {"name": "last_frame", "label": "an ending picture", "modality": "image", "accepts": ["image/*"]},
+    ]),
+    ("video-ltx-2.5-keyframes-mid.yml", [
+        {"name": "image", "label": "a starting picture", "modality": "image", "accepts": ["image/*"]},
+        {"name": "last_frame", "label": "an ending picture", "modality": "image", "accepts": ["image/*"]},
+        {"name": "mid_frame", "label": "a middle picture", "modality": "image", "accepts": ["image/*"]},
+    ]),
+    ("video-scail-2-replace.yml", [
+        {"name": "reference_image", "label": "a new character", "modality": "image", "accepts": ["image/*"]},
+        {"name": "source_video", "label": "a video to change", "modality": "video", "accepts": ["video/*"]},
+    ]),
+])
+def test_home_row_lists_each_required_media_input_in_manifest_order(filename, expected, monkeypatch):
+    from pathlib import Path
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    manifest = yaml.safe_load((root / "manifests" / "workflows" / filename).read_text())
+    home, cap, record = _required_media_case(manifest, monkeypatch)
+    row, = home._capability_rows([cap], {}, workflow_records=(record,))
+    assert row["required_media_inputs"] == expected
+    # The older, deduplicated modality contract is unchanged.
+    assert row["required_input_modalities"] == home._required_input_modalities(cap, (record,))
+    assert len(row["required_input_modalities"]) == len(set(row["required_input_modalities"]))
+    assert TypeAdapter(HomeCapability).dump_python(TypeAdapter(HomeCapability).validate_python(row)) == row
+
+
+def test_home_single_picture_skips_optional_nonsettable_and_nonasset_inputs(monkeypatch):
+    manifest = {"id": "image.edit.single-picture", "intent": "image.edit", "inputs": {
+        "prompt": {"type": "string", "required": True},
+        "picture": {"type": "asset", "label": "Your picture", "accepts": ["image/png", "image/jpeg"],
+                    "required": True},
+        "optional": {"type": "asset", "label": "Optional", "accepts": ["image/*"]},
+        "hidden": {"type": "asset", "label": "Hidden", "accepts": ["image/*"],
+                   "required": True, "settable": False},
+        "pictures": {"type": "array", "items": {"type": "asset", "accepts": ["image/*"]}, "required": True},
+    }}
+    home, cap, record = _required_media_case(manifest, monkeypatch)
+    row, = home._capability_rows([cap], {}, workflow_records=(record,))
+    assert row["required_media_inputs"] == [
+        {"name": "picture", "label": "Your picture", "modality": "image", "accepts": ["image/png", "image/jpeg"]},
+    ]
+
+
+def test_home_media_accepts_scalar_uses_the_existing_modality_derivation(monkeypatch):
+    home, cap, record = _required_media_case(
+        {"id": "video.edit.media", "intent": "video.edit", "inputs": {
+            "clip": {"type": "asset", "label": "Your clip", "accepts": "video/*", "required": True},
+        }}, monkeypatch)
+    calls = []
+
+    def derived(inputs, *, intent):
+        calls.append((inputs, intent))
+        return ("derived-modality",)
+
+    monkeypatch.setattr(home, "_derive_input_modalities", derived)
+    assert home._required_media_inputs(cap, (record,)) == [
+        {"name": "clip", "label": "Your clip", "modality": "derived-modality", "accepts": ["video/*"]},
+    ]
+    assert calls == [({"clip": {"type": "asset", "label": "Your clip",
+                                "accepts": ["video/*"], "required": True}}, "video.edit")]
+    assert record.contract["inputs"]["clip"]["accepts"] == "video/*"
+
+
+def test_home_omits_required_media_inputs_without_a_manifest(home_case):
+    rows = home_case.http.get("/me/api/home").json()["capabilities"]
+    assert rows
+    assert all("required_media_inputs" not in row for row in rows)
+
+
+def test_home_manifest_without_required_media_has_an_empty_list(monkeypatch):
+    home, cap, record = _required_media_case(
+        {"id": "image.generate.text-only", "intent": "image.generate", "inputs": {
+            "prompt": {"type": "string", "required": True},
+        }}, monkeypatch)
+    row, = home._capability_rows([cap], {}, workflow_records=(record,))
+    assert row["required_media_inputs"] == []
+
+
+# Frozen row and required-modality projections from 1d749a9c9a2a4452e6771a166c6d8c6b4594039b.
+# This independent base implementation must not call the new media-input helper.
+_BASE_HOME_ROW_PROJECTION = "def _capability_rows(capabilities, evidence, registry=None, alias_views=None, workflow_records=()) -> list[dict[str, Any]]:\n    rows = []\n    visible = project_capabilities(capabilities, service_records=registry, evidence=evidence,\n                                   workflow_records=workflow_records)\n    for cap in visible:\n        if not cap.policy_available:\n            continue\n        composed = (cap.availability if isinstance(cap.availability, Mapping)\n                    and (cap.availability.get(\"evidence\") or {}).get(\"source\") == \"dependencies\" else None)\n        if composed is not None:\n            # A gateway-composed workflow is as available as the engines it\n            # needs; the \"gateway\" pseudo-backend itself is never checked.\n            state = str(composed.get(\"status\") or \"unknown\")\n            reason = str(composed.get(\"reason_code\") or state)\n            product_availability = dict(composed)\n        else:\n            state, reason = _availability(cap, evidence, registry)\n            product_availability = project_service(cap.backend, service_records=registry, evidence=evidence,\n                                                   fallback_capability=cap).to_public_dict()\n        metadata = next((alias for view in (alias_views or {}).values() for alias in view.get(\"stable\", [])\n                         if alias.get(\"alias\") == cap.model and \"alias\" in cap.tags), None)\n        summary = summarize_capability(cap, \"client\")\n        summary.pop(\"reason\", None)\n        service = ((registry or {}).get(\"services\") or {}).get(cap.backend) or {}\n        remote = (\"remote\" in cap.tags or cap.backend_kind == \"remote\"\n                  or cap.cost_class not in {None, \"free-local\"}\n                  or is_remote_provider_config(service.get(\"config\") or {}))\n        if not remote and _declared_local_fast(cap, registry or {}):\n            summary[\"backend_kind\"] = \"local\"\n        elif remote:\n            summary[\"backend_kind\"] = \"remote\"\n        product_availability.pop(\"reason\", None)\n        product_availability.pop(\"engine\", None)\n        product_availability[\"reason_code\"] = reason\n        rows.append({**summary, **capability_presentation(cap, metadata),\n                     \"status\": state, \"available\": state in {\"ready\", \"idle\"}, \"reason_code\": reason,\n                     \"availability\": product_availability,\n                     \"typical_seconds\": _typical_seconds(cap, registry, workflow_records),\n                     \"required_input_modalities\": _required_input_modalities(cap, workflow_records),\n                     \"action_label\": _action_label(cap),\n                     \"prompt_hint\": cap.prompt_hint,\n                     \"input_words\": {modality: asset_types.input_word(modality)\n                                     for modality in cap.input_modalities if modality != \"text\"},\n                     \"recordable_input_modalities\": list(cap.recordable_inputs),\n                     \"cost_hint\": _cost_hint(summary.get(\"backend_kind\"), cap, registry)})\n    return rows\n\ndef _required_input_modalities(cap: Capability, workflow_records) -> list[str]:\n    \"\"\"The input modalities a request must carry, in the order the capability lists its inputs.\n\n    A workflow says so in its manifest: an input is required when it declares ``required: true``. A capability with no\n    manifest (a model on an engine) has no such flags, so a request is about its text when it takes text, and otherwise\n    needs everything it takes. The rest of ``input_modalities`` is optional.\n    \"\"\"\n    declared = list(cap.input_modalities)\n    record = next((item for item in workflow_records if item.id == cap.workflow), None) if cap.workflow else None\n    inputs = settable_inputs(record.contract or {}) if record is not None else None\n    if isinstance(inputs, Mapping) and inputs:\n        required = _derive_input_modalities(\n            {name: spec for name, spec in inputs.items() if isinstance(spec, Mapping) and spec.get(\"required\") is True},\n            intent=cap.intent)\n        return [modality for modality in declared if modality in required]\n    return [\"text\"] if \"text\" in declared else declared\n"
+
+
+def test_every_other_home_row_field_is_unchanged_for_all_shipped_workflows(monkeypatch):
+    from pathlib import Path
+    import yaml
+    from gateway import home_api
+
+    root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+    paths = sorted({*root.rglob("*.yml"), *root.rglob("*.yaml")})
+    assert paths, "the shipped workflow inventory must not be empty"
+    seen = set()
+    for path in paths:
+        manifest = yaml.safe_load(path.read_text())
+        home, cap, record = _required_media_case(manifest, monkeypatch)
+        assert record.id not in seen
+        seen.add(record.id)
+        namespace = dict(vars(home_api))
+        exec(_BASE_HOME_ROW_PROJECTION, namespace)
+        before = namespace["_capability_rows"]([cap], {}, workflow_records=(record,))
+        after = home._capability_rows([cap], {}, workflow_records=(record,))
+        assert len(before) == len(after) == 1, record.id
+        assert {key: value for key, value in after[0].items() if key != "required_media_inputs"} == before[0], record.id
+        assert "required_media_inputs" in after[0], record.id

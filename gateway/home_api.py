@@ -289,6 +289,9 @@ def _capability_rows(capabilities, evidence, registry=None, alias_views=None, wo
                                      for modality in cap.input_modalities if modality != "text"},
                      "recordable_input_modalities": list(cap.recordable_inputs),
                      "cost_hint": _cost_hint(summary.get("backend_kind"), cap, registry)})
+        required_media = _required_media_inputs(cap, workflow_records)
+        if required_media is not None:
+            rows[-1]["required_media_inputs"] = required_media
     return rows
 
 
@@ -319,6 +322,23 @@ def _required_input_modalities(cap: Capability, workflow_records) -> list[str]:
             intent=cap.intent)
         return [modality for modality in declared if modality in required]
     return ["text"] if "text" in declared else declared
+
+
+def _required_media_inputs(cap: Capability, workflow_records) -> list[dict[str, Any]] | None:
+    """One entry per required settable asset, in manifest order; no manifest means no field."""
+    record = next((item for item in workflow_records if item.id == cap.workflow), None) if cap.workflow else None
+    if record is None:
+        return None
+    rows = []
+    for name, spec in settable_inputs(record.contract or {}).items():
+        if not isinstance(spec, Mapping) or spec.get("required") is not True or spec.get("type") != "asset":
+            continue
+        declared = spec.get("accepts")
+        accepts = [declared] if isinstance(declared, str) else list(declared or [])
+        modalities = _derive_input_modalities({name: {**spec, "accepts": accepts}}, intent=cap.intent)
+        rows.append({"name": name, "label": spec.get("label", ""), "modality": next(iter(modalities), "file"),
+                     "accepts": accepts})
+    return rows
 
 
 def _typical_seconds(cap: Capability, registry: Mapping[str, Any] | None, workflow_records) -> float | None:
