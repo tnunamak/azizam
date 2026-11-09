@@ -1132,7 +1132,7 @@ describe("the composer follows the chosen capability's declared inputs", () => {
       expect(beforeChips).toHaveFocus();
       for (const name of names) {
         await user.tab();
-        const button = screen.getByRole("button", { name, exact: true });
+        const button = screen.getByRole("button", { name });
         expect(button).toHaveFocus();
         expect(button.tabIndex).toBe(0);
       }
