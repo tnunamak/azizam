@@ -198,6 +198,12 @@ and a reason. Nothing else may differ.
   `GATEWAY_RESTARTED` by startup recovery (M1).
 - `contract_manifest_hash`: a receipt's `manifest_hash` is the hash of the workflow's schema-2 contract, the record the
   run used; the old routes hashed the old manifest file. `manifest_id` and `manifest_version` keep their values.
+- `receipt_status_words`: a row receipt closes as `succeeded` where the old image route wrote `ok`, and as `failed` (with
+  `metadata.terminal_reason`) where it wrote `error`. A refusal of the request (a 4xx: policy, body, unknown model) still
+  closes as `rejected`; the lifecycle owner accepts `rejected` as a terminal status. The Usage and Activity pages label
+  both vocabularies the same way. Test `test_images_receipt_status_words_refusal_is_rejected_service_state_is_failed`.
+- `event_driven_wait` is not a delta: the 0.1 s poll in `JobService.wait` was a defect. The writer that ends a job wakes
+  its waiters (`gateway/job_wake.py`); a bounded 1 s fallback read covers a job another process ends.
 - `refusal_precedence`: a request with several faults gets the first refusal of authentication, route policy, body
   validation, service state (section 6.4). The old image route validated the body before policy; the old audio route
   checked the service before reading the body.
