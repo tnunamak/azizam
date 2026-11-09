@@ -405,6 +405,8 @@ def test_video_1_05_same_idempotency_key_twice_submits_once(tmp_path):
     assert seen["prompts"] == 1
 
 
+@pytest.mark.xfail(strict=True, reason="open item P8: a create answers 200 queued before the engine is asked, and the body must not name "
+                   "the engine address (see test_video_11b in test_s7_parity_video_create.py)")
 def test_video_1_11_engine_unreachable_is_502_with_the_engine_url(tmp_path):
     """video-11: an unreachable engine answers 502 `api_error` and names the engine URL (golden video_create_unreachable)."""
     seen = {}
@@ -1040,6 +1042,8 @@ def test_openai_alias_create_answers_as_the_canonical_route(tmp_path):
     assert seen["alias"] == seen["canonical"]
 
 
+@pytest.mark.xfail(strict=True, reason="open item P8: the engine is asked after the create has answered, so a refused or id-less prompt fails the "
+                   "job; it no longer answers 502 at create and stores no video")
 @pytest.mark.parametrize("failure", ["refused", "no_prompt_id"])
 def test_video_engine_submit_failures_are_502_and_store_nothing(tmp_path, failure):
     """Engine prompt refusals and a prompt answer without an id: 502, and no video is stored."""

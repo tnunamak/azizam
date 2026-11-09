@@ -317,6 +317,12 @@ def test_video_10_create_submits_exactly_one_engine_prompt(world):
     run(drive())
 
 
+CREATE_ANSWERS_BEFORE_THE_ENGINE = pytest.mark.xfail(
+    strict=True, reason="open item P8: a create answers 200 queued once the job is stored, before the engine is asked, so an "
+                        "unreachable engine fails the job and no longer answers 502 at create")
+
+
+@CREATE_ANSWERS_BEFORE_THE_ENGINE
 def test_video_11_unreachable_engine_leaves_no_video_or_media_job(world):
     async def drive():
         world.engine.down = True
@@ -325,6 +331,23 @@ def test_video_11_unreachable_engine_leaves_no_video_or_media_job(world):
         assert response.json()["error"] == {"message": f"ComfyUI unavailable at http://{HOST}", "type": "api_error"}
         assert (await world.rig.call("GET", "/v1/videos")).json()["data"] == []
         assert rows(world.rig.media_jobs_db, "media_jobs") == []        # the run core wrote no job
+    run(drive())
+
+
+def test_video_11b_an_unreachable_engine_fails_the_job_and_no_body_names_its_address(world):
+    """P8 (new behaviour, a delta): the create is stored and answered first; the job then fails with a stable code, and neither the
+    create answer nor the job's status nor its content names the engine's address."""
+    async def drive():
+        world.engine.down = True
+        made = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
+        assert made.status_code == 200 and made.json()["status"] == "queued", made.text
+        video_id = made.json()["id"]
+        failed = await await_status(world, video_id, "failed")
+        content = await world.rig.call("GET", f"/v1/videos/{video_id}/content")
+        assert failed["error"]["code"], failed
+        for text in (made.text, json.dumps(failed), content.text):
+            assert HOST not in text and "comfy.fk.test" not in text, text
+        assert content.status_code >= 400
     run(drive())
 
 
