@@ -44,9 +44,27 @@ def seed(path, case):
         path.mkdir()
         return 3, "store_unreadable", [], []
     if case == "uninitialized":
+        # A 0-byte file (a wrong path, or a store truncated by a failed
+        # deploy) holds no job table, so it proves nothing: refuse it.
         with sqlite3.connect(path):
             pass
-        return 0, None, [], []
+        return 3, "store_unreadable", [], []
+    if case == "other-tables":
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE sentinel (x)")
+        return 3, "store_unreadable", [], []
+    if case == "scalar-job-json":
+        # Valid JSON that is not an object must refuse, not crash.
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                "CREATE TABLE media_jobs "
+                "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO media_jobs VALUES (?, ?, ?, ?)",
+                ("odd", "saved.workflow", "queued", '"42"'),
+            )
+        return 3, "store_unreadable", [], []
     if case == "old-schema":
         # Historical schema without application initialization, matching
         # test_workflow_run_contracts.py:544-563.
@@ -121,7 +139,8 @@ def run_cli(tmp_path, path, *args):
 @pytest.mark.parametrize("json_output", [False, True], ids=["text", "json"])
 @pytest.mark.parametrize("case", [
     "empty", "running", "retained-deleted", "queued-v2",
-    "old-schema", "uninitialized", "missing", "text", "directory",
+    "old-schema", "uninitialized", "other-tables", "scalar-job-json",
+    "missing", "text", "directory",
 ])
 def test_readiness_cli_preserves_source_and_reports_inventory(tmp_path, case, json_output):
     # URI punctuation must name this exact path, never become URI options.
