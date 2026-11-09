@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+from urllib.parse import quote
 
 from starlette.responses import JSONResponse, Response
 
@@ -29,10 +31,24 @@ BODY_FACTS = (("model", "model"), ("size", "size"), ("seconds", "seconds"), ("ac
 # Where an older job (no recorded facts) kept the same things: the names its result metadata used.
 LEGACY_VIEW_FACTS = ("model", "size", "seconds", "azizam_resolved_model", "remixed_from_video_id", "extended_from_video_id",
                      "total_seconds")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 NOT_ACCESSIBLE = "Full metadata is available only to the maker while their prompt is kept."
 
 # Called with (wire id, asset id, file name, media type, the request's facts) after a maker's first fetch of a finished job.
 DeliveryNote = Callable[[str, str, str, str, RequestFacts], None]
+
+
+def download_name(filename: Any) -> str:
+    """The engine's file name as a download name: its last path part, with control characters dropped; "" when none is left."""
+    return _CONTROL.sub("", posixpath.basename(filename)) if isinstance(filename, str) else ""
+
+
+def content_disposition(name: str) -> str:
+    """An inline ``Content-Disposition`` for ``name`` (RFC 6266): a quoted ASCII fallback that cannot end the quoted string,
+    and, when the name differs from it, the real name as ``filename*`` (RFC 5987, UTF-8, percent-encoded)."""
+    fallback = "".join(c if " " <= c < "\x7f" and c not in '"\\' else "_" for c in name)
+    value = f'inline; filename="{fallback}"'
+    return value if fallback == name else f"{value}; filename*=UTF-8''{quote(name, safe='')}"
 
 
 class VideoViews:
@@ -68,7 +84,7 @@ class VideoViews:
             "created_at": view.created_at_s, "completed_at": view.finished_at_s if view.status in TERMINAL else None,
             "expires_at": view.created_at_s + EXPIRES_AFTER_S if view.created_at_s is not None else None,
             "prompt": getattr(facts, "prompt", None), "remixed_from_video_id": None, "error": None, "updated_at": view.updated_at_s}
-        if facts:                       # the facts the request kept; none kept (an older job) falls back to the result metadata
+        if facts is not None and getattr(facts, "recorded", True):     # a job with no record at all (an older one) falls back to the result metadata
             for key, name in BODY_FACTS:
                 if facts.get(key) is not None:
                     body[name] = facts[key]
@@ -141,7 +157,8 @@ class VideoViews:
             return JSONResponse({"error": {"code": "prompt_not_accessible", "message": NOT_ACCESSIBLE}}, status_code=403)
         content = self.read(view, ref, jobs, caller)
         filename = view.result_metadata.get("filename")
-        suffix = posixpath.splitext(filename)[1].lower() if isinstance(filename, str) else ""
+        name = download_name(filename)
+        suffix = posixpath.splitext(name)[1].lower()
         media_type = MEDIA_TYPES.get(suffix, FALLBACK_MEDIA_TYPE) if suffix else ref.media_type
         try:
             if mode == provenance.METADATA_NONE:
@@ -151,7 +168,8 @@ class VideoViews:
         current = jobs.get(view.job_id, caller)           # the cancel fence: a job canceled or deleted while its file was
         if current is None or current.status != "succeeded":      # read publishes nothing and delivers nothing
             return self.unknown_id()
+        headers = {"Content-Disposition": content_disposition(name)} if name else {}
+        answer = Response(content=content, media_type=media_type, headers=headers)      # built first: a failure here tells no one
         if on_delivered is not None and facts is not None and facts.maker_person_id is not None and ref.asset_id:
-            on_delivered(self.wire_id(view.job_id), ref.asset_id, filename if isinstance(filename, str) else "", media_type, facts)
-        headers = {"Content-Disposition": f'inline; filename="{posixpath.basename(filename)}"'} if isinstance(filename, str) and filename else {}
-        return Response(content=content, media_type=media_type, headers=headers)
+            on_delivered(self.wire_id(view.job_id), ref.asset_id, name, media_type, facts)
+        return answer

@@ -1191,7 +1191,7 @@ class WorkflowJobService:
         if own and self._prompt_lookup is not None:
             with contextlib.suppress(Exception):
                 prompt = self._prompt_lookup(job_id, maker)
-        return RequestFacts(values, prompt=prompt, maker_person_id=maker if own else None)
+        return RequestFacts(values, prompt=prompt, maker_person_id=maker if own else None, recorded=isinstance(recorded, Mapping))
 
     def list(self, caller: CallerContext, *, intents: Sequence[str], limit: int, after_id: str | None = None,
              after_key: tuple[int, str] | None = None, order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:

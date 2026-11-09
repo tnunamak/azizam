@@ -9,11 +9,14 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import httpx
+import pytest
+
 import proxy
 from gateway import media_jobs
 from gateway.workflow_run import REQUEST_FACTS_KEY, RESULT_METADATA_KEY, request_facts_record
 from tests.support.access import authenticated, identity
-from tests.support.adapter_differential_rig import GatewayRig
+from tests.support.adapter_differential_rig import GatewayRig, history_done
 from tests.support.fake_upstream import HandlerTransport
 from tests.support.s7_parity_images_rig import mount_rows
 from tests.test_s7_parity_video_lifecycle import ALICE as PLAIN_ALICE, HOST, PLAN, Engine
@@ -96,6 +99,14 @@ def test_a_run_job_from_before_facts_were_recorded_keeps_its_model_size_and_seco
     serve(tmp_path, exercise)
 
 
+def test_an_empty_record_of_facts_is_a_record_and_takes_nothing_from_the_result_metadata_on_status(tmp_path):
+    async def exercise(rig, call):
+        job = seed(rig, "succeeded", created_at=1_800_000_100, facts={}, result={"model": "engine-model", "size": "640x360"})
+        body = (await call("GET", f"/v1/videos/video_{job}")).json()
+        assert "model" not in body and "size" not in body and body["azizam_status"] == "succeeded"
+    serve(tmp_path, exercise)
+
+
 def test_recorded_facts_stand_alone_and_are_not_mixed_with_the_result_metadata_on_status(tmp_path):
     async def exercise(rig, call):
         job = seed(rig, "succeeded", created_at=1_800_000_100, facts={"model": "asked-model"},
@@ -106,23 +117,32 @@ def test_recorded_facts_stand_alone_and_are_not_mixed_with_the_result_metadata_o
 
 
 class FinishingEngine(Engine):
-    """The engine of the lifecycle tests, but a prompt it accepts is finished at once."""
+    """The engine of the lifecycle tests, but a prompt it accepts is finished at once, with a file of the name it is given."""
+
+    output_name = "clip.mp4"
 
     async def handle(self, request):
+        if request.method == "GET" and request.url.path.startswith("/history/") and self.states.get(request.url.path.rsplit("/", 1)[-1]) == "completed":
+            await request.aread()
+            pid = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(200, json=history_done("images", self.output_name, prompt_id=pid, node="60"))
         response = await super().handle(request)
         if request.method == "POST" and request.url.path == "/prompt":
             self.states[response.json()["prompt_id"]] = "completed"
         return response
 
 
-def test_a_video_the_runner_made_is_delivered_under_the_name_the_engine_gave_its_file(tmp_path):
+def download(tmp_path, output_name: str):
+    """Make a video through the real runner over an engine that names its file ``output_name``, and download it."""
     with GatewayRig("filename-from-runner", tmp_path) as rig:
         engine = FinishingEngine()
+        engine.output_name = output_name
         rig.fakes.router.add_transport(HOST, HandlerTransport(engine.handle))
         rig.set(proxy, "COMFY_HOST", f"http://{HOST}")
         rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
             "enabled": True, "host": HOST, "port": 80, "protocol": "node-graph"}})
         mount_rows(rig)
+
         async def exercise():
             with authenticated(PLAIN_ALICE):
                 made = await rig.call("POST", "/__row/v1/videos", json_body={"prompt": "waves at dusk", "model": "ltx-2.5-t2v"})
@@ -136,7 +156,24 @@ def test_a_video_the_runner_made_is_delivered_under_the_name_the_engine_gave_its
                 assert status.json()["azizam_status"] == "succeeded", status.text
                 return await rig.call("GET", f"/v1/videos/{video_id}/content", params={"metadata": "none"})
 
-        content = asyncio.run(exercise())
-        assert content.status_code == 200, content.text
-        assert content.headers["content-disposition"] == 'inline; filename="clip.mp4"'
-        assert content.headers["content-type"] == "video/mp4"
+        return asyncio.run(exercise())
+
+
+def test_a_video_the_runner_made_is_delivered_under_the_name_the_engine_gave_its_file(tmp_path):
+    content = download(tmp_path, "clip.mp4")
+    assert content.status_code == 200, content.text
+    assert content.headers["content-disposition"] == 'inline; filename="clip.mp4"'
+    assert content.headers["content-type"] == "video/mp4"
+
+
+@pytest.mark.parametrize(("output_name", "fallback", "encoded"), [
+    ("動画.mp4", "__.mp4", "%E5%8B%95%E7%94%BB.mp4"),
+    ('clip"; filename="second.mp4', "clip_; filename=_second.mp4", "clip%22%3B%20filename%3D%22second.mp4"),
+    ("a\r\nX-Evil: 1.mp4", "aX-Evil: 1.mp4", None),
+], ids=["non-ascii", "quote", "crlf"])
+def test_a_file_name_the_engine_gave_never_breaks_the_download_header(tmp_path, output_name, fallback, encoded):
+    content = download(tmp_path, output_name)
+    assert content.status_code == 200, content.text
+    star = f"; filename*=UTF-8''{encoded}" if encoded else ""
+    assert content.headers.get_list("content-disposition") == [f'inline; filename="{fallback}"{star}']
+    assert "x-evil" not in content.headers and content.headers["content-type"] == "video/mp4"

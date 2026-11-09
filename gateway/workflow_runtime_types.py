@@ -436,14 +436,17 @@ class RequestFacts(Mapping[str, Any]):
     """The facts recorded on a job at create, as a read-only mapping over ``REQUEST_FACT_KEYS``.
 
     ``prompt`` is filled only for the job's maker, and only while the prompt-memory rules still keep the text.
-    ``maker_person_id`` is the maker's own id for the maker, and None for any other reader."""
+    ``maker_person_id`` is the maker's own id for the maker, and None for any other reader. ``recorded`` tells a job that
+    kept an (empty) record from one that kept none."""
 
-    __slots__ = ("_values", "prompt", "maker_person_id")
+    __slots__ = ("_values", "prompt", "maker_person_id", "recorded")
 
-    def __init__(self, values: Mapping[str, Any], *, prompt: str | None = None, maker_person_id: str | None = None) -> None:
+    def __init__(self, values: Mapping[str, Any], *, prompt: str | None = None, maker_person_id: str | None = None,
+                 recorded: bool = True) -> None:
         self._values = dict(values)
         self.prompt = prompt
         self.maker_person_id = maker_person_id
+        self.recorded = recorded            # False: the job kept no record of facts at all (an older job), not an empty one
 
     def __getitem__(self, key: str) -> Any:
         return self._values[key]

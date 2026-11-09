@@ -275,3 +275,24 @@ def test_the_library_index_of_a_job_takes_the_maker_from_the_facts_and_a_repeat_
                                                  media_type="video/mp4", record=facts)
     assert first is not None and again is not None and first.job_id == again.job_id
     assert first.maker_person_id == "person-1"
+
+
+def test_nothing_is_told_to_the_library_when_the_response_cannot_be_built(shape, served, monkeypatch):
+    from gateway.frontend_shapes import video_views
+    core, jobs = served
+    done = finished(core, jobs)
+    told = []
+
+    def refuse(*args, **kwargs):
+        raise UnicodeEncodeError("latin-1", "x", 0, 1, "cannot encode")
+
+    monkeypatch.setattr(video_views, "Response", refuse)
+    with pytest.raises(UnicodeEncodeError):
+        shape.render_bytes(done, jobs, None, caller_person_id="p1", on_delivered=lambda *a: told.append(a))
+    assert told == []
+
+
+def test_a_recorded_empty_set_of_facts_shows_nothing_from_the_result_metadata(shape):
+    older = view(status="succeeded", result_metadata={"model": "m", "size": "640x480"})
+    assert "model" not in body(shape.render_status(older, RequestFacts({}, recorded=True)))
+    assert body(shape.render_status(older, RequestFacts({}, recorded=False)))["model"] == "m"
