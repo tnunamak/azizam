@@ -1,0 +1,882 @@
+diff --git a/gateway/media_jobs.py b/gateway/media_jobs.py
+index 7a206067b..df8a1a50e 100644
+--- a/gateway/media_jobs.py
++++ b/gateway/media_jobs.py
+@@ -466,60 +466,62 @@ CREATE TABLE IF NOT EXISTS result_json (
+   maker_person_id TEXT,
+   maker_credential_id TEXT,
+   maker_connection_id TEXT,
+   value BLOB NOT NULL,
+   created REAL NOT NULL
+ );
+ CREATE INDEX IF NOT EXISTS result_json_job ON result_json(job_id);
+ CREATE TABLE IF NOT EXISTS result_bundle (
+   job_id TEXT PRIMARY KEY,
+   attempt INTEGER NOT NULL,
+   bundle_ref TEXT NOT NULL,
+   summary_json TEXT NOT NULL,
+   published_at REAL NOT NULL,
+   receipt_linked_at REAL
+ );
+ """
+ 
+ 
+ def _apply_pragmas(conn: sqlite3.Connection) -> None:
+     conn.execute("PRAGMA journal_mode=WAL;")
+     conn.execute("PRAGMA synchronous=NORMAL;")
+     conn.execute("PRAGMA temp_store=MEMORY;")
+     conn.execute("PRAGMA secure_delete=ON;")
+     conn.execute("PRAGMA busy_timeout=5000;")
+     conn.execute("PRAGMA foreign_keys=ON;")
+ 
+ 
+ def _exec_schema(conn: sqlite3.Connection) -> None:
+     conn.executescript(_SCHEMA)
+     conn.executescript(media_input_leases.DDL)  # leases and ingest markers (gateway/media_input_leases.py)
++    conn.executescript(RUN_CLAIM_DDL)
++    conn.executescript(TOMBSTONE_DDL)
+     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
+     previous_version = int(row[0]) if row is not None else None
+     if row is None:
+         conn.execute(
+             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
+             (SCHEMA_VERSION,),
+         )
+     elif previous_version not in (1, 2, 3, 4, 5, SCHEMA_VERSION):
+         raise sqlite3.DatabaseError(
+             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
+         )
+     # Migrate under a write lock: reopening an old store is safe and retains
+     # every row. Historical events have unknown provenance, never trusted.
+     if not conn.in_transaction:
+         conn.execute("BEGIN IMMEDIATE")
+     columns = {r[1] for r in conn.execute("PRAGMA table_info(media_job_events)")}
+     if "sequence" not in columns:
+         conn.execute("ALTER TABLE media_job_events ADD COLUMN sequence INTEGER")
+     if "source" not in columns:
+         conn.execute("ALTER TABLE media_job_events ADD COLUMN source TEXT NOT NULL DEFAULT 'unavailable'")
+     if "attempt_number" not in columns:
+         conn.execute("ALTER TABLE media_job_events ADD COLUMN attempt_number INTEGER")
+     destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
+     if "created_at" not in destination_columns:
+         conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+     # Version 6: the maker stamp. Rows made before it keep NULL, which means no maker and no reader (fail closed).
+     job_columns = {r[1] for r in conn.execute("PRAGMA table_info(media_jobs)")}
+     for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
+         if column not in job_columns:
+             conn.execute(f"ALTER TABLE media_jobs ADD COLUMN {column} TEXT")
+@@ -734,109 +736,288 @@ class IdempotencyConflict(ValueError):
+     status_code = 409
+     code = "idempotency_conflict"
+ 
+     def __init__(self) -> None:
+         super().__init__("idempotency key conflicts with the owner, operation, or input")
+ 
+ 
+ def _input_hash(job: MediaJob, input_data: Mapping[str, Any] | None = None) -> str:
+     # Capture immutable submission facts before workers add progress metadata.
+     data = {"intent": job.intent, "workflow": job.workflow, "backend": job.backend,
+             "metadata": job.metadata, "assets": job.assets}
+     if input_data is not None:
+         data["input"] = input_data
+     return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False,
+                                      separators=(",", ":")).encode()).hexdigest()
+ 
+ 
+ def _receipt_link_candidate(data: Mapping[str, Any]) -> str | None:
+     """Keep an explicit receipt or parent before falling back to a legacy key.
+ 
+     A fallback is only a lookup candidate: projections must load a real receipt.
+     Seeded dedupe fingerprints are never receipts and must remain erasable.
+     """
+     for name in ("creating_receipt_id", "parent_request_id", "request_id"):
+         value = data.get(name)
+         if isinstance(value, str) and value and not value.startswith("imgjob_seeded_"):
+             return value
+     return None
+ 
+ 
++RUN_CLAIM_DDL = """CREATE TABLE IF NOT EXISTS workflow_run_claim (
++  owner_scope TEXT NOT NULL,
++  maker TEXT NOT NULL,
++  idem_key TEXT NOT NULL,
++  identity TEXT NOT NULL,
++  holder TEXT NOT NULL,
++  job_id TEXT,
++  claimed_at REAL NOT NULL,
++  PRIMARY KEY (owner_scope, maker, idem_key)
++);
++CREATE INDEX IF NOT EXISTS workflow_run_claim_job ON workflow_run_claim(job_id)"""
++
++
++@dataclass(frozen=True)
++class RunClaimFence:
++    """The claim a fenced ``create`` must still hold: it is checked, and then set to name the job, inside the write
++    transaction that inserts the job (CODE_TO_DATA_S4_S8 section 7.2)."""
++
++    owner_scope: str
++    maker: str
++    key: str
++    holder: str
++
++
++@dataclass(frozen=True)
++class RunClaim:
++    """What ``claim_run_key`` found. ``held``: this holder owns an undecided claim. ``replay``: the key names ``job_id``.
++    ``conflict``: another identity owns the key. ``busy``: the same identity is held by a live holder."""
++
++    outcome: Literal["held", "replay", "conflict", "busy"]
++    job_id: str | None = None
++
++
++class ClaimLost(RuntimeError):
++    """The fenced ``create`` found the claim taken over or decided. Nothing was drawn, adopted or stored."""
++
++
++def claim_run_key(
++    *, owner_scope: str, maker: str, key: str, identity: str, holder: str, lease_s: float,
++    now: float | None = None, path: Path = DB_PATH,
++) -> RunClaim:
++    """Claim an idempotency key in one write transaction (section 7.2, step 1). A claim that names a job that is gone
++    or past the replay window is stale and is replaced. An undecided claim older than ``lease_s`` is taken over by
++    rewriting its ``holder``; the old holder's fence then matches nothing."""
++    stamp = time.time() if now is None else now
++    with _conn(path) as conn:
++        conn.execute("BEGIN IMMEDIATE")
++        try:
++            row = conn.execute(
++                "SELECT identity, holder, job_id, claimed_at FROM workflow_run_claim "
++                "WHERE owner_scope=? AND maker=? AND idem_key=?", (owner_scope, maker, key)).fetchone()
++            if row is None:
++                conn.execute("INSERT INTO workflow_run_claim VALUES (?,?,?,?,?,NULL,?)",
++                             (owner_scope, maker, key, identity, holder, stamp))
++                conn.commit()
++                return RunClaim("held")
++            known_identity, old_holder, job_id, claimed_at = row
++            take_over = False
++            if job_id is not None:
++                job = conn.execute("SELECT status, updated_at FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
++                if job is None or not _replays(job[0], job[1]):
++                    take_over = True  # the job is gone or past the replay window: the key is free again
++                elif known_identity != identity:
++                    conn.rollback()
++                    return RunClaim("conflict")
++                else:
++                    conn.rollback()
++                    return RunClaim("replay", job_id)
++            else:
++                expired = stamp - claimed_at > lease_s
++                if known_identity != identity and not expired:
++                    conn.rollback()
++                    return RunClaim("conflict")
++                if not expired:
++                    conn.rollback()
++                    return RunClaim("busy")
++                take_over = True
++            if take_over:
++                moved = conn.execute(
++                    "UPDATE workflow_run_claim SET identity=?, holder=?, job_id=NULL, claimed_at=? "
++                    "WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? AND job_id IS ?",
++                    (identity, holder, stamp, owner_scope, maker, key, old_holder, job_id)).rowcount
++                if moved != 1:
++                    conn.rollback()
++                    return RunClaim("busy")
++            conn.commit()
++            return RunClaim("held")
++        except BaseException:
++            if conn.in_transaction:
++                conn.rollback()
++            raise
++
++
++def get_run_claim(*, owner_scope: str, maker: str, key: str, path: Path = DB_PATH) -> tuple[str, str | None, str] | None:
++    """The (holder, job_id, identity) of a claim, read in one statement, or None when it is gone."""
++    with _conn(path) as conn:
++        row = conn.execute(
++            "SELECT holder, job_id, identity FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=?",
++            (owner_scope, maker, key)).fetchone()
++    return (row[0], row[1], row[2]) if row else None
++
++
++def release_run_claim(fence: RunClaimFence, *, path: Path = DB_PATH) -> bool:
++    """Drop this holder's undecided claim (step 7). A claim another holder took over, or one that names a job, stays."""
++    with _conn(path) as conn:
++        conn.execute("BEGIN IMMEDIATE")
++        gone = conn.execute(
++            "DELETE FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? AND job_id IS NULL",
++            (fence.owner_scope, fence.maker, fence.key, fence.holder)).rowcount
++        conn.commit()
++    return gone == 1
++
++
++TOMBSTONE_DDL = """CREATE TABLE IF NOT EXISTS workflow_job_tombstone (
++  job_id TEXT PRIMARY KEY,
++  deleted_at INTEGER NOT NULL
++);
++CREATE INDEX IF NOT EXISTS workflow_job_tombstone_at ON workflow_job_tombstone(deleted_at)"""
++
++
++def tombstone_job(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> None:
++    """Mark a job deleted. Readers that honour tombstones (``tombstoned``, ``recent``) stop showing it at once, and
++    ``reap_tombstones`` removes it after the retention window. Marking twice keeps the first time."""
++    with _conn(path) as conn:
++        conn.execute("BEGIN IMMEDIATE")
++        conn.execute("INSERT OR IGNORE INTO workflow_job_tombstone(job_id, deleted_at) VALUES (?, ?)",
++                     (job_id, _now() if now is None else int(now)))
++        conn.commit()
++
++
++def tombstoned(job_id: str, *, path: Path = DB_PATH) -> bool:
++    with _conn(path) as conn:
++        return conn.execute("SELECT 1 FROM workflow_job_tombstone WHERE job_id=?", (job_id,)).fetchone() is not None
++
++
++def reap_tombstones(*, before: int, path: Path = DB_PATH) -> int:
++    """Remove every job tombstoned at or before ``before`` (a unix time), with its events, envelope, results and claim.
++    Returns how many jobs went."""
++    with _conn(path) as conn:
++        conn.execute("BEGIN IMMEDIATE")
++        try:
++            ids = [row[0] for row in conn.execute(
++                "SELECT job_id FROM workflow_job_tombstone WHERE deleted_at <= ?", (int(before),))]
++            for start in range(0, len(ids), 500):
++                chunk = ids[start:start + 500]
++                marks = ",".join("?" for _ in chunk)
++                conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", chunk)
++                conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", chunk)
++                _release_envelopes_in(conn, chunk)
++                conn.execute(f"DELETE FROM workflow_job_tombstone WHERE job_id IN ({marks})", chunk)
++            conn.commit()
++        except Exception:
++            conn.rollback()
++            raise
++    return len(ids)
++
++
+ def create(
+     job: MediaJob | Mapping[str, Any],
+     *,
+     outstanding_limits: Iterable[OutstandingLimit] = (),
+     input_data: Mapping[str, Any] | None = None,
+     path: Path = DB_PATH,
+     maker_from_request: bool = True,
+     envelope: JobEnvelope | None = None,
+     require_envelope: bool = False,
++    claim: RunClaimFence | None = None,
++    prepare: Callable[[MediaJob], JobEnvelope | None] | None = None,
+ ) -> MediaJob:
+     """Create a job; replay only matching owner, operation and submission facts.
+ 
+     The job's maker is the authenticated request's maker. A caller that indexes work made by someone else passes
+     ``maker_from_request=False``, and the maker it set on the job stands.
+ 
+     A finished job older than ``REPLAY_WINDOW_S`` gives up its request ID to
+     the new job instead of replaying.
+ 
+     This is the safe idempotent create primitive for handlers: clients may
+     retry POST /v1/videos with the same Idempotency-Key/request_id and we
+     must return the same job_id every time.
+ 
+     ``outstanding_limits`` are checked in the same write transaction as the
+     insert, so concurrent creates cannot overshoot them. A full limit raises
+     ``OutstandingLimitReached`` and stores nothing.
+ 
+     ``input_data`` covers inputs omitted from the safe job metadata. Only its
+     digest is stored. Legacy rows and erased digests cannot prove the original
+     input; those retries conflict rather than reconstructing proof from metadata.
+ 
+     ``envelope`` is what the job pinned (``gateway/job_envelope.py``). It is written in the same transaction as the
+     job row, so a job never exists without it nor it without the job. By default recording is best effort: a refusal
+     (a bad envelope, a store error) is logged and rolled back to a savepoint, and the job is created without it. A
+     route whose jobs run from their pin passes ``require_envelope=True``: a missing envelope or a failed write raises
+     ``EnvelopeNotRecorded`` (the cause is chained), the whole transaction rolls back and no job row is left. A replay
+     of an existing job records nothing.
++
++    ``claim`` fences the create (section 7.2): in the write transaction, before anything else, the claim row must
++    still hold this holder and name no job, else ``ClaimLost`` is raised and nothing is stored. ``prepare(record)``
++    runs after that check, in the same transaction, and returns the envelope: it draws generated values and adopts
++    staged files, so a holder that lost its claim draws and adopts nothing. When the job row is written the claim is set
++    to name it; the claim and the job commit together.
+     """
+     record = _coerce_to_job(job)
+     # Auth-disabled submissions still record an explicit scope. Missing scope
+     # on historical rows must not be mistaken for a verified unscoped request.
+     record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id) or "unscoped"
+     # Never accept a caller-supplied digest as proof that the input matches.
+     record.input_hash = _input_hash(record, input_data)
+     # The maker is the person and credential of the authenticated request, never a field of the submission.
+     if maker_from_request:
+         record.maker_person_id, record.maker_credential_id, record.maker_connection_id = (
+             request_source.job_maker(record.app_id))
+     with _conn(path) as conn:
+         conn.execute("BEGIN IMMEDIATE")
++        if claim is not None:
++            held = conn.execute(
++                "SELECT 1 FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? "
++                "AND job_id IS NULL", (claim.owner_scope, claim.maker, claim.key, claim.holder)).fetchone()
++            if held is None:
++                conn.rollback()
++                raise ClaimLost("the idempotency claim is no longer held by this request")
++        if prepare is not None:
++            try:
++                envelope = prepare(record)
++            except BaseException:
++                if conn.in_transaction:
++                    conn.rollback()
++                raise
+         if record.request_id:
+             existing = conn.execute(
+                 "SELECT job_json, status, updated_at, job_id FROM media_jobs WHERE request_id = ?",
+                 (record.request_id,),
+             ).fetchone()
+             if existing and not _replays(existing[1], existing[2]):
+                 retained = json.loads(existing[0])
+                 retained["creating_receipt_id"] = _receipt_link_candidate(retained)
+                 retained["request_id"] = ""
+                 conn.execute(
+                     "UPDATE media_jobs SET request_id = NULL, job_json = ? WHERE job_id = ?",
+                     (json.dumps(retained, ensure_ascii=False, sort_keys=True), existing[3]),
+                 )
+                 existing = None
+             if existing:
+                 data = json.loads(existing[0])
+                 previous = _coerce_to_job(data)
+                 # A replay returns the stored job, so it must be the same maker's job, or one maker reads another's.
+                 if (not previous.owner_scope or not previous.input_hash
+                         or previous.owner_scope != record.owner_scope or previous.intent != record.intent
+                         or previous.input_hash != record.input_hash
+                         or (previous.maker_person_id or None) != (record.maker_person_id or None)):
+                     raise IdempotencyConflict()
+                 conn.rollback()
+                 return _coerce_to_job(data)
+         for limit in outstanding_limits:
+             states = sorted(s for s in ALL_STATUSES if holds_resources(s))
+             clauses = [f"status IN ({','.join('?' for _ in states)})", "json_extract(job_json, '$.metadata.mode') = ?"]
+             params: list[Any] = [*states, limit.mode]
+             if limit.app_id is not None:
+@@ -846,60 +1027,67 @@ def create(
+                 f"SELECT COUNT(*) FROM media_jobs WHERE {' AND '.join(clauses)}", params,
+             ).fetchone()[0]
+             if outstanding >= limit.maximum:
+                 conn.rollback()
+                 raise OutstandingLimitReached(limit)
+         for name in PHASE_FIELDS:
+             setattr(record, name, None)
+         record.previous_attempts = []
+         observed_at = _now()
+         record.accepted_at = observed_at
+         record.attempt_number = 1
+         if record.status == STATUS_QUEUED:
+             record.queued_at = observed_at
+         elif record.status == STATUS_RUNNING:
+             record.started_at = observed_at
+         elif is_terminal(record.status):
+             record.finished_at = observed_at
+         if record.assets:
+             record.first_output_at = observed_at
+         erased = _write_job(conn, record)
+         if envelope is None and require_envelope:
+             conn.rollback()
+             raise EnvelopeNotRecorded("the job pinned no envelope")
+         if envelope is not None:
+             try:
+                 _record_envelope(conn, record.job_id, envelope, require=require_envelope, erase=erased)
+             except EnvelopeNotRecorded:
+                 if conn.in_transaction:
+                     conn.rollback()
+                 raise
++        if claim is not None:
++            named = conn.execute(
++                "UPDATE workflow_run_claim SET job_id=? WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? "
++                "AND job_id IS NULL", (record.job_id, claim.owner_scope, claim.maker, claim.key, claim.holder)).rowcount
++            if named != 1:
++                conn.rollback()
++                raise ClaimLost("the idempotency claim could not name the job")
+         conn.commit()
+     return record
+ 
+ 
+ def _record_envelope(
+     conn: sqlite3.Connection, job_id: str, envelope: JobEnvelope, *, require: bool, erase: bool = False,
+ ) -> None:
+     """Write the envelope in the caller's transaction, inside a savepoint: a failure leaves the job row untouched.
+ 
+     A failure is logged and swallowed, or with ``require`` raised as ``EnvelopeNotRecorded`` for the caller to roll the
+     whole transaction back.
+ 
+     ``erase`` is True when the erasure cutoff covers the job (created at or before it): the job is stored, as its other
+     prompt derivatives are cleared and not refused, and its generated values are written as erased markers."""
+     from gateway import definition_store, generated_defaults  # import this module, so they cannot be imported at the top
+ 
+     conn.execute("SAVEPOINT job_envelope")
+     try:
+         definition_store.record_envelope_in(
+             conn, job_id, envelope.envelope, generators=generated_defaults.persistence(), now=time.time(), blobs=envelope.blobs,
+         )
+         if erase:
+             definition_store.clear_generated_in(conn, job_id)
+     except Exception as exc:  # noqa: BLE001 - without ``require`` the job is created as it always was
+         if require:
+             raise EnvelopeNotRecorded(f"{type(exc).__name__}: {exc}") from exc
+         if not conn.in_transaction:
+             # SQLite rolled back the whole transaction (disk full, I/O error): the job row is gone too, and the
+             # savepoint with it. Raise the real cause, not "no such savepoint".
+             raise
+@@ -1006,60 +1194,61 @@ def delete_succeeded_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> int
+     ids = sorted({job_id for job_id in job_ids if job_id})
+     deleted = 0
+     for start in range(0, len(ids), 500):
+         chunk = ids[start:start + 500]
+         marks = ",".join("?" for _ in chunk)
+         done = [row[0] for row in conn.execute(
+             f"SELECT job_id FROM media_jobs WHERE status=? AND job_id IN ({marks})",
+             [STATUS_SUCCEEDED, *chunk],
+         )]
+         if not done:
+             continue
+         marks = ",".join("?" for _ in done)
+         conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", done)
+         conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", done)
+         _release_envelopes_in(conn, done)
+         deleted += len(done)
+     return deleted
+ 
+ 
+ def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> None:
+     """Release each deleted job's envelope, references and results, in the transaction that deleted the job row.
+ 
+     Every function in this module that deletes ``media_jobs`` rows calls this
+     (``tests/test_job_envelope_release.py`` scans the code for that). A database that predates the definition tables
+     has no envelopes to release.
+     """
+     from gateway import definition_store, result_bundle  # import this module, so they cannot be imported at the top
+ 
+     for job_id in job_ids:
+         media_input_leases.release_job_in(conn, job_id)  # a job row deleted: its input leases end with it
++        conn.execute("DELETE FROM workflow_run_claim WHERE job_id=?", (job_id,))  # and so does its idempotency claim
+     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
+         return
+     for job_id in job_ids:
+         definition_store.release_in(conn, job_id)
+         result_bundle.release_in(conn, job_id)
+ 
+ 
+ def delete_succeeded(job_ids: Iterable[str], *, path: Path = DB_PATH) -> int:
+     """``delete_succeeded_in`` in its own transaction."""
+     with _conn(path) as conn:
+         conn.execute("BEGIN IMMEDIATE")
+         try:
+             deleted = delete_succeeded_in(conn, job_ids)
+             conn.commit()
+         except Exception:
+             conn.rollback()
+             raise
+     return deleted
+ 
+ 
+ HIDDEN_ASSETS_DDL = """CREATE TABLE IF NOT EXISTS media_hidden_assets (
+   person_id TEXT NOT NULL,
+   asset_id TEXT NOT NULL,
+   job_id TEXT NOT NULL,
+   hidden_at INTEGER NOT NULL,
+   PRIMARY KEY (person_id, asset_id, job_id)
+ )"""
+ 
+ 
+ def hide_assets_in(conn: sqlite3.Connection, person_id: str, pairs: Iterable[tuple[str, str]]) -> None:
+@@ -1343,61 +1532,61 @@ def get_by_request_id(
+         return None
+     return _filter_for_audience(data, audience)
+ 
+ 
+ def recent(
+     limit: int = 50,
+     *,
+     audience: str = "internal",
+     app_profile: str | None = None,
+     app_ids: list[str] | None = None,
+     owner_key_hashes: list[str] | None = None,
+     status: str | None = None,
+     since_s: int | None = None,
+     updated_since: int | None = None,
+     include_active: bool = False,
+     before: tuple[int, str] | None = None,
+     job_ids: list[str] | None = None,
+     request_ids: list[str] | None = None,
+     maker_person_ids: list[str] | None = None,
+     path: Path = DB_PATH,
+ ) -> list[dict[str, Any]]:
+     """Return up to ``limit`` most-recently-updated jobs, newest first. ``job_ids``, ``request_ids`` and
+     ``maker_person_ids`` are positive allow-lists."""
+     if audience not in _AUDIENCES:
+         raise ValueError(f"audience must be one of {_AUDIENCES}")
+     if limit <= 0:
+         return []
+     if app_ids is not None or owner_key_hashes is not None:
+         if not app_ids and not owner_key_hashes:
+             return []
+-    clauses: list[str] = []
++    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"]
+     params: list[Any] = []
+     if app_ids is not None or owner_key_hashes is not None:
+         ownership = []
+         for field, values in (("app_id", app_ids), ("owner_key_hash", owner_key_hashes)):
+             if values:
+                 ownership.append(f"json_extract(job_json, '$.{field}') IN ({','.join('?' for _ in values)})")
+                 params.extend(values)
+         clauses.append("(" + " OR ".join(ownership) + ")")
+     if maker_person_ids is not None:
+         # The durable maker stamp, read from its own indexed column. An empty list matches nothing.
+         if not maker_person_ids:
+             return []
+         clauses.append(f"maker_person_id IN ({','.join('?' for _ in maker_person_ids)})")
+         params.extend(maker_person_ids)
+     if app_profile is not None:
+         clauses.append("app_profile = ?")
+         params.append(app_profile)
+     if status is not None:
+         if status not in ALL_STATUSES:
+             raise ValueError(f"status must be one of {sorted(ALL_STATUSES)}")
+         clauses.append("status = ?")
+         params.append(status)
+     if since_s is not None:
+         clauses.append("updated_at >= ?")
+         params.append(int(time.time()) - int(since_s))
+     if updated_since is not None:
+         if include_active:
+             clauses.append("(updated_at >= ? OR status IN (?, ?))")
+             params.extend((updated_since, STATUS_QUEUED, STATUS_RUNNING))
+         else:
+@@ -1411,243 +1600,265 @@ def recent(
+         if not job_ids and not request_ids:
+             return []
+         if job_ids:
+             clauses.append(f"job_id IN ({','.join('?' for _ in job_ids)})")
+             params.extend(job_ids)
+         if request_ids:
+             clauses.append(f"request_id IN ({','.join('?' for _ in request_ids)})")
+             params.extend(request_ids)
+     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+     params.append(int(limit))
+     with _conn(path) as conn:
+         rows = conn.execute(
+             f"SELECT job_json FROM media_jobs{where} "
+             "ORDER BY updated_at DESC, job_id DESC LIMIT ?",
+             params,
+         ).fetchall()
+     out: list[dict[str, Any]] = []
+     for (job_json,) in rows:
+         data = _safe_loads(job_json)
+         if not isinstance(data, Mapping):
+             continue
+         out.append(_filter_for_audience(data, audience))
+     return out
+ 
+ 
+ def list_jobs(*args, **kwargs):
+     """Alias for ``recent`` so call-sites can read more naturally."""
+     return recent(*args, **kwargs)
+ 
+ 
++def is_error_code(code: str) -> bool:
++    """Whether ``code`` is a short lowercase token the job store keeps as a failure code."""
++    return _ERROR_CODE_RE.fullmatch(code) is not None
++
++
+ def validate_error_info(info: Mapping[str, Any]) -> dict[str, Any]:
+     """Return the typed failure facts, or raise ValueError.
+ 
+     Only known fields; a known category; a plain code token, never free text
+     (which could carry a prompt); an HTTP status only for an upstream failure.
+     """
+     unknown = set(info) - set(ERROR_FIELDS)
+     if unknown:
+         raise ValueError(f"unknown error fields: {sorted(unknown)}")
+     category = info.get("error_category")
+     if category not in ERROR_CATEGORIES:
+         raise ValueError(f"error_category must be one of {sorted(ERROR_CATEGORIES)}")
+     code = info.get("error_code")
+     if not isinstance(code, str) or not _ERROR_CODE_RE.fullmatch(code):
+         raise ValueError("error_code must be a short lowercase token")
+     retryable = info.get("retryable")
+     if not isinstance(retryable, bool):
+         raise ValueError("retryable must be a boolean")
+     upstream = info.get("upstream_http_status")
+     if upstream is not None and (category != "upstream" or type(upstream) is not int
+                                  or not 100 <= upstream <= 599):
+         raise ValueError("upstream_http_status must be an HTTP status of an upstream failure")
+     return {"error_code": code, "error_category": category, "retryable": retryable,
+             "upstream_http_status": upstream}
+ 
+ 
+ def update_status(
+     job_id: str,
+     status: str,
+     *,
+     progress: int | None = None,
+     error: str | None = None,
+     error_info: Mapping[str, Any] | None = None,
+     add_assets: Iterable[Mapping[str, Any]] | None = None,
+     metadata_patch: Mapping[str, Any] | None = None,
+     expected_status: str | None = None,
+     now: int | None = None,
+     before_commit: Callable[[sqlite3.Connection, dict[str, Any]], object] | None = None,
++    committed_bundle: bool = False,
+     path: Path = DB_PATH,
+ ) -> dict[str, Any] | None:
+     """Apply a status transition. Returns the updated internal job dict.
+ 
+     ``before_commit(conn, job)`` runs in the same transaction, after the transition is checked and written and before
+     the commit: the caller writes what must become visible with the new state (the result bundle, S2 design D4). If it
+     raises, nothing is committed. It never runs for a refused transition (an illegal one, or a success that a pending
+     cancel holds back).
+ 
+     ``error_info`` holds the typed failure facts (``ERROR_FIELDS``) that go
+     with ``error``; ``validate_error_info`` checks them.
+ 
++    ``committed_bundle`` is for ``settle_committed`` alone: the result is already published, so a pending cancel no
++    longer holds the success back (S7 addendum 6.1: a committed bundle wins).
++
+     Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
+     are accepted so progress updates during ``running`` are idempotent. With
+     ``expected_status``, the write applies only if the job is still in that
+     status; otherwise it raises ``ValueError``.
+     """
+     if status not in ALL_STATUSES:
+         raise ValueError(f"status must be one of {sorted(ALL_STATUSES)}")
+     if progress is not None:
+         progress = _clamp_progress(progress)
+     if metadata_patch is not None:
+         _assert_safe_mapping("metadata_patch", metadata_patch)
+     error_facts = validate_error_info(error_info) if error_info is not None else None
+     assets_list: list[dict[str, Any]] = []
+     if add_assets is not None:
+         for asset in add_assets:
+             if not isinstance(asset, Mapping):
+                 raise ValueError("add_assets entries must be mappings")
+             _assert_safe_mapping("add_assets[*]", asset)
+             assets_list.append(dict(asset))
+     ts = int(now if now is not None else _now())
+ 
+     with _conn(path) as conn:
+         # Read and write in one transaction so a concurrent transition cannot
+         # slip between them.
+         conn.execute("BEGIN IMMEDIATE")
+         row = conn.execute(
+             "SELECT job_json FROM media_jobs WHERE job_id = ?",
+             (job_id,),
+         ).fetchone()
+         if not row:
+             return None
+         data = _safe_loads(row[0])
+         if not isinstance(data, Mapping):
+             return None
+         current = dict(data)
+         prev_status = current.get("status", STATUS_QUEUED)
+         if expected_status is not None and prev_status != expected_status:
+             raise ValueError(f"job {job_id!r} is {prev_status!r}, not {expected_status!r}")
+         if status not in _ALLOWED_TRANSITIONS.get(prev_status, frozenset()):
+             raise ValueError(
+                 f"illegal status transition {prev_status!r} -> {status!r} for job {job_id!r}"
+             )
+-        if (status == STATUS_SUCCEEDED
++        if (status == STATUS_SUCCEEDED and not committed_bundle
+                 and (current.get("metadata") or {}).get("cancel_requested_at")):
+             raise CancellationPending("Cancel requested; waiting for resources to be released")
+         current["status"] = status
+         if progress is not None:
+             current["progress"] = progress
+         elif status == STATUS_SUCCEEDED:
+             current["progress"] = 100
+         if error is not None:
+             current["error"] = error
+         if error_facts is not None:
+             current.update(error_facts)
+         if assets_list:
+             existing_assets = list(current.get("assets") or [])
+             existing_assets.extend(assets_list)
+             current["assets"] = existing_assets
+         if metadata_patch:
+             existing_meta = dict(current.get("metadata") or {})
+             existing_meta.update(metadata_patch)
+             current["metadata"] = existing_meta
+         current["updated_at"] = ts
+         # Legacy attempts remain unavailable; do not invent prior phase facts.
+         if current.get("attempt_number") is not None:
+             if status == STATUS_RUNNING and current.get("started_at") is None:
+                 current["started_at"] = ts
+             if assets_list and current.get("first_output_at") is None:
+                 current["first_output_at"] = ts
+             if is_terminal(status) and current.get("finished_at") is None:
+                 current["finished_at"] = ts
+ 
+         updated = _coerce_to_job(current)
+         _write_job(conn, updated)
+         if before_commit is not None:
+             before_commit(conn, updated.to_dict("internal"))
+         conn.commit()
+     return updated.to_dict("internal")
+ 
+ 
+ class CancellationPending(ValueError):
+     """Output finished after cancellation; the worker must release before settling."""
+ 
+ 
++def settle_committed(job_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
++    """Recovery: the job's result bundle is committed, so it succeeds from the bundle, even when a cancel was asked
++    (the ordinary pre-publication cancel guard does not apply to a published result). A terminal job is left alone."""
++    job = get(job_id, audience="internal", path=path)
++    if job is None or is_terminal(str(job["status"])):
++        return job
++    if job["status"] == STATUS_QUEUED:
++        update_status(job_id, STATUS_RUNNING, expected_status=STATUS_QUEUED, path=path)
++    return update_status(job_id, STATUS_SUCCEEDED, progress=100, committed_bundle=True, path=path)
++
++
+ def request_cancel(job_id: str, *, reason: str | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
+     """Cancel unstarted work atomically, or retain running work's reservation."""
+     job = get(job_id, path=path)
+     if job is None:
+         return None
+     if is_terminal(job["status"]):
+         raise ValueError("This job has already finished")
+     try:
+         return update_status(job_id, STATUS_CANCELED, expected_status=STATUS_QUEUED,
+                              error=reason or "Canceled by requester", path=path)
+     except ValueError:
+         return update_status(job_id, STATUS_RUNNING, expected_status=STATUS_RUNNING,
+                              metadata_patch={"cancel_requested_at": _now()}, path=path)
+ 
+ 
+ def active_count(*, app_id: str, intents: Iterable[str], path: Path = DB_PATH) -> int:
+     """Count this app's queued/running work without a history scan limit."""
+     intents = tuple(intents)
+     with _conn(path) as conn:
+         return conn.execute(
+             "SELECT COUNT(*) FROM media_jobs WHERE status IN (?, ?) "
+             "AND json_extract(job_json, '$.app_id') = ? "
+             f"AND intent IN ({','.join('?' for _ in intents)})",
+             (STATUS_QUEUED, STATUS_RUNNING, app_id, *intents),
+         ).fetchone()[0]
+ 
+ 
+ def unfinished(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
+     """Startup snapshot, without the history endpoint's page-size ceiling."""
+     with _conn(path) as conn:
+         rows = conn.execute("SELECT job_json FROM media_jobs WHERE status IN (?, ?)",
+                             (STATUS_QUEUED, STATUS_RUNNING)).fetchall()
+     return [data for (raw,) in rows if isinstance(data := _safe_loads(raw), dict)]
+ 
+ 
+ def begin_attempt(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
+     """Trusted worker retry: retain prior facts and start a new running attempt.
+ 
+     Only call when dispatching work again, never on a progress update or a
+     reconnect to the same upstream job. Legacy attempt numbers stay unknown.
+     """
+     with _conn(path) as conn:
+         conn.execute("BEGIN IMMEDIATE")
+         row = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
+         if row is None:
+             return None
+         job = _coerce_to_job(json.loads(row[0]))
+         if job.status != STATUS_RUNNING:
+             raise ValueError("only a running job can begin another attempt")
++        if (job.metadata or {}).get("cancel_requested_at"):
++            raise CancellationPending("Cancel requested; no further attempt may start")
+         if job.attempt_number is None:
+             return job.to_dict()
+         job.previous_attempts.append({"attempt_number": job.attempt_number,
+                                       **{name: getattr(job, name) for name in PHASE_FIELDS}})
+         job.attempt_number += 1
+         job.queued_at = None
+         job.started_at = int(now if now is not None else _now())
+         job.first_output_at = None
+         job.finished_at = None
+         job.updated_at = job.started_at
+         _write_job(conn, job, new_attempt=True)
+         conn.commit()
+         return job.to_dict()
+ 
+ 
+ def append_event(
+     job_id: str,
+     event_type: str,
+     payload: Mapping[str, Any] | None = None,
+     *,
+     now: int | None = None,
+     path: Path = DB_PATH,
+     _source: Literal["gateway", "client"] = "gateway",
+ ) -> int:
+     """Trusted adapter event write; returns a per-job cursor, never a row id.
+ 
+     Event payloads are metadata-only. They must not carry raw prompts, image
+     bytes, request/response bodies, or secrets — the safety guard rejects
+     those shapes before they reach disk.
+     """
+@@ -1993,58 +2204,65 @@ def schema_version(path: Path = DB_PATH) -> int | None:
+         ).fetchone()
+         return int(row[0]) if row else None
+ 
+ 
+ def _safe_loads(text: str) -> Any:
+     try:
+         return json.loads(text)
+     except Exception:
+         return None
+ 
+ 
+ __all__ = [
+     "DB_PATH",
+     "REPLAY_WINDOW_S",
+     "SCHEMA_VERSION",
+     "STATUS_QUEUED",
+     "STATUS_RUNNING",
+     "STATUS_SUCCEEDED",
+     "STATUS_FAILED",
+     "STATUS_CANCELED",
+     "ALL_STATUSES",
+     "TERMINAL_STATUSES",
+     "JobStatus",
+     "PHASE_FIELDS",
+     "ERROR_FIELDS",
+     "ERROR_CATEGORIES",
+     "validate_error_info",
+     "is_terminal",
+     "holds_resources",
+     "IdempotencyConflict",
++    "RunClaim",
++    "RunClaimFence",
++    "ClaimLost",
++    "claim_run_key",
++    "get_run_claim",
++    "settle_committed",
++    "release_run_claim",
+     "CLIENT_VISIBLE_FIELDS",
+     "ADMIN_ONLY_FIELDS",
+     "INTERNAL_ONLY_FIELDS",
+     "MediaJob",
+     "new_job_id",
+     "init_db",
+     "create",
+     "upsert",
+     "get",
+     "get_by_request_id",
+     "recent",
+     "list_jobs",
+     "update_status",
+     "begin_attempt",
+     "append_event",
+     "append_client_event",
+     "validate_client_event",
+     "events",
+     "count",
+     "connection",
+     "save_fact_revisions",
+     "save_fact_snapshot",
+     "fact_revisions",
+     "fact_revisions_for_source",
+     "fact_destinations_for_source",
+     "release_fact_references",
+     "schema_version",
+ ]
