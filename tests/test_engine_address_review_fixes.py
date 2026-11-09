@@ -146,9 +146,11 @@ def test_an_enabled_unreachable_engine_stays_measured_down(probed):
             raise OSError("refused")
 
     status_endpoint.engine_egress.async_client = lambda **_k: _Down(probed)
-    result = asyncio.run(status_endpoint._comfy_queue_and_stats(_disabled_config(COMPLETE, True)))
-    assert probed and "http://203.0.113.9:9999/queue" in probed
-    assert not result or isinstance(result, (dict, tuple, list))
+    config = {"backends": {"comfyui": {**COMPLETE, "enabled": True, "health_endpoint": "/queue"}}}
+    rows = asyncio.run(status_endpoint._backend_grid(config))
+    assert probed == ["http://203.0.113.9:9999/queue"]
+    assert [(row["key"], row["status"], row["live_status"]) for row in rows] == [
+        ("comfyui", "down", "down")]
 
 
 # --- recheck 1: a base address with a query ---------------------------------------------------------------------------
