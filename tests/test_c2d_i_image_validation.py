@@ -40,7 +40,7 @@ def test_a_top_level_field_outside_the_routes_standard_set_is_refused() -> None:
 def test_the_extensions_envelope_carries_workflow_inputs() -> None:
     snap = snapshot("flux2-klein")
     run = run_request("images-generations", json_request({"prompt": "p", "extensions": {NAMESPACE: {"seed": 3}}}), snap)
-    assert not isinstance(run, Response) and run.inputs == {"prompt": "p", "seed": 3}
+    assert not isinstance(run, Response) and run.inputs == {"prompt": "p", "seed": 3, "width": 1024, "height": 1024}
     form = run_request("images-edits", multipart_request({"prompt": "p", "extensions": json.dumps({NAMESPACE: {"steps": 8}})}, [IMG]),
                        snapshot("qwen-image-2.1-edit"))
     assert not isinstance(form, Response) and form.inputs["steps"] == 8
