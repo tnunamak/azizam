@@ -79,4 +79,4 @@ def test_the_mcp_run_tool_exposes_both_inputs_as_asset_inputs() -> None:
     properties = entry["inputs"]["properties"]
     assert set(properties) == {"source_video", "source_audio"}
     assert set(entry["inputs"]["required"]) == {"source_video", "source_audio"}
-    assert "video/" in json.dumps(properties["source_video"]) and "audio/" in json.dumps(properties["source_audio"])
+    assert all(properties[name]["x-azizam-asset"] is True for name in properties)
