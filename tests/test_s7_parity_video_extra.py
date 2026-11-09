@@ -880,7 +880,7 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
         seen["paths"] = _engine_paths(rig)
 
     _run(tmp_path, "s7-7-cancel-failure", setup, drive)
-    assert seen["failed_status"] == 409, (seen, [k for k, _ in __import__("itertools").groupby(seen["paths"])])
+    assert seen["failed_status"] == 409, (seen["failed_status"], len(seen["paths"]), [p for p in seen["paths"] if "history/p1" not in p])
     assert seen["kept_after_failure"] == 200
 
 
