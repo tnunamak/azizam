@@ -64,7 +64,7 @@ STALE_AFTER_MS = 5 * 60 * 1000
 SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
-_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "disconnected", "timed_out"})
+_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "disconnected", "timed_out", "rejected"})
 _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
     {
         "request_id", "protocol", "path", "intent", "app_profile", "app_id",
