@@ -16596,6 +16596,7 @@ workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
 
 
 _MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts
+_MOUNTED_VIDEO_ROW_IDS = ("videos-create",)
 
 
 def _mount_3d_rows(app: FastAPI) -> None:
@@ -16604,6 +16605,13 @@ def _mount_3d_rows(app: FastAPI) -> None:
 
 
 FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
+
+
+def _mount_video_rows(app: FastAPI) -> None:
+    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, _MOUNTED_VIDEO_ROW_IDS)
+
+
+FRONTEND_TRANSLATORS.register_owned("videos", _mount_video_rows)
 
 
 def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
@@ -27102,6 +27110,9 @@ class _RunReceiptOwner(ReceiptLifecycleOwner):
         return self
 
 
+_ROW_RECEIPT: contextvars.ContextVar[Any] = contextvars.ContextVar("row_receipt", default=None)   # the open row request's receipt
+
+
 def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
     """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
     (``_name_row_receipt``)."""
@@ -27113,6 +27124,7 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
         backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
     owner.short_names = row.receipt_names == "short"
+    _ROW_RECEIPT.set(owner.receipt)
     return owner
 
 
@@ -27164,6 +27176,42 @@ def _row_route_policy(path: str) -> dict[str, Any] | None:
     return None
 
 
+class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
+    """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
+    controls of the body, and the prompt memory."""
+
+    def resolve_model(self, name: str) -> Any:
+        try:
+            resolution = resolve_model_for_operation("videos", name)
+        except ModelCompatibilityError as error:
+            return model_compatibility_error(error)
+        return resolution.effective_model if resolution.is_openai_alias else name
+
+    def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
+        _begin_media_delivery(caller, _ROW_RECEIPT.get())
+        return _note_media_metadata_body(body)
+
+    def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> str:
+        return _workflow_run_prompt_retention(caller, body.get("extensions") if isinstance(body.get("extensions"), Mapping) else {})
+
+    def keep_prompt(self, caller: Any, key: str, prompt: str) -> bool:
+        context = media_delivery.current()
+        memory = context.prompt_decision if context is not None else None
+        if memory is None or not memory.keep or not context.prompt_text:
+            return False
+        return bool(prompt_memory.safe_put(key, memory.person_id, context.prompt_text, kept_until=memory.kept_until,
+                                           admin_path=ADMIN_STORE.path, created_at=memory.created_at))
+
+
+async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapping[str, Any], owner: Any) -> Response:
+    """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline, on
+    the body already read, under the receipt the row opened. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
+    return await proxy_graph_video_create(request, caller, body_override=body, receipt=owner.receipt)
+
+
+frontend_wire_shapes.VIDEO_HOOKS = _DeploymentVideoHooks()
+frontend_wire_shapes.DEFAULT_WORKFLOWS["openai.video.create"] = lambda: _video_default_workflow()
+
 frontend_wire_shapes.ASSET_URLS.update({
     "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
     "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
@@ -27185,6 +27233,7 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     pinned=_pinned_of_job,
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
+    legacy={"videos.create": _legacy_video_create},
 )
 
 
@@ -34743,7 +34792,6 @@ FRONTEND_TRANSLATORS.register("identity", {
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.delete": SelfAuthOp(assets_delete, frozenset({"DELETE"}), openapi_extra={**ASSETS_DELETE_OPENAPI}, auth=operation_security.APP_KEY),
-    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
     "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.APP_KEY),

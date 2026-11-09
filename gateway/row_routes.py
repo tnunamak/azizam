@@ -30,7 +30,8 @@ from starlette.responses import Response
 
 from gateway import operation_security, request_history_capture
 from gateway.access_plans import capability_for_intent
-from gateway.frontend_shapes import build_shape, bundled_rows
+from gateway.frontend_shapes import _wire, build_shape, bundled_rows
+from gateway.frontend_shapes._base import LegacyRoute
 from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
     FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
@@ -73,6 +74,9 @@ class RowRouteDeps:
     # record_facts(owner, facts): what the shape adjusted, each as (name, value, warning): the receipt keeps the value under
     # ``metadata[name]`` and raises the warning.
     record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
+    # legacy: the handlers a shape may hand a request to (``LegacyRoute.name``), each ``handler(request, caller, body, owner)`` ->
+    # the answer. They exist for requests the data path does not serve yet; ``tests/test_legacy_video_ratchet.py`` counts them.
+    legacy: Mapping[str, Callable[[Request, Any, Mapping[str, Any], Any], Awaitable[Response]]] = dataclasses.field(default_factory=dict)
 
 
 def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
@@ -144,6 +148,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         caller = await asyncio.to_thread(deps.authenticate, request, canonical)
         if isinstance(caller, Response):
             return caller
+        request.state.caller = caller            # the shapes that look a stored source up read it here
         request_id = deps.new_request_id()
         if row.receipt_opens == "before_policy":
             # The receipt is open when the policy decides, so a denial leaves a closed receipt behind it.
@@ -184,9 +189,22 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
                       request: Request, caller: Any, snapshot: RegistrySnapshot, spool: RequestSpool, owner: Any,
                       request_id: str, wants_async: bool, intent: str) -> Response:
     """The steps after the receipt opens. Each exit reports the outcome, or hands the receipt to the core."""
+    if row.unconfigured is not None and not _wire.candidates(snapshot, row):
+        # The deployment configures no workflow for this route: the row says what that is told.
+        owner.report(status="failed", reason=str(row.unconfigured["code"]))
+        return _wire.error_response(int(row.unconfigured["status"]), str(row.unconfigured["message"]),
+                                    code=str(row.unconfigured["code"]))
     with deps.scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         record_inputs(deps, owner, request)
+        if isinstance(run_request, LegacyRoute):
+            handler = deps.legacy.get(run_request.name)
+            if handler is None:
+                owner.report(status="failed", reason="legacy_handler_missing")
+                return _wire.error_response(500, "This request is not served", kind="api_error")
+            response = await handler(request, caller, run_request.body, owner)
+            owner.report(status="succeeded" if response.status_code < 400 else "failed", reason=f"http_{response.status_code}")
+            return response
         if isinstance(run_request, Response):
             owner.report(status="failed", reason=f"http_{run_request.status_code}")
             return run_request
@@ -204,6 +222,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         refusal = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
         owner.report(status="failed", reason=outcome.code)
         return refusal
+    await shape.after_submit(request, outcome, caller)
     if outcome.disposition == "replay":
         facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome)
     if answered.mode == "job" and outcome.disposition == "new":

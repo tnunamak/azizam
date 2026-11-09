@@ -485,8 +485,9 @@ class VideoHooks:
         """Read the delivery controls of the body (metadata mode, prompt keeping); a Response refuses the request."""
         return None
 
-    def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> Any:
-        return None
+    def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> str:
+        """The keep or forget decision on the prompt, part of the run's identity ("" when the deployment keeps none)."""
+        return ""
 
     def keep_prompt(self, caller: Any, key: str, prompt: str) -> bool:
         """Remember the prompt of a new job under ``key``; True when it was kept."""
