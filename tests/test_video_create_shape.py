@@ -418,7 +418,7 @@ def test_a_submit_the_engine_took_answers_queued_without_waiting_for_the_render(
     assert not isinstance(outcome, RunRefused) and outcome.disposition == "new" and _count(db, "media_jobs") == 1
 
 
-def _drive_background(db, tmp_path, adapter):
+def _drive_background(db, tmp_path, adapter, **request_fields):
     snap = core_snapshot()
     core, port, _ = make_core(db, tmp_path, snap)
     port.run_adapter = adapter
@@ -427,7 +427,7 @@ def _drive_background(db, tmp_path, adapter):
         import dataclasses
         tasks: list[asyncio.Task] = []
         port.schedule = lambda job_id: tasks.append(asyncio.get_running_loop().create_task(core.execute_run(job_id)))
-        outcome = await core.submit_run(dataclasses.replace(core_request(), submit_wait_s=5.0), Caller(),
+        outcome = await core.submit_run(dataclasses.replace(core_request(), submit_wait_s=5.0, **request_fields), Caller(),
                                         snapshot=core._snapshots.current())
         for task in tasks:
             task.cancel()
@@ -633,3 +633,46 @@ def test_an_invalid_body_is_refused_as_a_body_before_the_service_is_asked() -> N
     answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v", "seconds": "soon"})
     assert answer.status_code == 400 and answer.json()["error"]["message"] == "seconds must be a number"
     assert calls["report"] == [{"status": "failed", "reason": "http_400"}]
+
+
+# ----------------------------------------------- what is stored (review 11): read-only storage assertions and a storage fault
+
+
+def _everything_stored(db) -> str:
+    from gateway import media_jobs
+    with media_jobs.connection(db) as conn:
+        tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        return "\n".join(repr(row) for table in tables for row in conn.execute(f'SELECT * FROM "{table}"'))
+
+
+def test_a_single_prompt_create_stores_no_raw_prompt_and_no_legacy_job_record(db, tmp_path, monkeypatch) -> None:
+    from gateway import media_jobs, video_job_records
+    legacy_writes: list[Any] = []
+    monkeypatch.setattr(video_job_records, "save", lambda *a, **k: legacy_writes.append(a))
+
+    async def taking(ctx):
+        media_jobs.update_status(ctx.job_id, "running", metadata_patch={"protocol_job": "up-1"}, path=db)
+        await asyncio.sleep(30)
+
+    secret = "a-private-sentence-nobody-may-store"
+    outcome, _ = _drive_background(db, tmp_path, taking, inputs={"prompt": secret}, facts={"model": "m"})
+    assert outcome.disposition == "new" and _count(db, "media_jobs") == 1
+    assert secret not in _everything_stored(db)                  # the durable store holds the job, not the raw prompt
+    assert legacy_writes == []                                   # no new legacy video record for a single-prompt job
+
+
+def test_a_storage_fault_while_the_job_is_made_is_an_error_and_keeps_no_job(db, tmp_path, monkeypatch) -> None:
+    from gateway import media_jobs
+
+    def failing(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(media_jobs, "update_status", failing)
+
+    async def taking(ctx):
+        media_jobs.update_status(ctx.job_id, "running", metadata_patch={"protocol_job": "up-1"}, path=db)
+        await asyncio.sleep(30)
+
+    outcome, _ = _drive_background(db, tmp_path, taking)
+    assert isinstance(outcome, RunRefused) and outcome.http_status >= 500
+    assert _count(db, "media_jobs") == 0
