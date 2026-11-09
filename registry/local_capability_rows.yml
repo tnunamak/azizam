@@ -126,3 +126,31 @@ backend_rows:
     recordable_inputs: [audio]
     caveats:
       - Only advertised when the local STT backend declares translation support.
+image_defaults:
+  section: images
+  enabled_flag: images
+  section_required: false
+  backend_presence: nonempty_mapping
+  default_backend: comfyui
+  output_modalities: [image]
+  execution: job
+  streaming: false
+  resource_tier: batch
+  gpu_required: true
+image_rows:
+  - intent: image.generate
+    input_modalities: [text]
+    model_sources:
+      - backend.default_model
+      - config.model_compatibility.defaults.images
+  - intent: image.edit
+    input_modalities: [text, image]
+    model_sources:
+      - config.model_compatibility.defaults.image_edits
+workflow_defaults:
+  section_required: true
+  backend_presence: declared
+  default_backend: comfyui
+  execution: job
+  streaming: false
+  gpu_required: true

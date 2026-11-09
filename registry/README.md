@@ -100,7 +100,17 @@ existing backend resource parser. Other rows use only their declared GPU need.
 Alias names and workflow section names must be unique within their list;
 backend triggers must be unique across rows (case-insensitive).
 The loader rejects unknown/missing fields and invalid values with the file and
-logical row, then freezes all three tables at import. Restart after editing the
-file. The original two-table loader API and files without `backend_rows` remain
-supported; an omitted list is empty, with no hard-coded backend fallback.
+logical row. `image_defaults` declares the image section, enabled flag, section
+requirement, backend-presence rule, fallback backend, output modalities, execution,
+streaming, tier and GPU requirement. Ordered `image_rows` name intent, inputs and
+model sources such as `backend.default_model` or
+`config.model_compatibility.defaults.images`; only `backend` and `config` roots
+are accepted. Selection uses the first truthy source, then requires a nonempty
+string, preserving the existing non-string suppression behavior.
+`workflow_defaults` holds section/backend requirements and shared execution,
+streaming and GPU defaults; each workflow family still owns its resource tier.
+The whole file loads once into deeply read-only tables at import. Builders never
+reload it or inspect the environment. Restart after editing the file. The
+original two-table loader API and files without `backend_rows` remain supported;
+an omitted list is empty, with no hard-coded backend fallback.
 This file does not probe workflow files or enable a backend by itself.

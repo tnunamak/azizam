@@ -115,6 +115,9 @@ def _load_local_capability_rows(
     Mapping[str, tuple[str, tuple[str, ...], tuple[str, ...], str]],
     tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
     tuple[Mapping[str, Any], ...],
+    Mapping[str, Any],
+    tuple[Mapping[str, Any], ...],
+    Mapping[str, Any],
 ]:
     """Load ordered package facts; errors identify the file and logical row."""
     source = Path(path)
@@ -153,7 +156,10 @@ def _load_local_capability_rows(
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         fail("document row 0", f"could not read rows: {error}")
     fields(
-        document, {"schema_version", "alias_operations", "workflow_families"},
+        document, {
+            "schema_version", "alias_operations", "workflow_families",
+            "image_defaults", "image_rows", "workflow_defaults",
+        },
         "document row 0", frozenset({"backend_rows"}),
     )
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
@@ -191,6 +197,61 @@ def _load_local_capability_rows(
                 if tier not in {"batch", "expensive"}:
                     fail(where, "resource_tier must be batch or expensive")
                 families.append((name, flag, intent, inputs, outputs, tier))
+    default_fields = {
+        "section_required", "backend_presence", "default_backend",
+        "execution", "streaming", "gpu_required",
+    }
+
+    def family_defaults(table: str, required: set[str]) -> Mapping[str, Any]:
+        where = f"{table} row 1"
+        row = document[table]
+        fields(row, required, where)
+        frozen = dict(row)
+        for key in ("section", "enabled_flag", "default_backend", "backend_presence", "execution"):
+            if key in required:
+                text(row, key, where)
+        for key in ("section_required", "streaming", "gpu_required"):
+            if type(row[key]) is not bool:
+                fail(where, f"{key} must be a boolean")
+        if row["backend_presence"] not in {"declared", "nonempty_mapping"}:
+            fail(where, "backend_presence must be declared or nonempty_mapping")
+        if row["execution"] not in {"sync", "job"}:
+            fail(where, "execution must be sync or job")
+        if "resource_tier" in required:
+            tier = text(row, "resource_tier", where)
+            if tier not in {"batch", "expensive"}:
+                fail(where, "resource_tier must be batch or expensive")
+        if "output_modalities" in required:
+            frozen["output_modalities"] = modalities(row, "output_modalities", where)
+        return MappingProxyType(frozen)
+
+    image_defaults = family_defaults("image_defaults", default_fields | {
+        "section", "enabled_flag", "output_modalities", "resource_tier",
+    })
+    workflow_defaults = family_defaults("workflow_defaults", default_fields)
+    if not isinstance(document["image_rows"], list):
+        fail("document row 0", "image_rows must be a list")
+    images = []
+    intents = set()
+    for number, row in enumerate(document["image_rows"], start=1):
+        where = f"image_rows row {number}"
+        fields(row, {"intent", "input_modalities", "model_sources"}, where)
+        intent = text(row, "intent", where)
+        if intent in intents:
+            fail(where, f"duplicate intent: {intent!r}")
+        intents.add(intent)
+        sources = modalities(row, "model_sources", where)
+        for source_path in sources:
+            parts = source_path.split(".")
+            if len(parts) < 2 or any(not part or part != part.strip() for part in parts):
+                fail(where, f"model_sources must contain dotted paths: {source_path!r}")
+            if parts[0] not in {"backend", "config"}:
+                fail(where, f"unknown model_sources root: {parts[0]!r}")
+        images.append(MappingProxyType({
+            "intent": intent,
+            "input_modalities": modalities(row, "input_modalities", where),
+            "model_sources": sources,
+        }))
     backend_rows = []
     triggers_seen: dict[str, int] = {}
     rows = document.get("backend_rows", [])
@@ -248,7 +309,10 @@ def _load_local_capability_rows(
                 "inputs": modalities(row["vision"], "inputs", vision_where),
             })
         backend_rows.append(MappingProxyType(frozen))
-    return MappingProxyType(aliases), tuple(families), tuple(backend_rows)
+    return (
+        MappingProxyType(aliases), tuple(families), tuple(backend_rows),
+        image_defaults, tuple(images), workflow_defaults,
+    )
 
 
 def load_local_capability_rows(
@@ -258,7 +322,7 @@ def load_local_capability_rows(
     tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
 ]:
     """Keep the original two-table API, validating all supplied tables."""
-    aliases, families, _ = _load_local_capability_rows(path)
+    aliases, families = _load_local_capability_rows(path)[:2]
     return aliases, families
 
 
@@ -269,7 +333,17 @@ def load_backend_capability_rows(
     return _load_local_capability_rows(path)[2]
 
 
-_ALIAS_INTENTS, _WORKFLOW_FAMILIES, _BACKEND_ROWS = _load_local_capability_rows()
+def load_local_capability_image_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+) -> tuple[Mapping[str, Any], tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
+    """Return deeply read-only image defaults/rows and workflow defaults."""
+    return _load_local_capability_rows(path)[3:]
+
+
+(
+    _ALIAS_INTENTS, _WORKFLOW_FAMILIES, _BACKEND_ROWS,
+    _IMAGE_DEFAULTS, _IMAGE_ROWS, _WORKFLOW_DEFAULTS,
+) = _load_local_capability_rows()
 
 
 def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]:
@@ -456,8 +530,8 @@ def _build_stt_capabilities(
     return _build_backend_capabilities(backends, flags, "recognition")
 
 
-def _family_backend(section: Mapping[str, Any], family: str) -> str:
-    backend = section.get("backend", "comfyui")
+def _family_backend(section: Mapping[str, Any], family: str, default_backend: str) -> str:
+    backend = section.get("backend", default_backend)
     if not isinstance(backend, str) or not backend:
         raise ValueError(
             f"{family}.backend must be a non-empty string; got {backend!r}"
@@ -465,54 +539,59 @@ def _family_backend(section: Mapping[str, Any], family: str) -> str:
     return backend
 
 
+def _family_backend_present(backends: Mapping[str, Any], backend: str, presence: str) -> bool:
+    if presence == "declared":
+        return backend in backends
+    return bool(_as_mapping(backends.get(backend)))
+
+
+def _model_source(path: str, roots: Mapping[str, Any]) -> Any:
+    value: Any = roots
+    for part in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(part)
+    return value
+
+
 def _build_image_capabilities(
     config: Mapping[str, Any],
     backends: Mapping[str, Any],
     flags: Mapping[str, bool],
 ) -> list[Capability]:
-    if not flags.get("images", True):
+    defaults = _IMAGE_DEFAULTS
+    if not flags.get(defaults["enabled_flag"], True):
         return []
-    backend = _family_backend(_as_mapping(config.get("images")), "images")
+    section = _as_mapping(config.get(defaults["section"]))
+    if defaults["section_required"] and not section:
+        return []
+    backend = _family_backend(section, defaults["section"], defaults["default_backend"])
+    if not _family_backend_present(backends, backend, defaults["backend_presence"]):
+        return []
     backend_spec = _as_mapping(backends.get(backend))
-    if not backend_spec:
-        return []
-    default_model = backend_spec.get("default_model")
-    default_edit = None
-    compat = _as_mapping(config.get("model_compatibility"))
-    defaults = _as_mapping(compat.get("defaults"))
-    if defaults:
-        default_edit = defaults.get("image_edits")
-        if not default_model:
-            default_model = defaults.get("images")
-
+    roots = {"backend": backend_spec, "config": config}
     out: list[Capability] = []
-    if isinstance(default_model, str) and default_model:
+    for row in _IMAGE_ROWS:
+        model = None
+        for source in row["model_sources"]:
+            model = _model_source(source, roots)
+            if model:
+                break
+        # Preserve first-truthy precedence before the type check: a truthy
+        # non-string value suppresses the row rather than selecting a fallback.
+        if not isinstance(model, str) or not model:
+            continue
         out.append(
             Capability(
-                intent=INTENT_IMAGE_GENERATE,
+                intent=row["intent"],
                 backend=backend,
-                model=default_model,
-                input_modalities=("text",),
-                output_modalities=("image",),
-                execution="job",
-                streaming=False,
-                resource_tier="batch",
-                resources=ResourceEstimate(gpu_required=True),
-                caveats=_workflow_dir_caveats(backend_spec.get("workflows_dir")),
-            )
-        )
-    if isinstance(default_edit, str) and default_edit:
-        out.append(
-            Capability(
-                intent=INTENT_IMAGE_EDIT,
-                backend=backend,
-                model=default_edit,
-                input_modalities=("text", "image"),
-                output_modalities=("image",),
-                execution="job",
-                streaming=False,
-                resource_tier="batch",
-                resources=ResourceEstimate(gpu_required=True),
+                model=model,
+                input_modalities=row["input_modalities"],
+                output_modalities=defaults["output_modalities"],
+                execution=defaults["execution"],
+                streaming=defaults["streaming"],
+                resource_tier=defaults["resource_tier"],
+                resources=ResourceEstimate(gpu_required=defaults["gpu_required"]),
                 caveats=_workflow_dir_caveats(backend_spec.get("workflows_dir")),
             )
         )
@@ -533,10 +612,10 @@ def _build_workflow_capabilities(
         if not flags.get(flag_key, True):
             continue
         section = _as_mapping(config.get(section_key))
-        if not section:
+        if _WORKFLOW_DEFAULTS["section_required"] and not section:
             continue
-        backend = _family_backend(section, section_key)
-        if backend not in backends:
+        backend = _family_backend(section, section_key, _WORKFLOW_DEFAULTS["default_backend"])
+        if not _family_backend_present(backends, backend, _WORKFLOW_DEFAULTS["backend_presence"]):
             continue
         out.extend(
             _workflow_family_capabilities(
@@ -594,10 +673,10 @@ def _workflow_family_capabilities(
                 workflow=workflow_id,
                 input_modalities=input_modalities,
                 output_modalities=output_modalities,
-                execution="job",
-                streaming=False,
+                execution=_WORKFLOW_DEFAULTS["execution"],
+                streaming=_WORKFLOW_DEFAULTS["streaming"],
                 resource_tier=resource_tier,
-                resources=ResourceEstimate(gpu_required=True),
+                resources=ResourceEstimate(gpu_required=_WORKFLOW_DEFAULTS["gpu_required"]),
                 caveats=tuple(caveats),
             )
         )
