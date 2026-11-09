@@ -543,6 +543,14 @@ class JobService(Protocol):
     def open_result(self, job_id: str, ref: ResultRef, caller: CallerContext) -> ResultContent:
         """The content under the result-reader rule. JobNotFound, ResultUnavailable."""
         ...
+    def list(self, caller: CallerContext, *, intent: str, limit: int, after_id: str | None = None,
+             order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
+        """One page of the caller's jobs filed under ``intent`` (the intent a row's route declares), as ``(views, has_more)``.
+        Only jobs the caller may read are listed (the same rule as ``get``); a deleted job is not. ``order`` is ``"asc"`` or
+        ``"desc"`` by creation time, ties by job id. ``after_id`` is the last job of the previous page: the page starts after
+        it. A cursor that is not one of the caller's listed jobs (absent, deleted, or not theirs) raises JobNotFound, so a
+        client never restarts from page one by mistake."""
+        ...
     def delete(self, job_id: str, caller: CallerContext) -> None:
         """Delete one job (S7 parity 6.7). The caller who may cancel it may delete it. Cancels first; when the cancel is
         not confirmed, raises JobDeleteConflict and keeps the job. Then persists a tombstone: the job is gone from get,

@@ -1096,6 +1096,29 @@ class WorkflowJobService:
             job = current
         return job_view(job, self._path, disposition="replay")
 
+    def list(self, caller: CallerContext, *, intent: str, limit: int, after_id: str | None = None,
+             order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
+        sql = ("SELECT job_json FROM media_jobs WHERE intent = ? AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone) "
+               f"ORDER BY created_at {'ASC' if order == 'asc' else 'DESC'}, job_id {'ASC' if order == 'asc' else 'DESC'}")
+        page: list[dict[str, Any]] = []
+        seen_cursor = after_id is None
+        has_more = False
+        with media_jobs.connection(self._path) as conn:
+            for (job_json,) in conn.execute(sql, (intent,)):
+                job = media_jobs.for_audience(json.loads(job_json), "internal")
+                if not is_run_job(job) or not self._port.can_read(job, caller):
+                    continue
+                if not seen_cursor:
+                    seen_cursor = job["job_id"] == after_id
+                    continue
+                if len(page) == limit:
+                    has_more = True
+                    break
+                page.append(job)
+        if not seen_cursor:
+            raise JobNotFound(str(after_id))
+        return tuple(job_view(job, self._path, disposition="replay") for job in page), has_more
+
     def delete(self, job_id: str, caller: CallerContext) -> None:
         job = self._readable(job_id, caller)
         if not self._port.can_cancel(job, caller):

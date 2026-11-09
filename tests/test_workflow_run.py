@@ -622,3 +622,67 @@ def test_run_limits_lower_the_code_ceiling_and_ignore_values_that_raise_it_or_ar
     garbage = {CONFIG_SECTION: {"max_wait_s": "9", "history_depth": True, "bounds": [1, 2]}}
     assert run_limits_from_config(garbage) == ceiling
     assert run_limits_from_config({CONFIG_SECTION: {"max_wait_s": -1, "history_depth": 0}}) == ceiling
+
+
+# ---------------------------------------------------------------------------------------------- job service: list (S7 M7)
+
+
+def listed_jobs(db, tmp_path, count, *, intent="demo.listing", scope="app-1"):
+    """``count`` jobs filed under ``intent``, with created times 100, 200, ... so the order is the test's, not the clock's."""
+    snap = snapshot()
+    core, port, _ = make_core(db, tmp_path, snap)
+    ids = []
+    for index in range(count):
+        view = run(core.submit_run(request(idempotency_key=f"list-{index}", intent=intent), Caller(scope=scope), snapshot=snap))
+        ids.append(view.job_id)
+        with sqlite3.connect(db) as conn:
+            conn.execute("UPDATE media_jobs SET created_at = ? WHERE job_id = ?", (100 * (index + 1), view.job_id))
+    return port, ids
+
+
+def test_list_pages_newest_first_by_default_and_oldest_first_on_request(db, tmp_path):
+    port, ids = listed_jobs(db, tmp_path, 5)
+    service = WorkflowJobService(port=port, path=db)
+    views, more = service.list(Caller(), intent="demo.listing", limit=2)
+    assert [v.job_id for v in views] == [ids[4], ids[3]] and more is True
+    views, more = service.list(Caller(), intent="demo.listing", limit=2, after_id=ids[3])
+    assert [v.job_id for v in views] == [ids[2], ids[1]] and more is True
+    views, more = service.list(Caller(), intent="demo.listing", limit=2, after_id=ids[1])
+    assert [v.job_id for v in views] == [ids[0]] and more is False
+    views, more = service.list(Caller(), intent="demo.listing", limit=10, order="asc")
+    assert [v.job_id for v in views] == ids and more is False
+    assert all(v.disposition == "replay" for v in views)
+
+
+def test_list_shows_only_the_intent_and_the_jobs_the_caller_may_read(db, tmp_path):
+    port, mine = listed_jobs(db, tmp_path, 2)
+    _, others = listed_jobs(db, tmp_path, 1, scope="app-2")
+    _, elsewhere = listed_jobs(db, tmp_path, 1, intent="demo.other")
+    service = WorkflowJobService(port=port, path=db)
+    views, more = service.list(Caller(), intent="demo.listing", limit=10)
+    assert {v.job_id for v in views} == set(mine) and more is False
+    stranger, _ = service.list(Caller(scope="app-2"), intent="demo.listing", limit=10)
+    assert {v.job_id for v in stranger} == set(others)
+    assert {v.job_id for v in service.list(Caller(), intent="demo.other", limit=10)[0]} == set()
+    assert elsewhere and not set(elsewhere) & {v.job_id for v in views}
+
+
+def test_list_leaves_out_a_deleted_job_at_once_and_after_a_restart(db, tmp_path):
+    port, ids = listed_jobs(db, tmp_path, 3)
+    service = WorkflowJobService(port=port, path=db)
+    service.cancel(ids[1], Caller())
+    service.delete(ids[1], Caller())
+    for fresh in (service, WorkflowJobService(port=port, path=db)):
+        views, _ = fresh.list(Caller(), intent="demo.listing", limit=10, order="asc")
+        assert [v.job_id for v in views] == [ids[0], ids[2]]
+
+
+def test_list_refuses_a_cursor_that_is_not_one_of_the_callers_listed_jobs(db, tmp_path):
+    port, ids = listed_jobs(db, tmp_path, 2)
+    _, theirs = listed_jobs(db, tmp_path, 1, scope="app-2")
+    service = WorkflowJobService(port=port, path=db)
+    service.cancel(ids[0], Caller())
+    service.delete(ids[0], Caller())
+    for cursor in ("no-such-job", theirs[0], ids[0]):
+        with pytest.raises(JobNotFound):
+            service.list(Caller(), intent="demo.listing", limit=10, after_id=cursor)
