@@ -1,0 +1,49 @@
+diff --git a/tests/fixtures/content_access_inventory.json b/tests/fixtures/content_access_inventory.json
+index 904643ca9..2bafff34b 100644
+--- a/tests/fixtures/content_access_inventory.json
++++ b/tests/fixtures/content_access_inventory.json
+@@ -136,7 +136,7 @@
+     {
+       "path": "gateway/workflow_run.py",
+       "function": "_create",
+-      "source_sha256": "96ff4c907c63f613950a8ce63787493d9ed851ef2240aa35c724297cf3399f3e",
++      "source_sha256": "bd3b1e87fda13d98df851f3b64bf0f19ff2031b76c30745251dacba0591dcbe0",
+       "call": "append_event",
+       "event": "'queued'",
+       "access": "content:job:read"
+@@ -152,7 +152,7 @@
+     {
+       "path": "gateway/workflow_run.py",
+       "function": "_run",
+-      "source_sha256": "279bf61064a0c56c972baedc906cde860c69a6aa1d220f8750481ca4ea5abaa2",
++      "source_sha256": "ac68cc6ab0d8f6008c311a86f63a50370b0d6792e9fbaeb52be195df6bb9b81e",
+       "call": "append_event",
+       "event": "'started'",
+       "access": "content:job:read"
+@@ -160,7 +160,7 @@
+     {
+       "path": "gateway/workflow_run.py",
+       "function": "_run",
+-      "source_sha256": "279bf61064a0c56c972baedc906cde860c69a6aa1d220f8750481ca4ea5abaa2",
++      "source_sha256": "ac68cc6ab0d8f6008c311a86f63a50370b0d6792e9fbaeb52be195df6bb9b81e",
+       "call": "append_event",
+       "event": "'attempt'",
+       "access": "content:job:read"
+@@ -168,7 +168,7 @@
+     {
+       "path": "gateway/workflow_run.py",
+       "function": "_run",
+-      "source_sha256": "279bf61064a0c56c972baedc906cde860c69a6aa1d220f8750481ca4ea5abaa2",
++      "source_sha256": "ac68cc6ab0d8f6008c311a86f63a50370b0d6792e9fbaeb52be195df6bb9b81e",
+       "call": "append_event",
+       "event": "'succeeded'",
+       "access": "content:job:read"
+@@ -200,7 +200,7 @@
+     {
+       "path": "proxy.py",
+       "function": "gateway_image_generations_media_job",
+-      "source_sha256": "1c2b652bb79dc6663404252d219d84ffbbee32e70fad738c97d6891a9cf3ebff",
++      "source_sha256": "3fc4e42bd363e64cbc41cadc193781ce2a3a7f93a398130a19797390e13fb3fd",
+       "call": "append_event",
+       "event": "'queued'",
+       "access": "content:job:read"

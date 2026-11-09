@@ -1,0 +1,36 @@
+diff --git a/tests/support/s7_parity_images_facts.py b/tests/support/s7_parity_images_facts.py
+index 899fe7358..ca952bd4d 100644
+--- a/tests/support/s7_parity_images_facts.py
++++ b/tests/support/s7_parity_images_facts.py
+@@ -64,22 +64,6 @@ def engine_bodies(obs: Obs, path: str) -> list[Any]:
+     return [r.get("body") for r in obs.trace["engine_requests"] if r["path"] == path]
+ 
+ 
+-def prompt_bodies(obs: Obs) -> list[Any]:
+-    """The prompts sent to the engine, without the adapter's push-session id (``client_id``): the old edit route sent none,
+-    the row's adapter sends the id its event watcher uses (delta ``engine_session_id``)."""
+-    def bare(body: Any) -> Any:
+-        if isinstance(body, dict) and isinstance(body.get("text"), str):
+-            try:
+-                parsed = json.loads(body["text"])
+-            except ValueError:
+-                return body
+-            if isinstance(parsed, dict):
+-                parsed.pop("client_id", None)
+-                return {**body, "text": json.dumps(parsed, sort_keys=True)}
+-        return body
+-    return [bare(body) for body in engine_bodies(obs, "/prompt")]
+-
+-
+ def sleeps(obs: Obs) -> list[float]:
+     """The gateway's waits that belong to the request. The receipt heartbeat of a handed-off job is infrastructure both
+     routes share; it sleeps one fixed interval and the rig's instant clock makes it spin, so it is left out."""
+@@ -179,8 +163,3 @@ def assert_same(old: Obs, row: Obs, *readers: Reader | tuple[str, Reader]) -> No
+ def old_has(old: Obs, label: str, value: Any) -> None:
+     """Guard: the scenario really reached the behaviour the item names on the old route."""
+     assert value, f"scenario does not reach {label} on the old route (value {value!r})"
+-
+-
+-def submit_receipt(obs: Obs) -> list[tuple[Any, ...]]:
+-    """The first receipt of the request: the one the route that took it filed (a job route's old executor filed a second)."""
+-    return receipt_summary(obs)[:1]

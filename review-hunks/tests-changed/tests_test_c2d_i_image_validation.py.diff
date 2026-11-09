@@ -1,0 +1,18 @@
+diff --git a/tests/test_c2d_i_image_validation.py b/tests/test_c2d_i_image_validation.py
+index c78d4b8d8..09aa998d5 100644
+--- a/tests/test_c2d_i_image_validation.py
++++ b/tests/test_c2d_i_image_validation.py
+@@ -28,8 +28,11 @@ def test_a_top_level_field_outside_the_routes_standard_set_is_refused() -> None:
+     assert (status, error) == (400, {"message": UNKNOWN, "type": "invalid_request_error", "param": "not_a_field", "code": "unknown_parameter"})
+     # A workflow's own input is not a top-level field of the wire: it travels under the extensions envelope.
+     assert refusal(run_request("images-generations", json_request({"prompt": "p", "seed": 3}), snap))[1]["param"] == "seed"
+-    jobs = refusal(run_request("image-jobs", json_request({"prompt": "p", "seed": 3}), snap))
+-    assert jobs[0] == 400 and jobs[1]["code"] == "unknown_parameter"
++    # The job route takes the field at submit and leaves the refusal to the run, which fails the job with it.
++    jobs = run_request("image-jobs", json_request({"prompt": "p", "seed": 3}), snap)
++    assert not isinstance(jobs, Response) and "seed" not in jobs.inputs
++    assert {k: jobs.run_refusal[k] for k in ("status", "code", "category")} == {"status": 400, "code": "unknown_parameter", "category": "invalid_input"}
++    assert jobs.run_refusal["message"] == UNKNOWN
+     # An edit refuses a file part the wire does not name; variations take no prompt at all.
+     edit = run_request("images-edits", multipart_request({"prompt": "p"}, [("other", "a.png", "image/png", b"x")]), snap)
+     assert refusal(edit)[1]["param"] == "other"
