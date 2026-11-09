@@ -588,10 +588,10 @@ def test_a_reset_whose_outcome_is_unknown_is_never_run_again_by_the_next_restart
         assert (first.state, gates.state("dom")) == ("reconciling", "reconciling")
     assert engine.resets == 1
     row = executor.store.get(op_id)
-    assert not (row.evidence_ref or "").startswith("revalidate:"), "the held reset is not rewritten into the stale partial"
     second = _restart(runtime, op_id)
     assert engine.resets == 1, "the second restart queries the dispatched reset; it does not run it again"
     assert (second.state, gates.state("dom")) == ("reconciling", "reconciling")
+    assert not (row.evidence_ref or "").startswith("revalidate:"), "the held reset is not rewritten into the stale partial"
 
 
 @pytest.mark.parametrize("evidence", ["restore:failed:state_not_known_clean", "reset:target_not_verified_clean"])
