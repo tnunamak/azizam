@@ -13,13 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -234,7 +234,13 @@ def video_rig(rig, isolated_receipts, monkeypatch):
     stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
     patch_video_row_files_in_a_temporary_tree(stack)
     rig.comfy = comfy
-    rig.client = TestClient(proxy.app)
+
+    @contextlib.asynccontextmanager
+    async def no_lifespan(_app):
+        yield
+
+    stack.enter_context(patch.object(proxy.app.router, "lifespan_context", no_lifespan))
+    rig.client = stack.enter_context(TestClient(proxy.app))      # entered: the portal (and a run in flight) outlives each request
     yield rig
     stack.close()
 
@@ -243,28 +249,23 @@ VIDEO_MODEL = "video-minimax-h3-i2v"
 
 
 def post_video(rig, reference=None, *, files=None, settle: bool = True):
-    """Create a video and, unless ``settle`` is off, let the run core stage the file: the create answers at once and the run
-    goes on in the app's own loop, so the request and the wait share one loop."""
+    """Create a video and, unless ``settle`` is off, wait for the run core to stage the file: the create answers at once and the
+    run goes on in the app's loop (the fixture keeps that loop alive between requests)."""
     body = {"model": VIDEO_MODEL, "prompt": "a lighthouse", "seconds": 5, "seed": 7}
-
-    async def go():
-        transport = httpx.ASGITransport(app=proxy.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            if files is not None:
-                response = await client.post("/v1/videos", data={k: str(v) for k, v in body.items()}, files=files)
-            else:
-                response = await client.post("/v1/videos", json={**body, "input_reference": reference})
-            if settle and response.status_code == 200:
-                await settled_uploads(rig)
-            return response
-    return asyncio.run(go())
+    if files is not None:
+        response = rig.client.post("/v1/videos", data={k: str(v) for k, v in body.items()}, files=files)
+    else:
+        response = rig.client.post("/v1/videos", json={**body, "input_reference": reference})
+    if settle and response.status_code == 200:
+        settled_uploads(rig)
+    return response
 
 
-async def settled_uploads(rig, count: int = 1, *, wait_s: float = 5.0) -> list:
+def settled_uploads(rig, count: int = 1, *, wait_s: float = 5.0) -> list:
     """The files the engine was sent: the run core stages the file a moment after the create answered."""
     deadline = time.monotonic() + wait_s
     while len(rig.comfy.uploads) < count and time.monotonic() < deadline:
-        await asyncio.sleep(0.02)
+        time.sleep(0.02)
     return rig.comfy.uploads
 
 
