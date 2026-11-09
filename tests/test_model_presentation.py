@@ -702,7 +702,7 @@ def test_classification_follows_the_model_list_type():
     # Audio direction comes from the declared modalities.
     stt = Capability(intent="audio.transcriptions", backend="one", input_modalities=("audio",), output_modalities=("text",))
     assert product_capability(stt) == "transcribe"
-    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "audio"
+    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "speech"
     # The listed `/v1/models` fields win over the capability's intent.
     listed = {"type": "reranking", "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}}
     assert product_capability(Capability(intent="chat.completions", backend="one"), {LISTED_METADATA_KEY: listed}) == "rerank"
@@ -724,17 +724,6 @@ def test_embeddings_label_passes_the_member_jargon_sweep_list():
                 for line in map(str.strip, lines) if line and not line.startswith("#")]
     label = CAPABILITY_LABELS["embed"]
     assert [p.pattern for p in patterns if p.search(label)] == []
-
-
-def test_undeclared_speech_intent_stays_generic_audio():
-    from gateway.model_presentation import capability_presentation, product_capability
-
-    capability = Capability(intent="speech.synthesis", backend="one")
-    assert product_capability(capability) == "audio"
-    row = capability_presentation(capability)
-    assert row["capability"] == "audio"
-    assert row["capability_title"] == "Audio"
-    assert row["icon_key"] == "sfx"
 
 
 def test_undeclared_intent_family_never_reaches_product_wire():

@@ -221,10 +221,10 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     The listed model's `type` and modalities decide, else the capability's
     intent and modalities read through the same contract. Audio that turns
     audio into text is `transcribe`; other audio takes a declared subtype
-    (`capability: music`, a `capability:sfx` tag), else stays generic
-    `audio`. With no contract it is the declared product capability (a manifest's
-    `capability: mesh`), else UNCLASSIFIED_CAPABILITY. Never inferred
-    from model IDs or intent spelling.
+    (`capability: music`, a `capability:sfx` tag) or the speech intent, else
+    stays generic `audio`. With no contract it is the declared product
+    capability (a manifest's `capability: mesh`), else UNCLASSIFIED_CAPABILITY.
+    Never inferred from model IDs.
     """
     metadata = metadata or {}
     intent = capability if isinstance(capability, str) else capability.intent
@@ -246,7 +246,9 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     subtype = next((hint for hint in hints if hint in _AUDIO_SUBTYPES), None)
     if subtype:
         return subtype
-    return "audio"
+    # Kept until speech producers declare their subtype (local TTS, stable aliases
+    # and root-module rows build speech.synthesis with no capability field).
+    return "speech" if intent.startswith(("speech.", "audio.speech")) else "audio"
 
 
 def friendly_name(value: str) -> str:
