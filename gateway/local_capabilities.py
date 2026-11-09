@@ -379,6 +379,15 @@ def _build_stt_capabilities(
     return out
 
 
+def _family_backend(section: Mapping[str, Any], family: str) -> str:
+    backend = section.get("backend", "comfyui")
+    if not isinstance(backend, str) or not backend:
+        raise ValueError(
+            f"{family}.backend must be a non-empty string; got {backend!r}"
+        )
+    return backend
+
+
 def _build_image_capabilities(
     config: Mapping[str, Any],
     backends: Mapping[str, Any],
@@ -386,10 +395,11 @@ def _build_image_capabilities(
 ) -> list[Capability]:
     if not flags.get("images", True):
         return []
-    comfy = _as_mapping(backends.get("comfyui"))
-    if not comfy:
+    backend = _family_backend(_as_mapping(config.get("images")), "images")
+    backend_spec = _as_mapping(backends.get(backend))
+    if not backend_spec:
         return []
-    default_model = comfy.get("default_model")
+    default_model = backend_spec.get("default_model")
     default_edit = None
     compat = _as_mapping(config.get("model_compatibility"))
     defaults = _as_mapping(compat.get("defaults"))
@@ -403,7 +413,7 @@ def _build_image_capabilities(
         out.append(
             Capability(
                 intent=INTENT_IMAGE_GENERATE,
-                backend="comfyui",
+                backend=backend,
                 model=default_model,
                 input_modalities=("text",),
                 output_modalities=("image",),
@@ -411,14 +421,14 @@ def _build_image_capabilities(
                 streaming=False,
                 resource_tier="batch",
                 resources=ResourceEstimate(gpu_required=True),
-                caveats=_workflow_dir_caveats(comfy.get("workflows_dir")),
+                caveats=_workflow_dir_caveats(backend_spec.get("workflows_dir")),
             )
         )
     if isinstance(default_edit, str) and default_edit:
         out.append(
             Capability(
                 intent=INTENT_IMAGE_EDIT,
-                backend="comfyui",
+                backend=backend,
                 model=default_edit,
                 input_modalities=("text", "image"),
                 output_modalities=("image",),
@@ -426,7 +436,7 @@ def _build_image_capabilities(
                 streaming=False,
                 resource_tier="batch",
                 resources=ResourceEstimate(gpu_required=True),
-                caveats=_workflow_dir_caveats(comfy.get("workflows_dir")),
+                caveats=_workflow_dir_caveats(backend_spec.get("workflows_dir")),
             )
         )
     return out
@@ -455,8 +465,8 @@ def _build_workflow_capabilities(
         section = _as_mapping(config.get(section_key))
         if not section:
             continue
-        backend = section.get("backend", "comfyui")
-        if not isinstance(backend, str) or backend not in backends:
+        backend = _family_backend(section, section_key)
+        if backend not in backends:
             continue
         out.extend(
             _workflow_family_capabilities(
