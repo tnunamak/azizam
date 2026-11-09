@@ -355,8 +355,16 @@ def test_video_reference_to_an_engine_the_plan_does_not_list_is_refused_before_a
 
 
 def test_video_reference_lease_is_released_when_the_engine_upload_fails(video_rig):
-    """The picture is resolved, then the request fails at the engine: the lease still ends with the request."""
+    """The picture is resolved, then the run fails at the engine: nothing of the picture stays behind. The create has already
+    answered (it never waits for the engine), so the failure shows in the job."""
     video_rig.comfy.upload_status = 500
-    response = post_video(video_rig, data_uri(image_bytes("PNG")))
-    assert response.status_code == 502
+    response = post_video(video_rig, data_uri(image_bytes("PNG")), settle=False)
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 5
+    status = {}
+    while status.get("status") != "failed" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        status = video_rig.client.get(f"/v1/videos/{response.json()['id']}").json()
+    assert status.get("status") == "failed", status
+    assert video_rig.comfy.submitted == []
     assert ended(video_rig)
