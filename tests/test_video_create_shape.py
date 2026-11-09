@@ -706,7 +706,7 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
 
     try:
         made = edit_request({})
-        assert isinstance(made, RunRequest), made
+        assert isinstance(made, RunRequest), getattr(made, "body", made)
         assert made.inputs["frame_rate"] == 30 and tuple(made.media) == ("video",)
         too_long = edit_request({"seconds": 6})
         assert too_long.status_code == 400
