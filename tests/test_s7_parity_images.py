@@ -848,7 +848,6 @@ def test_images_J11_job_store_failure_500(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_J12_accepted_202_with_links(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), run=False)
     old_has(old, "202", status(old) == 202)
@@ -993,7 +992,6 @@ def test_images_J29_content_states(tmp_path):
     assert_same(old2, row2, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("content", lambda o: failure(o, 1)))
 
 
-@ROW_PENDING
 def test_images_J30_content_shape(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/content"))
     old_has(old, "content", data_items(old, 1))
