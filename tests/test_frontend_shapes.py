@@ -284,13 +284,13 @@ def test_a_video_edit_names_its_source_video_and_fills_the_asset_input_by_refere
 
     class Hooks(shapes.VideoHooks):
         async def source(self, job_id, wire_id, caller):
-            return VideoSource(wire_id, wire_id, None, None, None, None, None, None)
+            return VideoSource(wire_id, "ast_9", None, None, None, None, None, None)
 
     monkeypatch.setattr(shapes, "VIDEO_HOOKS", Hooks())
     snap = FakeSnapshot(1, MappingProxyType({"video.edit.demo": entry(VIDEO_EDIT)}))
-    run = run_request("videos-edit", json_request({"prompt": "night", "video": {"id": "vid_9"}}), snap)
+    run = run_request("videos-edit", json_request({"prompt": "night", "video": {"id": "video_9"}}), snap)
     assert run.workflow_id == "video.edit.demo" and run.inputs == {"prompt": "night"}
-    assert run.media["video"][0].asset_id == "vid_9"
+    assert run.media["video"][0].asset_id == "ast_9"
     missing = run_request("videos-edit", json_request({"prompt": "night"}), snap)
     assert missing.status_code == 400 and json.loads(missing.body)["error"]["param"] == "video"
 
