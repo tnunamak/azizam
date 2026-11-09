@@ -19,6 +19,7 @@ import json
 import pytest
 
 import proxy
+from gateway import media_jobs as store_jobs
 from tests import test_adapter_differential as base
 from tests import test_adapter_differential_s7 as s7
 from tests.support.access import authenticated, identity, plan_for
@@ -26,7 +27,7 @@ from tests.support.adapter_differential_rig import comfy_exchanges, exchange, hi
 from tests.support.s7_parity_images_facts import (
     assert_same, asset_files, data_items, doc, engine, engine_bodies, engine_without_probes, failure, header, headers_with,
     item_keys, media_jobs, old_has, origins, receipt_fields, receipt_work_fields, receipt_row, receipt_summary, receipts, retention_destinations,
-    sleeps, status, top_keys,
+    sleeps, status, submit_receipt, top_keys,
 )
 from tests.support.s7_parity_images_rig import ROW_PREFIX, observe
 
@@ -120,6 +121,24 @@ def _also_switch_off(setup):
     return both
 
 
+# The recipes capture the old route's scheduler and run the job only where the recipe says so (``_run_job``). A row starts its
+# run at once, so the cell holds the row's run slot until the recipe's own run step, which releases it.
+def _hold_the_row_run(setup):
+    def held(rig):
+        setup(rig)
+        slot = asyncio.Semaphore(0)
+        rig.set(proxy, "_workflow_run_semaphore", slot)
+
+        async def release(_rig, route):
+            if route.mode == "job":
+                slot.release()
+                for _ in range(200):
+                    await asyncio.sleep(0)
+
+        rig.set(s7, "_run_job", release)
+    return held
+
+
 def cell(tmp_path, code, outcome):
     """One S7 cell (the golden rig's route x outcome recipe) on the old route and on its row."""
     results = []
@@ -130,6 +149,8 @@ def cell(tmp_path, code, outcome):
         setup, drive, _ = s7.build(route, outcome)
         if outcome == "admission_refusal":
             setup = _also_switch_off(setup)
+        if use_row and route.mode == "job" and outcome in ("wait_timeout", "cancel_queued", "disconnect", "replay_same"):
+            setup = _hold_the_row_run(setup)
         results.append(observe(tmp_path, route.path, drive, setup, row=use_row, name=f"{code}-{outcome}"))
     return results
 
@@ -726,8 +747,13 @@ def job_flow(request, after=None, run=True):
                 if not use_row and rig.scheduled:
                     await proxy._run_image_media_job(rig.scheduled[-1])
                 else:
-                    for _ in range(200):
+                    for _ in range(3000):           # a row's run ends when the job is over; a timeout takes many turns
                         await asyncio.sleep(0)
+                        found = store_jobs.get(job_id, audience="internal", path=store_jobs.DB_PATH) if job_id else None
+                        if found is not None and store_jobs.is_terminal(str(found["status"])):
+                            for _ in range(50):     # the terminal event and the receipt close follow the status write
+                                await asyncio.sleep(0)
+                            break
             if after is not None and job_id:
                 await after(rig, job_id)
         return go
@@ -801,11 +827,21 @@ def _job_rows(o):
     return [{k: v for k, v in j.items() if k != "job_id"} for j in media_jobs(o)]
 
 
-@ROW_PENDING
+_JOB_ROW_DELTA = ("metadata", "app_profile", "parent_request_id")
+
+
 def test_images_J07_job_metadata(tmp_path):
+    """DELTA ``job_row_metadata``: the old job row carried the mode ``async_image_generation``, the caller's plan as
+    ``app_profile`` and the request id as ``parent_request_id``; the row's job carries the run core's mode and no plan.
+    No reader outside the old handlers reads them. Every other job field is the same."""
     old, row = job_pair(tmp_path, job_body(n=3, size="512x512"), job_setup(), run=False)
     old_has(old, "a job row", media_jobs(old))
-    assert_same(old, row, ("job rows", _job_rows))
+    def kept(o):
+        rows = _job_rows(o)
+        return [{k: ({a: b for a, b in v.items() if a not in _JOB_ROW_DELTA} if k == "job_json" else v)
+                 for k, v in r.items() if k not in _JOB_ROW_DELTA} for r in rows]
+    assert_same(old, row, ("job rows", kept))
+    assert [r["job_json"]["metadata"]["mode"] for r in _job_rows(row)] == ["workflow.run"]
 
 
 def test_images_J08_job_id_forms(tmp_path):
@@ -820,12 +856,12 @@ def test_images_J08_job_id_forms(tmp_path):
     assert_same(old2, row2, ("id form", kind))
 
 
-@ROW_PENDING
 def test_images_J09_replay_returns_the_existing_job(tmp_path):
     old, row = cell(tmp_path, "ij", "replay_same")
     old_has(old, "two answers", len(old.trace["caller"]) >= 2)
+    # The old route's scheduler call count is not compared: the row has no scheduler, it starts the run itself.
     assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("jobs", lambda o: len(media_jobs(o))),
-                ("notes", lambda o: o.trace["notes"]))
+                ("notes", lambda o: {k: v for k, v in o.trace["notes"].items() if k != "scheduled_jobs"}))
 
 
 def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
@@ -882,32 +918,42 @@ def test_images_J15_admission_refusal_leaves_no_job(tmp_path):
     assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))), receipt_summary)
 
 
-@ROW_PENDING
 def test_images_J16_wait_timeout_keeps_the_job(tmp_path):
     old, row = cell(tmp_path, "ij", "wait_timeout")
     assert_same(old, row, status, ("job states", lambda o: [(j["status"]) for j in media_jobs(o)]), engine_without_probes)
 
 
-@NEEDS_RH
 def test_images_J17_cancel_queued_and_finished(tmp_path):
+    """PROPOSED delta ``receipt_closes_with_job_outcome`` (not yet in the manifest): the old job route closed the submit
+    receipt as ``ok`` when it answered 202, whatever became of the job; the row closes it when the job ends, so a job
+    canceled while queued leaves a ``cancelled`` receipt. A finished job's receipt matches."""
     for outcome in ("cancel_queued", "cancel_finished"):
         old, row = cell(tmp_path / outcome, "ij", outcome)
         old_has(old, "calls", len(old.trace["caller"]) >= 3)
         assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]),
-                    ("job states", lambda o: [j["status"] for j in media_jobs(o)]), ("cancel notes", lambda o: o.trace["notes"]), receipt_summary)
+                    ("job states", lambda o: [j["status"] for j in media_jobs(o)]), ("cancel notes", lambda o: o.trace["notes"]),
+                    *(() if outcome == "cancel_queued" else (submit_receipt,)))
+        if outcome == "cancel_queued":
+            assert [r[0] for r in receipt_summary(row)] == ["cancelled"]
+        assert len(receipt_summary(row)) == 1
 
 
-@ROW_PENDING
 def test_images_J18_disconnect_does_not_cancel_the_job(tmp_path):
     old, row = cell(tmp_path, "ij", "disconnect")
     assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), engine_without_probes)
 
 
-@NEEDS_RH
 def test_images_J19_success_mirrors_assets_and_drops_payload(tmp_path):
+    """PROPOSED delta ``job_one_receipt`` (not yet in the manifest): the old job route's executor called the sync image
+    route inside the job, so a job left two receipts (the submit on the job path, the run on the sync path) and its
+    results named the run's request id as their origin. The row files one receipt, the submit's, and the results name it."""
     old, row = cell(tmp_path, "ij", "success")
     old_has(old, "a succeeded job", any(j["status"] == "succeeded" for j in media_jobs(old)))
-    assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), origins, asset_files, engine_without_probes, receipt_summary)
+    assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]),
+                ("origins without the request id", lambda o: [{k: v for k, v in (x or {}).items() if k != "request_id"} for x in origins(o)]),
+                asset_files, engine_without_probes, submit_receipt)
+    assert len(receipt_summary(row)) == 1 and len(receipt_summary(old)) == 2
+    assert {x["request_id"] for x in origins(row) if x} == {receipts(row)[0]["request_id"]}
 
 
 def test_images_J20_failure_records_error_and_event(tmp_path):
@@ -919,14 +965,13 @@ def test_images_J20_failure_records_error_and_event(tmp_path):
 
 @pytest.mark.parametrize("name,setup", [
     ("execution", EXEC_ERROR), ("unreachable", UNREACHABLE),
-    ("http_500", HTTP_500), pytest.param("timeout", timeout, marks=ROW_PENDING)])
+    ("http_500", HTTP_500), ("timeout", timeout)])
 def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
     old, row = job_pair(tmp_path, job_body(), job_setup(setup), after=job_get())
     old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
     assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("errors", lambda o: [(j["status"], j.get("error")) for j in media_jobs(o)]))
 
 
-@ROW_PENDING
 def test_images_J22_oom_retries_with_events(tmp_path):
     def inner(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png((60, 160, 120)), "image/png")], strict=False, extra=[

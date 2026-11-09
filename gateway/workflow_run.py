@@ -792,6 +792,10 @@ class WorkflowRunCore:
                 attempt += 1
                 continue
             break
+        committed = media_jobs.get(job_id, audience="internal", path=self._path)
+        if committed is not None and committed["status"] == media_jobs.STATUS_SUCCEEDED:     # the event the job routes always wrote
+            media_jobs.append_event(job_id, "succeeded", {"phase": "complete", "status": media_jobs.STATUS_SUCCEEDED, "progress": 100,
+                                                          "attempt": attempt, "total": policy.max_attempts}, path=self._path)
         self._settle(job_id)
 
     async def _before_retry(self, job_id: str, exc: BaseException, attempt: int, delay: float, policy: RetryPolicy) -> tuple[CallerContext | None, Mapping[str, Any] | None, tuple[str, str, str] | None]:

@@ -163,3 +163,8 @@ def assert_same(old: Obs, row: Obs, *readers: Reader | tuple[str, Reader]) -> No
 def old_has(old: Obs, label: str, value: Any) -> None:
     """Guard: the scenario really reached the behaviour the item names on the old route."""
     assert value, f"scenario does not reach {label} on the old route (value {value!r})"
+
+
+def submit_receipt(obs: Obs) -> list[tuple[Any, ...]]:
+    """The first receipt of the request: the one the route that took it filed (a job route's old executor filed a second)."""
+    return receipt_summary(obs)[:1]
