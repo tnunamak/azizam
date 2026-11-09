@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from gateway import generated_defaults, log_scrub, media_jobs, result_bundle
+from gateway import generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
@@ -66,7 +66,6 @@ CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
 CLAIM_POLL_S = 0.05
 RETRY_AFTER_S = 2
-WAIT_POLL_S = 0.1
 TOMBSTONE_RETENTION_S = 24 * 3600     # a deleted job is hidden at once and removed after this long
 
 # I7: the code's value of each key is its ceiling; the runtime config (section ``workflow_execution``) may only lower it.
@@ -1075,11 +1074,13 @@ class WorkflowJobService:
 
     async def wait(self, job_id: str, caller: CallerContext, timeout_s: float) -> RunJobView:
         deadline = time.monotonic() + max(0.0, timeout_s)
-        while True:
-            job = self._readable(job_id, caller)
-            if media_jobs.is_terminal(str(job["status"])) or time.monotonic() >= deadline:
-                return job_view(job, self._path, disposition="replay")
-            await asyncio.sleep(WAIT_POLL_S)
+        with job_wake.watch(job_id) as woken:
+            while True:
+                job = self._readable(job_id, caller)
+                remaining = deadline - time.monotonic()
+                if media_jobs.is_terminal(str(job["status"])) or remaining <= 0:
+                    return job_view(job, self._path, disposition="replay")
+                await woken.wait(min(remaining, job_wake.FALLBACK_S))
 
     def cancel(self, job_id: str, caller: CallerContext) -> RunJobView:
         job = self._readable(job_id, caller)
