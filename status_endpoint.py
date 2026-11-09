@@ -340,7 +340,11 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
     for key, cfg in backends.items():
         if not isinstance(cfg, dict) or not _is_enabled(cfg):
             continue
-        url = service_health_endpoint(cfg)
+        try:
+            service_registry.engine_base_address(cfg)
+            url = service_health_endpoint(cfg)
+        except service_registry.EngineAddressError:
+            continue  # _unconfigured_rows reports the refusal without dialing another address.
         if not url:
             continue
         name = cfg.get("name") or key
@@ -358,6 +362,10 @@ def _lifecycle_backend_targets(config: dict) -> list[dict[str, Any]]:
     targets: list[dict[str, Any]] = []
     for key, cfg in backends.items():
         if not isinstance(cfg, dict) or not _is_enabled(cfg):
+            continue
+        try:
+            service_registry.engine_base_address(cfg)
+        except service_registry.EngineAddressError:
             continue
         lifecycle = cfg.get("lifecycle")
         if not isinstance(lifecycle, Mapping):
@@ -495,20 +503,26 @@ def _http_target_row(target: Mapping[str, Any], status: str, error: Optional[str
 
 
 def _unconfigured_rows(config: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """One row per service that declares a relative health path but whose record names no address.
+    """One row per invalid execution address or relative health path with no complete address.
 
     Such an engine is not configured: shown as "not_configured" (never as measured down), with the reason, and never probed.
     """
     rows: list[dict[str, Any]] = []
     for key, cfg in ((config or {}).get("backends") or {}).items():
-        if (not isinstance(cfg, Mapping) or not _is_enabled(cfg) or not cfg.get("health_endpoint")
-                or service_health_endpoint(cfg)):
+        if not isinstance(cfg, Mapping) or not _is_enabled(cfg):
             continue
+        try:
+            service_registry.engine_base_address(cfg)
+            if not cfg.get("health_endpoint") or service_health_endpoint(cfg):
+                continue
+            reason = service_registry.NOT_CONFIGURED_REASON
+        except service_registry.EngineAddressError as error:
+            reason = str(error)
         rows.append({
             "key": key, "service_id": key, "name": cfg.get("name") or key, "url": "",
             "role": cfg.get("role") if cfg.get("role") in _VALID_ROLES else "required", "note": cfg.get("note"),
             "status": "not_configured", "live_status": "not_configured", "latency_ms": None,
-            "last_error": f"not configured: {service_registry.NOT_CONFIGURED_REASON}",
+            "last_error": f"not configured: {reason}",
             "kind": "not_configured", "observed_at_s": int(time.time()),
         })
     return rows
@@ -585,6 +599,15 @@ def _is_enabled(record: Mapping[str, Any]) -> bool:
     return service_registry.bool_from_config(record.get("enabled"), True)
 
 
+def _configured_engine_base(record: Mapping[str, Any]) -> str:
+    if not _is_enabled(record):
+        return ""
+    try:
+        return service_registry.engine_base_address(record)
+    except service_registry.EngineAddressError:
+        return ""  # The grid reports the field-level configuration refusal.
+
+
 def _managed_chat_origin(config: Mapping[str, Any]) -> str:
     """The address of the chat engine the gateway runs on this computer, from its service record ("" when none).
 
@@ -600,7 +623,7 @@ def _managed_chat_origin(config: Mapping[str, Any]) -> str:
         if not _is_enabled(cfg):
             continue
         if driver not in {"external", "none"} and capabilities & {"chat", "completions"}:
-            origin = service_registry.engine_base_address(cfg)
+            origin = _configured_engine_base(cfg)
             if origin:
                 return origin
     return ""
@@ -993,7 +1016,7 @@ async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[di
             return None
 
     graph = ((config or {}).get("backends") or {}).get(_GRAPH_SERVICE_ID) or {}
-    origin = service_registry.engine_base_address(graph) if _is_enabled(graph) else ""
+    origin = _configured_engine_base(graph)
     if not origin:  # the record names no address: the graph engine is not configured
         return None, None
     try:
@@ -2780,7 +2803,7 @@ async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
 
     async def _health(client, service_id: str):
         record = backends.get(service_id) or {}
-        origin = service_registry.engine_base_address(record) if _is_enabled(record) else ""
+        origin = _configured_engine_base(record)
         return await _get(client, service_registry.join_base_path(origin, "/health")) if origin else None  # no address: not configured, not probed
 
     try:

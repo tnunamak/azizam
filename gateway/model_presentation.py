@@ -17,14 +17,16 @@ def health_base(service: Mapping[str, Any]) -> str | None:
     connection = {**(config if isinstance(config, Mapping) else {}), **service}
     base_url = str(connection.get("base_url") or "").rstrip("/")
     if base_url:
-        return base_url
+        return engine_base_address({"base_url": base_url})
     host = str(connection.get("host") or "").strip()
     if not host:
         return engine_base_address(connection) or None
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     port = connection.get("port")
-    authority = f"{host}:{port}" if port is not None else host
+    if port in (None, ""):
+        return None
+    authority = f"{host}:{port}"
     scheme = str(connection.get("scheme") or "http")
     base_path = str(connection.get("base_path") or "").strip("/")
     return f"{scheme}://{authority}/{base_path}".rstrip("/")

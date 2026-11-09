@@ -282,7 +282,10 @@ class SttExecutionConfig:
                 raise SttConfigurationError(f"STT {name} must be finite and {qualification}")
             return result
 
-        origin = service_registry.engine_base_address(raw)  # "" when the record names no address: a request refuses, nothing is dialed
+        try:
+            origin = service_registry.engine_base_address(raw)  # No address: the request path refuses.
+        except service_registry.EngineAddressError as error:
+            raise SttNotConfigured(str(error)) from error
 
         fallback = bundled_chunking_defaults()
         threshold = positive_float("threshold_seconds", fallback["threshold_seconds"])

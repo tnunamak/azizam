@@ -1924,25 +1924,38 @@ def engine_origin(config: Mapping[str, Any]) -> str:
     return origin_of(str(connection.get("address") or "")) if isinstance(connection, Mapping) else ""
 
 
+class EngineAddressError(ValueError):
+    """A named execution address is invalid; no lower-priority address may replace it."""
+
+
 def engine_base_address(config: Mapping[str, Any]) -> str:
     """The full base URL an engine's record names, keeping the scheme, the port and any path prefix; ``""`` when none.
 
     For dispatch and for probes written relative to that base. Host and port name a bare ``scheme://host:port``. A
-    base URL or a ``connection.address`` is kept whole (no trailing slash), so ``https://h:8443/prefix`` posts to
+    base URL, ``connection.address`` or standalone ``address`` is kept whole (no trailing slash), so ``https://203.0.113.9:8443/prefix`` posts to
     ``/prefix/...``. ``engine_origin`` is the origin only: use it for credential-origin comparisons and for endpoints
-    defined against the origin.
+    defined against the origin. A named invalid URL raises EngineAddressError instead of choosing another address.
     """
     bare = host_port_origin(config)
     if bare:
         return bare
     connection = config.get("connection")
     candidates = [config.get(key) for key in ("base_url", "api_base", "default_base_url")]
+    fields = ["base_url", "api_base", "default_base_url"]
     if isinstance(connection, Mapping):
         candidates.append(connection.get("address"))
-    for candidate in candidates:
+        fields.append("connection.address")
+    # Existing sources keep their order; the accepted standalone address is used when none of them is named.
+    candidates.append(config.get("address"))
+    fields.append("address")
+    for field, candidate in zip(fields, candidates):
         raw = str(candidate or "").strip()
-        if raw and origin_of(raw):
-            return _trim_path_slash(raw)
+        if not raw:
+            continue
+        if not origin_of(raw):
+            # Name only the field: an address can contain a credential.
+            raise EngineAddressError(f"service record {field} is not a valid HTTP(S) address")
+        return _trim_path_slash(raw)
     return ""
 
 
