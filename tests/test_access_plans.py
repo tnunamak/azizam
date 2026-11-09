@@ -212,7 +212,8 @@ def test_all_work_types_includes_a_capability_added_later(monkeypatch):
     listed = plan_from_document(_document(can_use={cap: {"items": "all"} for cap in CAPABILITIES}), plan_id="plan_full")
     # A capability added after both plans were saved: the code gains it, the stored documents do not change.
     monkeypatch.setattr(access_plans, "CAPABILITIES", (*CAPABILITIES, "teleport"))
-    monkeypatch.setitem(access_plans.CAPABILITY_LABELS, "teleport", "Teleport")
+    # The shipped labels are read-only data; a later capability arrives as a new row.
+    monkeypatch.setattr(access_plans, "CAPABILITY_LABELS", {**access_plans.CAPABILITY_LABELS, "teleport": "Teleport"})
     monkeypatch.setattr(access_plans, "INTENT_CAPABILITIES", {**access_plans.INTENT_CAPABILITIES, "teleport.now": "teleport"})
     assert evaluate(access(later), PolicyRequest(intent="teleport.now")).allowed
     decision = evaluate(access(listed), PolicyRequest(intent="teleport.now"))
