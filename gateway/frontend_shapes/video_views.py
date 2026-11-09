@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 from gateway import media_delivery, media_metadata, provenance
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL
-from gateway.workflow_runtime_types import RUN_STARTED_PROGRESS, CallerContext, JobService, RequestFacts, RunJobView
+from gateway.workflow_runtime_types import RESULT_REFUSED_MESSAGE, RUN_STARTED_PROGRESS, CallerContext, JobService, RequestFacts, RunJobView
 
 WIRE_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "completed", "failed": "failed", "canceled": "failed"}
 
@@ -139,6 +139,10 @@ class VideoViews:
         if view.status == "failed" and view.failure is not None and view.failure.code == NO_RESULT:
             # The run ended with no file to keep: the content is missing on the engine's side, as the old route answered.
             return _wire.error_response(502, view.failure.message, kind="api_error")
+        if view.status == "failed" and view.failure is not None and view.failure.message == RESULT_REFUSED_MESSAGE:
+            # A limit refused the result while it was read: the content answers with the refusal and its code, as the old route did.
+            return JSONResponse({"error": {"message": view.failure.message, "type": "api_error", "code": view.failure.code}},
+                                status_code=view.failure.upstream_status or 502)
         if view.status != "succeeded":
             word = WIRE_STATUS.get(effective_status(view), "queued")
             return _wire.error_response(404, f"{self.wire_name.capitalize()} content is not ready yet (status={word})",

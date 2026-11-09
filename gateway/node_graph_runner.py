@@ -33,7 +33,7 @@ from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.engine_protocol.types import AssetsResult, CanonicalRequest, ResultBundle, ResultContext
 from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, with_wire_id
-from gateway.workflow_runtime_types import AUDIO_FACT
+from gateway.workflow_runtime_types import AUDIO_FACT, RESULT_REFUSED_MESSAGE
 
 LOG = logging.getLogger("azizam.node_graph_runner")
 
@@ -187,7 +187,7 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
         return RunFailed("image_generation_timeout", "timeout", f"Image generation timed out before {engine} returned an image{suffix}",
                          upstream_status=504, retryable=True, retry_reason=reason, queue_position=failed.queue_position)
     code = failed.code or "result_refused"
-    return RunFailed(code, "upstream", "The result could not be read within the deployment's limits",
+    return RunFailed(code, "upstream", RESULT_REFUSED_MESSAGE,
                      upstream_status=504 if code == "fetch_timeout" else 502)
 
 

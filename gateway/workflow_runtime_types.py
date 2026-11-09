@@ -40,6 +40,7 @@ NameKind = Literal["workflow", "workflow_alias", "model", "model_alias", "fronte
 CallerContext = Any
 
 # Refusal and failure codes the store, the run core and the frontends share (the error vocabulary of this design).
+RESULT_REFUSED_MESSAGE = "The result could not be read within the deployment's limits"   # the text of a run whose result a limit refused
 RUN_STARTED_PROGRESS = 5            # the progress a run is given when it starts, before its engine has reported anything
 WORKFLOW_DISABLED = "workflow_disabled"
 WORKFLOW_DELETED = "workflow_deleted"

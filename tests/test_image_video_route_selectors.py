@@ -240,7 +240,16 @@ async def refused_video(world: World, **settings: Any):
     await settled(world, video_id)
     status = await world.status(video_id)
     assert status.status_code == 200, status.text
-    return status.json(), video_views(world.engine)
+    content = await world.content(video_id)
+    return {**status.json(), "content": content}, video_views(world.engine)
+
+
+def refusal_of(status, code: str, http_status: int) -> None:
+    """The status names the wire's own failed word; the content download answers the refusal with its status and code, as the old route."""
+    assert status["status"] == "failed" and status["error"]["code"] == "video_generation_failed"
+    content = status["content"]
+    assert content.status_code == http_status, content.text
+    assert json.loads(content.text)["error"]["code"] == code
 
 
 @pytest.mark.xfail(strict=True, reason="V5d: a content download answers 403 prompt_not_accessible when no metadata mode is set")
@@ -258,7 +267,7 @@ def test_the_video_content_route_takes_the_file_the_selector_names(tmp_path: Pat
 def test_a_video_answer_over_the_history_limit_is_refused_and_no_file_is_fetched(tmp_path: Path):
     async def exercise(world: World):
         status, views = await refused_video(world, result_limits={"max_history_bytes": 50})
-        assert status["status"] == "failed" and status["error"]["code"] == "history_too_large"
+        refusal_of(status, "history_too_large", 502)
         assert views == []
     run_video(tmp_path, exercise)
 
@@ -277,7 +286,7 @@ def test_the_video_fetch_waits_in_the_fetch_gate_and_is_refused_past_the_time_li
             status, views = await refused_video(world, result_limits={"max_concurrent_fetches": 1, "fetch_timeout_s": 1})
         finally:
             task.cancel()
-        assert status["status"] == "failed" and status["error"]["code"] == "fetch_timeout"
+        refusal_of(status, "fetch_timeout", 504)
         assert views == []
     run_video(tmp_path, exercise)
 
@@ -292,7 +301,7 @@ def test_a_video_workflow_with_no_selectors_is_refused_with_its_reason_and_nothi
         with edited_workflows(without_selectors):
             install_runner_clock(world)
             status, views = await refused_video(world)
-        assert status["status"] == "failed" and status["error"]["code"] == "selectors_missing"
+        refusal_of(status, "selectors_missing", 502)
         assert views == []
     run_video(tmp_path, exercise)
 
@@ -300,5 +309,5 @@ def test_a_video_workflow_with_no_selectors_is_refused_with_its_reason_and_nothi
 def test_a_video_file_over_the_asset_limit_is_refused_while_it_is_read(tmp_path: Path):
     async def exercise(world: World):
         status, _ = await refused_video(world, result_limits={"max_asset_bytes": 10})
-        assert status["status"] == "failed" and status["error"]["code"] == "asset_too_large"
+        refusal_of(status, "asset_too_large", 502)
     run_video(tmp_path, exercise)
