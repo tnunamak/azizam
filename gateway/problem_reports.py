@@ -110,9 +110,14 @@ def clean_text(value: Any, limit: int) -> str:
     return log_scrub.scrub(text, limit=limit)[:limit]
 
 
+def _number(match: "re.Match[str]") -> str:
+    run = match.group()
+    return run if len(run) == 3 and "1" <= run[0] <= "5" else "#"  # an HTTP status says what failed; a count or a percent does not
+
+
 def _normal(value: Any, limit: int = 200) -> str:
     text = _LONG_ID.sub("#", str(value or "").lower())
-    return re.sub(r"\s+", " ", _NUMBERS.sub("#", text)).strip()[:limit]
+    return re.sub(r"\s+", " ", _NUMBERS.sub(_number, text)).strip()[:limit]
 
 
 class ProblemReports:
@@ -165,12 +170,12 @@ class ProblemReports:
         cutoff = self._now() - FAILURE_WINDOW_S
         with self._lock:
             recent = [info for ts, info in self._failures.get(caller.key, ()) if ts >= cutoff]
+        if not job_id and not target:
+            return {}  # the report names nothing: no unrelated failure is adopted as its cause
         for info in reversed(recent):
-            if (job_id and info.get("job_id") == job_id) or (not job_id and target and info.get("target") == target):
+            if (job_id and info.get("job_id") == job_id) or (not job_id and info.get("target") == target):
                 return info
-        if job_id or target:
-            return {}
-        return recent[-1] if recent else {}
+        return {}
 
     def _job_facts(self, caller: Caller, job_id: str) -> dict[str, Any]:
         try:
@@ -239,10 +244,11 @@ class ProblemReports:
         if code or error:  # a failure the gateway saw names the problem, whatever words each agent uses
             basis = f"{tool}|{target}|{code}|{_normal(error)}"
         else:  # nothing seen: the agent's own words are the identity, so two problems stay two reports
+            context["latest_summary"] = fields["summary"]  # the first summary stays on the row; this one is kept here
             basis = f"-|{target}|{fields['category']}|{_normal(fields['summary'], 120)}"
         fingerprint = hashlib.sha256(basis.encode("utf-8")).hexdigest()
         row, event = self._upsert(fingerprint, fields, caller, context, tool=tool, target=target, code=code,
-                                  error=error, engine=job.get("engine"))
+                                  error=error, engine=job.get("engine"), keep_summary=not (code or error))
         if event:
             await self._notify(row, event)
             row = self.get(row["id"]) or row
@@ -252,7 +258,8 @@ class ProblemReports:
                          else "The operator has been told. Carry on with your task.")}
 
     def _upsert(self, fingerprint: str, fields: Mapping[str, Any], caller: Caller, context: Mapping[str, Any], *,
-                tool: Any, target: Any, code: Any, error: Any, engine: Any) -> tuple[dict[str, Any], str | None]:
+                tool: Any, target: Any, code: Any, error: Any, engine: Any,
+                keep_summary: bool = False) -> tuple[dict[str, Any], str | None]:
         now = int(self._now())
         app = {"app_id": caller.app_id, "app_name": caller.app_name}
         text = lambda value, limit: clean_text(value, limit) if value else None  # noqa: E731
@@ -280,7 +287,7 @@ class ProblemReports:
                 conn.execute(
                     "UPDATE problem_reports SET count=?, last_seen=?, apps_json=?, summary=?, workaround_used=?, "
                     "last_context_json=?, status=?, category=? WHERE id=?",
-                    (count, now, json.dumps(apps), fields["summary"], fields["workaround"] or old["workaround_used"],
+                    (count, now, json.dumps(apps), old["summary"] if keep_summary else fields["summary"], fields["workaround"] or old["workaround_used"],
                      context_json, "open" if reopened else old["status"], fields["category"], rid))
                 event = ("problem_report.reopened" if reopened
                          else "problem_report.repeat" if count in NOTIFY_COUNTS else None)
