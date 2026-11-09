@@ -582,15 +582,14 @@ def test_video_49_disabled_capability_refuses_edit(world):
 def test_video_50_cancel_of_the_goldens_missing_job_does_not_cancel_a_video(world):
     async def drive():
         world.engine.pending = True
-        await create(world)
+        made = await create(world)
         await submitted(world, 1)
-        # The job's runner polls the engine's history while the render is held; a cancel is what must add no engine call.
-        def acting():
-            return [call for call in world.engine.calls if not (call[0] == "GET" and call[1].startswith(("/history", "/queue")))]
-        before = len(acting())
         response = await world.rig.call("POST", "/gateway/v1/media/jobs/None/cancel", json_body={})
         assert response.status_code == 404
-        assert len(acting()) == before
+        # The fake clock lets a held render reach the runner's own timeout at once; what the cancel of a missing job must never
+        # do is ask for a cancel of the video: the job records no cancel request and never ends canceled.
+        job = await world.rig.call("GET", f"/gateway/v1/media/jobs/{made.json()['id'].removeprefix('video_')}", unordered_json=True)
+        assert job.json().get("cancel_requested") in (False, None) and job.json()["status"] != "canceled", job.text
     run(drive())
 
 
