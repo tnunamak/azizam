@@ -57,7 +57,8 @@ def test_result_processing_is_a_closed_list_of_stages():
     descriptor = _compile(_doc()).binding_descriptor
     spec = descriptor.fields["result_processing"]
     assert spec.kind == "enum_list"
-    assert set(spec.values) == {"source_alpha_mask", "post_composite_mask", "background_fallback", "offset_inpaint"}
+    assert set(spec.values) == {"source_alpha_mask", "post_composite_mask", "background_fallback", "offset_inpaint", "strip_audio",
+                              "attach_provenance"}
 
 
 def _problems(value):

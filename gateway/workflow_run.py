@@ -38,10 +38,12 @@ from gateway.result_bundle import Reader, ResultLimits, ResultRefused
 from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
+    AUDIO_FACT,
     DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SERVICE_UNREACHABLE, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
-    CallerContext, FactRef, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
-    ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
+    CallerContext, FactRef, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, REQUEST_FACT_KEYS,
+    RequestFacts, ResultContent, ResultRef, ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider,
+    WorkflowEntry,
 )
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ RECEIPT_OUTCOMES = {
     media_jobs.STATUS_CANCELED: ("cancelled", "cancelled"),
 }
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
+REQUEST_FACTS_KEY = "request_facts"          # where the request facts sit in the job's metadata: written once with the row
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
 CLAIM_POLL_S = 0.05
@@ -200,6 +203,9 @@ class RunContext:
     request_id: str | None = None      # the request the job answers (the Library asset origin names it)
     # The adapter calls it once, with its result metadata, before it commits the bundle (S7 parity M5).
     record_result_metadata: Callable[[Mapping[str, Any]], None] = lambda metadata: None
+    # The adapter calls it with how far the engine has got (0 to 99). The job's progress never goes down, so a smaller
+    # value than an earlier one changes nothing.
+    record_progress: Callable[[int], None] = lambda percent: None
 
 
 class RunPort(Protocol):
@@ -421,7 +427,39 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
         job_id=str(job["job_id"]), status=status, disposition=disposition,  # type: ignore[arg-type]
         workflow_id=str(job.get("workflow") or ""), record_revision=revision, binding_key=binding_key,
         created_at_s=int(job.get("created_at") or 0), updated_at_s=int(job.get("updated_at") or 0),
-        failure=failure, results=results, result_metadata=dict((job.get("metadata") or {}).get(RESULT_METADATA_KEY) or {}))
+        failure=failure, results=results, result_metadata=dict((job.get("metadata") or {}).get(RESULT_METADATA_KEY) or {}),
+        progress=100 if status == media_jobs.STATUS_SUCCEEDED else int(job.get("progress") or 0),
+        intent=str(job.get("intent") or ""),
+        finished_at_s=int(job["finished_at"]) if media_jobs.is_terminal(status) and job.get("finished_at") is not None else None)
+
+
+WIRE_ID_PLACEHOLDER = "{wire_id}"       # what a shape writes where the id the caller will see is not yet known
+
+
+def with_wire_id(value: Any, wire_id: str) -> Any:
+    """``value`` with the placeholder replaced by ``wire_id`` in every string it holds."""
+    if isinstance(value, str):
+        return value.replace(WIRE_ID_PLACEHOLDER, wire_id)
+    if isinstance(value, Mapping):
+        return {key: with_wire_id(item, wire_id) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [with_wire_id(item, wire_id) for item in value]
+    return value
+
+
+# The job store refuses some key names inside a job's metadata (they can hold media bytes). A fact keeps its public name in
+# ``RequestFacts`` and is stored under the name here.
+_FACT_STORED_AS = {AUDIO_FACT: "audio_track"}
+_FACT_PUBLIC_AS = {stored: public for public, stored in _FACT_STORED_AS.items()}
+
+
+def request_facts_record(facts: Mapping[str, Any]) -> dict[str, Any]:
+    """The facts a request wants kept, checked and made plain, as the job's metadata stores them. A key outside
+    ``REQUEST_FACT_KEYS`` is refused (ValueError); a key with no value is dropped."""
+    unknown = sorted(set(facts) - REQUEST_FACT_KEYS)
+    if unknown:
+        raise ValueError(f"request facts hold only the listed keys, not {unknown}")
+    return {_FACT_STORED_AS.get(key, key): plain(value) for key, value in facts.items() if value is not None}
 
 
 # ----------------------------------------------------------------------------------------------------- the core
@@ -481,6 +519,7 @@ class WorkflowRunCore:
     async def submit_run(self, req: RunRequest, caller: CallerContext, *,
                          snapshot) -> RunJobView | RunRefused:
         port = self._port
+        request_facts_record(req.facts)         # a key outside the table is a defect of the shape: refused before any claim
         scope, maker = port.owner_scope(caller), port.maker(caller)
         fence = None
         identity = ""
@@ -671,11 +710,13 @@ class WorkflowRunCore:
         port = self._port
         binding = entry.bindings[binding_key]
         owner_hash, app_id, key_name = port.job_owner(caller)
+        facts = request_facts_record(req.facts)
         job = media_jobs.MediaJob(
             intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
-                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries})
+                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries,
+                      **({REQUEST_FACTS_KEY: facts} if facts else {})})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
@@ -840,7 +881,8 @@ class WorkflowRunCore:
                 media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
                 generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
                 request_id=str(job.get("request_id") or "") or None,
-                record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
+                record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata),
+                record_progress=lambda percent: self._record_progress(job_id, percent))
             media_jobs.append_event(
                 job_id, "attempt", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": min(95, 5 + (attempt - 1) * 10),
                                     "attempt": attempt, "total": policy.max_attempts}, path=self._path)
@@ -923,6 +965,19 @@ class WorkflowRunCore:
                                      metadata_patch={RESULT_METADATA_KEY: plain(result_metadata)})
         except ValueError:
             log.warning("job %s result metadata was not stored", job_id, exc_info=True)
+
+    def _record_progress(self, job_id: str, percent: int) -> None:
+        """Raise the running job's progress to ``percent`` (at most 99: only success shows 100). It never lowers it and does
+        nothing once the job is terminal."""
+        try:
+            value = max(0, min(99, int(percent)))
+            job = media_jobs.get(job_id, audience="internal", path=self._path)
+            if job is None or job["status"] != media_jobs.STATUS_RUNNING or value <= int(job.get("progress") or 0):
+                return
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, progress=value, expected_status=media_jobs.STATUS_RUNNING,
+                                     path=self._path)
+        except (ValueError, TypeError):
+            log.warning("job %s progress was not stored", job_id, exc_info=True)
 
     def _dispatch_problem(self, job: Mapping[str, Any], pin: PinnedDefinitions,
                           caller: CallerContext | None) -> tuple[str, str, str] | None:
@@ -1123,7 +1178,14 @@ class WorkflowJobService:
     """``JobService`` over the job store. Who may read or cancel is the port's decision (the existing media-job rules)."""
 
     def __init__(self, *, port: RunPort, path: Path | None = None,
-                 tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time) -> None:
+                 tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time,
+                 prompt_lookup: Callable[[str, str], str | None] | None = None,
+                 wire_id: Callable[[str], str] | None = None) -> None:
+        # ``wire_id(job_id)`` is the id the frontend shows for a job: the placeholder in the recorded facts becomes it on read.
+        self._wire_id = wire_id
+        # ``prompt_lookup(job_id, person_id)`` is the text the prompt-memory rules still keep for the maker, or None. The
+        # main module gives it; without it no facts carry a prompt.
+        self._prompt_lookup = prompt_lookup
         self._port = port
         self._path = path or media_jobs.DB_PATH
         self._retention_s = tombstone_retention_s
@@ -1165,19 +1227,49 @@ class WorkflowJobService:
             job = current
         return job_view(job, self._path, disposition="replay")
 
-    def list(self, caller: CallerContext, *, intent: str, limit: int, after_id: str | None = None,
-             order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
-        sql = ("SELECT job_json FROM media_jobs WHERE intent = ? AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone) "
-               f"ORDER BY created_at {'ASC' if order == 'asc' else 'DESC'}, job_id {'ASC' if order == 'asc' else 'DESC'}")
+    def request_facts(self, job_id: str, caller: CallerContext) -> RequestFacts | None:
+        try:
+            job = self._readable(job_id, caller)
+        except JobNotFound:
+            return None
+        recorded = (job.get("metadata") or {}).get(REQUEST_FACTS_KEY)
+        values = ({_FACT_PUBLIC_AS.get(k, k): v for k, v in recorded.items() if _FACT_PUBLIC_AS.get(k, k) in REQUEST_FACT_KEYS}
+                  if isinstance(recorded, Mapping) else {})
+        if self._wire_id is not None:
+            values = with_wire_id(values, self._wire_id(job_id))
+        maker = str(job.get("maker_person_id") or "")
+        own = bool(maker) and self._port.maker(caller) == maker
+        prompt = None
+        if own and self._prompt_lookup is not None:
+            with contextlib.suppress(Exception):
+                prompt = self._prompt_lookup(job_id, maker)
+        return RequestFacts(values, prompt=prompt, maker_person_id=maker if own else None)
+
+    def list(self, caller: CallerContext, *, intents: Sequence[str], limit: int, after_id: str | None = None,
+             after_key: tuple[int, str] | None = None, order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
+        if after_id is not None and after_key is not None:
+            raise ValueError("give after_id or after_key, not both")
+        wanted = tuple(dict.fromkeys(intents))
+        if not wanted:
+            return (), False
+        direction = "ASC" if order == "asc" else "DESC"
+        marks = ",".join("?" for _ in wanted)
+        sql = (f"SELECT job_json, created_at FROM media_jobs WHERE intent IN ({marks}) "
+               "AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone) "
+               f"ORDER BY created_at {direction}, job_id {direction}")
         page: list[dict[str, Any]] = []
         seen_cursor = after_id is None
         has_more = False
         with media_jobs.connection(self._path) as conn:
-            for (job_json,) in conn.execute(sql, (intent,)):
+            for job_json, created_at in conn.execute(sql, wanted):
                 job = media_jobs.for_audience(json.loads(job_json), "internal")
                 if not is_run_job(job) or not self._port.can_read(job, caller):
                     continue
-                if not seen_cursor:
+                if after_key is not None:
+                    position = (int(created_at or 0), str(job["job_id"]))
+                    if (position <= after_key) if order == "asc" else (position >= after_key):
+                        continue
+                elif not seen_cursor:
                     seen_cursor = job["job_id"] == after_id
                     continue
                 if len(page) == limit:

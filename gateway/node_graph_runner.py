@@ -19,17 +19,19 @@ Nothing here names an engine, an intent or a workflow. The reason the core may r
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
-from gateway import generated_defaults, media_jobs, pinned_runtime, result_bundle
+from gateway import generated_defaults, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
 from gateway.engine_protocol import graph_round
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.engine_protocol.types import AssetsResult, CanonicalRequest, ResultBundle, ResultContext
-from gateway.workflow_run import AdapterIdentity, RunContext
+from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, with_wire_id
+from gateway.workflow_runtime_types import AUDIO_FACT
 
 LOG = logging.getLogger("azizam.node_graph_runner")
 
@@ -106,6 +108,8 @@ class GraphHost:
     say: Callable[[str], None] = lambda text: None
     # Each media input of the run, held by the engine, as the name the engine gives it: ``(ctx, adapter, connection) -> {input: name}``.
     stage_media: Callable[..., Awaitable[Mapping[str, str]]] | None = None
+    # The id a caller sees for a job, for the stage that stamps the file with the request it answers (None: the placeholder stays).
+    wire_id: Callable[[str], str] | None = None
 
 
 def retry_reason_of(kind: str, binding_key: str) -> str | None:
@@ -132,6 +136,8 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
         text = client_errors.REASONS["upstream_out_of_memory" if out else "upstream_refused"]
         return RunFailed("upstream_out_of_memory" if out else "upstream_refused", "upstream", f"{engine}: {text}",
                          upstream_status=502)
+    if kind == graph_round.ORPHANED:
+        return RunFailed("upstream_orphaned", "upstream", f"orphaned: {engine} does not report this prompt_id", upstream_status=502)
     if kind == graph_round.NO_PROMPT_ID:
         return RunFailed("upstream_no_prompt_id", "upstream", "No prompt_id returned", upstream_status=502, retryable=True, retry_reason=reason)
     if kind == graph_round.EXECUTION_FAILED:
@@ -143,6 +149,11 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
     code = failed.code or "result_refused"
     return RunFailed(code, "upstream", "The result could not be read within the deployment's limits",
                      upstream_status=504 if code == "fetch_timeout" else 502)
+
+
+def _media_type_of(raw: bytes) -> str:
+    from gateway.engine_protocol.assets import served_media_type
+    return served_media_type(None, raw[:16]) or "application/octet-stream"
 
 
 def _only_files(contract: Mapping[str, Any]) -> bool:
@@ -270,7 +281,8 @@ class NodeGraphRunner:
             result = await graph_round.run_round(
                 adapter, session, payload, headers, graph=graph, label=label, max_wait_s=float(host.max_wait_s()),
                 control_timeout=host.control_timeout(), cancel_connection=lambda: runtime.connection_for(op),
-                is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say)
+                is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
+                on_progress=ctx.record_progress)
         except graph_round.RoundFailure as failed:
             # The submit marker only means "a submit may be in flight": a round that ended in failure leaves none.
             media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": False},
@@ -295,9 +307,38 @@ class NodeGraphRunner:
         name = next(iter(result.files)) if len(result.files) == 1 else None
         return name, files
 
+    # -- the reviewed stages that read the run's own facts (a host may still supply a stage of the same name) ----------------
+
+    async def _strip_audio(self, ctx: RunContext, files: list[bytes]) -> list[bytes]:
+        """Remove the audio track when the request asked for a silent result (``options.audio`` is false), before the bytes
+        are stored, so the stored copy and the delivered file agree."""
+        if ((ctx.payload.get("body") or {}).get("options") or {}).get(AUDIO_FACT) is not False:
+            return files
+        out: list[bytes] = []
+        for raw in files:
+            try:
+                out.append(await asyncio.to_thread(media_metadata.strip_audio, raw, _media_type_of(raw)))
+            except media_metadata.MediaMetadataError as exc:
+                LOG.warning("audio strip failed: %s", type(exc).__name__)
+                raise RunFailed("audio_strip_failed", "upstream", "Could not remove the audio track from the video",
+                                upstream_status=502) from exc
+        return out
+
+    async def _attach_provenance(self, ctx: RunContext, files: list[bytes]) -> list[bytes]:
+        """Stamp each file with the provenance record the request kept in its facts. A failure to embed leaves the bytes as
+        they were (``media_delivery.attach_provenance`` already does)."""
+        job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        record = ((job.get("metadata") or {}).get(REQUEST_FACTS_KEY) or {}).get("provenance")
+        if not isinstance(record, Mapping) or not record:
+            return files
+        if self.host.wire_id is not None:
+            record = with_wire_id(record, self.host.wire_id(ctx.job_id))
+        return [await asyncio.to_thread(media_delivery.attach_provenance, raw, _media_type_of(raw), record) for raw in files]
+
     async def _stages(self, ctx: RunContext, files: list[bytes]) -> list[bytes]:
+        builtin = {"strip_audio": self._strip_audio, "attach_provenance": self._attach_provenance}
         for stage in ctx.pin.binding.get("result_processing") or ():
-            run = self.host.stages.get(stage)
+            run = self.host.stages.get(stage) or builtin.get(stage)
             if run is None:
                 raise RunFailed("stage_unavailable", "internal", "A result stage of this workflow is not available here.")
             files = await run(ctx, files)

@@ -170,6 +170,15 @@ def new_job_id() -> str:
     return f"mj_{uuid4().hex}"
 
 
+_JOB_ID_FORM = re.compile(r"^mj_[0-9a-f]{32}$")
+
+
+def is_job_id(raw: str) -> bool:
+    """True when ``raw`` has the form ``new_job_id`` makes. Whether such a job exists, was deleted or was reaped does not
+    change what an id of this form names: the job store."""
+    return isinstance(raw, str) and _JOB_ID_FORM.match(raw) is not None
+
+
 def _now() -> int:
     return int(time.time())
 

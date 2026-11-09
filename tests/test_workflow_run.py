@@ -707,13 +707,13 @@ def listed_jobs(db, tmp_path, count, *, intent="demo.listing", scope="app-1"):
 def test_list_pages_newest_first_by_default_and_oldest_first_on_request(db, tmp_path):
     port, ids = listed_jobs(db, tmp_path, 5)
     service = WorkflowJobService(port=port, path=db)
-    views, more = service.list(Caller(), intent="demo.listing", limit=2)
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=2)
     assert [v.job_id for v in views] == [ids[4], ids[3]] and more is True
-    views, more = service.list(Caller(), intent="demo.listing", limit=2, after_id=ids[3])
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=2, after_id=ids[3])
     assert [v.job_id for v in views] == [ids[2], ids[1]] and more is True
-    views, more = service.list(Caller(), intent="demo.listing", limit=2, after_id=ids[1])
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=2, after_id=ids[1])
     assert [v.job_id for v in views] == [ids[0]] and more is False
-    views, more = service.list(Caller(), intent="demo.listing", limit=10, order="asc")
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=10, order="asc")
     assert [v.job_id for v in views] == ids and more is False
     assert all(v.disposition == "replay" for v in views)
 
@@ -723,11 +723,11 @@ def test_list_shows_only_the_intent_and_the_jobs_the_caller_may_read(db, tmp_pat
     _, others = listed_jobs(db, tmp_path, 1, scope="app-2")
     _, elsewhere = listed_jobs(db, tmp_path, 1, intent="demo.other")
     service = WorkflowJobService(port=port, path=db)
-    views, more = service.list(Caller(), intent="demo.listing", limit=10)
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=10)
     assert {v.job_id for v in views} == set(mine) and more is False
-    stranger, _ = service.list(Caller(scope="app-2"), intent="demo.listing", limit=10)
+    stranger, _ = service.list(Caller(scope="app-2"), intents=("demo.listing",), limit=10)
     assert {v.job_id for v in stranger} == set(others)
-    assert {v.job_id for v in service.list(Caller(), intent="demo.other", limit=10)[0]} == set(elsewhere)
+    assert {v.job_id for v in service.list(Caller(), intents=("demo.other",), limit=10)[0]} == set(elsewhere)
     assert not set(elsewhere) & {v.job_id for v in views}
 
 
@@ -737,7 +737,7 @@ def test_list_leaves_out_a_deleted_job_at_once_and_after_a_restart(db, tmp_path)
     service.cancel(ids[1], Caller())
     service.delete(ids[1], Caller())
     for fresh in (service, WorkflowJobService(port=port, path=db)):
-        views, _ = fresh.list(Caller(), intent="demo.listing", limit=10, order="asc")
+        views, _ = fresh.list(Caller(), intents=("demo.listing",), limit=10, order="asc")
         assert [v.job_id for v in views] == [ids[0], ids[2]]
 
 
@@ -749,4 +749,172 @@ def test_list_refuses_a_cursor_that_is_not_one_of_the_callers_listed_jobs(db, tm
     service.delete(ids[0], Caller())
     for cursor in ("no-such-job", theirs[0], ids[0]):
         with pytest.raises(JobNotFound):
-            service.list(Caller(), intent="demo.listing", limit=10, after_id=cursor)
+            service.list(Caller(), intents=("demo.listing",), limit=10, after_id=cursor)
+
+
+# ------------------------------------------------------- request facts, progress, list by intents and boundary (V5b)
+
+STORED_FACTS = {"model": "m", "resolved_model": "m-t2v", "size": "640x480", "seconds": "4", "actual_seconds": 4.0,
+                "frame_rate": 24, "audio": False, "warnings": ["w"], "provenance": {"seed": 7}}
+
+
+def submit_one(db, tmp_path, **kw):
+    snap = snapshot()
+    core, port, _ = make_core(db, tmp_path, snap)
+    view = run(core.submit_run(request(**kw), Caller(), snapshot=snap))
+    return core, port, view
+
+
+def test_request_facts_are_written_with_the_job_and_read_back_whole(db, tmp_path):
+    _, port, view = submit_one(db, tmp_path, facts=STORED_FACTS)
+    got = WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())
+    assert dict(got) == STORED_FACTS
+    assert media_jobs.get(view.job_id, audience="client", path=db) is not None
+    assert "request_facts" not in json.dumps(media_jobs.get(view.job_id, audience="client", path=db))
+
+
+def test_the_audio_fact_survives_the_job_stores_key_guard(db, tmp_path):
+    """The job store refuses the key name ``audio`` inside metadata (it can hold media bytes); the fact is kept under
+    another stored name and read back under its own."""
+    _, port, view = submit_one(db, tmp_path, facts={"audio": False})
+    assert dict(WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())) == {"audio": False}
+    stored = media_jobs.get(view.job_id, audience="internal", path=db)["metadata"]["request_facts"]
+    assert "audio" not in stored
+
+
+def test_a_job_that_recorded_no_facts_has_an_empty_mapping_and_an_unreadable_job_has_none(db, tmp_path):
+    _, port, view = submit_one(db, tmp_path)
+    service = WorkflowJobService(port=port, path=db)
+    assert dict(service.request_facts(view.job_id, Caller())) == {}
+    assert service.request_facts(view.job_id, Caller(scope="app-2")) is None
+    assert service.request_facts("mj_absent", Caller()) is None
+
+
+def test_a_fact_outside_the_table_is_refused_before_any_claim_or_job(db, tmp_path):
+    snap = snapshot()
+    core, _, _ = make_core(db, tmp_path, snap)
+    with pytest.raises(ValueError, match="prompt"):
+        run(core.submit_run(request(facts={"model": "m", "prompt": "secret words"}), Caller(), snapshot=snap))
+    assert job_rows(db) == [] and claim_rows(db) == []
+
+
+def test_facts_are_immutable_after_the_job_finishes(db, tmp_path):
+    core, port, view = submit_one(db, tmp_path, facts=STORED_FACTS)
+    run(core.execute_run(view.job_id))
+    assert dict(WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())) == STORED_FACTS
+
+
+def test_the_maker_alone_sees_the_person_id_and_the_kept_prompt(db, tmp_path):
+    _, port, view = submit_one(db, tmp_path, facts=STORED_FACTS)
+    with sqlite3.connect(db) as conn:
+        stored = json.loads(conn.execute("SELECT job_json FROM media_jobs WHERE job_id = ?", (view.job_id,)).fetchone()[0])
+        stored["maker_person_id"] = "person-1"
+        conn.execute("UPDATE media_jobs SET job_json = ? WHERE job_id = ?", (json.dumps(stored), view.job_id))
+    asked: list[tuple[str, str]] = []
+
+    def lookup(job_id, person):
+        asked.append((job_id, person))
+        return "a kept prompt"
+
+    service = WorkflowJobService(port=port, path=db, prompt_lookup=lookup)
+    own = service.request_facts(view.job_id, Caller())
+    assert (own.maker_person_id, own.prompt) == ("person-1", "a kept prompt") and asked == [(view.job_id, "person-1")]
+    other = service.request_facts(view.job_id, Caller(person="person-2"))
+    assert (other.maker_person_id, other.prompt) == (None, None) and asked == [(view.job_id, "person-1")]
+    assert dict(other) == STORED_FACTS
+    without_lookup = WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())
+    assert without_lookup.prompt is None and without_lookup.maker_person_id == "person-1"
+
+
+def test_a_job_view_carries_the_progress_column_and_a_succeeded_job_shows_100(db, tmp_path):
+    core, port, view = submit_one(db, tmp_path)
+    service = WorkflowJobService(port=port, path=db)
+    assert service.get(view.job_id, Caller()).progress == 0
+    run(core.execute_run(view.job_id))
+    assert service.get(view.job_id, Caller()).progress == 100
+
+
+class ProgressPort(Port):
+    """An adapter that reports engine progress and looks at the job between reports."""
+
+    def __init__(self, db, reports):
+        super().__init__(db)
+        self.reports = reports
+        self.seen: list[int] = []
+
+    async def run_adapter(self, ctx):
+        for percent in self.reports:
+            ctx.record_progress(percent)
+            self.seen.append(media_jobs.get(ctx.job_id, audience="internal", path=self.db)["progress"])
+        await super().run_adapter(ctx)
+
+
+def test_progress_reported_by_the_adapter_reaches_the_job_and_never_goes_down(db, tmp_path):
+    snap = snapshot()
+    port = ProgressPort(db, [25, 50, 30, 999, -4, 70])
+    core, _, _ = make_core(db, tmp_path, snap, port)
+    view = run(core.submit_run(request(), Caller(), snapshot=snap))
+    run(core.execute_run(view.job_id))
+    assert port.seen == [25, 50, 50, 99, 99, 99]       # capped below 100: only success shows 100
+    assert WorkflowJobService(port=port, path=db).get(view.job_id, Caller()).progress == 100
+
+
+def test_list_takes_several_intents_in_one_order(db, tmp_path):
+    port, first = listed_jobs(db, tmp_path, 2, intent="demo.listing")
+    _, second = listed_jobs(db, tmp_path, 1, intent="demo.listing-two")
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE media_jobs SET created_at = 150 WHERE job_id = ?", (second[0],))
+    service = WorkflowJobService(port=port, path=db)
+    views, more = service.list(Caller(), intents=("demo.listing", "demo.listing-two"), limit=10, order="asc")
+    assert [v.job_id for v in views] == [first[0], second[0], first[1]] and more is False
+    only_second, _ = service.list(Caller(), intents=("demo.listing-two",), limit=10)
+    assert [v.job_id for v in only_second] == second
+    assert service.list(Caller(), intents=(), limit=10) == ((), False)
+
+
+@pytest.mark.parametrize("order", ["asc", "desc"])
+def test_list_after_key_starts_strictly_after_a_position_no_job_holds(db, tmp_path, order):
+    port, ids = listed_jobs(db, tmp_path, 4)         # created 100, 200, 300, 400
+    service = WorkflowJobService(port=port, path=db)
+    boundary = (250, "mj_between")
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=10, after_key=boundary, order=order)
+    assert [v.job_id for v in views] == ([ids[2], ids[3]] if order == "asc" else [ids[1], ids[0]]) and more is False
+    views, more = service.list(Caller(), intents=("demo.listing",), limit=1, after_key=boundary, order=order)
+    assert len(views) == 1 and more is True
+
+
+def test_list_after_key_breaks_a_time_tie_by_job_id(db, tmp_path):
+    port, ids = listed_jobs(db, tmp_path, 3)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE media_jobs SET created_at = 500 WHERE job_id IN (?, ?, ?)", tuple(ids))
+    service = WorkflowJobService(port=port, path=db)
+    ordered = sorted(ids)
+    views, _ = service.list(Caller(), intents=("demo.listing",), limit=10, after_key=(500, ordered[0]), order="asc")
+    assert [v.job_id for v in views] == ordered[1:]
+    views, _ = service.list(Caller(), intents=("demo.listing",), limit=10, after_key=(500, ordered[2]), order="desc")
+    assert [v.job_id for v in views] == [ordered[1], ordered[0]]
+
+
+def test_list_refuses_both_cursors_at_once(db, tmp_path):
+    port, ids = listed_jobs(db, tmp_path, 1)
+    with pytest.raises(ValueError):
+        WorkflowJobService(port=port, path=db).list(Caller(), intents=("demo.listing",), limit=1, after_id=ids[0], after_key=(1, "x"))
+
+
+def test_a_job_view_carries_the_intent_it_is_filed_under(db, tmp_path):
+    core, port, view = submit_one(db, tmp_path)
+    shown = WorkflowJobService(port=port, path=db).get(view.job_id, Caller())
+    assert shown.intent == media_jobs.get(view.job_id, audience="internal", path=db)["intent"]
+
+
+def test_the_finish_time_is_set_once_and_a_later_write_to_a_finished_job_does_not_move_it(db, tmp_path):
+    core, port, view = submit_one(db, tmp_path)
+    service = WorkflowJobService(port=port, path=db)
+    assert service.get(view.job_id, Caller()).finished_at_s is None
+    run(core.execute_run(view.job_id))
+    done = service.get(view.job_id, Caller())
+    assert done.status == "succeeded" and done.finished_at_s is not None
+    later = done.updated_at_s + 500
+    media_jobs.update_status(view.job_id, "succeeded", metadata_patch={"bookkeeping": 1}, now=later, path=db)
+    again = service.get(view.job_id, Caller())
+    assert (again.finished_at_s, again.updated_at_s) == (done.finished_at_s, later)

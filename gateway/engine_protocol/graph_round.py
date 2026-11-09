@@ -29,6 +29,16 @@ EXECUTION_FAILED = "execution_failed"
 WAIT_EXCEEDED = "wait_exceeded"
 DISCONNECTED = "disconnected"
 RESULT_REFUSED = "result_refused"
+ORPHANED = "orphaned"                # the engine reported the prompt in neither its history nor its queue, twice
+
+# How long a prompt that the history does not show may stay out of the queue too before the engine is taken to have lost it.
+# The first look at the queue comes after this much waiting, the second this much later: a prompt a fast engine finishes
+# is never looked up, and one answer that does not name the prompt is not enough.
+ORPHAN_GRACE_S = 15.0
+# What the progress of a run shows for each thing the engine reports (the values the old status route showed): the prompt
+# is running in the queue, and the history has an entry that is not finished.
+PROGRESS_IN_QUEUE = 25
+PROGRESS_IN_HISTORY = 50
 
 _OOM_MARKERS = ("cuda out of memory", "cuda oom", "out of memory")
 
@@ -77,6 +87,26 @@ async def queue_position(adapter: Any, session: Any, prompt_id: str, headers: Ma
     return node_graph.queue_position(queue, prompt_id) if isinstance(queue, Mapping) else None
 
 
+async def prompt_in_queue(adapter: Any, session: Any, prompt_id: str, headers: Mapping[str, str], *, timeout: Any) -> Optional[str]:
+    """``"running"``, ``"pending"`` or ``"absent"`` for a prompt in the engine's queue; None when the answer says nothing (no
+    answer, an error status, a body that is not the queue's shape). Only a usable answer may count towards an orphan."""
+    try:
+        reply = await session.queue(headers=dict(headers), timeout=timeout)
+        if reply.status != 200:
+            return None
+        queue = reply.json()
+    except Exception:  # noqa: BLE001 - any failure to read the queue is "no answer"
+        return None
+    if not isinstance(queue, Mapping):
+        return None
+    running, pending = queue.get("queue_running"), queue.get("queue_pending")
+    if not isinstance(running, list) or not isinstance(pending, list):
+        return None
+    if prompt_id in node_graph.queue_prompt_ids(running):
+        return "running"
+    return "pending" if prompt_id in node_graph.queue_prompt_ids(pending) else "absent"
+
+
 async def cancel(adapter: Any, connection: Callable[[], Any], session: Any, prompt_id: str, headers: Mapping[str, str], *,
                  reason: str, timeout: Any, say: Callable[[str], None]) -> bool:
     """Ask the engine to drop a prompt. Never raises: a cancel that fails is reported and the caller carries on."""
@@ -109,8 +139,13 @@ async def run_round(
     limits: Any,
     cadence: Poll,
     say: Callable[[str], None] = lambda _text: None,
+    on_progress: Callable[[int], None] = lambda _percent: None,
 ) -> RoundResult:
-    """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first."""
+    """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first.
+
+    ``on_progress`` hears how far the engine has got (a value below 100). A prompt that the history does not show and that
+    two looks at the queue, ``ORPHAN_GRACE_S`` of waiting apart, also do not show, ends the round as ``ORPHANED``. A look
+    that fails or answers in a shape that is not the queue's counts for nothing and ends the streak."""
     prompt_id: Optional[str] = None
     try:
         try:
@@ -129,6 +164,8 @@ async def run_round(
         remaining = float(max_wait_s)
         finished = None
         polls = 0
+        next_look_s = ORPHAN_GRACE_S
+        unseen = 0
         while remaining > 0 and (cadence.max_polls is None or polls < cadence.max_polls):
             if await is_disconnected():
                 await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="client disconnect", timeout=control_timeout, say=say)
@@ -140,13 +177,25 @@ async def run_round(
                 remaining -= delay
             try:
                 status = await adapter.poll(session.conn, ref, headers=dict(headers), session=session, graph=dict(graph))
-            except (TransportFailure, UpstreamError):
+            except (TransportFailure, UpstreamError, ValueError, TypeError):    # no answer, or an answer that is not a history
+                unseen = 0
                 continue
             if status.state is JobState.failed:
                 raise RoundFailure(EXECUTION_FAILED, detail=str(status.detail or ""), prompt_id=prompt_id)
             if status.state is JobState.succeeded:
                 finished = status
                 break
+            if status.state is JobState.running:
+                unseen = 0
+                on_progress(PROGRESS_IN_HISTORY)
+            elif float(max_wait_s) - remaining >= next_look_s:
+                next_look_s = float(max_wait_s) - remaining + ORPHAN_GRACE_S
+                where = await prompt_in_queue(adapter, session, prompt_id, headers, timeout=control_timeout)
+                unseen = unseen + 1 if where == "absent" else 0
+                if where == "running":
+                    on_progress(PROGRESS_IN_QUEUE)
+                if unseen >= 2:
+                    raise RoundFailure(ORPHANED, prompt_id=prompt_id)
         if finished is None:
             position = await queue_position(adapter, session, prompt_id, headers, timeout=control_timeout)
             await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="timeout", timeout=control_timeout, say=say)
