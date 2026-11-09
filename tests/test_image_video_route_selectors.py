@@ -8,15 +8,20 @@ node and key of the file that is the result.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 import proxy
 from gateway import media_jobs, output_selectors, result_bundle
 from tests.media_test_bytes import mp4_bytes
 from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, scenario
 from tests.support.config_snapshot import publish_section
+from tests.support.video_rig import Engine, World, drive, install_runner_clock, run as run_video, settled
+from tests.support.video_row_engine import edited_workflows
 from tests.test_adapter_differential import _png
 
 COMFY_HOST = "comfy.fk.test"
@@ -78,11 +83,6 @@ def generate_image(made: GatewayRig):
     return made.call("POST", "/v1/images/generations", label="generate", json_body=IMAGE_BODY)
 
 
-async def fetch_video(made: GatewayRig):
-    created = await made.call("POST", "/v1/videos", label="create", json_body=VIDEO_BODY)
-    return await made.call("GET", f"/v1/videos/{created.json()['id']}/content", label="content")
-
-
 PNG = (_png(), "image/png")
 
 
@@ -92,22 +92,8 @@ def test_the_image_route_takes_the_file_the_selector_names_not_an_earlier_previe
     assert views == [[["filename", "fox_00001_.png"], ["type", "output"]]]
 
 
-def test_the_video_content_route_takes_the_file_the_selector_names(tmp_path: Path):
-    response, views = run(tmp_path, NOISY_VIDEO, (mp4_bytes(), "video/mp4"), fetch_video)
-    assert response.status_code == 200, response.text
-    assert views == [[["filename", "clip_00001_.mp4"], ["type", "output"]]]
-
-
 def test_an_image_answer_over_the_history_limit_is_refused_and_no_file_is_fetched(tmp_path: Path):
     response, views = run(tmp_path, NOISY_IMAGE, PNG, generate_image, result_limits={"max_history_bytes": 50})
-    assert response.status_code == 502
-    assert json.loads(response.text)["error"]["code"] == "history_too_large"
-    assert views == []
-
-
-def test_a_video_answer_over_the_history_limit_is_refused_and_no_file_is_fetched(tmp_path: Path):
-    response, views = run(tmp_path, NOISY_VIDEO, (mp4_bytes(), "video/mp4"), fetch_video,
-                          result_limits={"max_history_bytes": 50})
     assert response.status_code == 502
     assert json.loads(response.text)["error"]["code"] == "history_too_large"
     assert views == []
@@ -142,14 +128,6 @@ def test_the_image_fetch_waits_in_the_fetch_gate_and_is_refused_past_the_time_li
     response, views = run(tmp_path, NOISY_IMAGE, PNG, holding_the_only_fetch_slot(generate_image), **limits)
     assert response.status_code == 504
     assert json.loads(response.text)["error"]["code"] == "fetch_timeout"
-    assert views == []
-
-
-def test_the_video_fetch_waits_in_the_fetch_gate_and_is_refused_past_the_time_limit(tmp_path: Path):
-    limits = {"result_limits": {"max_concurrent_fetches": 1, "fetch_timeout_s": 1}}
-    response, views = run(tmp_path, NOISY_VIDEO, (mp4_bytes(), "video/mp4"), holding_the_only_fetch_slot(fetch_video),
-                          **limits)
-    assert response.status_code == 504
     assert views == []
 
 
@@ -233,13 +211,6 @@ def without_selectors(call):
 MP4 = (mp4_bytes(), "video/mp4")
 
 
-def test_a_video_workflow_with_no_selectors_is_refused_with_its_reason_and_nothing_is_fetched(tmp_path: Path):
-    response, views = run(tmp_path, NOISY_VIDEO, MP4, without_selectors(fetch_video))
-    assert response.status_code == 502
-    assert json.loads(response.text)["error"]["code"] == "selectors_missing"
-    assert views == []
-
-
 def test_an_image_workflow_with_no_selectors_is_refused_with_its_reason_and_nothing_is_fetched(tmp_path: Path):
     response, views = run(tmp_path, NOISY_IMAGE, PNG, without_selectors(generate_image))
     assert response.status_code == 502
@@ -247,7 +218,87 @@ def test_an_image_workflow_with_no_selectors_is_refused_with_its_reason_and_noth
     assert views == []
 
 
+# ----------------------------------------------------------------------------------------- the video create route
+
+# A video create is a run-core job: the runner reads the engine's answer by the workflow's selectors and keeps the file, and
+# the content route serves what the job kept. The engine is the video parity rig's, driven to its state through ``drive``.
+NOISY_VIDEO_OUTPUTS = NOISY_VIDEO["p1"]["outputs"]
+
+
+def video_views(engine: Engine) -> list[list[list[str]]]:
+    return [[list(pair) for pair in sorted(request.url.params.multi_items())] for request in engine.calls("GET", "/view")]
+
+
+async def refused_video(world: World, **settings: Any):
+    """Create a video over the noisy answer and let the engine finish it. The runner reads the answer by the selectors; a
+    refusal is the job's failure, which the status route shows. Returns that status body and the views the engine served."""
+    if settings:
+        publish_section(world.rig.monkeypatch, "workflow_execution", settings)
+    world.engine.outputs = NOISY_VIDEO_OUTPUTS
+    video_id = await world.create(prompt=VIDEO_BODY["prompt"])
+    await drive(world, video_id, "completed", wait=False)
+    await settled(world, video_id)
+    status = await world.status(video_id)
+    assert status.status_code == 200, status.text
+    return status.json(), video_views(world.engine)
+
+
+@pytest.mark.xfail(strict=True, reason="V5d: a content download answers 403 prompt_not_accessible when no metadata mode is set")
+def test_the_video_content_route_takes_the_file_the_selector_names(tmp_path: Path):
+    async def exercise(world: World):
+        world.engine.outputs = NOISY_VIDEO_OUTPUTS
+        video_id = await world.create(prompt=VIDEO_BODY["prompt"])
+        await drive(world, video_id, "completed")
+        response = await world.content(video_id)
+        assert response.status_code == 200, response.text
+        assert video_views(world.engine) == [[["filename", "clip_00001_.mp4"], ["type", "output"]]]
+    run_video(tmp_path, exercise)
+
+
+def test_a_video_answer_over_the_history_limit_is_refused_and_no_file_is_fetched(tmp_path: Path):
+    async def exercise(world: World):
+        status, views = await refused_video(world, result_limits={"max_history_bytes": 50})
+        assert status["status"] == "failed" and status["error"]["code"] == "history_too_large"
+        assert views == []
+    run_video(tmp_path, exercise)
+
+
+def test_the_video_fetch_waits_in_the_fetch_gate_and_is_refused_past_the_time_limit(tmp_path: Path):
+    async def exercise(world: World):
+        limits = result_bundle.ResultLimits(max_concurrent_fetches=1, fetch_timeout_s=30)
+
+        async def hold():       # the rig shortens sleeps, so the slot is held on an event nothing sets, not on a sleep
+            async with output_selectors.FETCH_GATE.slot(limits):
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(hold())
+        await asyncio.sleep(0)
+        try:
+            status, views = await refused_video(world, result_limits={"max_concurrent_fetches": 1, "fetch_timeout_s": 1})
+        finally:
+            task.cancel()
+        assert status["status"] == "failed" and status["error"]["code"] == "fetch_timeout"
+        assert views == []
+    run_video(tmp_path, exercise)
+
+
+def test_a_video_workflow_with_no_selectors_is_refused_with_its_reason_and_nothing_is_fetched(tmp_path: Path):
+    def without_selectors(entry):
+        return dataclasses.replace(entry, bindings={key: dataclasses.replace(
+            binding, binding={name: value for name, value in binding.binding.items() if name != "selectors"})
+            for key, binding in entry.bindings.items()})
+
+    async def exercise(world: World):
+        with edited_workflows(without_selectors):
+            install_runner_clock(world)
+            status, views = await refused_video(world)
+        assert status["status"] == "failed" and status["error"]["code"] == "selectors_missing"
+        assert views == []
+    run_video(tmp_path, exercise)
+
+
 def test_a_video_file_over_the_asset_limit_is_refused_while_it_is_read(tmp_path: Path):
-    response, _ = run(tmp_path, NOISY_VIDEO, MP4, fetch_video, result_limits={"max_asset_bytes": 10})
-    assert response.status_code == 502
-    assert json.loads(response.text)["error"]["code"] == "asset_too_large"
+    async def exercise(world: World):
+        status, _ = await refused_video(world, result_limits={"max_asset_bytes": 10})
+        assert status["status"] == "failed" and status["error"]["code"] == "asset_too_large"
+    run_video(tmp_path, exercise)

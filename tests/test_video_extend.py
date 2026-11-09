@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from tests.support.config_snapshot import section_key_published  # noqa: E402
 from gateway import media_jobs, video_extend as ve, video_inputs  # noqa: E402
+from tests.support.video_row_engine import use_graph_engine  # noqa: E402
 from test_video_remix_replace import (  # noqa: E402
     NEW_ID,
     NEW_PROMPT_ID,
@@ -489,6 +490,7 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertEqual(r.json()["error"]["code"], "invalid_shots")
 
     def test_native_length_still_uses_the_template_graph(self) -> None:
+        use_graph_engine(self.stack)        # a plain create is a run-core job; the chain creates above are not
         r = self._create(model="ltx-2.5", prompt="short", seconds=5)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-t2v")
