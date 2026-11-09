@@ -163,7 +163,7 @@ class Engine(SnapshotEngine):
 
 
 def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best_effort", verify: bool = False,
-         fresh_within_s: Optional[float] = None, **semantics: str):
+         fresh_within_s: Optional[float] = None, invoke: Any = None, **semantics: str):
     """The shipped snapshot profile with ``semantics`` attested and a ``servable`` observation, under the shipped id."""
     shipped = yaml.safe_load((transition_profiles.PROFILE_DIR / f"{SNAPSHOT_PROFILE}.yml").read_text(encoding="utf-8"))
     for op, value in semantics.items():
@@ -178,7 +178,7 @@ def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best
     if fresh_within_s is not None:
         shipped["fresh_within_s"] = fresh_within_s
     directory = tmp_path / "profiles"
-    directory.mkdir()
+    directory.mkdir(exist_ok=True)  # A restart reopens this fixture on the same temporary databases.
     (directory / f"{SNAPSHOT_PROFILE}.yml").write_text(yaml.safe_dump(shipped), encoding="utf-8")
     monkeypatch.setattr(transition_profiles, "PROFILE_DIR", directory)
     store = SqliteSnapshotStore(tmp_path / "transition.db", PrivateSnapshotDir(tmp_path / "snap"),
@@ -188,7 +188,7 @@ def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best
     gates.load()
     drain = SwapDrain(wall_clock=time.time)
     locks: dict[str, asyncio.Lock] = {}
-    engine = Engine()
+    engine = Engine() if invoke is None else invoke
     def services() -> dict[str, Any]:
         found = snapshot_services()
         for record in found.values():

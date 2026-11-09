@@ -12,7 +12,7 @@ import asyncio
 import json
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import parse_qsl
 
 from .clock import ClockClosed, VirtualClock
@@ -58,6 +58,9 @@ class FakeUpstream:
     violations: list[str] = field(default_factory=list)
     # Exchange ids whose client closed the connection before the response ended.
     client_closed: list[str] = field(default_factory=list)
+    # Stateful wire tests may compute a reply only after the scenario accepts
+    # and records the request. Counts, matching and teardown stay authoritative.
+    response_hook: Callable[[RecordedRequest, Mapping[str, Any]], Awaitable[Mapping[str, Any]]] | None = None
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -158,7 +161,9 @@ class FakeUpstream:
 
         watcher = asyncio.create_task(watch())
         try:
-            await self._respond(exchange.response, send, disconnected)
+            response = (await self.response_hook(recorded, exchange.response)
+                        if self.response_hook is not None else exchange.response)
+            await self._respond(response, send, disconnected)
         except _ClientGone:
             with self._lock:
                 self.client_closed.append(exchange.id)
