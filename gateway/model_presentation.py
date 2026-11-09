@@ -235,7 +235,7 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     )
     if contract is None:
         declared = metadata.get("capability") or getattr(capability, "capability", None)
-        return declared if declared in CAPABILITY_LABELS else UNCLASSIFIED_CAPABILITY
+        return declared if isinstance(declared, str) and declared in CAPABILITY_LABELS else UNCLASSIFIED_CAPABILITY
     if contract.type != "audio":
         return _TYPE_CAPABILITIES[contract.type]
     if "audio" in contract.input_modalities and "audio" not in contract.output_modalities:
