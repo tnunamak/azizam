@@ -92,14 +92,20 @@ def load_execution_routes(path: str | Path = _EXECUTION_ROUTES_PATH) -> Mapping[
         fail("<root>", "schema_version must be 1")
     if not isinstance(frontends, dict):
         fail("<root>", f"invalid route registry {_PROTOCOL_FRONTENDS_PATH}")
-    known_paths: set[str] = set()
+    known_routes: set[tuple[str, str]] = set()
     for group, route_key in (("records", "registered_routes"), ("frontends", "routes")):
         for frontend in frontends.get(group, []):
             for route in frontend.get(route_key, []):
+                route_paths: set[str] = set()
                 for field in ("canonical", "path", "alias"):
                     if isinstance(route.get(field), str):
-                        known_paths.add(route[field])
-                known_paths.update(alias for alias in route.get("aliases", []) if isinstance(alias, str))
+                        route_paths.add(route[field])
+                route_paths.update(alias for alias in route.get("aliases", []) if isinstance(alias, str))
+                known_routes.update(
+                    (method, route_path)
+                    for method in route.get("methods", []) if isinstance(method, str)
+                    for route_path in route_paths
+                )
 
     endpoint_keys = {"method", "path", "output", "note", "discovery_only"}
     model_bindings = {"short_id", "video_prefixed", "none"}
@@ -114,8 +120,8 @@ def load_execution_routes(path: str | Path = _EXECUTION_ROUTES_PATH) -> Mapping[
             fail(row, "path must be a local route")
         if "discovery_only" in value and type(value["discovery_only"]) is not bool:
             fail(row, "discovery_only must be boolean")
-        if value["path"] not in known_paths and value.get("discovery_only") is not True:
-            fail(row, f"path {value['path']!r} is not a canonical/alias route; declare discovery_only: true")
+        if (value["method"], value["path"]) not in known_routes and value.get("discovery_only") is not True:
+            fail(row, f"method/path pair {value['method']} {value['path']!r} is not a canonical/alias route; declare discovery_only: true")
         for field in ("output", "note"):
             if field in value:
                 word(value[field], row, field)
