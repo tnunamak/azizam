@@ -220,31 +220,65 @@ def graph_nodes(manifest: dict) -> dict:
     return json.loads((ROOT / manifest["bindings"]["comfyui"]["workflow"]).read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("path", MANIFESTS, ids=lambda p: p.stem)
-def test_each_role_input_drives_the_node_videos_yml_names(path: Path) -> None:
-    """A role input is bound to the very nodes the old code wrote the value into."""
-    manifest = load(path)
-    old = OLD[old_key(manifest)]
-    roles = manifest["video"].get("roles", {})
+# Targets a manifest binds beyond the nodes registry/defaults/videos.yml names for the role (workflow key, role -> nodes).
+INTENDED_EXTRA_NODES = {
+    (f"video-ltx-2.5-{variant}", "frame_rate"): {"24"}  # the float twin of the integer frame-rate node 23
+    for variant in ("t2v", "i2v", "keyframes", "keyframes-mid")
+}
+
+
+def check_role_nodes(manifest: dict) -> None:
+    """A role input is bound to the very nodes the old code wrote the value into (its ``node_roles``), plus the pinned extras."""
+    key = old_key(manifest)
+    old = OLD[key]
+    if old.get("builder"):
+        return  # a chain builder writes its own graph
+    old_roles = old.get("node_roles", {})
+    roles = manifest["video"]["roles"]
     mapped = {name: {entry["node"] for entry in entries} for name, entries in manifest["bindings"]["comfyui"]["map"].items()}
-    roles_to_old = {
-        "length": set(map(str, old.get("length_nodes", ()))),
-        "frame_rate": set(map(str, old.get("frame_rate_nodes", ()))),
-    }
-    sizes = [str(n) for n in old.get("size_node", ())]
-    if sizes:
-        roles_to_old["width"], roles_to_old["height"] = {sizes[0]}, {sizes[1]}
-    for role, nodes in roles_to_old.items():
-        if not nodes or old.get("builder"):
-            continue
-        assert role in roles, f"{role} role missing"
-        assert mapped[roles[role]] == nodes, f"{role}: {mapped[roles[role]]} != {nodes}"
-    if old.get("image_node"):
-        assert mapped[roles["image"]] == {str(old["image_node"])}
-    if old.get("image_strength_node"):
-        assert mapped[roles["image_strength"]] == {str(old["image_strength_node"])}
+    expected: dict[str, set[str]] = {}
+    if old_roles.get("size_node"):
+        width_node, height_node = (str(n) for n in old_roles["size_node"])
+        expected["width"], expected["height"] = {width_node}, {height_node}
+    for role, field in (("length", "length_nodes"), ("frame_rate", "frame_rate_nodes")):
+        if old_roles.get(field):
+            expected[role] = {str(n) for n in old_roles[field]}
+    for role, field in (("image", "image_node"), ("image_strength", "image_strength_node")):
+        if old_roles.get(field):
+            expected[role] = {str(old_roles[field])}
+    assert expected, f"{key}: nothing to compare"
+    for role, nodes in expected.items():
+        assert role in roles, f"{key}: {role} role missing"
+        want = nodes | INTENDED_EXTRA_NODES.get((key, role), set())
+        assert mapped[roles[role]] == want, f"{key} {role}: {mapped[roles[role]]} != {want}"
     if old.get("source_video_input"):
         assert roles["source"] == old["source_video_input"]
+
+
+@pytest.mark.parametrize("path", [p for p in MANIFESTS if not OLD[old_key(load(p))].get("builder")], ids=lambda p: p.stem)
+def test_each_role_input_drives_the_node_videos_yml_names(path: Path) -> None:
+    check_role_nodes(load(path))
+
+
+def test_the_node_check_sees_a_width_sent_to_the_height_node() -> None:
+    manifest = load(T2V)
+    manifest["bindings"]["comfyui"]["map"]["width"] = copy.deepcopy(manifest["bindings"]["comfyui"]["map"]["height"])
+    with pytest.raises(AssertionError, match="width"):
+        check_role_nodes(manifest)
+
+
+def test_the_node_check_sees_a_dropped_legacy_target() -> None:
+    manifest = load(T2V)
+    manifest["bindings"]["comfyui"]["map"]["frame_rate"] = [{"node": "24", "input": "value"}]
+    with pytest.raises(AssertionError, match="frame_rate"):
+        check_role_nodes(manifest)
+
+
+def test_the_node_check_sees_an_unpinned_extra_target() -> None:
+    manifest = load(ROOT / "manifests" / "workflows" / "video-minimax-h3-t2v.yml")
+    manifest["bindings"]["comfyui"]["map"]["frame_rate"].append({"node": "99", "input": "fps"})
+    with pytest.raises(AssertionError, match="frame_rate"):
+        check_role_nodes(manifest)
 
 
 @pytest.mark.parametrize("path", MANIFESTS, ids=lambda p: p.stem)
@@ -402,3 +436,99 @@ def test_video_facts_does_not_alias_the_contract() -> None:
     with pytest.raises((TypeError, AttributeError)):
         manifest.roles["width"] = "changed"  # type: ignore[index]
     assert contract["video"] == original
+
+
+# ------------------------------------------------------- a length input covers every length the grid can compute
+
+
+def spec_range(manifest: dict, role: str) -> tuple[float, float]:
+    spec = manifest["inputs"][manifest["video"]["roles"][role]]
+    return spec["minimum"], spec["maximum"]
+
+
+@pytest.mark.parametrize("path", [p for p in MANIFESTS if not load(p)["video"].get("chain")], ids=lambda p: p.stem)
+def test_the_length_input_fits_every_length_the_declared_ranges_can_compute(path: Path) -> None:
+    manifest = load(path)
+    video = manifest["video"]
+    grid = GridSpec(**video["grid"])
+    low, high = spec_range(manifest, "length")
+    rate_role = video["roles"].get("frame_rate")
+    rate_spec = manifest["inputs"][rate_role] if rate_role else None
+    rates = range(rate_spec["minimum"], rate_spec["maximum"] + 1) if rate_spec else [None]
+    step = manifest["inputs"][video["roles"]["length"]].get("step", 1)
+    offset = manifest["inputs"][video["roles"]["length"]].get("offset", 0)
+    for rate in rates:
+        for seconds in (video["length"]["min_seconds"], video["length"]["max_seconds"]):
+            length = frame_count(seconds, rate, grid)
+            assert low <= length <= high, f"{seconds} s at {rate} fps computes {length}, outside {low}..{high}"
+            assert (length - offset) % step == 0
+
+
+@pytest.mark.parametrize("name,rate,expected", [
+    ("video-ltx-2.5-t2v", 30, 297), ("video-ltx-2.5-t2v", 50, 497), ("video-ltx-2.5-i2v", 50, 497),
+    ("video-ltx-2.5-keyframes", 50, 497), ("video-ltx-2.5-keyframes-mid", 50, 497),
+    ("video-minimax-h3-t2v", 50, 498), ("video-minimax-h3-i2v", 50, 498),
+    ("video-minimax-h3-keyframes", 50, 498), ("video-minimax-h3-keyframes-mid", 50, 498),
+])
+def test_ten_seconds_at_a_high_frame_rate_fits_the_length_input(name: str, rate: int, expected: int) -> None:
+    manifest = load(ROOT / "manifests" / "workflows" / f"{name}.yml")
+    length = frame_count(10, rate, GridSpec(**manifest["video"]["grid"]))
+    assert length == expected
+    assert spec_range(manifest, "length")[1] >= length
+
+
+# --------------------------------------------------------------- a role needs an input of the right kind, used once
+
+
+@pytest.mark.parametrize("role,target", [
+    ("width", "prompt"), ("height", "prompt"), ("length", "negative_prompt"), ("frame_rate", "prompt"),
+    ("image", "width"), ("image_strength", "prompt"),
+])
+def test_a_role_mapped_to_an_input_of_the_wrong_kind_is_refused(role: str, target: str) -> None:
+    doc = load(ROOT / "manifests" / "workflows" / "video-ltx-2.5-i2v.yml")
+    doc["video"]["roles"][role] = target
+    assert (("video", "roles", role), "role_input_type_mismatch") in codes(doc)
+
+
+@pytest.mark.parametrize("first,second", [("width", "height"), ("height", "length"), ("image", "image_strength")])
+def test_two_roles_sharing_one_input_are_refused(first: str, second: str) -> None:
+    doc = load(ROOT / "manifests" / "workflows" / "video-ltx-2.5-i2v.yml")
+    doc["video"]["roles"][first] = doc["video"]["roles"][second]
+    found = codes(doc)
+    assert any(path[:2] == ("video", "roles") and code == "role_input_shared" for path, code in found), found
+
+
+def test_the_shipped_roles_have_the_right_kinds_and_are_distinct() -> None:
+    for path in MANIFESTS:
+        found = check_contract(load(path)).errors
+        assert not [e for e in found if e.code in ("role_input_type_mismatch", "role_input_shared")], path.stem
+
+
+def test_the_role_kinds_are_schema_metadata_not_code() -> None:
+    import gateway.workflow_contract as contract
+
+    text = Path(contract.__file__).read_text(encoding="utf-8")
+    assert '"width"' not in text and '"prompt"' not in text
+
+
+# -------------------------------------------------------------------------- numbers in a section must be finite
+
+
+def with_text_replaced(old: str, new: str) -> dict:
+    text = T2V.read_text(encoding="utf-8")
+    assert old in text
+    return yaml.safe_load(text.replace(old, new, 1))
+
+
+@pytest.mark.parametrize("old,new,path", [
+    ("grid: {fps: 24,", "grid: {fps: .nan,", ("video", "grid", "fps")),
+    ("length: {min_seconds: 1,", "length: {min_seconds: .nan,", ("video", "length", "min_seconds")),
+    ("max_seconds: 10}", "max_seconds: .nan}", ("video", "length", "max_seconds")),
+    ("grid: {fps: 24,", "grid: {fps: .inf,", ("video", "grid", "fps")),
+])
+def test_a_non_finite_number_in_the_section_is_refused(old: str, new: str, path: tuple) -> None:
+    assert (path, "number_not_finite") in codes(with_text_replaced(old, new))
+
+
+def test_a_finite_section_raises_no_finiteness_error() -> None:
+    assert not [c for _, c in codes(load(T2V)) if c == "number_not_finite"]
