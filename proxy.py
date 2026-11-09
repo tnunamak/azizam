@@ -26977,6 +26977,10 @@ frontend_wire_shapes.DEFAULT_WORKFLOWS[
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
 def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
     """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
+    # A picture that is no readable file is refused as the upload check refuses it, before the mask is read.
+    if _open_image_for_route(image, param="image")[1] is not None:
+        return _refuse_edit_image(None, media_inputs.MediaInputError(
+            media_inputs.UNSUPPORTED, "the input is not a file type this model accepts"))
     context, error = _prepare_image_edit_mask_context(source_image_content=image, mask_content=mask)
     if error is not None:
         return error
