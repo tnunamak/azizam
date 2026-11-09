@@ -156,6 +156,17 @@ def test_a_listing_renders_ready_bodies_beside_views_in_the_given_order(shape):
     assert page["last_id"] == "video_p9"
 
 
+@pytest.mark.parametrize(("status", "word", "progress"), [("queued", "queued", 0), ("running", "running", 40),
+                                                          ("succeeded", "succeeded", 100), ("failed", "failed", 0), ("canceled", "failed", 0)])
+def test_a_listed_job_keeps_the_old_status_word_and_item_fields(shape, status, word, progress):
+    failure = RunFailure(code="oom", category="upstream", message="out of memory") if status == "failed" else None
+    item = body(shape.render_listing([view(status=status, failure=failure, progress=40)], False))["data"][0]
+    assert (item["status"], item["progress"]) == (word, progress)
+    assert set(item) == {"id", "object", "model", "size", "seconds", "created_at", "completed_at", "prompt", "status", "progress"} | (
+        {"error"} if failure else set())
+    assert item.get("error") in (None, "out of memory")
+
+
 def test_the_maker_gets_full_metadata_with_the_files_headers_and_the_library_is_told_once(shape, served):
     core, jobs = served
     done = finished(core, jobs)

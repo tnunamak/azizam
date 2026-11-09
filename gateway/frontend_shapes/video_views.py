@@ -80,6 +80,19 @@ class VideoViews:
             body["error"] = {"code": view.failure.code, "message": view.failure.message}
         return body
 
+    def list_item(self, view: RunJobView, facts: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """One job as the list route has always shown an item: the job store's own status word (a canceled job is failed),
+        not the status body's wire word, the error as its text, and only the fields a list shows."""
+        body = self.status_body(view, facts)
+        item: dict[str, Any] = {"id": body["id"], "object": body["object"], "model": body.get("model"), "size": body.get("size"),
+                                "seconds": body.get("seconds"), "created_at": body["created_at"], "completed_at": body["completed_at"],
+                                "prompt": body["prompt"]}
+        if view.failure is not None:
+            item["error"] = view.failure.message
+        item["status"] = body["azizam_status"]
+        item["progress"] = body["progress"]
+        return item
+
     def render_job(self, view: RunJobView) -> Response:
         """The create answer: the video object of the job, with the id every lifecycle route accepts. No ``Location``."""
         return JSONResponse(self.status_body(view))
@@ -90,7 +103,7 @@ class VideoViews:
     def render_listing(self, items: Sequence[RunJobView | Mapping[str, Any]], has_more: bool,
                        facts: Mapping[str, Mapping[str, Any] | None] | None = None) -> Response:
         """The list object. An item is a job view (rendered here, with its facts by job id) or a body that is ready."""
-        data = [dict(item) if isinstance(item, Mapping) else self.status_body(item, (facts or {}).get(item.job_id))
+        data = [dict(item) if isinstance(item, Mapping) else self.list_item(item, (facts or {}).get(item.job_id))
                 for item in items]
         # The list route has always answered with json.dumps' own spacing; its clients and goldens see those bytes.
         return Response(content=json.dumps({"object": "list", "data": data, "first_id": data[0]["id"] if data else None,
