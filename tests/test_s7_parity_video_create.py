@@ -585,10 +585,13 @@ def test_video_50_cancel_of_the_goldens_missing_job_does_not_cancel_a_video(worl
     async def drive():
         world.engine.pending = True
         await create(world)
-        before = len(world.engine.calls)
+        # The job's runner polls the engine's history while the render is held; a cancel is what must add no engine call.
+        def acting():
+            return [call for call in world.engine.calls if not (call[0] == "GET" and call[1].startswith("/history"))]
+        before = len(acting())
         response = await world.rig.call("POST", "/gateway/v1/media/jobs/None/cancel", json_body={})
         assert response.status_code == 404
-        assert len(world.engine.calls) == before
+        assert len(acting()) == before
     run(drive())
 
 

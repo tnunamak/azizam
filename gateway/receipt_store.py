@@ -65,6 +65,9 @@ SCHEMA_VERSION = 2
 
 _AUDIENCES = ("internal", "admin", "client")
 _TERMINAL_STATUSES = frozenset({"succeeded", "failed", "cancelled", "disconnected", "timed_out", "rejected"})
+#: A route that opens its receipt before it reads the body learns the model the caller asked for later: that field may be
+#: filled once while the accepted value is empty. Once it holds a value it is immutable like the others.
+_FILL_ONCE_FIELDS = frozenset({"requested_model"})
 _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
     {
         "request_id", "protocol", "path", "intent", "app_profile", "app_id",
@@ -418,7 +421,7 @@ def finalize(
             raise ValueError("cannot finalize malformed stored receipt")
         merged = dict(data)
         for field in _IMMUTABLE_ACCEPTED_FIELDS:
-            if field in accepted:
+            if field in accepted and not (field in _FILL_ONCE_FIELDS and accepted[field] is None):
                 merged[field] = accepted[field]
         # The maker decides who reads the full retention entry, so the accepted value wins, absent or not.
         if accepted.get("maker_person_id") is None:
