@@ -11,7 +11,7 @@ WORKAROUND_MAX = 500
 
 INSTRUCTION = "If a tool fails, misbehaves or forces a workaround, call `report_problem` before you move on."
 REPORT_HINT = ("If you work around this or give up, call `report_problem` once to tell the operator. "
-               "The gateway attaches the details.")
+               "Pass the `target` you called (and the `job_id`, if any) so the gateway attaches the details.")
 
 TOOL: dict[str, Any] = {
     "name": "report_problem",

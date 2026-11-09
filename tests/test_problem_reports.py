@@ -55,7 +55,7 @@ FAILURE = {"tool": "run", "target": "video-long", "error": "metadata dropped at 
 def test_report_stores_what_the_agent_wrote_and_what_the_gateway_knows(tmp_path):
     svc, _ = make(tmp_path)
     svc.note_failure(A1, FAILURE)
-    out = run(svc.submit(A1, {"category": "workaround", "summary": "The -long path drops metadata at about 90 percent.",
+    out = run(svc.submit(A1, {"category": "workaround", "target": "video-long", "summary": "The -long path drops metadata at about 90 percent.",
                               "workaround": "Switched to the standard t2v path."}))
     assert out["status"] == "recorded" and out["duplicate"] is False and out["count"] == 1
     assert out["known_workaround"] is None
@@ -79,9 +79,9 @@ def test_same_failure_from_two_agents_is_one_report_with_a_count(tmp_path):
     svc = ProblemReports(tmp_path / "p.db", destinations=lambda: [], post=FakePoster(), now=lambda: t[0])
     svc.note_failure(A1, FAILURE)
     svc.note_failure(A2, {**FAILURE, "error": "metadata dropped at 87% (job 9120)"})  # other numbers, same failure
-    first = run(svc.submit(A1, {"category": "failure", "summary": "one"}))
+    first = run(svc.submit(A1, {"category": "failure", "target": "video-long", "summary": "one"}))
     t[0] = 2000
-    second = run(svc.submit(A2, {"category": "failure", "summary": "two, in my own words"}))
+    second = run(svc.submit(A2, {"category": "failure", "target": "video-long", "summary": "two, in my own words"}))
     assert second["duplicate"] is True and second["report_id"] == first["report_id"] and second["count"] == 2
     rows = svc.list()
     assert len(rows) == 1 and rows[0]["count"] == 2
@@ -167,10 +167,10 @@ def test_a_report_that_names_no_target_and_no_job_takes_nothing_from_an_unrelate
 def test_operator_workaround_comes_back_to_the_next_agent(tmp_path):
     svc, _ = make(tmp_path)
     svc.note_failure(A1, FAILURE)
-    first = run(svc.submit(A1, {"category": "failure", "summary": "x"}))
+    first = run(svc.submit(A1, {"category": "failure", "target": "video-long", "summary": "x"}))
     svc.update(first["report_id"], workaround="Use target `video` with mode=async instead of `video-long`.")
     svc.note_failure(A2, FAILURE)
-    again = run(svc.submit(A2, {"category": "failure", "summary": "y"}))
+    again = run(svc.submit(A2, {"category": "failure", "target": "video-long", "summary": "y"}))
     assert again["duplicate"] is True
     assert again["known_workaround"] == "Use target `video` with mode=async instead of `video-long`."
 
@@ -178,10 +178,10 @@ def test_operator_workaround_comes_back_to_the_next_agent(tmp_path):
 def test_a_resolved_report_reopens_when_it_comes_back(tmp_path):
     svc, _ = make(tmp_path)
     svc.note_failure(A1, FAILURE)
-    first = run(svc.submit(A1, {"category": "failure", "summary": "x"}))
+    first = run(svc.submit(A1, {"category": "failure", "target": "video-long", "summary": "x"}))
     svc.update(first["report_id"], status="resolved")
     svc.note_failure(A1, FAILURE)
-    run(svc.submit(A1, {"category": "failure", "summary": "x again"}))
+    run(svc.submit(A1, {"category": "failure", "target": "video-long", "summary": "x again"}))
     assert svc.get(first["report_id"])["status"] == "open"
 
 
@@ -257,9 +257,9 @@ def test_an_old_failure_is_not_attached(tmp_path):
 def test_new_report_posts_json_to_the_configured_webhook_once(tmp_path):
     svc, poster = make(tmp_path)
     svc.note_failure(A1, FAILURE)
-    run(svc.submit(A1, {"category": "failure", "summary": "first"}))
+    run(svc.submit(A1, {"category": "failure", "target": "video-long", "summary": "first"}))
     svc.note_failure(A2, FAILURE)
-    run(svc.submit(A2, {"category": "failure", "summary": "second"}))  # duplicate: no new post
+    run(svc.submit(A2, {"category": "failure", "target": "video-long", "summary": "second"}))  # duplicate: no new post
     assert len(poster.sent) == 1
     sent = poster.sent[0]
     assert sent["url"] == WEBHOOK["url"] and sent["as_json"] is True
@@ -273,7 +273,7 @@ def test_text_destination_posts_a_short_plain_body_with_title_header(tmp_path):
     dest = {**WEBHOOK, "id": "ntfy", "format": "text"}
     svc, poster = make(tmp_path, destinations=(dest,))
     svc.note_failure(A1, FAILURE)
-    run(svc.submit(A1, {"category": "failure", "summary": "metadata dropped", "workaround": "used t2v"}))
+    run(svc.submit(A1, {"category": "failure", "target": "video-long", "summary": "metadata dropped", "workaround": "used t2v"}))
     sent = poster.sent[0]
     assert sent["as_json"] is False and isinstance(sent["body"], str)
     assert "metadata dropped" in sent["body"] and "video-long" in sent["body"]
@@ -371,7 +371,7 @@ def test_failed_run_carries_a_report_hint_and_the_report_gets_its_context(mcp):
     assert result["isError"] is True
     assert "report_problem" in result["structuredContent"]["report_hint"]
     reported = rpc(mcp, "tools/call", {"name": "report_problem", "arguments": {
-        "category": "workaround", "summary": "krea fails on every call", "workaround": "used another image alias"}})
+        "category": "workaround", "target": "krea", "summary": "krea fails on every call", "workaround": "used another image alias"}})
     assert "isError" not in reported or reported["isError"] is False
     out = reported["structuredContent"]
     assert out["status"] == "recorded" and out["duplicate"] is False
