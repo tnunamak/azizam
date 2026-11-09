@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +9,8 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 import yaml
+from starlette.convertors import CONVERTOR_TYPES
+from starlette.routing import PARAM_REGEX
 
 from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
@@ -59,7 +60,7 @@ def _route_identity(route: str) -> str:
     (``{n:int}`` and ``{u:uuid}`` are two routes; ``{a}`` and ``{b:str}`` are one). Letter case stays (paths are
     case-sensitive)."""
     trimmed = route[:-1] if len(route) > 1 and route.endswith("/") else route
-    return re.sub(r"\{[^}/:]*(?::([^}/]*))?\}", lambda match: "{:" + (match.group(1) or "str") + "}", trimmed)
+    return PARAM_REGEX.sub(lambda match: "{" + (match.group(2) or ":str") + "}", trimmed)
 
 
 def load_extension_routes(
@@ -106,8 +107,13 @@ def load_extension_routes(
             route = row.get("canonical")
             if not isinstance(route, str) or not route.startswith("/"):
                 raise ValueError("extension route needs a canonical path")
+            location = f"{path}: record {record_number}, row {row_number}"
             if "//" in route:
-                raise ValueError(f"extension route has an empty path segment: {route!r}")
+                raise ValueError(f"{location}: extension route has an empty path segment: {route!r}")
+            for parameter in PARAM_REGEX.finditer(route):
+                converter = (parameter.group(2) or ":str")[1:]
+                if converter not in CONVERTOR_TYPES:
+                    raise ValueError(f"{location}: unknown path converter {converter!r}: {route!r}")
             route_inputs = frozenset(_string_list(row.get("route_inputs", []), "route_inputs"))
             prefixes: tuple[str, ...] = ()
             route_intent: str | None = None
@@ -130,8 +136,8 @@ def load_extension_routes(
                 identity = (namespace, _route_identity(route))
                 if identity in identities:
                     raise ValueError(
-                        f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
-                        f"record {record_number}, row {row_number}"
+                        f"{location}: duplicate extension route: "
+                        f"namespace {namespace!r}, route {route!r}"
                     )
                 identities.add(identity)
                 found[namespace].append(entry)
