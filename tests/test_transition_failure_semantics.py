@@ -447,3 +447,31 @@ def test_an_unattested_recorded_no_change_stays_held_after_the_restart(tmp_path,
     op_id = _crashed_checkpoint(runtime, recorded=True)
     done = _restart(runtime, op_id)
     assert done.state == "failed_closed" and gates.state("dom") == "failed_closed"
+
+
+# -- a malformed failure_semantics is a refused profile, never a crash (S8b ship check) -----------------------------------
+
+BLOCKS = ["release", "load", "checkpoint", "restore", "restore.reset"]
+BAD_SEMANTICS = [["no_change"], {"no_change": True}, None, True, "maybe"]
+
+
+def _raw_with(block: str, value: Any) -> dict[str, Any]:
+    raw = raw_profile(operations={**raw_profile()["operations"], "checkpoint": "transition.checkpoint",
+                                  "restore": "transition.restore", "reset": "transition.reset",
+                                  "compatibility": "transition.compatibility"})
+    if block == "restore.reset":
+        raw["restore"] = {"reset": {"failure_semantics": value}}
+    else:
+        raw[block] = {"failure_semantics": value}
+    return raw
+
+
+@pytest.mark.parametrize("value", BAD_SEMANTICS, ids=["list", "dict", "null", "bool", "string"])
+@pytest.mark.parametrize("block", BLOCKS)
+def test_a_malformed_failure_semantics_is_a_profile_error_and_never_stops_the_valid_neighbours(
+        tmp_path, block, value) -> None:
+    with pytest.raises(ProfileError, match="failure_semantics"):
+        parse_profile(_raw_with(block, value), source="bad.yml")
+    (tmp_path / "bad.yml").write_text(yaml.safe_dump({**_raw_with(block, value), "id": "bad"}), encoding="utf-8")
+    (tmp_path / "good.yml").write_text(yaml.safe_dump({**raw_profile(), "id": "good", "attested": True}), encoding="utf-8")
+    assert sorted(transition_profiles.load_profiles(tmp_path)) == ["good"]
