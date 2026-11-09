@@ -2,7 +2,7 @@ import json, os
 from tests.support.video_rig import run, MODEL, ALICE
 import proxy
 
-OUT = os.path.expanduser("~/.tmp/c2d/v5d-out/texts.json")
+OUT = os.path.join(os.path.dirname(__file__), "..", "texts_dump.json")
 
 def test_dump(tmp_path):
     rows = []
