@@ -712,6 +712,8 @@ def job_flow(request, after=None, run=True):
     def mk(use_row):
         async def go(rig):
             target = (ROW_PREFIX if use_row else "") + JOB
+            if use_row and not run:      # the old route's scheduler is captured and not run: the row's run waits for a free slot
+                rig.set(proxy, "_workflow_run_semaphore", asyncio.Semaphore(0))
             first = await rig.call("POST", target, label="submit", **request)
             job_id = _job_id(first) if first is not None else None
             if run:
@@ -1042,7 +1044,6 @@ def _states(o):
     return [(j["status"], j.get("error")) for j in media_jobs(o)]
 
 
-@ROW_PENDING
 def test_images_R01_startup_scan_resumes_or_fails_the_job(tmp_path):
     old, row = restart_pair(tmp_path)
     old_has(old, "a job", media_jobs(old))
@@ -1056,7 +1057,6 @@ def test_images_R02_payload_missing_after_restart(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R03_recovery_turned_off(tmp_path):
     def setup(rig):
         job_setup()(rig)
@@ -1072,7 +1072,6 @@ def test_images_R04_restart_during_cancellation(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R05_restart_during_the_run(tmp_path):
     def mutate(rig, job_id):
         proxy.media_jobs.mark_running(job_id, path=proxy.media_jobs.DB_PATH) if hasattr(proxy.media_jobs, "mark_running") else None
