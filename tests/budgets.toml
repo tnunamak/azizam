@@ -889,7 +889,7 @@ vitest = 4015
 # Trains r114 and r115 (2026-10-30): Try mesh viewer and App request history cases; the r114 gate counted 694.
 # Library pick everywhere (2026-11-06): +35 Playwright cases (library-pick-everywhere.spec.ts across its projects); playwright test --list rose 679 -> 714.
 # Home media slots (2026-11-09): +8 Playwright cases in e2e/home-media-slots.spec.ts (4 rows at 1440 and 390 px); playwright test --list 723 + live-data 3 + household 18 = 744.
-playwright = 744
+playwright = 745
 # Builder E2 (2026-11-08): +1 case in e2e/workflows-owner.spec.ts (owner flow, chromium only); not yet run, see the report.
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
