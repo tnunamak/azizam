@@ -398,3 +398,134 @@ def test_the_hold_shows_on_the_owner_routes_without_a_retry_loop(tmp_path, monke
     assert (gate["gate"], gate["op_id"]) == ("reconciling", op_id)
     assert (op["state"], op["step_outcome"]) == ("reconciling", "unknown")
     assert op["evidence_ref"] == f"revalidate:{COLD[0]}"
+
+
+# -- the owner's continuation, a skipped restore and a crash after a settled hold (dot recheck 2299) --------------------------
+
+
+def _settled(runtime: Any, op_id: str) -> Any:
+    async def go() -> Any:
+        executor = runtime.executor()
+        for _ in range(200):
+            done = await asyncio.to_thread(executor.store.get, op_id)
+            if done.state != "running":
+                return done
+            await asyncio.sleep(0.05)
+        return done
+
+    return run(go())
+
+
+def _resolve(runtime: Any, op_id: str, step: str) -> Any:
+    run(runtime.executor().resolve(op_id, step=step, outcome="success", evidence_ref="owner"))
+    return _settled(runtime, op_id)
+
+
+def _held_at(runtime: Any, engine: Any, kind: str, step: str) -> str:
+    """An operation held ``reconciling`` at a restore (its query is unknown) or at the open step (the load is unready)."""
+    if step == "restore":
+        op_id = _crash_for(runtime, engine, kind, "restore")
+        engine.query_outcome = "unknown"
+        done = _restart(runtime, op_id)
+        assert (done.state, done.step) == ("reconciling", "restore")
+    else:
+        op_id = _crash_for(runtime, engine, kind, "restore")
+        engine.ready = False
+        done = _restart(runtime, op_id)
+        assert (done.state, done.step) == ("reconciling", "open")
+    return op_id
+
+
+@pytest.mark.parametrize("step", ["restore", "open"])
+@pytest.mark.parametrize("kind", ["select", "wake"])
+def test_an_owner_resolution_never_opens_the_gate_on_a_target_that_is_not_ready(tmp_path, monkeypatch, kind, step) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _held_at(runtime, engine, kind, step)
+    engine.ready = False
+    done = _resolve(runtime, op_id, step)
+    assert (done.state, gates.state("dom")) == ("reconciling", "reconciling"), (done.state, done.step, done.evidence_ref)
+    assert (done.step, done.evidence_ref) == ("open", "load_unverified_at_resume")
+    engine.ready = True
+    done = _resolve(runtime, op_id, "open")
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+
+
+def _crashed_after_load(runtime: Any, engine: Any, kind: str) -> str:
+    executor = runtime.executor()
+    begun = executor.store.begin(domain="dom", kind=kind, idempotency_key="skip", target="alpha",
+                                 incarnation="inc-1", config_revision=1)
+    op_id = begun.operation.op_id
+    executor.store.write_intent(op_id, StepIntent(step="load", effect_key=f"{op_id}:load", expected_incarnation=None))
+    executor.store.write_outcome(op_id, "load", EffectResult(outcome="success", evidence_ref="loaded"))
+    engine.resident = "alpha"
+    return op_id
+
+
+@pytest.mark.parametrize("kind", ["select", "wake"])
+@pytest.mark.parametrize(("ready", "state"), [(False, "reconciling"), (True, "succeeded")])
+def test_a_restore_that_is_skipped_on_recovery_still_checks_the_load_before_open(tmp_path, monkeypatch, kind, ready, state) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crashed_after_load(runtime, engine, kind)
+    engine.ready = ready
+    done = _restart(runtime, op_id)
+    assert done.state == state and gates.state("dom") == {"succeeded": "open"}.get(state, state), (done.state, done.step)
+    if not ready:
+        assert (done.step, done.evidence_ref) == ("open", "load_unverified_at_resume")
+
+
+class Crash(BaseException):
+    """The process died: nothing in the executor catches it."""
+
+
+def _die_in(executor: Any, monkeypatch: Any, name: str) -> None:
+    def crash(*_a: Any, **_k: Any) -> Any:
+        raise Crash(name)
+
+    monkeypatch.setattr(executor.store, name, crash)
+
+
+def _restart_dying(runtime: Any) -> None:
+    async def go() -> None:
+        try:
+            await runtime.executor().reconcile_startup()
+        except Crash:
+            pass
+
+    run(go())
+
+
+@pytest.mark.parametrize("kind", ["select", "wake"])
+def test_a_crash_after_the_owner_settled_a_hold_recovers_on_the_next_start_without_another_owner_action(
+        tmp_path, monkeypatch, kind) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _held_at(runtime, engine, kind, "restore")
+    restores = engine.restores[:]
+    executor = runtime.executor()
+    with monkeypatch.context() as patch:
+        _die_in(executor, patch, "resume")
+        with pytest.raises(Crash):
+            run(executor.resolve(op_id, step="restore", outcome="success", evidence_ref="owner"))
+    row = executor.store.get(op_id)
+    assert (row.state, row.step_outcome) == ("reconciling", "success"), "the settled outcome is committed, the resume is not"
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+    assert engine.restores == restores and engine.resets == 0, "the effect was not replayed"
+
+
+@pytest.mark.parametrize("kind", ["select", "wake"])
+def test_a_crash_after_a_revalidation_settled_recovers_on_the_next_start(tmp_path, monkeypatch, kind) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crashed_recorded(runtime, engine, kind=kind, step="restore", effect="reset", outcome="no_change",
+                              evidence=COLD[0], target="alpha")
+    engine.resident, engine.clean = "alpha", None
+    done = _restart(runtime, op_id)
+    assert done.state == "reconciling"
+    engine.clean = True
+    executor = runtime.executor()
+    with monkeypatch.context() as patch:
+        _die_in(executor, patch, "resume")
+        _restart_dying(runtime)
+    row = executor.store.get(op_id)
+    assert (row.state, row.step_outcome) == ("reconciling", "no_change"), (row.state, row.step_outcome)
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
