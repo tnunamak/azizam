@@ -66,7 +66,7 @@ inputs:
     step: 17
     offset: 5
     minimum: 22
-    maximum: 362
+    maximum: 498
   frame_rate:
     label: Frames per second
     help: How many frames the video shows each second.

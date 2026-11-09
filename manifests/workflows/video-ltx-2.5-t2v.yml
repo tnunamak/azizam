@@ -71,7 +71,7 @@ inputs:
     step: 8
     offset: 1
     minimum: 9
-    maximum: 241
+    maximum: 497
 outputs:
   video:
     media_type: video/mp4

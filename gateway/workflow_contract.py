@@ -361,21 +361,50 @@ class _Semantic:
         ``min_x`` and ``max_x`` is not empty, a ``default_x`` lies between them, and a default is not above its ``max``."""
         name = _section_name(doc)
         section = doc.get(name) if name is not None else None
-        if not isinstance(section, Mapping) or self._broken_below((name,)):
+        if not isinstance(section, Mapping):
+            return
+        non_finite = self._finite(section, (name,))
+        if self._broken_below((name,)) or non_finite:
             return
         inputs = doc.get("inputs") if isinstance(doc.get("inputs"), Mapping) else {}
         bindings = doc.get("bindings") if isinstance(doc.get("bindings"), Mapping) else {}
         bound = {key for body in bindings.values() if isinstance(body, Mapping) and isinstance(body.get("map"), Mapping)
                  for key in body["map"]}
         roles = section.get("roles")
+        role_schema = _section_validators()[name].schema.get("properties", {}).get("roles", {})
+        taken: dict[str, str] = {}
         for role, input_name in (roles.items() if isinstance(roles, Mapping) else ()):
             if input_name not in inputs:
                 self.errors.add((name, "roles", role), "role_input_missing", f"role {role} names an input the document does not declare")
-            elif input_name not in bound:
+                continue
+            if input_name not in bound:
                 self.errors.add((name, "roles", role), "role_input_unbound", f"role {role} names an input that no binding maps")
+            spec = inputs[input_name]
+            kinds = role_schema.get("properties", {}).get(role, {}).get("x-input-types")
+            if kinds and isinstance(spec, Mapping) and spec.get("type") not in kinds:
+                self.errors.add((name, "roles", role), "role_input_type_mismatch",
+                                f"role {role} names an input of type {spec.get('type')}; it takes {' or '.join(kinds)}")
+            if role_schema.get("x-distinct-inputs") and input_name in taken:
+                self.errors.add((name, "roles", role), "role_input_shared",
+                                f"roles {taken[input_name]} and {role} name one input, and each needs a value of its own")
+            taken.setdefault(input_name, role)
         for group_name, group in section.items():
             if isinstance(group, Mapping):
                 self._ranges((name, group_name), group)
+
+    def _finite(self, value: Any, at: tuple[PathPart, ...]) -> bool:
+        """Report every non-finite number in a section (YAML ``.nan`` and ``.inf``); True when there was one."""
+        if isinstance(value, float) and not math.isfinite(value):
+            self.errors.add(at, "number_not_finite", f"{at[-1]} must be a finite number")
+            return True
+        found = False
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                found = self._finite(child, at + (key,)) or found
+        elif isinstance(value, (list, tuple)):
+            for index, child in enumerate(value):
+                found = self._finite(child, at + (index,)) or found
+        return found
 
     def _ranges(self, at: tuple[PathPart, ...], group: Mapping[str, Any]) -> None:
         for key in group:

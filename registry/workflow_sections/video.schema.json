@@ -14,41 +14,67 @@
     "roles": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Role name to the input that plays it.",
+      "description": "Role name to the input that plays it. Metadata read by the contract: x-input-types on a role lists the input types that can receive its value; x-distinct-inputs says no two roles may name one input, because each receives a value of its own.",
       "properties": {
         "width": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "integer"
+          ]
         },
         "height": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "integer"
+          ]
         },
         "length": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "integer"
+          ]
         },
         "frame_rate": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "integer",
+            "number"
+          ]
         },
         "image": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "asset"
+          ]
         },
         "image_strength": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "number"
+          ]
         },
         "source": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "asset"
+          ]
         },
         "last_image": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "x-input-types": [
+            "asset"
+          ]
         }
-      }
+      },
+      "x-distinct-inputs": true
     },
     "size": {
       "type": "object",
