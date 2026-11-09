@@ -101,15 +101,15 @@ def build_local_capabilities(
     return capabilities
 
 
-_ALIAS_INTENTS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str]] = {
-    "chat": (INTENT_CHAT, ("text",), ("text",), "sync"),
-    "embeddings": (INTENT_EMBEDDINGS, ("text",), ("embedding",), "sync"),
-    "images": (INTENT_IMAGE_GENERATE, ("text",), ("image",), "job"),
-    "image_edits": (INTENT_IMAGE_EDIT, ("text", "image"), ("image",), "job"),
-    "videos": (INTENT_VIDEO_GENERATE, ("text",), ("video",), "job"),
-    "speech": (INTENT_SPEECH, ("text",), ("audio",), "sync"),
-    "transcriptions": (INTENT_TRANSCRIPTIONS, ("audio",), ("text",), "sync"),
-    "audio_generate": (INTENT_AUDIO_GENERATE, ("text",), ("audio",), "job"),
+_ALIAS_INTENTS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str, str | None]] = {
+    "chat": (INTENT_CHAT, ("text",), ("text",), "sync", None),
+    "embeddings": (INTENT_EMBEDDINGS, ("text",), ("embedding",), "sync", None),
+    "images": (INTENT_IMAGE_GENERATE, ("text",), ("image",), "job", None),
+    "image_edits": (INTENT_IMAGE_EDIT, ("text", "image"), ("image",), "job", None),
+    "videos": (INTENT_VIDEO_GENERATE, ("text",), ("video",), "job", None),
+    "speech": (INTENT_SPEECH, ("text",), ("audio",), "sync", "speech"),
+    "transcriptions": (INTENT_TRANSCRIPTIONS, ("audio",), ("text",), "sync", None),
+    "audio_generate": (INTENT_AUDIO_GENERATE, ("text",), ("audio",), "job", None),
 }
 
 
@@ -124,7 +124,7 @@ def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]
         spec = _ALIAS_INTENTS.get(operation)
         if spec is None:
             continue
-        intent, inputs, outputs, execution = spec
+        intent, inputs, outputs, execution, subtype = spec
         for row in _as_mapping(view).get("stable", ()):
             row = _as_mapping(row)
             alias = row.get("alias")
@@ -145,7 +145,7 @@ def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]
                     tags=tuple(tags),
                     title=row.get("title") or row.get("display_name"),
                     description=row.get("description"),
-                    capability=row.get("capability"),
+                    capability=row.get("capability") if row.get("capability") is not None else subtype,
                 )
             )
     return out
@@ -315,6 +315,7 @@ def _build_tts_capabilities(
             out.append(
                 Capability(
                     intent=INTENT_SPEECH,
+                    capability="speech",
                     backend=backend_name,
                     input_modalities=("text",),
                     output_modalities=("audio",),

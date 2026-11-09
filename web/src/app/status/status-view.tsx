@@ -29,10 +29,10 @@ import {
   isInFlight,
   isSuccess,
   isTerminalFailure,
-  requestCapability,
 } from "@/lib/capability-state";
 import {
   capabilityLabel,
+  capabilityKeyForRequest,
   useCapabilityViews,
 } from "@/lib/use-capability-views";
 import { askOwner, useOwnerName } from "@/lib/use-owner-name";
@@ -83,16 +83,16 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
   // Home and Status read the same snapshot. If Home has no rows (an older
   // gateway), the Status rows go through the same model instead.
   const memberRows = (data?.capabilities ?? []).filter(
-    (row) => !appPlumbingCapabilities.has(row.icon_key ?? row.capability),
+    (row) => !appPlumbingCapabilities.has(row.capability),
   );
   const capabilityViews = model.views.length
     ? model.views
     : memberRows.map((row) =>
         capabilityView(
           {
-            key: row.icon_key ?? row.capability,
+            key: row.capability,
             label: capabilityLabel(
-              row.icon_key ?? row.capability,
+              row.capability,
               row.capability_title,
             ),
             status: row.status,
@@ -116,16 +116,16 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
   const receipts = data?.receipts ?? [];
   const unresolved = receipts.find((receipt) => {
     if (!isTerminalFailure(receipt.status)) return false;
-    const capability = requestCapability(receipt.intent);
+    const capability = capabilityKeyForRequest(receipt.intent, undefined, data?.capabilities ?? []);
     return !receipts.some(
       (other) =>
-        requestCapability(other.intent) === capability &&
+        capabilityKeyForRequest(other.intent, undefined, data?.capabilities ?? []) === capability &&
         isSuccess(other.status) &&
         (other.created_at ?? 0) > (receipt.created_at ?? 0),
     );
   });
   const unresolvedView = unresolved
-    ? views.get(requestCapability(unresolved.intent) ?? "")
+    ? views.get(capabilityKeyForRequest(unresolved.intent, undefined, data?.capabilities ?? []) ?? "")
     : undefined;
 
   // A failed refresh never keeps an old verdict on screen.
@@ -314,8 +314,9 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
               ) : receipts.length ? (
                 <ul className="divide-y">
                   {receipts.map((receipt) => {
-                    const capability = requestCapability(receipt.intent);
-                    const meta = capabilityMeta(capability);
+                    const capability = capabilityKeyForRequest(receipt.intent, undefined, data?.capabilities ?? []);
+                    const row = data?.capabilities.find((item) => item.capability === capability);
+                    const meta = capabilityMeta(row?.icon_key ?? capability);
                     const Icon = meta.icon;
                     const state = receiptWord(receipt.status);
                     return (
@@ -334,7 +335,7 @@ export function MemberStatus({ requestsOnly = false }: { requestsOnly?: boolean 
                             className="flex min-w-0 flex-1 items-center gap-3"
                           >
                             <span className="min-w-0 flex-1 truncate text-meta font-medium group-hover:underline">
-                              {capability ? meta.label : "Request"}
+                              {row ? capabilityLabel(row.capability, row.capability_title) : capability ? meta.label : "Request"}
                             </span>
                             {state ? (
                               <StateWord tone={state.tone} word={state.word} />

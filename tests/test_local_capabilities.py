@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway.capabilities import summarize_capabilities  # noqa: E402
+from tests.support import c2d_parity  # noqa: E402
 from gateway.local_capabilities import (  # noqa: E402
     INTENT_AUDIO_GENERATE,
     INTENT_CHAT,
@@ -323,6 +327,40 @@ class SummarySafetyTest(unittest.TestCase):
             self.assertNotIn("backend", entry)
             self.assertNotIn("policy_sources", entry)
             self.assertNotIn("policy_reasons", entry)
+
+
+# ---------------------------------------------------------------------------
+# Parity golden (tests/fixtures/c2d_parity/local_capabilities.json): the full ordered
+# Capability list for REPRESENTATIVE_CONFIG with default flags, as dataclasses.asdict
+# per record, in Capability.sort_key order (the order is the contract: discovery sorts
+# by it). Stubbed helper: gateway.model_files._is_installed (the one disk read behind
+# model_file_availability and missing_model_file_caveat), once absent and once present,
+# because REPRESENTATIVE_CONFIG names weight files that exist on no machine.
+# The golden is written only by tests/fixtures/c2d_parity/capture.py.
+
+
+def capture_local_capabilities() -> dict:
+    out = {}
+    for label, stub in (("files_absent", c2d_parity.model_files_absent), ("files_present", c2d_parity.model_files_present)):
+        with stub():
+            caps = sorted(build_local_capabilities(REPRESENTATIVE_CONFIG), key=lambda c: c.sort_key)
+        out[label] = [dataclasses.asdict(cap) for cap in caps]
+    return c2d_parity.as_golden(out)
+
+
+@pytest.mark.parametrize("label", ["files_absent", "files_present"])
+def test_local_capabilities_match_golden(label):
+    golden = c2d_parity.load_golden("local_capabilities")
+    actual = capture_local_capabilities()
+    assert len(actual[label]) == len(golden[label]), "capability count changed"
+    for index, (got, want) in enumerate(zip(actual[label], golden[label])):
+        for field in sorted(set(got) | set(want)):
+            assert got.get(field) == want.get(field), f"record {index} ({want['intent']}/{want['backend']}/{want['model']}) field {field}"
+
+
+def test_local_capabilities_golden_has_no_paths_or_secrets():
+    blob = c2d_parity.canonical(c2d_parity.load_golden("local_capabilities"))
+    assert "/secret/" not in blob
 
 
 if __name__ == "__main__":

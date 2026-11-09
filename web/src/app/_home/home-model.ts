@@ -15,11 +15,11 @@ import type { HomeCapability, HomeChat, HomeCreation, HomeReceipt } from "./home
  * (a placeholder, a verb), keyed by the kind the rows carry, with a plain default.
  */
 
-export type MakingKind = "image" | "video" | "audio";
+export type MakingKind = string;
 
-/** The kind a capability row makes: its icon key, the same word the URL and Try use. */
+/** A capability's identity comes from the API; icon_key only names its drawing. */
 export function kindOf(row: HomeCapability): string {
-  return row.icon_key ?? row.capability;
+  return row.capability;
 }
 
 /** The chooser offers what a person makes; apps' plumbing (search, decisions) never appears. */
@@ -33,11 +33,11 @@ export function capabilityLabel(row: HomeCapability): string {
 }
 
 /** How often, and when last, this person got a result from each kind of work. */
-function taskUse(receipts: HomeReceipt[]) {
+function taskUse(receipts: HomeReceipt[], rows: HomeCapability[]) {
   const uses = new Map<string, { count: number; last: number }>();
   for (const receipt of receipts) {
     if (!isSuccess(receipt.status)) continue;
-    const kind = requestCapability(receipt.intent, receipt.path);
+    const kind = receiptRow(receipt, rows)?.capability ?? requestCapability(receipt.intent, receipt.path);
     if (!kind) continue;
     const at = receipt.accepted_at_ms
       ? receipt.accepted_at_ms / 1000
@@ -50,7 +50,7 @@ function taskUse(receipts: HomeReceipt[]) {
 
 /** The person's most-used kinds first, then the gateway's own order. */
 export function orderChooser(rows: HomeCapability[], receipts: HomeReceipt[]): HomeCapability[] {
-  const uses = taskUse(receipts);
+  const uses = taskUse(receipts, rows);
   return rows
     .map((row, index) => ({ row, index, use: uses.get(kindOf(row)) }))
     .sort(
@@ -221,13 +221,23 @@ export function parseEpochSeconds(value: number | string | null | undefined): nu
   return null;
 }
 
-function inFlightKind(receipt: HomeReceipt): MakingKind | null {
+/** Prefer a declared intent match; older partial rows still match the legacy request key. */
+function receiptRow(receipt: HomeReceipt, rows: HomeCapability[]): HomeCapability | undefined {
+  const byIntent = receipt.intent ? rows.find((row) => row.intent === receipt.intent) : undefined;
+  return byIntent ?? rows.find((row) => row.capability === requestCapability(receipt.intent, receipt.path));
+}
+
+function inFlightKind(receipt: HomeReceipt, row: HomeCapability | undefined): MakingKind | null {
+  if (row?.output_modalities?.length) {
+    return row.output_modalities.find((output) => ["image", "video", "audio"].includes(output)) ?? "item";
+  }
+  // Older rows without output metadata keep the established media presentation.
   const intent = String(receipt.intent ?? "").toLowerCase();
   const path = String(receipt.path ?? "").toLowerCase();
   if (intent.startsWith("image") || path.includes("/images/")) return "image";
   if (intent.startsWith("video") || path.includes("/videos")) return "video";
   if (intent.startsWith("audio") || intent.startsWith("speech") || path.includes("/audio/")) return "audio";
-  return null;
+  return row ? "item" : null;
 }
 
 export type RecentItem =
@@ -254,14 +264,13 @@ export function recentItems(input: {
   chats: HomeChat[];
   rows: HomeCapability[];
 }): RecentItem[] {
-  const typical = (kind: string | null) =>
-    input.rows.find((row) => kindOf(row) === kind)?.typical_seconds ?? null;
   const making: Extract<RecentItem, { kind: "making" }>[] = [];
   for (const receipt of input.receipts) {
     if (!isInFlight(receipt.status)) continue;
-    const kind = inFlightKind(receipt);
+    const row = receiptRow(receipt, input.rows);
+    const kind = inFlightKind(receipt, row);
     if (!kind) continue;
-    const capability = requestCapability(receipt.intent, receipt.path);
+    const capability = row?.capability ?? requestCapability(receipt.intent, receipt.path);
     const startedAt = receipt.accepted_at_ms
       ? receipt.accepted_at_ms / 1000
       : (receipt._stored_at ?? null);
@@ -270,7 +279,7 @@ export function recentItems(input: {
       key: `making:${receipt.request_id}`,
       making: kind,
       startedAt,
-      typicalSeconds: typical(capability),
+      typicalSeconds: row?.typical_seconds ?? null,
       capability,
     });
   }

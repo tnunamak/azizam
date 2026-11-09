@@ -15,6 +15,48 @@ The managed LiteLLM substrate is the sole exception. Its gateway-derived
 endpoint/protocol fields are locked and it cannot be removed; its name, enabled
 state, and note remain editable.
 
+`capability_words.yml` defines ordered `capabilities` rows (`id`, `label`, optional `policy_protocol`, and the presentation fields below), followed by protocol words and extra route intents referring to those ids. Row order is display/access-plan order. Home defaults an omitted policy protocol to `openai.chat`, including decide and rerank; embed explicitly keeps `openai.embeddings`. `gateway/capability_ids.py` validates schema version 1 and the rows before the word maps, naming the file and row for malformed rows, duplicate ids, unknown row keys, empty/non-string labels or non-string protocols. It loads read-only ordered tables once at import. Add a row and any word mappings to extend the catalog without a code table edit; this does not add a registered model kind. Restart after editing it.
+- `icon`: optional non-empty capability id, including a later row; defaults to this row’s `id` (audio declares `sfx`).
+- `recommended_alias`: optional non-empty stable caller name; omission adds no recommended alias.
+- `summary`: optional non-empty presentation sentence; omission adds no summary. Presentation maps follow row order and are read-only.
+- `hidden_by`: optional list of capability ids, including later rows. A service hides this label when any listed capability is also present; audio names speech, transcribe, music and sfx.
+
+Top-level `type_capabilities` maps parsed metadata types to declared capability
+ids. `audio_rule` declares the special type, required input modality, absent
+output modality, result capability, allowed subtypes and fallback capability.
+The loader rejects unknown fields and undeclared capability references with
+file/row diagnostics. Classification tables and nested lists are immutable and
+load once. Existing word/presentation loader return shapes remain supported;
+older files may omit the two new sections, which then yield empty tables.
+Parsing and normalization remain code. Listed contracts precede inferred
+contracts, then declared capability; the audio direction rule precedes metadata
+subtype, capability subtype, tags, intent mapping and fallback. Adding a mapping
+does not expand the upstream metadata parser's accepted type vocabulary.
+
+`presentation_words.yml` (schema version 1) supplies ordered label-cleanup
+vocabulary for `gateway/model_presentation.py`: provider suffixes, engine prefixes
+and tails, capability-specific suffixes, acronym replacements, parenthesized
+hardware words, hardware label suffixes, bare titles, technical-summary regexes
+and the unclassified presentation fallback. All word lists/maps are non-empty.
+Only `technical_patterns` contains regex syntax; other words are matched
+literally. Prefix matching stays case-sensitive, while engine tails and
+capability suffixes are case-insensitive. The loader names the file and key for
+missing/unknown fields, wrong types, blank words, empty lists/maps or invalid
+patterns. Data is loaded once at import into read-only maps/tuples and patterns
+are compiled then. Restart after edits. Cleanup order, case rules, punctuation,
+sentence/eight-word filtering and URL/IP logic stay in code. Capability taxonomy
+and classification remain separate from this vocabulary.
+
+`models_catalog_operations.yml` holds the catalog's operation synonyms, ordered
+intent prefixes, and exact example/path templates. `gateway/models_catalog.py`
+validates schema version 1 and loads deeply read-only maps once at import. Each
+operation row has an `id`, `words`, `intent_prefixes`, and optional `examples`;
+example rows declare `intent`, `kind`, mapping `body`, `path`, and optional `files`.
+The one top-level `row_id_placeholder` replaces matching whole body values with
+the requested model ID. Synonyms normalize strip/lower/underscore-to-dot; intent
+matching stays exact. Duplicate synonyms/IDs/intents and malformed rows fail with
+file/row diagnostics. Add data rows for new operations; restart after edits.
+
 ## Protocol descriptions
 
 `registry/protocols/*.yml` hold protocol descriptions: data that says how

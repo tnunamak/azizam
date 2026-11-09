@@ -2,13 +2,105 @@
 
 from collections.abc import Mapping
 from ipaddress import ip_address
+from pathlib import Path
 import re
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+import yaml
+
 from gateway import model_metadata
-from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
+from gateway.capability_ids import (
+    CAPABILITY_DESCRIPTIONS, CAPABILITY_ICON_KEYS, CAPABILITY_LABELS, INTENT_CAPABILITIES,
+    PROTOCOL_CAPABILITIES, RECOMMENDED_ALIASES,
+    TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY,
+)
 from gateway.service_registry import LEGACY_RESIDENCY_KEY, engine_base_address, is_litellm_service_record, is_remote_provider_config
+
+
+_PRESENTATION_WORDS_PATH = Path(__file__).resolve().parents[1] / "registry/presentation_words.yml"
+_PRESENTATION_LIST_KEYS = (
+    "provider_suffixes", "engine_prefixes", "engine_tails", "parenthesized_hardware",
+    "hardware_label_suffixes", "bare_titles", "technical_patterns",
+)
+_PRESENTATION_KEYS = (
+    "schema_version", *_PRESENTATION_LIST_KEYS, "capability_engine_suffixes", "acronyms", "unclassified",
+)
+_UNCLASSIFIED_KEYS = ("capability", "label", "icon", "service_capability", "summary")
+
+
+def _load_presentation_words(path: Path) -> Mapping[str, Any]:
+    """Read ordered vocabulary once; refuse malformed data with file/key evidence."""
+    def fail(key, reason):
+        raise ValueError(f"{path}: {key}: {reason}")
+
+    def string(value, key):
+        if not isinstance(value, str) or not value.strip():
+            fail(key, "expected a non-empty string")
+        return value
+
+    def mapping(value, key):
+        if not isinstance(value, dict) or not value:
+            fail(key, "expected a non-empty mapping")
+        for name in value:
+            string(name, key)
+        return value
+
+    def keys(value, allowed, key):
+        for name in value:
+            if name not in allowed:
+                fail(f"{key}.{name}" if key else name, "unknown key")
+        for name in allowed:
+            if name not in value:
+                fail(f"{key}.{name}" if key else name, "missing key")
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        fail("$", str(exc))
+    raw = mapping(raw, "$")
+    keys(raw, _PRESENTATION_KEYS, "")
+    if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+        fail("schema_version", "expected 1")
+    loaded: dict[str, Any] = {"schema_version": 1}
+    for key in _PRESENTATION_LIST_KEYS:
+        value = raw[key]
+        if not isinstance(value, list) or not value:
+            fail(key, "expected a non-empty list")
+        loaded[key] = tuple(string(word, f"{key}[{index}]") for index, word in enumerate(value))
+    for key in ("capability_engine_suffixes", "acronyms", "unclassified"):
+        value = mapping(raw[key], key)
+        if key == "unclassified":
+            keys(value, _UNCLASSIFIED_KEYS, key)
+        for name, word in value.items():
+            string(word, f"{key}.{name}")
+            if key == "capability_engine_suffixes" and name not in CAPABILITY_LABELS:
+                fail(f"{key}.{name}", "unknown capability")
+        loaded[key] = MappingProxyType(dict(value))
+    if loaded["unclassified"]["service_capability"] not in CAPABILITY_ICON_KEYS:
+        fail("unclassified.service_capability", "unknown capability")
+    patterns = []
+    for index, pattern in enumerate(loaded["technical_patterns"]):
+        try:
+            patterns.append(re.compile(pattern))
+        except (re.error, OverflowError, RecursionError) as exc:
+            fail(f"technical_patterns[{index}]", str(exc))
+    loaded["technical_patterns"] = tuple(patterns)
+    return MappingProxyType(loaded)
+
+
+PRESENTATION_WORDS = _load_presentation_words(_PRESENTATION_WORDS_PATH)
+# Words are literal; only technical_patterns contains authored regex syntax.
+_ENGINE_PREFIX = re.compile(r"^(?:" + "|".join(map(re.escape, PRESENTATION_WORDS["engine_prefixes"])) + r")\s+")
+_ENGINE_TAIL = re.compile(r"\s+(?:" + "|".join(map(re.escape, PRESENTATION_WORDS["engine_tails"])) + r")$", re.IGNORECASE)
+_ENGINE_SUFFIXES = MappingProxyType({
+    key: re.compile(r"-" + re.escape(suffix) + r"$", re.IGNORECASE)
+    for key, suffix in PRESENTATION_WORDS["capability_engine_suffixes"].items()
+})
+_HARDWARE_LABEL_SUFFIX = re.compile(
+    r"\((?:" + "|".join(map(re.escape, PRESENTATION_WORDS["hardware_label_suffixes"])) + r")\)$"
+)
 
 
 def health_base(service: Mapping[str, Any]) -> str | None:
@@ -96,21 +188,21 @@ def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | No
     labels = service_capability_labels(service)
     if not name:
         return " & ".join(labels) or None
-    name = name.removesuffix(" (provider)").removesuffix(" (Provider)")
+    for suffix in PRESENTATION_WORDS["provider_suffixes"]:
+        name = name.removesuffix(suffix)
     # Legacy seed names sometimes carry deployment notes in parentheses.
     # The engine line keeps hardware suffixes but moves notes to details.
     name = _strip_deployment_notes(name)
     if labels:
-        name = re.sub(r"^(?:Local|Remote)\s+", "", name)
-        name = re.sub(r"\s+(?:server|provider|engine)$", "", name, flags=re.IGNORECASE)
-    suffixes = {CAPABILITY_LABELS["transcribe"]: "stt", CAPABILITY_LABELS["speech"]: "tts"}
-    for label, suffix in suffixes.items():
-        if label in labels:
-            name = re.sub(rf"-{suffix}$", "", name, flags=re.IGNORECASE)
+        name = _ENGINE_PREFIX.sub("", name)
+        name = _ENGINE_TAIL.sub("", name)
+    for key, pattern in _ENGINE_SUFFIXES.items():
+        if CAPABILITY_LABELS[key] in labels:
+            name = pattern.sub("", name)
     if re.fullmatch(r"[a-z][a-z0-9-]+", name):
         name = friendly_name(name)
     name = _preserve_engine_acronyms(name)
-    if re.search(r"\((?:CPU|GPU|STT|TTS)\)$", name):
+    if _HARDWARE_LABEL_SUFFIX.search(name):
         return name
     if not labels or name.casefold() in {label.casefold() for label in labels}:
         return name
@@ -152,31 +244,8 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
     return "unknown"
 
 
-# Generic audio generation has no honest music/speech subtype. Its neutral
-# waveform glyph shares the sound-effects icon without changing its taxonomy.
-CAPABILITY_ICON_KEYS = {key: key for key in CAPABILITY_LABELS if key != "audio"}
-CAPABILITY_ICON_KEYS["audio"] = "sfx"
+# Capability labels, icons, aliases and summaries come from capability_words.yml.
 PRIMARY_CHAT_NAMES = frozenset({"default", "fast", "coder", "code", "chat"})
-# Product defaults are stable caller names, independent of catalog order,
-# engine identity, and current health. Operators still control their targets.
-RECOMMENDED_ALIASES = {
-    "chat": "default", "image": "image", "video": "video", "music": "music",
-    "sfx": "sfx", "speech": "tts", "transcribe": "stt", "decide": "decide",
-    "embed": "embed", "rerank": "rerank",
-}
-CAPABILITY_DESCRIPTIONS = {
-    "image": "Generate or edit images from your prompts.",
-    "video": "Video from a prompt or image.",
-    "mesh": "A 3D model from one picture.",
-    "music": "Songs and instrumentals from a prompt.",
-    "sfx": "Sound effects from a description.",
-    "speech": "Turn text into spoken audio.",
-    "transcribe": "Turn recorded speech into text.",
-    "decide": "Choose an outcome from your options.",
-    "embed": "Create vectors for search and similarity.",
-    "rerank": "Order search results by relevance.",
-    "audio": "Generate audio from your prompts.",
-}
 
 
 def service_capability_labels(service: Mapping[str, Any]) -> list[str]:
@@ -187,15 +256,15 @@ def service_capability_labels(service: Mapping[str, Any]) -> list[str]:
         capabilities = (capabilities,)
     keys = list(dict.fromkeys(PROTOCOL_CAPABILITIES[str(cap)] for cap in capabilities
                               if str(cap) in PROTOCOL_CAPABILITIES))
-    if "audio" in keys and any(key in keys for key in ("speech", "transcribe", "music", "sfx")):
-        keys.remove("audio")
+    keys = [key for key in keys if not any(other in keys for other in CAPABILITY_HIDDEN_BY.get(key, ()))]
     return [CAPABILITY_LABELS[key] for key in keys]
 
 
 def service_presentation(service: Mapping[str, Any], service_id: str) -> dict[str, Any]:
     labels = service_capability_labels(service)
-    first = labels[0] if labels else "AI"
-    kind = next((key for key, value in CAPABILITY_LABELS.items() if value == first), "chat")
+    first = labels[0] if labels else PRESENTATION_WORDS["unclassified"]["label"]
+    kind = next((key for key, value in CAPABILITY_LABELS.items() if value == first),
+                PRESENTATION_WORDS["unclassified"]["service_capability"])
     # Derive an unnamed registry ID only as a last resort, without engine rules.
     name = engine_label(service, service_id) or friendly_name(service_id)
     return {"engine_label": name, "capability_title": first,
@@ -205,12 +274,10 @@ def service_presentation(service: Mapping[str, Any], service_id: str) -> dict[st
 # Presentation-metadata key holding a row's `/v1/models` contract fields
 # (`type`, `architecture`, ...). When present it decides the classification.
 LISTED_METADATA_KEY = "listed_model_metadata"
-# `/v1/models` type -> product capability. `audio` is split below.
-_TYPE_CAPABILITIES = {
-    "language": "chat", "image": "image", "video": "video", "embedding": "embed",
-    "reranking": "rerank", "decision": "decide",
-}
-_AUDIO_SUBTYPES = ("music", "sfx", "speech")
+# The wire value for a capability no contract classifies. It is not a product
+# capability (not in CAPABILITY_LABELS), so it takes the generic label and icon,
+# and no intent word leaks into the catalog.
+UNCLASSIFIED_CAPABILITY = PRESENTATION_WORDS["unclassified"]["capability"]
 
 
 def product_capability(capability: Any, metadata: Mapping[str, Any] | None = None) -> str:
@@ -220,7 +287,9 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     intent and modalities read through the same contract. Audio that turns
     audio into text is `transcribe`; other audio takes a declared subtype
     (`capability: music`, a `capability:sfx` tag) or the speech intent, else
-    stays generic `audio`. Never inferred from model IDs.
+    stays generic `audio`. With no contract it is the declared product
+    capability (a manifest's `capability: mesh`), else UNCLASSIFIED_CAPABILITY.
+    Never inferred from model IDs.
     """
     metadata = metadata or {}
     intent = capability if isinstance(capability, str) else capability.intent
@@ -230,18 +299,21 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
         getattr(capability, "output_modalities", ()),
     )
     if contract is None:
-        return intent.split(".", 1)[0]
-    if contract.type != "audio":
-        return _TYPE_CAPABILITIES[contract.type]
-    if "audio" in contract.input_modalities and "audio" not in contract.output_modalities:
-        return "transcribe"
+        declared = metadata.get("capability") or getattr(capability, "capability", None)
+        return declared if isinstance(declared, str) and declared in CAPABILITY_LABELS else UNCLASSIFIED_CAPABILITY
+    if contract.type != AUDIO_RULE.get("type"):
+        return TYPE_CAPABILITIES[contract.type]
+    if AUDIO_RULE["input"] in contract.input_modalities and AUDIO_RULE["absent_output"] not in contract.output_modalities:
+        return AUDIO_RULE["result"]
     tags = tuple(metadata.get("tags") or ()) + tuple(getattr(capability, "tags", ()))
     hints = (metadata.get("capability"), getattr(capability, "capability", None),
              *(str(tag).removeprefix("capability:") for tag in tags))
-    subtype = next((hint for hint in hints if hint in _AUDIO_SUBTYPES), None)
+    subtype = next((hint for hint in hints if hint in AUDIO_RULE["subtypes"]), None)
     if subtype:
         return subtype
-    return "speech" if intent.startswith(("speech.", "audio.speech")) else "audio"
+    # No declared subtype: the shipped capability words (registry/capability_words.yml) name it.
+    word = INTENT_CAPABILITIES.get(intent)
+    return word if word in AUDIO_RULE["subtypes"] else AUDIO_RULE["fallback"]
 
 
 def friendly_name(value: str) -> str:
@@ -251,14 +323,9 @@ def friendly_name(value: str) -> str:
 
 def _preserve_engine_acronyms(value: str) -> str:
     """Keep common hardware acronyms in human labels from metadata-derived IDs."""
-    replacements = {
-        "Cpu": "CPU",
-        "Gpu": "GPU",
-        "Stt": "STT",
-        "Tts": "TTS",
-    }
+    replacements = PRESENTATION_WORDS["acronyms"]
     parts = [replacements.get(part, part) for part in value.split(" ")]
-    if len(parts) > 1 and parts[-1] in {"CPU", "GPU"}:
+    if len(parts) > 1 and parts[-1] in PRESENTATION_WORDS["parenthesized_hardware"]:
         return f"{' '.join(parts[:-1])} ({parts[-1]})"
     return " ".join(parts)
 
@@ -276,7 +343,7 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
     """One product contract: taxonomy, friendly identity and safe description."""
     metadata = metadata or {}
     kind = product_capability(capability, metadata)
-    label = CAPABILITY_LABELS.get(kind, "AI")
+    label = CAPABILITY_LABELS.get(kind, PRESENTATION_WORDS["unclassified"]["label"])
     use_name = metadata.get("alias") or getattr(capability, "model", None) or getattr(capability, "workflow", None)
     declared_title = next((_presentation_label(metadata[field]) for field in ("title", "display_name", "name")
                            if metadata.get(field) and str(metadata[field]).strip()), None)
@@ -294,7 +361,7 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
     else:
         title = capability_title
     title = title or (_presentation_label(friendly_name(str(use_name))) if use_name else label)
-    if title.casefold() in {"tts", "stt"}:
+    if title.casefold() in PRESENTATION_WORDS["bare_titles"]:
         title = label
     description = metadata.get("description") or getattr(capability, "description", None)
     if description:
@@ -306,16 +373,17 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
             profile_name = str(use_name or "chat").removeprefix("role:")
             description = _chat_profile_description(profile_name)
         else:
-            description = CAPABILITY_DESCRIPTIONS.get(kind, "Use this configured AI capability.")
+            description = CAPABILITY_DESCRIPTIONS.get(kind, PRESENTATION_WORDS["unclassified"]["summary"])
     description = re.split(r"(?<=[.!?])\s+", str(description).strip(), maxsplit=1)[0]
     description = description.rstrip(".") + "." if not description.endswith(("!", "?")) else description
     target = next((tag.removeprefix("resolves_to:") for tag in getattr(capability, "tags", ())
                    if tag.startswith("resolves_to:")), None)
     recommended = _presentation_label(metadata.get("recommended_model")) or capability_title or declared_title
     recommended = recommended or (_presentation_label(friendly_name(target)) if target else title)
-    if recommended.casefold() in {"tts", "stt"}:
+    if recommended.casefold() in PRESENTATION_WORDS["bare_titles"]:
         recommended = title
-    out = {"capability": kind, "capability_title": label, "icon_key": CAPABILITY_ICON_KEYS.get(kind, "chat"),
+    out = {"capability": kind, "capability_title": label,
+           "icon_key": CAPABILITY_ICON_KEYS.get(kind, PRESENTATION_WORDS["unclassified"]["icon"]),
            "title": title, "recommended_model": str(recommended), "summary": description,
            "use_names": [str(use_name)] if use_name else [],
            "secondary_profile": bool(metadata.get("secondary_profile", (not remote or alias) and kind == "chat" and use_name
@@ -340,24 +408,14 @@ def _chat_profile_description(profile_name: str) -> str:
 
 def _strip_deployment_notes(value: str) -> str:
     note = re.search(r"\(([^)]*)\)", value)
-    if note and note.group(1).strip().upper() in {"CPU", "GPU"}:
+    if note and note.group(1).strip().upper() in PRESENTATION_WORDS["parenthesized_hardware"]:
         return value.split(";", 1)[0].strip()
     return value.split(" (", 1)[0].split(";", 1)[0].strip()
 
 
 def _is_technical_description(value: str) -> bool:
-    technical_patterns = (
-        r":\d{2,5}\b",
-        r"\b(?:port|host|localhost|127\.0\.0\.1)\b",
-        r"\b(?:gguf|safetensors|checkpoint)\b",
-        r"\b(?:contract|workflow|flac|khz)\b",
-        r"\bcontext (?:of|window|length)\b",
-        r"\bvia\s+(?:local|remote|backend|engine|server)\b",
-        r"\b(?:served by|served via|running on)\b",
-        r"[/\\][\w.-]+",
-    )
     lowered = value.casefold()
-    return any(re.search(pattern, lowered) for pattern in technical_patterns)
+    return any(pattern.search(lowered) for pattern in PRESENTATION_WORDS["technical_patterns"])
 
 
 def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

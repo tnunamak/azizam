@@ -1,8 +1,8 @@
-import { AudioLines, ImageIcon, Video } from "lucide-react";
+import { AudioLines, File, ImageIcon, Video } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { RelativeTime } from "@/components/product/relative-time";
 
-export type MakingKind = "image" | "video" | "audio";
+export type MakingKind = string;
 
 export const MAKING_COPY: Record<MakingKind, string> = {
   image: "Making your picture",
@@ -10,7 +10,7 @@ export const MAKING_COPY: Record<MakingKind, string> = {
   audio: "Making your audio",
 };
 
-const ICONS = { image: ImageIcon, video: Video, audio: AudioLines } as const;
+const ICONS: Readonly<Record<string, typeof ImageIcon>> = { image: ImageIcon, video: Video, audio: AudioLines };
 
 /**
  * Work the gateway accepted and is still making: calm, not clickable. The
@@ -30,7 +30,8 @@ export function MakingTile({
   risk?: string | null;
   className?: string;
 }) {
-  const Icon = ICONS[kind];
+  const knownKind = Object.prototype.hasOwnProperty.call(ICONS, kind);
+  const Icon = (knownKind ? ICONS[kind] : undefined) ?? File;
   return (
     <div
       className={cn(
@@ -47,7 +48,7 @@ export function MakingTile({
         )}
       />
       <p className="text-foreground text-badge sm:text-meta font-medium">
-        {MAKING_COPY[kind]}
+        {(knownKind ? MAKING_COPY[kind] : undefined) ?? "Making your item"}
       </p>
       {startedAt != null ? (
         <p className="text-badge font-normal max-sm:sr-only">

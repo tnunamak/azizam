@@ -1,0 +1,1810 @@
+{
+  "from_contract": {
+    "audio.generate.ace-step-1.5-xl-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate.sa3-small-sfx": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate.tangoflux": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate.yue2-song": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "image.analyze.face-likeness": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.fibo-2-edit-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.flux2-klein": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.flux2-klein-4b": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.flux2-klein-4b-inpaint": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.image-identity": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.qwen-image-2.1-edit": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.qwen-image-2.1-edit-multiref": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.qwen-image-2.1-inpaint": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.seedvr2-upscale": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.anima-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-4b": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-4b-seamless-tile": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-snofs": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.krea2-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.krea2-turbo-snofs": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.moss-image": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.moss-image-fast": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.moss-image-quality": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.sdxl-seamless-tile": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "mesh.generate.trellis-2": null,
+    "video.edit.rife-interpolate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.edit.scail-2-replace": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-i2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-keyframes": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-keyframes-mid": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-long": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-t2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-i2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-keyframes": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-keyframes-mid": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-long": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-t2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    }
+  },
+  "from_contract_non_mapping": null,
+  "from_operation": {
+    "": null,
+    "audio_generate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "chat": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "decisions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "image_edits": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "images": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "mesh": null,
+    "rerank": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "speech": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "transcriptions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "unknown-operation": null,
+    "videos": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    }
+  },
+  "from_origin": {
+    "None": null,
+    "decision": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "llm-catalog": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "other": null
+  },
+  "from_service_capabilities": {
+    "chat": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "completions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "decisions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "empty": null,
+    "first match wins (rerank before chat in the list)": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "non-string members": null,
+    "none": null,
+    "openai marker": null,
+    "rerank": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "table order wins over list order": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "unknown": null,
+    "uppercase": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "vision alone": null,
+    "vision+chat": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "vision+completions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "vision+embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    }
+  },
+  "operations": [
+    "",
+    "audio_generate",
+    "chat",
+    "decisions",
+    "embeddings",
+    "image_edits",
+    "images",
+    "mesh",
+    "rerank",
+    "speech",
+    "transcriptions",
+    "unknown-operation",
+    "videos"
+  ],
+  "operations_of": {
+    "audio|among chat+images": [],
+    "audio|among with unknown": [],
+    "audio|audio": [
+      "transcriptions"
+    ],
+    "audio|empty list": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|image+text (order)": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|no inputs": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|string not list": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|text": [
+      "speech",
+      "audio_generate"
+    ],
+    "audio|text+image": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|video (matches none)": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "decision|among chat+images": [],
+    "decision|among with unknown": [],
+    "decision|audio": [
+      "decisions"
+    ],
+    "decision|empty list": [
+      "decisions"
+    ],
+    "decision|image+text (order)": [
+      "decisions"
+    ],
+    "decision|no inputs": [
+      "decisions"
+    ],
+    "decision|string not list": [
+      "decisions"
+    ],
+    "decision|text": [
+      "decisions"
+    ],
+    "decision|text+image": [
+      "decisions"
+    ],
+    "decision|video (matches none)": [
+      "decisions"
+    ],
+    "embedding|among chat+images": [],
+    "embedding|among with unknown": [],
+    "embedding|audio": [
+      "embeddings"
+    ],
+    "embedding|empty list": [
+      "embeddings"
+    ],
+    "embedding|image+text (order)": [
+      "embeddings"
+    ],
+    "embedding|no inputs": [
+      "embeddings"
+    ],
+    "embedding|string not list": [
+      "embeddings"
+    ],
+    "embedding|text": [
+      "embeddings"
+    ],
+    "embedding|text+image": [
+      "embeddings"
+    ],
+    "embedding|video (matches none)": [
+      "embeddings"
+    ],
+    "image|among chat+images": [
+      "images"
+    ],
+    "image|among with unknown": [
+      "images"
+    ],
+    "image|audio": [
+      "images",
+      "image_edits"
+    ],
+    "image|empty list": [
+      "images",
+      "image_edits"
+    ],
+    "image|image+text (order)": [
+      "image_edits"
+    ],
+    "image|no inputs": [
+      "images",
+      "image_edits"
+    ],
+    "image|string not list": [
+      "images",
+      "image_edits"
+    ],
+    "image|text": [
+      "images"
+    ],
+    "image|text+image": [
+      "image_edits"
+    ],
+    "image|video (matches none)": [
+      "images",
+      "image_edits"
+    ],
+    "language|among chat+images": [
+      "chat"
+    ],
+    "language|among with unknown": [],
+    "language|audio": [
+      "chat"
+    ],
+    "language|empty list": [
+      "chat"
+    ],
+    "language|image+text (order)": [
+      "chat"
+    ],
+    "language|no inputs": [
+      "chat"
+    ],
+    "language|string not list": [
+      "chat"
+    ],
+    "language|text": [
+      "chat"
+    ],
+    "language|text+image": [
+      "chat"
+    ],
+    "language|video (matches none)": [
+      "chat"
+    ],
+    "reranking|among chat+images": [],
+    "reranking|among with unknown": [],
+    "reranking|audio": [
+      "rerank"
+    ],
+    "reranking|empty list": [
+      "rerank"
+    ],
+    "reranking|image+text (order)": [
+      "rerank"
+    ],
+    "reranking|no inputs": [
+      "rerank"
+    ],
+    "reranking|string not list": [
+      "rerank"
+    ],
+    "reranking|text": [
+      "rerank"
+    ],
+    "reranking|text+image": [
+      "rerank"
+    ],
+    "reranking|video (matches none)": [
+      "rerank"
+    ],
+    "unknown-type|among chat+images": [],
+    "unknown-type|among with unknown": [],
+    "unknown-type|audio": [],
+    "unknown-type|empty list": [],
+    "unknown-type|image+text (order)": [],
+    "unknown-type|no inputs": [],
+    "unknown-type|string not list": [],
+    "unknown-type|text": [],
+    "unknown-type|text+image": [],
+    "unknown-type|video (matches none)": [],
+    "video|among chat+images": [],
+    "video|among with unknown": [],
+    "video|audio": [
+      "videos"
+    ],
+    "video|empty list": [
+      "videos"
+    ],
+    "video|image+text (order)": [
+      "videos"
+    ],
+    "video|no inputs": [
+      "videos"
+    ],
+    "video|string not list": [
+      "videos"
+    ],
+    "video|text": [
+      "videos"
+    ],
+    "video|text+image": [
+      "videos"
+    ],
+    "video|video (matches none)": [
+      "videos"
+    ]
+  },
+  "operations_of_non_string_type": [],
+  "service_capability_cases": [
+    "chat",
+    "completions",
+    "decisions",
+    "embeddings",
+    "empty",
+    "first match wins (rerank before chat in the list)",
+    "non-string members",
+    "none",
+    "openai marker",
+    "rerank",
+    "table order wins over list order",
+    "unknown",
+    "uppercase",
+    "vision alone",
+    "vision+chat",
+    "vision+completions",
+    "vision+embeddings"
+  ],
+  "types": [
+    "language",
+    "embedding",
+    "reranking",
+    "image",
+    "video",
+    "audio",
+    "decision",
+    "unknown-type"
+  ],
+  "workflow_ids": [
+    "audio.generate.ace-step-1.5-xl-turbo",
+    "audio.generate.sa3-small-sfx",
+    "audio.generate.tangoflux",
+    "audio.generate.yue2-song",
+    "image.analyze.face-likeness",
+    "image.edit.fibo-2-edit-turbo",
+    "image.edit.flux2-klein",
+    "image.edit.flux2-klein-4b",
+    "image.edit.flux2-klein-4b-inpaint",
+    "image.edit.image-identity",
+    "image.edit.qwen-image-2.1-edit",
+    "image.edit.qwen-image-2.1-edit-multiref",
+    "image.edit.qwen-image-2.1-inpaint",
+    "image.edit.seedvr2-upscale",
+    "image.generate.anima-turbo",
+    "image.generate.flux2-klein",
+    "image.generate.flux2-klein-4b",
+    "image.generate.flux2-klein-4b-seamless-tile",
+    "image.generate.flux2-klein-snofs",
+    "image.generate.krea2-turbo",
+    "image.generate.krea2-turbo-snofs",
+    "image.generate.moss-image",
+    "image.generate.moss-image-fast",
+    "image.generate.moss-image-quality",
+    "image.generate.sdxl-seamless-tile",
+    "mesh.generate.trellis-2",
+    "video.edit.rife-interpolate",
+    "video.edit.scail-2-replace",
+    "video.generate.ltx-2.5-i2v",
+    "video.generate.ltx-2.5-keyframes",
+    "video.generate.ltx-2.5-keyframes-mid",
+    "video.generate.ltx-2.5-long",
+    "video.generate.ltx-2.5-t2v",
+    "video.generate.minimax-h3-i2v",
+    "video.generate.minimax-h3-keyframes",
+    "video.generate.minimax-h3-keyframes-mid",
+    "video.generate.minimax-h3-long",
+    "video.generate.minimax-h3-t2v"
+  ]
+}

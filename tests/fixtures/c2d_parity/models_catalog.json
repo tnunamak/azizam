@@ -1,0 +1,5718 @@
+{
+  "capabilities_for_operation": {
+    "": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ],
+      [
+        "decision.systemone",
+        "dec",
+        "decider",
+        null
+      ],
+      [
+        "image.analyze",
+        "gateway",
+        null,
+        "image.analyze.face-likeness"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ],
+      [
+        "mesh.generate",
+        "trellis",
+        null,
+        "mesh.generate.trellis-2"
+      ],
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ],
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ],
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "CHAT": [
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ]
+    ],
+    "audio": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ]
+    ],
+    "audio.generate": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ]
+    ],
+    "audio_generate": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ]
+    ],
+    "chat": [
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ]
+    ],
+    "chat.completions": [
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ]
+    ],
+    "chat_completions": [
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ]
+    ],
+    "completion": [
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ]
+    ],
+    "completions": [
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ]
+    ],
+    "decision": [
+      [
+        "decision.systemone",
+        "dec",
+        "decider",
+        null
+      ]
+    ],
+    "decisions": [
+      [
+        "decision.systemone",
+        "dec",
+        "decider",
+        null
+      ]
+    ],
+    "edits": [
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ]
+    ],
+    "embedding": [
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ]
+    ],
+    "embeddings": [
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ]
+    ],
+    "image": [
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ]
+    ],
+    "image.edit": [
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ]
+    ],
+    "image.edits": [
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ]
+    ],
+    "image.generate": [
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ]
+    ],
+    "image.generations": [
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ]
+    ],
+    "image_edits": [
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ]
+    ],
+    "images": [
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ]
+    ],
+    "images.edit": [
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ]
+    ],
+    "mesh": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ],
+      [
+        "decision.systemone",
+        "dec",
+        "decider",
+        null
+      ],
+      [
+        "image.analyze",
+        "gateway",
+        null,
+        "image.analyze.face-likeness"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ],
+      [
+        "mesh.generate",
+        "trellis",
+        null,
+        "mesh.generate.trellis-2"
+      ],
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ],
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ],
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "mesh.generate": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ],
+      [
+        "decision.systemone",
+        "dec",
+        "decider",
+        null
+      ],
+      [
+        "image.analyze",
+        "gateway",
+        null,
+        "image.analyze.face-likeness"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ],
+      [
+        "mesh.generate",
+        "trellis",
+        null,
+        "mesh.generate.trellis-2"
+      ],
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ],
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ],
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "rerank": [
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ]
+    ],
+    "reranking": [
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ]
+    ],
+    "speech": [
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ]
+    ],
+    "speech.synthesis": [
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ]
+    ],
+    "speech.transcription": [
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ]
+    ],
+    "speech.translation": [],
+    "stt": [
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ]
+    ],
+    "text": [
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ]
+    ],
+    "text.completions": [
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ]
+    ],
+    "text.embeddings": [
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ]
+    ],
+    "text.rerank": [
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ]
+    ],
+    "transcription": [
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ]
+    ],
+    "transcriptions": [
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ]
+    ],
+    "translation": [],
+    "translations": [],
+    "tts": [
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ]
+    ],
+    "unknown-operation": [
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.ace-step-1.5-xl-turbo"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.sa3-small-sfx"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.tangoflux"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "audio.generate.yue2-song"
+      ],
+      [
+        "audio.generate",
+        "comfyui",
+        null,
+        "tangoflux"
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "cydonia-24b",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "heretic-v2",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:default",
+        null
+      ],
+      [
+        "chat.completions",
+        "kobold",
+        "role:text-only-role",
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "chat.completions",
+        "tabby",
+        "role:vision",
+        null
+      ],
+      [
+        "decision.systemone",
+        "dec",
+        "decider",
+        null
+      ],
+      [
+        "image.analyze",
+        "gateway",
+        null,
+        "image.analyze.face-likeness"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.fibo-2-edit-turbo"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.flux2-klein-4b-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-edit-multiref"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.qwen-image-2.1-inpaint"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        null,
+        "image.edit.seedvr2-upscale"
+      ],
+      [
+        "image.edit",
+        "comfyui",
+        "flux2-klein-4b-edit",
+        null
+      ],
+      [
+        "image.edit",
+        "gateway",
+        null,
+        "image.edit.image-identity"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.anima-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-4b"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.flux2-klein-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.krea2-turbo-snofs"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-fast"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.moss-image-quality"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        null,
+        "image.generate.sdxl-seamless-tile"
+      ],
+      [
+        "image.generate",
+        "comfyui",
+        "flux2-klein-4b",
+        null
+      ],
+      [
+        "image.generate",
+        "gateway",
+        null,
+        "image.generate.flux2-klein-4b-seamless-tile"
+      ],
+      [
+        "mesh.generate",
+        "trellis",
+        null,
+        "mesh.generate.trellis-2"
+      ],
+      [
+        "speech.synthesis",
+        "tts",
+        null,
+        null
+      ],
+      [
+        "speech.transcription",
+        "stt",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "kobold",
+        null,
+        null
+      ],
+      [
+        "text.completions",
+        "tabby",
+        null,
+        null
+      ],
+      [
+        "text.embeddings",
+        "embeddings",
+        null,
+        null
+      ],
+      [
+        "text.rerank",
+        "rr",
+        "rerank-model",
+        null
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "video": [
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "video.edit": [
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ]
+    ],
+    "video.generate": [
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "videos": [
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video-ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.ltx-2.5-t2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-i2v"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-keyframes-mid"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-long"
+      ],
+      [
+        "video.generate",
+        "comfyui",
+        null,
+        "video.generate.minimax-h3-t2v"
+      ]
+    ],
+    "videos.edit": [
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.rife-interpolate"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.scail-2-replace"
+      ]
+    ]
+  },
+  "catalog_aliases": [
+    {
+      "alias": true,
+      "capabilities": [
+        {
+          "available": false,
+          "capability": "chat",
+          "icon_key": "chat",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "chat.completions",
+          "label": "Chat",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": true
+        }
+      ],
+      "capability": "chat",
+      "examples": [
+        {
+          "body": {
+            "messages": [
+              {
+                "content": "Hello",
+                "role": "user"
+              }
+            ],
+            "model": "chat-default"
+          },
+          "kind": "chat"
+        }
+      ],
+      "icon_key": "chat",
+      "id": "chat-default",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [
+        "chat"
+      ],
+      "path": "/v1/chat/completions",
+      "workflow": null
+    },
+    {
+      "alias": true,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image-edit-fast",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image-edit-fast",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [
+        "image_edits"
+      ],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.flux2-klein-4b"
+    },
+    {
+      "alias": true,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image-fast",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image-fast",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [
+        "images"
+      ],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.flux2-klein-4b"
+    }
+  ],
+  "catalog_counts": {
+    "aliases": 3,
+    "capabilities": 58,
+    "models": 48
+  },
+  "catalog_models": [
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "audio",
+          "icon_key": "sfx",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "audio.generate",
+          "label": "Audio",
+          "output_modalities": [
+            "audio"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "audio",
+      "examples": [
+        {
+          "body": {
+            "model": "ace-step-1.5-xl-turbo",
+            "prompt": "Gentle piano loop"
+          },
+          "kind": "audio"
+        }
+      ],
+      "icon_key": "sfx",
+      "id": "ace-step-1.5-xl-turbo",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "audio"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/audio/generate",
+      "workflow": "ace-step-1.5-xl-turbo"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "music",
+          "icon_key": "music",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "audio.generate",
+          "label": "Music",
+          "output_modalities": [
+            "audio"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "music",
+      "examples": [
+        {
+          "body": {
+            "model": "audio.generate.ace-step-1.5-xl-turbo",
+            "prompt": "Gentle piano loop"
+          },
+          "kind": "audio"
+        }
+      ],
+      "icon_key": "music",
+      "id": "audio.generate.ace-step-1.5-xl-turbo",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "audio"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/audio/generate",
+      "workflow": "audio.generate.ace-step-1.5-xl-turbo"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "sfx",
+          "icon_key": "sfx",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "audio.generate",
+          "label": "Sound effects",
+          "output_modalities": [
+            "audio"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "sfx",
+      "examples": [
+        {
+          "body": {
+            "model": "audio.generate.sa3-small-sfx",
+            "prompt": "Gentle piano loop"
+          },
+          "kind": "audio"
+        }
+      ],
+      "icon_key": "sfx",
+      "id": "audio.generate.sa3-small-sfx",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "audio"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/audio/generate",
+      "workflow": "audio.generate.sa3-small-sfx"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "sfx",
+          "icon_key": "sfx",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "audio.generate",
+          "label": "Sound effects",
+          "output_modalities": [
+            "audio"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "sfx",
+      "examples": [
+        {
+          "body": {
+            "model": "audio.generate.tangoflux",
+            "prompt": "Gentle piano loop"
+          },
+          "kind": "audio"
+        }
+      ],
+      "icon_key": "sfx",
+      "id": "audio.generate.tangoflux",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "audio"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/audio/generate",
+      "workflow": "audio.generate.tangoflux"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "music",
+          "icon_key": "music",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "audio.generate",
+          "label": "Music",
+          "output_modalities": [
+            "audio"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "music",
+      "examples": [
+        {
+          "body": {
+            "model": "audio.generate.yue2-song",
+            "prompt": "Gentle piano loop"
+          },
+          "kind": "audio"
+        }
+      ],
+      "icon_key": "music",
+      "id": "audio.generate.yue2-song",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "audio"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/audio/generate",
+      "workflow": "audio.generate.yue2-song"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": false,
+          "capability": "chat",
+          "icon_key": "chat",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "chat.completions",
+          "label": "Chat",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": true
+        }
+      ],
+      "capability": "chat",
+      "examples": [
+        {
+          "body": {
+            "messages": [
+              {
+                "content": "Hello",
+                "role": "user"
+              }
+            ],
+            "model": "cydonia-24b"
+          },
+          "kind": "chat"
+        }
+      ],
+      "icon_key": "chat",
+      "id": "cydonia-24b",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/chat/completions",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "decide",
+          "icon_key": "decide",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "decision.systemone",
+          "label": "Decisions",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "decide",
+      "examples": [
+        {
+          "body": null,
+          "kind": "decision.systemone"
+        }
+      ],
+      "icon_key": "decide",
+      "id": "decider",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": null,
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "flux2-klein-4b",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "flux2-klein-4b",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "flux2-klein-4b-edit",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "flux2-klein-4b-edit",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": false,
+          "capability": "chat",
+          "icon_key": "chat",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "chat.completions",
+          "label": "Chat",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": true
+        }
+      ],
+      "capability": "chat",
+      "examples": [
+        {
+          "body": {
+            "messages": [
+              {
+                "content": "Hello",
+                "role": "user"
+              }
+            ],
+            "model": "heretic-v2"
+          },
+          "kind": "chat"
+        }
+      ],
+      "icon_key": "chat",
+      "id": "heretic-v2",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/chat/completions",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "image",
+            "text"
+          ],
+          "intent": "image.analyze",
+          "label": "Images",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": null,
+          "kind": "image.analyze"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.analyze.face-likeness",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": null,
+      "workflow": "image.analyze.face-likeness"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.fibo-2-edit-turbo",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.fibo-2-edit-turbo",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.fibo-2-edit-turbo"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.flux2-klein",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.flux2-klein",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.flux2-klein"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.flux2-klein-4b-inpaint",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.flux2-klein-4b-inpaint",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.flux2-klein-4b-inpaint"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.image-identity",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.image-identity",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.image-identity"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.qwen-image-2.1-edit",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.qwen-image-2.1-edit",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.qwen-image-2.1-edit"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.qwen-image-2.1-edit-multiref",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.qwen-image-2.1-edit-multiref",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.qwen-image-2.1-edit-multiref"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.qwen-image-2.1-inpaint",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.qwen-image-2.1-inpaint",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.qwen-image-2.1-inpaint"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "image",
+            "text"
+          ],
+          "intent": "image.edit",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.edit.seedvr2-upscale",
+            "prompt": "Replace the sky"
+          },
+          "files": [
+            "image"
+          ],
+          "kind": "image_edit"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.edit.seedvr2-upscale",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/edits",
+      "workflow": "image.edit.seedvr2-upscale"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.anima-turbo",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.anima-turbo",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.anima-turbo"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.flux2-klein",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.flux2-klein",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.flux2-klein"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.flux2-klein-4b-seamless-tile",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.flux2-klein-4b-seamless-tile",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.flux2-klein-4b-seamless-tile"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.flux2-klein-snofs",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.flux2-klein-snofs",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.flux2-klein-snofs"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.krea2-turbo",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.krea2-turbo",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.krea2-turbo"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.krea2-turbo-snofs",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.krea2-turbo-snofs",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.krea2-turbo-snofs"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.moss-image",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.moss-image",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.moss-image"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.moss-image-fast",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.moss-image-fast",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.moss-image-fast"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.moss-image-quality",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.moss-image-quality",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.moss-image-quality"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "image",
+          "icon_key": "image",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "image.generate",
+          "label": "Images",
+          "output_modalities": [
+            "image"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "image",
+      "examples": [
+        {
+          "body": {
+            "model": "image.generate.sdxl-seamless-tile",
+            "prompt": "A small red cabin"
+          },
+          "kind": "image"
+        }
+      ],
+      "icon_key": "image",
+      "id": "image.generate.sdxl-seamless-tile",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "image"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/images/generations",
+      "workflow": "image.generate.sdxl-seamless-tile"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "mesh",
+          "icon_key": "mesh",
+          "input_modalities": [
+            "asset",
+            "text"
+          ],
+          "intent": "mesh.generate",
+          "label": "3D models",
+          "output_modalities": [],
+          "streaming": false
+        }
+      ],
+      "capability": "mesh",
+      "examples": [
+        {
+          "body": null,
+          "kind": "mesh.generate"
+        }
+      ],
+      "icon_key": "mesh",
+      "id": "mesh.generate.trellis-2",
+      "io": {
+        "input": [
+          "asset",
+          "text"
+        ],
+        "output": []
+      },
+      "operations": [],
+      "path": null,
+      "workflow": "mesh.generate.trellis-2"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "rerank",
+          "icon_key": "rerank",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "text.rerank",
+          "label": "Reranking",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "rerank",
+      "examples": [
+        {
+          "body": {
+            "documents": [
+              "Paris is the capital of France.",
+              "Berlin is in Germany."
+            ],
+            "model": "rerank-model",
+            "query": "capital of France"
+          },
+          "kind": "rerank"
+        }
+      ],
+      "icon_key": "rerank",
+      "id": "rerank-model",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/rerank",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "chat",
+          "icon_key": "chat",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "chat.completions",
+          "label": "Chat",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": true
+        }
+      ],
+      "capability": "chat",
+      "examples": [
+        {
+          "body": {
+            "messages": [
+              {
+                "content": "Hello",
+                "role": "user"
+              }
+            ],
+            "model": "role:text-only-role"
+          },
+          "kind": "chat"
+        }
+      ],
+      "icon_key": "chat",
+      "id": "role:text-only-role",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/chat/completions",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "chat",
+          "icon_key": "chat",
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "intent": "chat.completions",
+          "label": "Chat",
+          "output_modalities": [
+            "text"
+          ],
+          "streaming": true
+        }
+      ],
+      "capability": "chat",
+      "examples": [
+        {
+          "body": {
+            "messages": [
+              {
+                "content": "Hello",
+                "role": "user"
+              }
+            ],
+            "model": "role:vision"
+          },
+          "kind": "chat"
+        }
+      ],
+      "icon_key": "chat",
+      "id": "role:vision",
+      "io": {
+        "input": [
+          "image",
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/chat/completions",
+      "workflow": null
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "audio",
+          "icon_key": "sfx",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "audio.generate",
+          "label": "Audio",
+          "output_modalities": [
+            "audio"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "audio",
+      "examples": [
+        {
+          "body": {
+            "model": "tangoflux",
+            "prompt": "Gentle piano loop"
+          },
+          "kind": "audio"
+        }
+      ],
+      "icon_key": "sfx",
+      "id": "tangoflux",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "audio"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/audio/generate",
+      "workflow": "tangoflux"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video-ltx-2.5-i2v",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video-ltx-2.5-i2v",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video-ltx-2.5-i2v"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video-ltx-2.5-t2v",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video-ltx-2.5-t2v",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video-ltx-2.5-t2v"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "video"
+          ],
+          "intent": "video.edit",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": null,
+          "kind": "video.edit"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.edit.rife-interpolate",
+      "io": {
+        "input": [
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": null,
+      "workflow": "video.edit.rife-interpolate"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "video",
+            "text"
+          ],
+          "intent": "video.edit",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": null,
+          "kind": "video.edit"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.edit.scail-2-replace",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": null,
+      "workflow": "video.edit.scail-2-replace"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.ltx-2.5-i2v",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.ltx-2.5-i2v",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.ltx-2.5-i2v"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.ltx-2.5-keyframes",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.ltx-2.5-keyframes",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.ltx-2.5-keyframes"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.ltx-2.5-keyframes-mid",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.ltx-2.5-keyframes-mid",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.ltx-2.5-keyframes-mid"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.ltx-2.5-long",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.ltx-2.5-long",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.ltx-2.5-long"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.ltx-2.5-t2v",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.ltx-2.5-t2v",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.ltx-2.5-t2v"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.minimax-h3-i2v",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.minimax-h3-i2v",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.minimax-h3-i2v"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.minimax-h3-keyframes",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.minimax-h3-keyframes",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.minimax-h3-keyframes"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.minimax-h3-keyframes-mid",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.minimax-h3-keyframes-mid",
+      "io": {
+        "input": [
+          "text",
+          "video"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.minimax-h3-keyframes-mid"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.minimax-h3-long",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.minimax-h3-long",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.minimax-h3-long"
+    },
+    {
+      "alias": false,
+      "capabilities": [
+        {
+          "available": true,
+          "capability": "video",
+          "icon_key": "video",
+          "input_modalities": [
+            "text"
+          ],
+          "intent": "video.generate",
+          "label": "Video",
+          "output_modalities": [
+            "video"
+          ],
+          "streaming": false
+        }
+      ],
+      "capability": "video",
+      "examples": [
+        {
+          "body": {
+            "model": "video.generate.minimax-h3-t2v",
+            "prompt": "A kite above a beach"
+          },
+          "kind": "video"
+        }
+      ],
+      "icon_key": "video",
+      "id": "video.generate.minimax-h3-t2v",
+      "io": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "video"
+        ]
+      },
+      "operations": [],
+      "path": "/v1/videos",
+      "workflow": "video.generate.minimax-h3-t2v"
+    }
+  ],
+  "empty_inputs": {
+    "examples_empty": [],
+    "operation_of_none": []
+  },
+  "examples_by_intent": {
+    "audio.generate": [
+      {
+        "body": {
+          "model": "row-id",
+          "prompt": "Gentle piano loop"
+        },
+        "kind": "audio"
+      }
+    ],
+    "chat.completions": [
+      {
+        "body": {
+          "messages": [
+            {
+              "content": "Hello",
+              "role": "user"
+            }
+          ],
+          "model": "row-id"
+        },
+        "kind": "chat"
+      }
+    ],
+    "decision.systemone": [
+      {
+        "body": null,
+        "kind": "decision.systemone"
+      }
+    ],
+    "frobnicate.widget-9": [
+      {
+        "body": null,
+        "kind": "frobnicate.widget-9"
+      }
+    ],
+    "image.analyze": [
+      {
+        "body": null,
+        "kind": "image.analyze"
+      }
+    ],
+    "image.edit": [
+      {
+        "body": {
+          "model": "row-id",
+          "prompt": "Replace the sky"
+        },
+        "files": [
+          "image"
+        ],
+        "kind": "image_edit"
+      }
+    ],
+    "image.generate": [
+      {
+        "body": {
+          "model": "row-id",
+          "prompt": "A small red cabin"
+        },
+        "kind": "image"
+      }
+    ],
+    "mesh.generate": [
+      {
+        "body": null,
+        "kind": "mesh.generate"
+      }
+    ],
+    "speech.synthesis": [
+      {
+        "body": {
+          "input": "Hello",
+          "model": "row-id",
+          "voice": "alloy"
+        },
+        "kind": "speech"
+      }
+    ],
+    "speech.transcription": [
+      {
+        "body": {
+          "model": "row-id"
+        },
+        "files": [
+          "file"
+        ],
+        "kind": "transcription"
+      }
+    ],
+    "speech.translation": [
+      {
+        "body": {
+          "model": "row-id"
+        },
+        "files": [
+          "file"
+        ],
+        "kind": "translation"
+      }
+    ],
+    "text.completions": [
+      {
+        "body": {
+          "model": "row-id",
+          "prompt": "Hello"
+        },
+        "kind": "completion"
+      }
+    ],
+    "text.embeddings": [
+      {
+        "body": {
+          "input": "Hello",
+          "model": "row-id"
+        },
+        "kind": "embeddings"
+      }
+    ],
+    "text.rerank": [
+      {
+        "body": {
+          "documents": [
+            "Paris is the capital of France.",
+            "Berlin is in Germany."
+          ],
+          "model": "row-id",
+          "query": "capital of France"
+        },
+        "kind": "rerank"
+      }
+    ],
+    "video.edit": [
+      {
+        "body": null,
+        "kind": "video.edit"
+      }
+    ],
+    "video.generate": [
+      {
+        "body": {
+          "model": "row-id",
+          "prompt": "A kite above a beach"
+        },
+        "kind": "video"
+      }
+    ]
+  },
+  "fixture_capability_identities": [
+    [
+      "audio.generate",
+      "comfyui",
+      null,
+      "ace-step-1.5-xl-turbo"
+    ],
+    [
+      "audio.generate",
+      "comfyui",
+      null,
+      "audio.generate.ace-step-1.5-xl-turbo"
+    ],
+    [
+      "audio.generate",
+      "comfyui",
+      null,
+      "audio.generate.sa3-small-sfx"
+    ],
+    [
+      "audio.generate",
+      "comfyui",
+      null,
+      "audio.generate.tangoflux"
+    ],
+    [
+      "audio.generate",
+      "comfyui",
+      null,
+      "audio.generate.yue2-song"
+    ],
+    [
+      "audio.generate",
+      "comfyui",
+      null,
+      "tangoflux"
+    ],
+    [
+      "chat.completions",
+      "kobold",
+      null,
+      null
+    ],
+    [
+      "chat.completions",
+      "kobold",
+      "cydonia-24b",
+      null
+    ],
+    [
+      "chat.completions",
+      "kobold",
+      "heretic-v2",
+      null
+    ],
+    [
+      "chat.completions",
+      "kobold",
+      "role:default",
+      null
+    ],
+    [
+      "chat.completions",
+      "kobold",
+      "role:text-only-role",
+      null
+    ],
+    [
+      "chat.completions",
+      "tabby",
+      null,
+      null
+    ],
+    [
+      "chat.completions",
+      "tabby",
+      "role:vision",
+      null
+    ],
+    [
+      "decision.systemone",
+      "dec",
+      "decider",
+      null
+    ],
+    [
+      "image.analyze",
+      "gateway",
+      null,
+      "image.analyze.face-likeness"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.fibo-2-edit-turbo"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.flux2-klein"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.flux2-klein-4b"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.flux2-klein-4b-inpaint"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.qwen-image-2.1-edit"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.qwen-image-2.1-edit-multiref"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.qwen-image-2.1-inpaint"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      null,
+      "image.edit.seedvr2-upscale"
+    ],
+    [
+      "image.edit",
+      "comfyui",
+      "flux2-klein-4b-edit",
+      null
+    ],
+    [
+      "image.edit",
+      "gateway",
+      null,
+      "image.edit.image-identity"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.anima-turbo"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.flux2-klein"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.flux2-klein-4b"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.flux2-klein-snofs"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.krea2-turbo"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.krea2-turbo-snofs"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.moss-image"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.moss-image-fast"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.moss-image-quality"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      null,
+      "image.generate.sdxl-seamless-tile"
+    ],
+    [
+      "image.generate",
+      "comfyui",
+      "flux2-klein-4b",
+      null
+    ],
+    [
+      "image.generate",
+      "gateway",
+      null,
+      "image.generate.flux2-klein-4b-seamless-tile"
+    ],
+    [
+      "mesh.generate",
+      "trellis",
+      null,
+      "mesh.generate.trellis-2"
+    ],
+    [
+      "speech.synthesis",
+      "tts",
+      null,
+      null
+    ],
+    [
+      "speech.transcription",
+      "stt",
+      null,
+      null
+    ],
+    [
+      "text.completions",
+      "kobold",
+      null,
+      null
+    ],
+    [
+      "text.completions",
+      "tabby",
+      null,
+      null
+    ],
+    [
+      "text.embeddings",
+      "embeddings",
+      null,
+      null
+    ],
+    [
+      "text.rerank",
+      "rr",
+      "rerank-model",
+      null
+    ],
+    [
+      "video.edit",
+      "comfyui",
+      null,
+      "video.edit.rife-interpolate"
+    ],
+    [
+      "video.edit",
+      "comfyui",
+      null,
+      "video.edit.scail-2-replace"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video-ltx-2.5-i2v"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video-ltx-2.5-t2v"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.ltx-2.5-i2v"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.ltx-2.5-keyframes"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.ltx-2.5-keyframes-mid"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.ltx-2.5-long"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.ltx-2.5-t2v"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.minimax-h3-i2v"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.minimax-h3-keyframes"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.minimax-h3-keyframes-mid"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.minimax-h3-long"
+    ],
+    [
+      "video.generate",
+      "comfyui",
+      null,
+      "video.generate.minimax-h3-t2v"
+    ]
+  ],
+  "intent_prefixes_for_operation": {
+    "": [],
+    "CHAT": [
+      "chat."
+    ],
+    "audio": [
+      "audio.generate"
+    ],
+    "audio.generate": [
+      "audio.generate"
+    ],
+    "audio_generate": [
+      "audio.generate"
+    ],
+    "chat": [
+      "chat."
+    ],
+    "chat.completions": [
+      "chat."
+    ],
+    "chat_completions": [
+      "chat."
+    ],
+    "completion": [
+      "text.completions"
+    ],
+    "completions": [
+      "text.completions"
+    ],
+    "decision": [
+      "decision."
+    ],
+    "decisions": [
+      "decision."
+    ],
+    "edits": [
+      "image.edit"
+    ],
+    "embedding": [
+      "text.embeddings"
+    ],
+    "embeddings": [
+      "text.embeddings"
+    ],
+    "image": [
+      "image.generate"
+    ],
+    "image.edit": [
+      "image.edit"
+    ],
+    "image.edits": [
+      "image.edit"
+    ],
+    "image.generate": [
+      "image.generate"
+    ],
+    "image.generations": [
+      "image.generate"
+    ],
+    "image_edits": [
+      "image.edit"
+    ],
+    "images": [
+      "image.generate"
+    ],
+    "images.edit": [
+      "image.edit"
+    ],
+    "mesh": [],
+    "mesh.generate": [],
+    "rerank": [
+      "text.rerank"
+    ],
+    "reranking": [
+      "text.rerank"
+    ],
+    "speech": [
+      "speech.synthesis"
+    ],
+    "speech.synthesis": [
+      "speech.synthesis"
+    ],
+    "speech.transcription": [
+      "speech.transcription"
+    ],
+    "speech.translation": [
+      "speech.translation"
+    ],
+    "stt": [
+      "speech.transcription"
+    ],
+    "text": [
+      "text.completions"
+    ],
+    "text.completions": [
+      "text.completions"
+    ],
+    "text.embeddings": [
+      "text.embeddings"
+    ],
+    "text.rerank": [
+      "text.rerank"
+    ],
+    "transcription": [
+      "speech.transcription"
+    ],
+    "transcriptions": [
+      "speech.transcription"
+    ],
+    "translation": [
+      "speech.translation"
+    ],
+    "translations": [
+      "speech.translation"
+    ],
+    "tts": [
+      "speech.synthesis"
+    ],
+    "unknown-operation": [],
+    "video": [
+      "video.generate",
+      "video.edit"
+    ],
+    "video.edit": [
+      "video.edit"
+    ],
+    "video.generate": [
+      "video.generate"
+    ],
+    "videos": [
+      "video.generate",
+      "video.edit"
+    ],
+    "videos.edit": [
+      "video.edit"
+    ]
+  },
+  "intents": [
+    "audio.generate",
+    "chat.completions",
+    "decision.systemone",
+    "frobnicate.widget-9",
+    "image.analyze",
+    "image.edit",
+    "image.generate",
+    "mesh.generate",
+    "speech.synthesis",
+    "speech.transcription",
+    "speech.translation",
+    "text.completions",
+    "text.embeddings",
+    "text.rerank",
+    "video.edit",
+    "video.generate"
+  ],
+  "operations": [
+    "chat",
+    "chat.completions",
+    "chat_completions",
+    "CHAT",
+    "completions",
+    "completion",
+    "text",
+    "text.completions",
+    "embeddings",
+    "embedding",
+    "text.embeddings",
+    "images",
+    "image",
+    "image.generate",
+    "image.generations",
+    "image.edit",
+    "image.edits",
+    "images.edit",
+    "edits",
+    "audio",
+    "audio.generate",
+    "speech",
+    "speech.synthesis",
+    "tts",
+    "transcription",
+    "transcriptions",
+    "speech.transcription",
+    "stt",
+    "translation",
+    "translations",
+    "speech.translation",
+    "video",
+    "videos",
+    "video.generate",
+    "video.edit",
+    "videos.edit",
+    "rerank",
+    "reranking",
+    "text.rerank",
+    "decision",
+    "decisions",
+    "image_edits",
+    "audio_generate",
+    "mesh",
+    "mesh.generate",
+    "unknown-operation",
+    ""
+  ],
+  "path_by_intent": {
+    "audio.generate": "/v1/audio/generate",
+    "chat.completions": "/v1/chat/completions",
+    "decision.systemone": null,
+    "frobnicate.widget-9": null,
+    "image.analyze": null,
+    "image.edit": "/v1/images/edits",
+    "image.generate": "/v1/images/generations",
+    "mesh.generate": null,
+    "speech.synthesis": "/v1/audio/speech",
+    "speech.transcription": "/v1/audio/transcriptions",
+    "speech.translation": "/v1/audio/translations",
+    "text.completions": "/v1/completions",
+    "text.embeddings": "/v1/embeddings",
+    "text.rerank": "/v1/rerank",
+    "video.edit": null,
+    "video.generate": "/v1/videos"
+  }
+}
