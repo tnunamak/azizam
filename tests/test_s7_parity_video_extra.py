@@ -494,7 +494,7 @@ def test_video_7_59_status_maps_running_to_in_progress_and_history_success_to_co
     _run(tmp_path, "r7-59", setup, drive)
     assert seen["pending"]["status"] in ("queued", "in_progress")
     assert seen["pending"]["azizam_status"] in ("queued", "running")
-    assert seen["done"]["status"] == "completed", seen["done"]
+    assert seen["done"]["status"] == "completed", json.dumps(seen["done"])
     assert seen["done"]["azizam_status"] == "succeeded"
 
 
