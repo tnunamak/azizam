@@ -7,7 +7,8 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "unknown", "unavailable"]
-CapabilityIconKey = Literal["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank", "mesh"]
+# An icon key names a capability id from registry/capability_words.yml; the set grows with the rows.
+CapabilityIconKey = str
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
 # The `/v1/models` metadata vocabulary (gateway/model_metadata.py, docs/api/MODEL_METADATA.md).
 ModelType = Literal["language", "embedding", "reranking", "image", "video", "audio", "decision"]

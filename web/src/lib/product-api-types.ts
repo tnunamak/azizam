@@ -3,8 +3,6 @@
 
 export type AvailabilityStatus = "ready" | "idle" | "starting" | "busy" | "degraded" | "unknown" | "unavailable";
 
-export type CapabilityIconKey = string;
-
 export type SetupEvent = "settings_copied" | "external_client_confirmed" | "receipt_viewed";
 
 export type ModelType = "language" | "embedding" | "reranking" | "image" | "video" | "audio" | "decision";
