@@ -328,16 +328,10 @@ class SummarySafetyTest(unittest.TestCase):
 
 
 
-# Slice 1 pins the defects without changing production behavior. Keep these
-# strict: once slice 2 repairs a binding, XPASS must force removal of its marker.
+# Workflow families bind only to a declared backend in the effective backend map.
 @pytest.mark.parametrize(
     ("family", "intent"),
     [("videos", "video.generate"), ("audio", "audio.generate")],
-)
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="slice 2: workflow families must not bind an undeclared ComfyUI backend",
 )
 def test_workflow_family_absent_comfyui_has_no_capabilities(family, intent):
     config = {
@@ -351,11 +345,6 @@ def test_workflow_family_absent_comfyui_has_no_capabilities(family, intent):
 @pytest.mark.parametrize(
     ("family", "intent"),
     [("videos", "video.generate"), ("audio", "audio.generate")],
-)
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="slice 2: workflow families must honor their configured backend",
 )
 def test_workflow_family_uses_configured_backend(family, intent):
     config = {
@@ -373,6 +362,43 @@ def test_workflow_family_uses_configured_backend(family, intent):
     assert len(caps) == 1
     assert caps[0].workflow == "sample"
     assert caps[0].backend == "other"
+
+
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+def test_workflow_family_configured_backend_must_be_present(family, intent):
+    config = {
+        "backends": {"comfyui": {"name": "ComfyUI"}},
+        family: {
+            "backend": "missing",
+            "workflows": {"sample": {"file": "sample.json"}},
+        },
+    }
+
+    assert _by_intent(build_local_capabilities(config), intent) == []
+
+
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+def test_workflow_family_uses_backend_present_only_in_override(family, intent):
+    config = {
+        "backends": {},
+        family: {"workflows": {"sample": {"file": "sample.json"}}},
+    }
+    live_backends = {"comfyui": {"name": "Live ComfyUI"}}
+
+    caps = _by_intent(
+        build_local_capabilities(config, backends=live_backends), intent
+    )
+
+    assert len(caps) == 1
+    assert caps[0].workflow == "sample"
+    assert caps[0].backend == "comfyui"
+    assert config["backends"] == {}
 
 
 def test_image_family_requires_comfyui_control():
