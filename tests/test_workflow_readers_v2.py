@@ -33,6 +33,10 @@ Re-captured when asset inputs took their modality from declared accepts, not the
 only their input modalities in ``capabilities``, ``member_catalog``, ``home`` and ``projected``: the mesh picture input
 ``asset`` to ``image``; the six image-to-video and keyframe workflows ``video`` to ``image``; scail-2-replace gains
 ``image``. Every other entry is as before.
+
+Re-captured when the job-run examples, the declared response kinds and the rollback-readiness checks were merged: 28
+workflows moved, and only their ``openapi_catalog`` and ``member_catalog`` entries (the published examples for a job
+that returns media, and the response kind of a sync route). Every other entry is as before.
 """
 
 from __future__ import annotations
