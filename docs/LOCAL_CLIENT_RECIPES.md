@@ -2052,18 +2052,21 @@ but is not consumed by this graph.
 
 ### RIFE video interpolation
 
-Upload-driven video-edit manifests run synchronously through the gateway's
-manifest executor. `workflow_id` can be `rife-interpolate` or the full
-manifest id `video.edit.rife-interpolate`. The response body is the rendered
-video file:
+Upload-driven video-edit workflows run through the generic workflow route,
+which takes the full workflow id (`video.edit.rife-interpolate`). The route
+answers a media job: 202 while it runs, with its address in `Location`.
+`Prefer: wait=N` waits up to N seconds for the job to end. Read the video from
+the job's content route:
 
 ```bash
 export AZIZAM_API_KEY='opk_...'
-curl -sS http://127.0.0.1:5000/gateway/v1/workflows/rife-interpolate/run \
+job=$(curl -sS http://127.0.0.1:5000/gateway/v1/workflows/video.edit.rife-interpolate/run \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
+  -H 'Prefer: wait=60' \
   -F 'source_video=@input.mp4;type=video/mp4' \
-  -F 'multiplier=2' \
-  -o interpolated.mp4
+  -F 'multiplier=2' | jq -r .job_id)
+curl -sS "http://127.0.0.1:5000/gateway/v1/media/jobs/$job/content" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" -o interpolated.mp4
 ```
 
 The workflow manifest validates the multiplier. `2` is the verified setting;

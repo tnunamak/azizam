@@ -11701,6 +11701,7 @@ async def _submit_video_graph(
                     media_type="application/json"
                 )
 
+            now = int(time.time())  # the one reading: the seed's updated_at and the job's created_at share it
             # Seed progress state so /v1/videos/{id} can phase-classify nodes
             # by class type before any ws events arrive.
             try:
@@ -11717,8 +11718,10 @@ async def _submit_video_graph(
                         "node_class": None,
                         "phase": "encoding",
                         "error": None,
-                        "updated_at": time.time(),
+                        "updated_at": now,
                     })
+                    # A resubmit that reuses an id is a new job: its progress clock cannot predate its created_at.
+                    _video_progress[prompt_id]["updated_at"] = max(_video_progress[prompt_id].get("updated_at") or 0, now)
             except Exception:
                 pass
 
@@ -11758,7 +11761,6 @@ async def _submit_video_graph(
             except Exception:
                 pass
 
-            now = int(time.time())
             response_headers = {}
             if duration_adjustment_reason is not None:
                 response_headers["X-Duration-Adjusted"] = (
@@ -27564,9 +27566,11 @@ async def _run_workflow_open(workflow_id: str, request: Request, auth_context: A
     spool = request_spool.FileRequestSpool(
         _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
     with request_spool.request_scope(request, spool):
+        declared = getattr(snapshot.get(workflow_id), "contract", None) or {}
         run_request = await request_spool.read_run_request(
             request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),
-            idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s)
+            idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s,
+            declared_inputs=declared.get("inputs") if isinstance(declared, Mapping) else None)
         if isinstance(run_request, RunRefused):
             owner.report(status="failed", reason=run_request.code)
             return _workflow_run_response(run_request)
@@ -27912,9 +27916,22 @@ def _audio_job_runs_from_pin(job_id: str, job: Mapping[str, Any]) -> bool:
     if definition_store.DefinitionStore(media_jobs.DB_PATH).has_envelope(job_id):
         return True
     recorded, intent = str(job.get("workflow") or ""), str(job.get("intent") or "")
-    name = recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded
-    manifest = _load_audio_workflow_manifest(name) if name else None
+    manifest = _audio_job_manifest(recorded, intent) if recorded else None
     return manifest is None or _manifest_has_pin(manifest)  # no workflow to judge by: fail closed at the pin
+
+
+def _audio_job_manifest(recorded: str, intent: str) -> dict[str, Any] | None:
+    """The manifest an audio job's recorded workflow names. A job records the bare name or ``<intent>.<name>``. A job
+    that kept no intent is read against each workflow's own intent; two different answers count as none."""
+    if intent:
+        return _load_audio_workflow_manifest(recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded)
+    found = _load_audio_workflow_manifest(recorded)
+    if found is not None:
+        return found
+    matches = {str(record.manifest.get("id") or ""): record.manifest for record in _audio_workflow_records()
+               if recorded.startswith(f"{record.intent}.")
+               and _manifest_names_audio_workflow(record.manifest, recorded[len(record.intent) + 1:])}
+    return copy.deepcopy(dict(next(iter(matches.values())))) if len(matches) == 1 else None
 
 
 def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
@@ -27992,10 +28009,13 @@ def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: s
     return isinstance(artifact, str) and Path(artifact).stem == workflow_name
 
 
+def _audio_workflow_records() -> Iterator[Any]:
+    """The registry's records of the audio family (speech-free generation: audio, music, effects)."""
+    return (record for record in GATEWAY_WORKFLOW_REGISTRY.records() if record.intent.startswith(("audio.", "music.", "sfx.")))
+
+
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
-    for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        if not record.intent.startswith(("audio.", "music.", "sfx.")):
-            continue
+    for record in _audio_workflow_records():
         if _manifest_names_audio_workflow(record.manifest, workflow_name):
             return copy.deepcopy(dict(record.manifest))
     return None

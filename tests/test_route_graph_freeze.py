@@ -241,6 +241,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # change is in tests/fixtures/headless_openapi.json, which merged without a conflict. Before it the digests were
         # 14ce7dfb5ffa910de2b633e42712afc201dbafde2da2a7f7517e9805932f1aae (video side) and
         # c4a9451c273b6939ab712658a9aec1dca0778dd9d27a579b67a813c5c604640d (image side).
+        # Re-captured 2026-11-08 for the generic run route (S6): each video-edit workflow's concrete run path names its
+        # full id, and the run route documents the media job it answers (202, ``Location``) instead of video bytes;
+        # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the digest was
+        # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5.
         assert route_graph.openapi_digest(proxy.app) == "50a4f5e3b70e70355d3d10dbc80452681948d2a605a0a884cb8f74be09e3ecf7"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
@@ -280,6 +284,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # POST /v1/3d/generations/glb arrived with the same App key security; the mesh workflow's documented paths moved.
     # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the frozen digest was
     # b62d42d37489df105cda9f0d730000d9ea8dba85e958df91ecfa7b21d629e6ad.
-    # Re-captured 2026-11-08 for S7 (V5a): the same video workflow input changes. Before it the frozen digest was
+    # Re-captured 2026-11-08 for S7 (V5a): the same video workflow input changes (its own digest note is above).
+    # Re-captured 2026-11-08 for the generic run route (S6): the video-edit run paths name full ids and the run route
+    # documents the media job it answers. Before it the frozen digest was
     # 31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

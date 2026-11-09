@@ -24,6 +24,10 @@ byte for byte what the readers gave before the switch:
 Re-captured at S7 (builder D4): the mesh route moved from ``/v1/meshes/generate`` to ``/v1/3d/generations/glb``. Only the
 mesh ``openapi_catalog`` and ``member_catalog`` entries changed, and only the route path in them (11 strings, the path
 field and the three code examples). Every other byte is as before.
+
+Re-captured at the train 35 gate: the generic run route takes full ids, so the two video-edit workflows' sync path in
+their ``openapi_catalog`` and ``member_catalog`` entries (and rife-interpolate's example request and code examples) name
+the full id, and their sync ``output`` says the route answers a media job. Every other byte is as before.
 """
 
 from __future__ import annotations

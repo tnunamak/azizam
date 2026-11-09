@@ -454,7 +454,10 @@ wire and security sites stay, each listed with its reason; a security check is n
 ### 7.1 Request and media ownership
 
 `POST /gateway/v1/workflows/{id}/run` (full id only), JSON body `{"inputs": {...}, "binding": "<key>"?}`, or
-multipart with a JSON part `inputs` and file parts named by input (repeat a name for a multi-item input). A media
+multipart with a JSON part `inputs` and file parts named by input (repeat a name for a multi-item input). A multipart
+form may also send a declared value input as its own text part named by the input, as a plain form or `curl -F` sends
+it; the text is read as the declared type, and an input sent both ways is refused (release train 35 gate: the Try page
+and the documented form schema send these parts). A media
 input may instead be a library asset reference `{"asset_id": "..."}` in `inputs` (the shared library input, per the
 Library pick rule). The `Idempotency-Key` header is the idempotency key.
 

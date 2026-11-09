@@ -152,6 +152,61 @@ def test_a_multipart_upload_reaches_the_adapter_with_its_declared_type(served):
     assert seen["bytes"] == PNG
 
 
+def _capture_inputs(served):
+    seen = {}
+
+    async def run_adapter(ctx):
+        seen["inputs"] = dict(ctx.inputs)
+        served.engine_calls += 1
+        limits = result_bundle.ResultLimits()
+        result_bundle.complete_job(
+            ctx.job_id, lambda conn, attempt: result_bundle.stage_json_in(
+                conn, ctx.job_id, attempt, "result", b'{}', limits=limits),
+            limits=limits, path=served.media)
+
+    proxy._WORKFLOW_RUN_PORT.run_adapter = run_adapter  # undone with the fixture's monkeypatch of the same name
+    return seen
+
+
+def test_a_declared_value_input_sent_as_its_own_form_part_is_read_as_its_declared_type(served):
+    # A plain form (the Try page, curl -F) sends each value input as a part named by the input, beside the file parts.
+    seen = _capture_inputs(served)
+    response = call("post", ROUTE, data={"prompt": "hi", "seed": "7"},
+                    files={"photo": ("p.png", PNG, "image/png")}, headers={"Prefer": "wait=10"})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "succeeded"
+    assert seen["inputs"]["prompt"] == "hi" and seen["inputs"]["seed"] == 7
+    assert served.engine_calls == 1
+
+
+def test_form_parts_and_the_inputs_part_meet(served):
+    seen = _capture_inputs(served)
+    response = call("post", ROUTE, data={"inputs": json.dumps({"prompt": "hi"}), "seed": "3"},
+                    files={"photo": ("p.png", PNG, "image/png")}, headers={"Prefer": "wait=10"})
+    assert response.status_code == 200, response.text
+    assert seen["inputs"]["prompt"] == "hi" and seen["inputs"]["seed"] == 3
+
+
+@pytest.mark.parametrize("data, files, message", [
+    ({"inputs": json.dumps({"prompt": "hi"}), "prompt": "again"}, None, "prompt: sent both as a form part and inside inputs"),
+    ({"prompt": "hi", "colour": "red"}, None, "colour: a value part must be named inputs, binding or a declared value input"),
+    ({"prompt": "hi", "photo": "not a file"}, None, "photo: a value part must be named inputs, binding or a declared value input"),
+    (None, [("prompt", (None, "a")), ("prompt", (None, "b"))], "prompt: a value input is sent as one part"),
+])
+def test_a_form_part_that_is_not_one_declared_value_input_is_refused_and_runs_nothing(served, data, files, message):
+    response = call("post", ROUTE, data=data, files=files or {"photo": ("p.png", PNG, "image/png")})
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["message"] == message
+    assert served.engine_calls == 0
+
+
+def test_a_form_value_that_does_not_read_as_its_type_is_named_by_validation(served):
+    response = call("post", ROUTE, data={"prompt": "hi", "seed": "seven"}, files={"photo": ("p.png", PNG, "image/png")})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_inputs"
+    assert served.engine_calls == 0
+
+
 def test_a_file_part_below_a_top_level_name_is_media_path_unsupported(served):
     response = call("post", ROUTE, data={"inputs": json.dumps({"prompt": "hi"})},
                     files={"photo.sub": ("p.png", PNG, "image/png")})

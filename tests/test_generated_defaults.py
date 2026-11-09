@@ -1179,3 +1179,34 @@ def test_a_graph_workflow_whose_envelope_fails_to_build_is_still_refused(jobs_db
             patch.object(generated_defaults, "secure_source", Recorder(7)):
         response, scheduled = submit_without_checking(route, ROUTE_BODIES[route])
     assert response.status_code == 503 and scheduled == [] and job_rows(jobs_db) == [] and spool_files(tmp_path) == []
+
+
+@pytest.mark.parametrize("intent", ["audio.generate", "music.generate", "sfx.generate"])
+def test_a_job_without_its_intent_still_finds_a_pinless_workflow_by_its_qualified_short_name(monkeypatch, intent):
+    """A job records ``<intent>.<name>``; when it kept no intent, each workflow's own intent reads the name, so a pinless
+    workflow named by the tail of its id still runs as accepted instead of failing at the pin."""
+    base = proxy._load_audio_workflow_manifest("tangoflux")
+    pinless = {**base, "id": "custom.voice", "intent": intent,
+               "bindings": {name: binding for name, binding in base["bindings"].items()
+                            if name != proxy.DERIVED._GRAPH_BINDING}}
+    assert not proxy._manifest_has_pin(pinless)
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY",
+                        SimpleNamespace(records=lambda: [SimpleNamespace(intent=intent, manifest=pinless)]))
+    monkeypatch.setattr(proxy.definition_store, "DefinitionStore",
+                        lambda _path: SimpleNamespace(has_envelope=lambda _job_id: False))
+    assert not proxy._audio_job_runs_from_pin("legacy", {"workflow": "voice"})
+    assert not proxy._audio_job_runs_from_pin("legacy", {"workflow": f"{intent}.voice", "intent": intent})
+    assert not proxy._audio_job_runs_from_pin("legacy", {"workflow": f"{intent}.voice"})
+    assert proxy._audio_job_runs_from_pin("legacy", {"workflow": "other.generate.voice"}), "no workflow: fail closed"
+
+
+def test_a_job_without_its_intent_whose_name_two_workflows_answer_fails_closed(monkeypatch):
+    base = proxy._load_audio_workflow_manifest("tangoflux")
+    pinless = {name: binding for name, binding in base["bindings"].items() if name != proxy.DERIVED._GRAPH_BINDING}
+    records = [SimpleNamespace(intent="audio.generate", manifest={**base, "id": "a.voice", "bindings": pinless}),
+               SimpleNamespace(intent="audio.generate", manifest={**base, "id": "b.voice", "bindings": pinless})]
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", SimpleNamespace(records=lambda: records))
+    monkeypatch.setattr(proxy.definition_store, "DefinitionStore",
+                        lambda _path: SimpleNamespace(has_envelope=lambda _job_id: False))
+    # Both workflows answer the qualified name by their own intent, so neither is chosen and the job fails at the pin.
+    assert proxy._audio_job_runs_from_pin("legacy", {"workflow": "audio.generate.voice"})

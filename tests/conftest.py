@@ -154,6 +154,24 @@ _ASYNCIO_GLOBALS = ("sleep", "wait_for", "to_thread", "create_task")
 
 
 @pytest.fixture(autouse=True)
+def _log_scrub_registry_is_restored() -> Iterator[None]:
+    """A test leaves the log scrubber's registered values as it found them. The registry is process-wide and a
+    monkeypatched environment variable that holds a credential (``env_secret``) outlives the monkeypatch; a short
+    word such as ``test`` left behind then removes that word from every later failure message in the worker."""
+    import copy
+
+    from gateway import log_scrub
+
+    with log_scrub._LOCK:
+        before = copy.deepcopy(log_scrub._SOURCES)
+    yield
+    with log_scrub._LOCK:
+        log_scrub._SOURCES.clear()
+        log_scrub._SOURCES.update(before)
+        log_scrub._SNAPSHOT = None
+
+
+@pytest.fixture(autouse=True)
 def _asyncio_globals_are_restored() -> Iterator[None]:
     """A test leaves the global asyncio functions as it found them. Defined before every other autouse fixture, so it
     is set up first and torn down last, after each MonkeyPatch has been undone. Two patch owners undone out of order

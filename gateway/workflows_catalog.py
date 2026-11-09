@@ -322,7 +322,7 @@ def _example_request(
     route: Mapping[str, Any] | None,
     base_url: str,
 ) -> dict[str, Any]:
-    path = _route_path(route) or f"/gateway/v1/workflows/{short_id(record)}/run"
+    path = _route_path(route) or f"/gateway/v1/workflows/{record.id}/run"
     # The wire of the request: a route that names its ``submit`` is sent as that submit says.
     wire = {**(route or {}), **((route or {}).get("submit") or {})}
     method = str(wire.get("method") or "POST")

@@ -131,7 +131,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         edits = [r for r in self.registry.records() if r.intent == "video.edit"]
         self.assertTrue(edits)
         for record in edits:
-            path = f"/gateway/v1/workflows/{short_id(record)}/run"
+            path = f"/gateway/v1/workflows/{record.id}/run"
             body = self.spec["paths"][path]["post"]["requestBody"]
             form = self.spec["components"]["schemas"][schema_name(record.id, "WorkflowForm_")]
             self.assertEqual(

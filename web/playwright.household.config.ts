@@ -39,6 +39,12 @@ writeFileSync(
       workflows: {
         "video-ltx-2.5-i2v": {
           file: path.resolve(__dirname, "../workflows/videos/video-ltx-2.5-i2v.json"),
+          // The graph's node roles live in the workflow entry, as in registry/defaults/videos.yml.
+          node_roles: {
+            prompt_node: "5", negative_prompt_node: "6", size_node: ["20", "21"], length_nodes: ["22"],
+            frame_rate_nodes: ["23"], seed_nodes: ["30", "31"], save_node: "60", image_node: "70",
+            image_strength_node: "79", image_strength_default: 0.7,
+          },
           requires_input_reference: true,
           min_seconds: 1,
           max_seconds: 10,

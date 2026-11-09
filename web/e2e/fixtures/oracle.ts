@@ -447,6 +447,11 @@ export async function buildOracle(port: number, stateRoot: string, outFile: stri
         workflows: {
           "video-ltx-2.5-t2v": {
             file: path.resolve(WEB, "../workflows/videos/video-ltx-2.5-t2v.json"),
+            // The graph's node roles live in the workflow entry, as in registry/defaults/videos.yml.
+            node_roles: {
+              prompt_node: "5", negative_prompt_node: "6", size_node: ["20", "21"], length_nodes: ["22"],
+              frame_rate_nodes: ["23"], seed_nodes: ["30", "31"], save_node: "60",
+            },
             min_seconds: 1,
             max_seconds: 10,
             max_size: "1280x704",
