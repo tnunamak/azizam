@@ -553,7 +553,10 @@ def test_a_revalidation_hold_carries_the_recorded_outcome_not_no_change(tmp_path
     op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="restore", outcome="partial",
                               evidence="restore:failed:state_not_known_clean", target="alpha")
     engine.resident = "alpha"
-    _restart(runtime, op_id)
+    first = _restart(runtime, op_id)
+    # The first restart left a revalidation hold, with the reset run exactly once.
+    assert (first.state, gates.state("dom")) == ("reconciling", "reconciling")
+    assert (first.evidence_ref or "").startswith("revalidate:") and engine.resets == 1, (first.evidence_ref, engine.resets)
     executor = runtime.executor()
     seen: list[tuple[str, str | None]] = []
     real = executor.store.write_outcome
@@ -564,8 +567,13 @@ def test_a_revalidation_hold_carries_the_recorded_outcome_not_no_change(tmp_path
 
     monkeypatch.setattr(executor.store, "write_outcome", spy)
     engine.clean = True
-    _restart(runtime, op_id)
+    done = _restart(runtime, op_id)
+    # The second restart settled the hold: something was written, and it is the reset's cold settlement, never a no_change
+    # that replaced the engine's word.
+    assert seen, "the revalidation settled nothing (a test that skips the settlement must fail here)"
     assert all(outcome != "no_change" or (evidence or "").startswith("restore:reset") for outcome, evidence in seen), seen
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+    assert engine.resets == 1, "the reset count did not change"
 
 
 # -- an unknown reset is not run again; a hold from the previous format still re-reads the clean check (review 2327) -------
@@ -614,3 +622,46 @@ def test_a_hold_written_in_the_previous_format_re_reads_the_clean_check(tmp_path
     assert engine.resets == 0, "the reset already ran; it is not run again"
     cleans = [call for call in engine.calls if call[0] == "transition.clean"]
     assert len(cleans) == 1, "the clean check was read once, not skipped"
+
+
+# -- a failed durable finalization marks recovery pending (dot review of 51faf1338) -------------------------------------
+
+
+def test_a_finish_that_fails_twice_leaves_no_wedged_domain_after_storage_recovers(tmp_path, monkeypatch) -> None:
+    """An effect settles unknown; the normal finish and the hold's finish both fail transiently (a real SQLite store).
+    The mutex is released, the gate stays held in memory, the next admission recovers the row to a durable reconciling
+    state, and the owner resolves it without a process restart."""
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch)
+    engine.release_outcome = "unknown"
+    executor = runtime.executor()
+    real = executor.store.finish
+    calls = {"n": 0}
+
+    def flaky(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError("database is locked")
+        return real(*args, **kwargs)
+
+    async def go() -> None:
+        await executor.reconcile_startup()
+        monkeypatch.setattr(executor.store, "finish", flaky)
+        began = await executor.submit(domain="dom", kind="select", idempotency_key="wedge", target="beta")
+        op_id = began.operation.op_id
+        for _ in range(100):
+            if op_id not in executor._tasks:
+                break
+            await asyncio.sleep(0.02)
+        assert calls["n"] == 2, "the normal finish and the hold's finish both failed"
+        assert not executor._lock_for("dom").locked(), "the mutex is released"
+        row = await asyncio.to_thread(executor.store.get, op_id)
+        assert row.state == "running", "storage never took the hold"
+        assert gates.state("dom") == "reconciling", "the hold is kept in memory"
+        # Storage works again. The next admission recovers the row before it accepts work.
+        again = await executor.submit(domain="dom", kind="select", idempotency_key="after", target="beta")
+        row = await asyncio.to_thread(executor.store.get, op_id)
+        assert (row.state, gates.state("dom")) == ("reconciling", "reconciling"), (row.state, type(again).__name__)
+        assert type(again).__name__ == "Conflict", "no new work begins while the row is held"
+        await executor.resolve(op_id, step="release", outcome="unknown", evidence_ref="owner")  # accepted, not StaleOutcome
+
+    run(go())
