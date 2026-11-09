@@ -29,6 +29,7 @@ EXPECTED_FAMILIES = (
 
 def document():
     return {
+        **yaml.safe_load(ROWS.read_text(encoding="utf-8")),
         "schema_version": 1,
         "alias_operations": [{
             "name": "chat", "intent": "chat.completions",
