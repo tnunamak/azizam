@@ -44,7 +44,7 @@ import {
 import { outputKindOf } from "./workflow-input-meta";
 import { MESH_CAPABILITY, MESH_FILE_SLOTS, meshDetailChoices, meshModeState } from "./mesh-mode";
 import { MeshMode } from "./mesh-panel";
-import { assignHandoffFiles, type PanelFiles } from "./handoff-files";
+import { assignHandoffFiles, hasRequiredHandoffFiles, type PanelFiles } from "./handoff-files";
 import { TRANSCRIBE_FILE_SLOTS } from "./transcribe-mode";
 import { costFrom } from "./result-cost";
 import { chatDefaultChoice } from "./chat-default";
@@ -1189,7 +1189,7 @@ function workflowFileSpecs(workflow: WorkflowOption): WorkflowExampleFile[] {
 }
 
 /** The files Home sent, set on a workflow's file inputs (see assignHandoffFiles). */
-function filesForWorkflow(workflow: WorkflowOption, files: File[]): Record<string, File | null> {
+function filesForWorkflow(workflow: WorkflowOption, files: File[], fileInputs?: string[]): Record<string, File | null> {
   return assignHandoffFiles(
     files,
     workflowFileSpecs(workflow).map((spec) => ({
@@ -1197,6 +1197,7 @@ function filesForWorkflow(workflow: WorkflowOption, files: File[]): Record<strin
       required: spec.required === true,
       family: workflow.inputs.find((input) => input.name === spec.inputName)?.media_type?.split("/")[0] ?? "",
     })),
+    fileInputs,
   );
 }
 
@@ -1595,7 +1596,7 @@ export default function TryPage() {
       setPrompt((current) => ({ ...current, [requestedTab]: words }));
     }
     const panel = PANEL_FILES[requestedTab];
-    if (panel) setPanelFiles((current) => ({ ...current, ...assignHandoffFiles(files, panel.slots) }));
+    if (panel) setPanelFiles((current) => ({ ...current, ...assignHandoffFiles(files, panel.slots, taken.file_inputs) }));
     if (panel?.startsItself) {
       // The panel takes its files and starts itself.
       homeHandoff.current = null;
@@ -1613,13 +1614,12 @@ export default function TryPage() {
     if (!handoffPending || !homeHandoff.current || !requestedTab || activeTab !== requestedTab) return;
     const section: CatalogSection = requestedTab === "workflow" ? "workflows" : "models";
     if (catalogState[section] !== "ready" && catalogState[section] !== "empty") return;
-    // Files for a workflow wait until its form has taken them: a form with file inputs and none chosen is not ready.
+    // Wait for this workflow's form and every required file, even for a prompt-only hand-off.
     if (
       requestedTab === "workflow" &&
-      homeHandoff.current.files?.length &&
-      selectedWorkflow &&
-      workflowFileSpecs(selectedWorkflow).length > 0 &&
-      !Object.values(workflowFiles).some(Boolean)
+      (!selectedWorkflow ||
+        initializedWorkflowId.current !== selectedWorkflow.id ||
+        !hasRequiredHandoffFiles(workflowFileSpecs(selectedWorkflow), workflowFiles))
     )
       return;
     const form = formRefs.current[requestedTab];
@@ -1721,7 +1721,7 @@ export default function TryPage() {
       workflow: example,
     }));
     setBaseWords((current) => ({ ...current, workflow: example }));
-    setWorkflowFiles(filesForWorkflow(selectedWorkflow, handoffFiles.current));
+    setWorkflowFiles(filesForWorkflow(selectedWorkflow, handoffFiles.current, homeHandoff.current?.file_inputs));
     handoffFiles.current = [];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkflow]);

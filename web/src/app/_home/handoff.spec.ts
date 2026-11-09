@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { storeHomeHandoff, takeHomeHandoff } from "./handoff";
+import { assignHandoffFiles } from "../try/handoff-files";
 
 const picture = new File(["p"], "fox.png", { type: "image/png" });
 
@@ -51,4 +52,22 @@ it("never returns input names without matching files", () => {
   expect(takeHomeHandoff("video")?.file_inputs).toBeUndefined();
   storeHomeHandoff({ capability: "video", model: "m", prompt: "", files: [picture], file_inputs: ["image", "last_frame"] });
   expect(takeHomeHandoff("video")?.file_inputs).toBeUndefined();
+});
+
+it("carries reversed input names through take to the correct Try slots", () => {
+  const ending = new File(["e"], "end.png", { type: "image/png" });
+  storeHomeHandoff({
+    capability: "video", model: "m", prompt: "",
+    files: [ending, picture], file_inputs: ["last_frame", "image"],
+  });
+  const taken = takeHomeHandoff("video");
+  expect(taken?.file_inputs).toEqual(["last_frame", "image"]);
+  const chosen = assignHandoffFiles(taken?.files ?? [], [
+    { inputName: "image", required: true, family: "image" },
+    { inputName: "last_frame", required: true, family: "image" },
+  ], taken?.file_inputs);
+  // toEqual treats any two File objects as equal, so compare names.
+  expect({ image: chosen.image?.name, last_frame: chosen.last_frame?.name })
+    .toEqual({ image: picture.name, last_frame: ending.name });
+  expect(takeHomeHandoff("video")).toBeNull();
 });
