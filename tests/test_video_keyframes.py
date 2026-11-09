@@ -1037,7 +1037,7 @@ class KeyframeCatalogTests(unittest.TestCase):
             extension_name = "WorkflowExtensionInputs_" + wid.replace(".", "_").replace("-", "_")
             properties = schemas[extension_name]["properties"]
             for name in _manifest(model)["inputs"]:
-                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength", "frame_rate"):
+                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength", "frame_rate", "width", "height", "length"):
                     self.assertNotIn(name, properties, (model, name))
                 else:
                     self.assertIn(name, properties, (model, name))

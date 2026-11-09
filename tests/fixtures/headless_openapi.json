@@ -2927,6 +2927,12 @@
         "additionalProperties": false,
         "description": "Make a video with sound from a starting picture and a description.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
@@ -2939,6 +2945,14 @@
             "minimum": 0,
             "type": "number"
           },
+          "length": {
+            "description": "Frame count on the 8N+1 grid.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
             "type": "string"
@@ -2950,6 +2964,12 @@
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -2972,6 +2992,12 @@
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3016,6 +3042,12 @@
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
+            "type": "integer"
           }
         },
         "required": [
@@ -3038,6 +3070,12 @@
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3100,6 +3138,12 @@
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
+            "type": "integer"
           }
         },
         "required": [
@@ -3150,6 +3194,20 @@
         "additionalProperties": false,
         "description": "Make a video with sound from a description or picture.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "length": {
+            "description": "Frame count on the 8N+1 grid.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
             "type": "string"
@@ -3161,6 +3219,12 @@
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3175,10 +3239,24 @@
         "additionalProperties": false,
         "description": "Make a video with stereo sound from a starting picture and a description.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
             "x-azizam-asset": true
+          },
+          "length": {
+            "description": "Frame count on the 17N+5 grid.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
           },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
@@ -3194,6 +3272,12 @@
             "description": "More steps take longer.",
             "maximum": 50,
             "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3216,6 +3300,12 @@
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3242,6 +3332,12 @@
             "maximum": 50,
             "minimum": 1,
             "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
+            "type": "integer"
           }
         },
         "required": [
@@ -3264,6 +3360,12 @@
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3300,6 +3402,12 @@
             "description": "More steps take longer.",
             "maximum": 50,
             "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3347,6 +3455,20 @@
         "additionalProperties": false,
         "description": "Make a video with stereo sound from a description.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "length": {
+            "description": "Frame count on the 17N+5 grid.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
+          },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
             "type": "string"
@@ -3361,6 +3483,12 @@
             "description": "More steps take longer.",
             "maximum": 50,
             "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -39747,12 +39875,24 @@
             "frame_rate": {
               "in": "none"
             },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
             "image": {
               "field": "input_reference",
               "in": "body"
             },
             "image_strength": {
               "field": "image_strength",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
               "in": "body"
             },
             "negative_prompt": {
@@ -39765,6 +39905,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -39814,23 +39962,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "ltx-2.5-i2v",
       "typical_seconds": 56.0
     },
@@ -39855,6 +39987,14 @@
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -39886,6 +40026,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -39940,13 +40088,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "ltx-2.5-keyframes",
@@ -39973,6 +40114,14 @@
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -40016,6 +40165,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -40070,13 +40227,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "ltx-2.5-keyframes-mid",
@@ -40205,6 +40355,18 @@
             "frame_rate": {
               "in": "none"
             },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
+              "in": "body"
+            },
             "negative_prompt": {
               "field": "negative_prompt",
               "in": "body"
@@ -40215,6 +40377,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -40264,23 +40434,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "ltx-2.5-t2v",
       "typical_seconds": 49.0
     },
@@ -40299,8 +40453,23 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
             "image": {
               "field": "input_reference",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
               "in": "body"
             },
             "prompt": {
@@ -40314,6 +40483,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -40362,23 +40539,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "minimax-h3-i2v",
       "typical_seconds": 135.0
     },
@@ -40397,9 +40558,20 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -40420,6 +40592,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -40473,13 +40653,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "minimax-h3-keyframes",
@@ -40500,9 +40673,20 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -40531,6 +40715,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -40584,13 +40776,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "minimax-h3-keyframes-mid",
@@ -40709,6 +40894,21 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
+              "in": "body"
+            },
             "prompt": {
               "field": "prompt",
               "in": "body"
@@ -40720,6 +40920,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -40768,23 +40976,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "minimax-h3-t2v",
       "typical_seconds": 122.0
     }

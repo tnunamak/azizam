@@ -12,6 +12,14 @@ display_name: LTX 2.5 Long
 purpose: Longer videos from a prompt
 prompt_hint: Describe the clip you want
 description: Make a longer video from a description.
+video:
+  roles:
+    width: width
+    height: height
+  size: {default: 960x512, max: 1280x720, multiple: 32}
+  length: {min_seconds: 1, max_seconds: 40}
+  grid: {fps: 24, step: 8, offset: 1}
+  chain: true
 inputs:
   prompt:
     label: What to make

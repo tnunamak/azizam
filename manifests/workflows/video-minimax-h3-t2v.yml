@@ -13,6 +13,18 @@ purpose: Video with stereo sound from a prompt
 prompt_hint: Describe the clip you want
 description: Make a video with stereo sound from a description.
 typical_seconds: 122
+video:
+  roles:
+    width: width
+    height: height
+    length: length
+    frame_rate: frame_rate
+  size: {default: 960x544, max: 1344x768, multiple: 32}
+  length: {min_seconds: 2, max_seconds: 10}
+  grid: {fps: 24, step: 17, offset: 5}
+  variants:
+    image: video.generate.minimax-h3-i2v
+    long: video.generate.minimax-h3-long
 inputs:
   prompt:
     label: What to make
@@ -35,6 +47,33 @@ inputs:
     minimum: 1
     maximum: 50
     default: 8
+  width:
+    label: Width
+    help: Video width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 1344
+  height:
+    label: Height
+    help: Video height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 768
+  length:
+    label: Length in frames
+    help: Frame count on the 17N+5 grid.
+    type: integer
+    step: 17
+    offset: 5
+    minimum: 22
+    maximum: 362
+  frame_rate:
+    label: Frames per second
+    help: How many frames the video shows each second.
+    type: integer
+    minimum: 1
+    maximum: 50
+    default: 24
 outputs:
   video:
     media_type: video/mp4
@@ -53,6 +92,18 @@ bindings:
       steps:
         - node: '12'
           input: steps
+      width:
+        - node: '6'
+          input: value
+      height:
+        - node: '7'
+          input: value
+      frame_rate:
+        - node: '17'
+          input: fps
+      length:
+        - node: '8'
+          input: value
     requires:
       models:
         - role: diffusion_model

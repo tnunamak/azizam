@@ -11,6 +11,18 @@ display_name: SCAIL-2 Character Replace
 purpose: Put a reference character into a video
 description: Replace a person in a video with a character from a picture, keeping the original motion and scene.
 typical_seconds: 231
+video:
+  roles:
+    width: width
+    height: height
+    length: length
+    image: reference_image
+    source: source_video
+  size: {default: 832x448, max: 832x448, multiple: 32}
+  length: {min_seconds: 1, max_seconds: 4, default_seconds: 4}
+  grid: {fps: 24, step: 4, offset: 1, max_frames: 81}
+  requires: [extensions, source]
+  select_subject: true
 inputs:
   reference_image:
     label: a new character
