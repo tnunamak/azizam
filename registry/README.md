@@ -83,3 +83,21 @@ it succeeds. A transient database lock defers the stored-ID check to repair;
 it does not by itself invalidate the retention file.
 Slice 1 refuses `household.never_keep: true` in this file; the owner setting
 performs the required erasure when that switch is enabled.
+
+## Operation model metadata
+
+Each stable-alias operation is declared once on the `registered_routes` row in
+`protocol_frontends.yml` that serves it. `operation` is an exact member of
+`gateway.stable_aliases.OPERATIONS`; `model_metadata` holds `type`,
+`input_modalities` and `output_modalities`. The type must be in
+`gateway.model_metadata.MODEL_TYPES`; both modality fields are lists using the
+corresponding `INPUT_MODALITIES` and `OUTPUT_MODALITIES` vocabularies.
+Routes that do not declare an operation omit both keys. An operation declaration
+without metadata, or metadata without an operation, is invalid.
+
+The loader rejects duplicates, unknown operation/type/modality values and a
+missing roster operation at module load. It builds a read-only operation index
+once from release data, in stable-alias roster order. Metadata is not inferred
+from route intent: the rerank row declares `type: reranking` even though its
+runtime policy shares the embeddings intent. Changing these rows requires a
+process restart; they are not owner-config metadata overrides.

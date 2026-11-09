@@ -11,16 +11,21 @@ of an entry (LLM catalog, current-loaded, decision runtime), and the
 capabilities a service-registry record declares. Operator declarations under
 the `model_metadata` key are DATA and always win over derived values.
 
-The module is pure: callers inject lookups, nothing here reads config, the
-registry, or the network.
+Operation metadata is read once from the shipped protocol-frontend rows. Other
+lookups are injected; this module reads no owner config and makes no network calls.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
+import yaml
+
 from gateway.manifests import asset_leaf_specs
+from gateway.stable_aliases import OPERATIONS as ALIAS_OPERATIONS
 
 MODEL_TYPES: tuple[str, ...] = (
     "language", "embedding", "reranking", "image", "video", "audio", "decision",
@@ -78,30 +83,74 @@ def _md(type_: str, inputs: Iterable[str], outputs: Iterable[str]) -> ModelMetad
     return ModelMetadata(type_, _ordered(inputs, INPUT_MODALITIES), _ordered(outputs, OUTPUT_MODALITIES))
 
 
-# Stable-alias operation (gateway/stable_aliases.OPERATIONS) -> metadata.
-_OPERATIONS: dict[str, ModelMetadata] = {
-    "chat": _md("language", ["text"], ["text"]),
-    "embeddings": _md("embedding", ["text"], ["embedding"]),
-    "images": _md("image", ["text"], ["image"]),
-    "image_edits": _md("image", ["text", "image"], ["image"]),
-    "videos": _md("video", ["text"], ["video"]),
-    "speech": _md("audio", ["text"], ["audio"]),
-    "transcriptions": _md("audio", ["audio"], ["text"]),
-    "audio_generate": _md("audio", ["text"], ["audio"]),
-    "rerank": _md("reranking", ["text"], ["text"]),
-    "decisions": _md("decision", ["text"], ["text"]),
-}
+# Stable-alias operation -> metadata, declared once on its registered route.
+_OPERATION_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "protocol_frontends.yml"
 
-_LANGUAGE = _OPERATIONS["chat"]
-_DECISION = _OPERATIONS["decisions"]
+
+def load_operation_metadata(path: str | Path = _OPERATION_ROWS_PATH) -> Mapping[str, ModelMetadata]:
+    """Read and validate shipped operation rows; fail closed rather than invent metadata.
+
+    The frontend-shape loader exposes only the separate ``frontends`` rows.
+    Read ``records[].registered_routes`` with the same ``yaml.safe_load``.
+    Roster order is observable through ``operations_of``; YAML row order is not.
+    """
+    document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, Mapping) or not isinstance(document.get("records"), list):
+        raise ValueError("operation metadata requires a records list")
+    found: dict[str, ModelMetadata] = {}
+    for record in document["records"]:
+        if not isinstance(record, Mapping):
+            raise ValueError("operation metadata record must be a mapping")
+        routes = record.get("registered_routes", [])
+        if not isinstance(routes, list):
+            raise ValueError("registered_routes must be a list")
+        for row in routes:
+            if not isinstance(row, Mapping):
+                raise ValueError("registered route must be a mapping")
+            if "operation" not in row and "model_metadata" not in row:
+                continue
+            if "operation" not in row or "model_metadata" not in row:
+                raise ValueError("registered route needs both operation and model_metadata")
+            operation = row["operation"]
+            if not isinstance(operation, str) or operation not in ALIAS_OPERATIONS:
+                raise ValueError(f"unknown operation: {operation!r}")
+            if operation in found:
+                raise ValueError(f"duplicate operation: {operation}")
+            metadata = row["model_metadata"]
+            if not isinstance(metadata, Mapping):
+                raise ValueError(f"{operation}: model_metadata must be a mapping")
+            type_ = metadata.get("type")
+            if type_ not in MODEL_TYPES:
+                raise ValueError(f"{operation}: unknown type: {type_!r}")
+            modalities: dict[str, list[str]] = {}
+            for key, vocabulary in (("input_modalities", INPUT_MODALITIES),
+                                    ("output_modalities", OUTPUT_MODALITIES)):
+                values = metadata.get(key)
+                if not isinstance(values, list):
+                    raise ValueError(f"{operation}: {key} must be a list")
+                if any(not isinstance(value, str) or value not in vocabulary for value in values):
+                    raise ValueError(f"{operation}: unknown {key}: {values!r}")
+                modalities[key] = values
+            found[operation] = _md(type_, modalities["input_modalities"], modalities["output_modalities"])
+    missing = tuple(operation for operation in ALIAS_OPERATIONS if operation not in found)
+    if missing:
+        raise ValueError(f"missing operations: {', '.join(missing)}")
+    return MappingProxyType({operation: found[operation] for operation in ALIAS_OPERATIONS})
+
+
+# Build once from immutable release data; values are frozen and modalities tuples.
+OPERATION_METADATA = load_operation_metadata()
+
+_LANGUAGE = OPERATION_METADATA["chat"]
+_DECISION = OPERATION_METADATA["decisions"]
 
 # Service-registry capability -> metadata, first match wins. These are the
 # gateway's own capability names (`backends.<id>.capabilities`), not engines.
 _SERVICE_CAPABILITIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("chat", _LANGUAGE),
     ("completions", _LANGUAGE),
-    ("embeddings", _OPERATIONS["embeddings"]),
-    ("rerank", _OPERATIONS["rerank"]),
+    ("embeddings", OPERATION_METADATA["embeddings"]),
+    ("rerank", OPERATION_METADATA["rerank"]),
     ("decisions", _DECISION),
 )
 
@@ -119,10 +168,10 @@ _CAPABILITY_INTENTS: dict[str, ModelMetadata] = {
     "text.embeddings": _md("embedding", ["text"], ["embedding"]),
     "chat.completions": _LANGUAGE,
     "text.completions": _LANGUAGE,
-    "text.rerank": _OPERATIONS["rerank"],
-    "speech.synthesis": _OPERATIONS["speech"],
-    "speech.transcription": _OPERATIONS["transcriptions"],
-    "speech.translation": _OPERATIONS["transcriptions"],
+    "text.rerank": OPERATION_METADATA["rerank"],
+    "speech.synthesis": OPERATION_METADATA["speech"],
+    "speech.transcription": OPERATION_METADATA["transcriptions"],
+    "speech.translation": OPERATION_METADATA["transcriptions"],
 }
 _CAPABILITY_INTENT_FAMILIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("chat.", _LANGUAGE),
@@ -130,7 +179,7 @@ _CAPABILITY_INTENT_FAMILIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("decision.", _DECISION),
     ("image.", _CAPABILITY_INTENTS["image.generate"]),
     ("video.", _CAPABILITY_INTENTS["video.generate"]),
-    ("speech.", _OPERATIONS["speech"]),
+    ("speech.", OPERATION_METADATA["speech"]),
     ("audio.", _CAPABILITY_INTENTS["audio.generate"]),
 )
 
@@ -204,7 +253,7 @@ def from_fields(fields: Mapping[str, Any] | None) -> ModelMetadata | None:
 
 
 def from_operation(operation: str) -> ModelMetadata | None:
-    return _OPERATIONS.get(operation)
+    return OPERATION_METADATA.get(operation)
 
 
 def operations_of(type_: Any, input_modalities: Any = None, among: Iterable[str] | None = None) -> tuple[str, ...]:
@@ -214,11 +263,11 @@ def operations_of(type_: Any, input_modalities: Any = None, among: Iterable[str]
     them, or they are unknown, every operation of the type is returned."""
     if not isinstance(type_, str):
         return ()
-    of_type = [op for op in (_OPERATIONS if among is None else among)
-               if op in _OPERATIONS and _OPERATIONS[op].type == type_]
+    of_type = [op for op in (OPERATION_METADATA if among is None else among)
+               if op in OPERATION_METADATA and OPERATION_METADATA[op].type == type_]
     if isinstance(input_modalities, (list, tuple)) and input_modalities:
         wanted = set(input_modalities)
-        narrowed = [op for op in of_type if set(_OPERATIONS[op].input_modalities) == wanted]
+        narrowed = [op for op in of_type if set(OPERATION_METADATA[op].input_modalities) == wanted]
         if narrowed:
             return tuple(narrowed)
     return tuple(of_type)
