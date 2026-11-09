@@ -90,6 +90,17 @@ def test_same_failure_from_two_agents_is_one_report_with_a_count(tmp_path):
     assert rows[0]["summary"] == "two, in my own words"
 
 
+def test_a_store_whose_path_moves_makes_its_tables_in_the_new_database(tmp_path):
+    # The gateway passes a callable path read at each use; the database it names can change.
+    where = [tmp_path / "one" / "p.db"]
+    svc = ProblemReports(lambda: where[0], destinations=lambda: [], post=FakePoster())
+    assert svc.list() == []
+    where[0] = tmp_path / "two" / "p.db"
+    assert svc.list() == []
+    run(svc.submit(A1, {"category": "failure", "summary": "lands in the second database"}))
+    assert [row["summary"] for row in svc.list()] == ["lands in the second database"]
+
+
 def test_a_different_failure_is_a_different_report(tmp_path):
     svc, _ = make(tmp_path, destinations=())
     svc.note_failure(A1, FAILURE)
