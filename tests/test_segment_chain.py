@@ -248,3 +248,56 @@ def test_a_prefix_the_lookup_cannot_reverse_is_refused_at_load():
     more["exports"]["frames"] = ["@2cat", 0]
     with pytest.raises(sc.ChainTemplateError, match="cannot be reversed"):
         sc.load(document)
+
+
+# ---------------------------------------------------------------------------------------------------------- V4
+
+
+def _two_index_document(prefix: str) -> dict:
+    document = _document()
+    document["binding"]["node_prefix"] = prefix
+    return document
+
+
+@pytest.mark.parametrize("prefix", ["p{index}{index}", "p{index}", "p{index}7."])
+def test_v4_a_prefix_whose_first_index_is_not_closed_by_a_non_digit_is_refused_at_load(prefix):
+    # p{index}{index} with a local id 1212x reverses wrongly at segment 12 and collides with segment 1212's "x"
+    with pytest.raises(sc.ChainTemplateError, match="cannot be reversed"):
+        sc.load(_two_index_document(prefix))
+
+
+def test_v4_the_ambiguous_prefix_reproduction_is_refused_even_with_ids_that_reverse_at_every_sampled_index():
+    document = _two_index_document("p{index}{index}")
+    more = document["template"]["variants"]["more"]
+    more["nodes"]["1212x"] = more["nodes"].pop("cat")
+    more["exports"]["frames"] = ["@1212x", 0]
+    with pytest.raises(sc.ChainTemplateError, match="cannot be reversed"):
+        sc.load(document)
+
+
+def test_v4_two_segments_that_make_the_same_node_id_are_refused_not_overwritten():
+    graph: dict = {"a": {"class_type": "X", "inputs": {}}}
+    with pytest.raises(sc.ChainTemplateError, match="twice"):
+        sc._add_nodes(graph, {"a": _node("Y")}, {}, {}, "")
+
+
+def test_v4_an_export_that_dangles_only_from_the_third_segment_is_refused_at_load():
+    document = _document()
+    document["binding"]["rule"] = [{"variant": "start", "index": 0}, {"variant": "more"}]
+    more = document["template"]["variants"]["more"]
+    more["nodes"]["bridge"] = {**_node("Latent", samples=["@gen", 0]), "unless": "index"}
+    more["exports"]["latent"] = ["@bridge", 0]
+    with pytest.raises(sc.ChainTemplateError, match="dangling"):
+        sc.load(document)
+
+
+@pytest.mark.parametrize("prefix,digits", [("p{index}.{index}2.", "2"), ("p{index}.{index}345.", "345"),
+                                           ("p{index}.{index}12.", "12")])
+def test_v4_a_repeated_index_followed_by_literal_digits_loads_composes_and_reverses(prefix, digits):
+    document = _two_index_document(prefix)
+    template = sc.load(document)
+    units = sc.compose(template, _spec(13, 8, 8), context=9, negative="bad").units
+    assert [u["sample"] for u in units] == [f"p{i}.{i}{digits}.gen" for i in range(3)]
+    assert sc.prefix_index(prefix, f"p1.1{digits}.cat") == 1
+    assert video_extend.segment_of_node(units, f"p1.1{digits}.cat", node_prefix=prefix) == 1
+    assert sc.prefix_index(prefix, f"p1.2{digits}.cat") is None

@@ -185,6 +185,7 @@ def load(document: Mapping[str, Any]) -> ChainTemplate:
     prefix = raw.get("node_prefix")
     if not isinstance(prefix, str) or "{index}" not in prefix:
         raise _bad("binding.node_prefix", "must hold {index}")
+    _check_prefix_grammar(prefix)
     binding = ChainBinding(
         model_family=str(raw.get("model_family", "")), stride_reason=str(raw.get("stride_reason", "")),
         frame_step=_positive_int(raw, "frame_step"), frame_offset=int(_number(raw, "frame_offset")),
@@ -308,6 +309,8 @@ def _check_graphs(template: ChainTemplate) -> None:
                     composed = compose(template, spec, context=binding.default_context_frames, negative="")
                 except (KeyError, TypeError, AttributeError, IndexError) as exc:
                     raise _bad("template", f"does not compose ({exc!r}) when {case}") from exc
+                except ChainTemplateError as exc:
+                    raise _bad("template", f"{exc} when {case}") from exc
                 graph = composed.graph
                 missing = sorted({t for node in graph.values() for t in _links(node["inputs"]) if t not in graph})
                 if missing:
@@ -318,6 +321,19 @@ def _check_graphs(template: ChainTemplate) -> None:
                 cycle = _cycle(graph)
                 if cycle is not None:
                     raise _bad("template", f"dependency cycle {' -> '.join(cycle)} when {case}")
+
+
+def _check_prefix_grammar(prefix: str) -> None:
+    """Refuse a prefix whose first ``{index}`` is not closed by a literal that starts with a non-digit.
+
+    Then the digits of the first index end at a known character, so no two segments make the same prefix and the
+    lookup reads each one back exactly, whatever the local node ids. A later ``{index}`` repeats the first, so what
+    follows it does not matter.
+    """
+    after = prefix.split("{index}", 1)[1]
+    if not after or after[0].isdigit() or after.startswith("{index}"):
+        raise _bad("binding.node_prefix",
+                   f"{prefix!r} cannot be reversed: the first {{index}} must be followed by a character that is not a digit")
 
 
 def _check_prefix(template: ChainTemplate) -> None:
@@ -346,7 +362,7 @@ def prefix_index(prefix: str, node_id: str) -> int | None:
     parts = prefix.split("{index}")
     pattern = re.escape(parts[0])
     for position, part in enumerate(parts[1:]):
-        pattern += r"(\d+)" if position == 0 else r"\1"
+        pattern += r"(\d+)" if position == 0 else r"(?:\1)"
         pattern += re.escape(part)
     match = re.match(pattern, node_id)
     return int(match.group(1)) if match else None
@@ -385,6 +401,8 @@ def _add_nodes(graph: dict[str, Any], nodes: Mapping[str, Any], params: Mapping[
     for node_id, node in nodes.items():
         if ("if" in node and not facts[node["if"]]) or ("unless" in node and facts[node["unless"]]):
             continue
+        if prefix + node_id in graph:
+            raise ChainTemplateError(f"node {prefix + node_id!r} is made twice")
         graph[prefix + node_id] = {"class_type": node["class_type"],
                                    "inputs": _resolve(node["inputs"], params, facts, prefix)}
 
@@ -396,6 +414,12 @@ def _exports(exports: Mapping[str, Any], params: Mapping[str, Any], facts: Mappi
         if resolved is not _MISSING and resolved is not None:
             found[key] = resolved
     return found
+
+
+def _check_export_links(found: Mapping[str, Any], graph: Mapping[str, Any]) -> None:
+    missing = sorted({t for value in found.values() for t in _links(value) if t not in graph})
+    if missing:
+        raise ChainTemplateError(f"dangling link to {missing} in an export")
 
 
 def pick_variant(binding: ChainBinding, *, index: int, source: bool) -> str:
@@ -439,6 +463,7 @@ def compose(template: ChainTemplate, spec: Any, *, context: int, negative: str) 
         params = {**base, "source_file": source.filename, "source_seconds": source.frames / fps}
         _add_nodes(graph, template.source["nodes"], params, base_facts, "")
         found = _exports(template.source["exports"], params, base_facts, "")
+        _check_export_links(found, graph)
         state["frames"] = found.get("frames")
         if "sound" in found:
             sound_parts.append(found["sound"])
@@ -457,6 +482,7 @@ def compose(template: ChainTemplate, spec: Any, *, context: int, negative: str) 
         }
         _add_nodes(graph, variant["nodes"], params, facts, prefix)
         found = _exports(variant["exports"], params, facts, prefix)
+        _check_export_links(found, graph)
         state["frames"] = found.get("frames", state["frames"])
         state["latent"] = found.get("latent", state["latent"])
         if "sound" in found:
@@ -470,6 +496,8 @@ def compose(template: ChainTemplate, spec: Any, *, context: int, negative: str) 
         sound = sound_parts[0]
         for k, part in enumerate(sound_parts[1:]):
             node_id = join["id"].replace("{k}", str(k))
+            if node_id in graph:
+                raise ChainTemplateError(f"node {node_id!r} is made twice")
             graph[node_id] = {"class_type": join["class_type"],
                               "inputs": {**copy.deepcopy(join.get("inputs", {})), join["first"]: sound, join["next"]: part}}
             sound = [node_id, 0]
