@@ -222,7 +222,6 @@ def test_edit_route_to_an_engine_the_plan_does_not_list_sends_nothing(edit_rig):
 def video_rig(rig, isolated_receipts, monkeypatch):
     """A video create over the run core: the engine is declared as a service record that names its protocol, and the create's
     hold for the engine is cut to a moment. The fake engine never finishes the prompt it is given."""
-    from gateway.frontend_shapes import video_create
     from tests._fake_comfy_video import FakeComfy
     comfy = FakeComfy()
     stack = ExitStack()
@@ -232,7 +231,6 @@ def video_rig(rig, isolated_receipts, monkeypatch):
     stack.enter_context(authenticated(identity(**OWNER)))
     stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
     patch_video_row_files_in_a_temporary_tree(stack)
-    monkeypatch.setattr(video_create, "SUBMIT_WAIT_S", 0.05)
     rig.comfy = comfy
     rig.client = TestClient(proxy.app)
     yield rig

@@ -11,7 +11,6 @@ from typing import Any, Callable
 from unittest.mock import patch
 
 import proxy
-from gateway.frontend_shapes import video_create
 
 ENGINE_URL = "http://engine.test:1"
 
@@ -24,14 +23,12 @@ def declare_graph_engine(registry: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
-def use_graph_engine(stack: ExitStack, *, hold_s: float = 0.05) -> dict[str, Any]:
-    """Serve a registry with only the graph engine, declared for the run core, and cut a create's hold for the engine to
-    ``hold_s``. Returns the registry."""
+def use_graph_engine(stack: ExitStack) -> dict[str, Any]:
+    """Serve a registry with only the graph engine, declared for the run core. Returns the registry."""
     registry = {"schema_version": 2, "services": {
         proxy._GRAPH_BACKEND_ID: {"id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": ENGINE_URL}}}}
     declare_graph_engine(registry)
     stack.enter_context(patch.object(proxy.ADMIN_STORE, "get_service_registry", lambda: registry))
-    stack.enter_context(patch.object(video_create, "SUBMIT_WAIT_S", hold_s))
     return registry
 
 
