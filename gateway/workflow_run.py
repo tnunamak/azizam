@@ -38,6 +38,7 @@ from gateway.result_bundle import Reader, ResultLimits, ResultRefused
 from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
+    AUDIO_FACT,
     DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
     CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, REQUEST_FACT_KEYS,
@@ -442,7 +443,7 @@ def with_wire_id(value: Any, wire_id: str) -> Any:
 
 # The job store refuses some key names inside a job's metadata (they can hold media bytes). A fact keeps its public name in
 # ``RequestFacts`` and is stored under the name here.
-_FACT_STORED_AS = {"audio": "audio_track"}
+_FACT_STORED_AS = {AUDIO_FACT: "audio_track"}
 _FACT_PUBLIC_AS = {stored: public for public, stored in _FACT_STORED_AS.items()}
 
 

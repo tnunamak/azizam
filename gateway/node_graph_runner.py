@@ -31,6 +31,7 @@ from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.engine_protocol.types import AssetsResult, CanonicalRequest, ResultBundle, ResultContext
 from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, with_wire_id
+from gateway.workflow_runtime_types import AUDIO_FACT
 
 LOG = logging.getLogger("azizam.node_graph_runner")
 
@@ -311,7 +312,7 @@ class NodeGraphRunner:
     async def _strip_audio(self, ctx: RunContext, files: list[bytes]) -> list[bytes]:
         """Remove the audio track when the request asked for a silent result (``options.audio`` is false), before the bytes
         are stored, so the stored copy and the delivered file agree."""
-        if ((ctx.payload.get("body") or {}).get("options") or {}).get("audio") is not False:
+        if ((ctx.payload.get("body") or {}).get("options") or {}).get(AUDIO_FACT) is not False:
             return files
         out: list[bytes] = []
         for raw in files:
