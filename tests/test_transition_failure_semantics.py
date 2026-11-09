@@ -132,8 +132,15 @@ class Engine(SnapshotEngine):
         self.clean: Optional[bool] = True
         self.servable_incarnation = "inc-1"
         self.servable_delay = 0.0
+        self.ready = True
+        self.offering: Optional[str] = None  # None: the engine reports what is resident
 
     async def __call__(self, service_id: str, op: str, body: Mapping[str, Any]) -> Reply:
+        if op == "transition.resident" and (self.ready is not True or self.offering is not None):
+            self.calls.append((op, dict(body)))
+            return Reply(200, {"resident": self.resident is not None,
+                               "offering": self.offering if self.offering is not None else self.resident,
+                               "ready": self.ready, "incarnation": "inc-1"})
         if op == "transition.servable":
             self.calls.append((op, dict(body)))
             if self.servable_delay:

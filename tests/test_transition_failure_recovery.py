@@ -235,3 +235,86 @@ def test_the_adapter_maps_every_declared_word_by_the_profile_for_every_effect(tm
     else:
         got = run(adapter.query("dom", reset_intent() if op == "reset" else intent(op)))
     assert got.outcome == _expected(word, attest)
+
+
+# -- a recovery that goes on to open the gate re-checks the load first (G14), by every continuation -----------------------
+
+def _crash_for(runtime: Any, engine: Any, kind: str, case: str) -> str:
+    """The three recoveries that continue to the open step: a query-settled restore, a query-settled reset, and a recorded
+    cold settlement."""
+    if case == "restore":
+        engine.query_outcome = "success"
+        executor = runtime.executor()
+        begun = executor.store.begin(domain="dom", kind=kind, idempotency_key="g14", target="alpha",
+                                     incarnation="inc-1", config_revision=1)
+        op_id = begun.operation.op_id
+        executor.store.write_intent(op_id, StepIntent(step="restore", effect_key=f"{op_id}:restore",
+                                                      expected_incarnation="inc-1"))
+        engine.resident = "alpha"
+        return op_id
+    if case == "reset":
+        engine.query_outcome, engine.clean = "success", True
+        executor = runtime.executor()
+        begun = executor.store.begin(domain="dom", kind=kind, idempotency_key="g14", target="alpha",
+                                     incarnation="inc-1", config_revision=1)
+        op_id = begun.operation.op_id
+        executor.store.write_intent(op_id, StepIntent(step="restore", effect_key=f"{op_id}:reset",
+                                                      expected_incarnation="inc-1"))
+        engine.resident = "alpha"
+        return op_id
+    op_id = _crashed_recorded(runtime, engine, kind=kind, step="restore", effect="reset", outcome="no_change",
+                              evidence=case, target="alpha")
+    engine.resident, engine.clean = "alpha", None  # the first restart cannot read the clean evidence
+    return op_id
+
+
+def _held_open(done: Any, gates: Any) -> None:
+    assert (done.state, gates.state("dom")) == ("reconciling", "reconciling"), (done.state, done.step, done.evidence_ref)
+    assert (done.step, done.step_outcome, done.evidence_ref) == ("open", "unknown", "load_unverified_at_resume")
+
+
+G14_CASES = ["restore", "reset", *COLD]
+
+
+@pytest.mark.parametrize("case", G14_CASES)
+@pytest.mark.parametrize("kind", ["select", "wake"])
+@pytest.mark.parametrize(("ready", "offering"), [(False, None), (True, "beta")])
+def test_a_recovery_never_opens_the_gate_on_a_target_that_is_not_ready_or_not_the_offering(
+        tmp_path, monkeypatch, kind, case, ready, offering) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crash_for(runtime, engine, kind, case)
+    cold = case in COLD
+    engine.ready, engine.offering = ready, offering
+    done = _restart(runtime, op_id)
+    if cold:
+        assert done.state == "reconciling" and gates.state("dom") == "reconciling"  # the clean evidence is unreadable
+        engine.clean = True
+        done = _restart(runtime, op_id)
+    _held_open(done, gates)
+
+
+@pytest.mark.parametrize("how", ["absent", "stale"])
+@pytest.mark.parametrize("case", G14_CASES)
+def test_a_recovery_never_opens_the_gate_when_the_resident_evidence_is_absent_or_stale(tmp_path, monkeypatch, case, how) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True,
+                                         fresh_within_s=1e-9 if how == "stale" else None)
+    op_id = _crash_for(runtime, engine, "wake", case)
+    if how == "absent":
+        engine.resident = None
+    done = _restart(runtime, op_id)
+    if case in COLD:
+        engine.clean = True
+        done = _restart(runtime, op_id)
+    assert gates.state("dom") != "open" and done.state != "succeeded", (done.state, done.step, done.evidence_ref)
+
+
+@pytest.mark.parametrize("case", G14_CASES)
+@pytest.mark.parametrize("kind", ["select", "wake"])
+def test_a_recovery_opens_the_gate_when_the_target_is_resident_and_ready(tmp_path, monkeypatch, case, kind) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crash_for(runtime, engine, kind, case)
+    done = _restart(runtime, op_id)
+    if case in COLD:
+        engine.clean = True
+        done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
