@@ -117,6 +117,10 @@ MESH_ROUTING = {
     "POST": "<path> serve",
     "HEAD": "405 allow=POST via <path> serve",
 }
+# The video create route is the registry row `videos-create` (gateway/row_routes.py) since the baseline: the path is the same, and the
+# handler that answers POST is the row's. HEAD meets the route's 405 (POST only). Other methods are unchanged.
+VIDEO_ROW_PATHS = ("/v1/videos", "/openai/v1/videos")
+VIDEO_ROW_ROUTING = {"POST": "<path> serve", "HEAD": "405 allow=POST via <path> serve"}
 MESH_LIVE = {
     "HEAD": "none: 405 application/json allow=POST; app: 405 application/json allow=POST; admin: 405 application/json allow=POST",
     "OTHER": "none: 401 application/json; app: 404 application/json; admin: 401 application/json",
@@ -211,6 +215,8 @@ def _deliberate(key: str) -> str | None:
         return "engine_protocols"
     if path in MESH_PATHS:
         return "mesh"
+    if path in VIDEO_ROW_PATHS and _method in ("POST", "HEAD"):
+        return "video_row"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
     if path == HOST_COMMANDS:
@@ -332,6 +338,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route").replace("<path>", key.split(" ", 1)[1])
             if outcome == expected:
                 continue
+        if kind == "video_row" and outcome == VIDEO_ROW_ROUTING[_method_of(key)].replace("<path>", key.split(" ", 1)[1]):
+            continue
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
         if kind == "engine_protocols" and key not in old:

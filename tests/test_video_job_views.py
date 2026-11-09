@@ -16,6 +16,14 @@ from gateway.workflow_runtime_types import JobNotFound, RequestFacts, ResultRef,
 from tests.workflow_runtime_fakes import FakeJobService, FakeRunCore
 
 
+@pytest.fixture(autouse=True)
+def _full_metadata_by_default(monkeypatch):
+    """Outside a request the delivery mode is none, which re-writes the bytes; these tests serve stand-in bytes, so the plan's
+    default here is full (the file is delivered as stored unless the request kept a provenance record)."""
+    from gateway import media_delivery, provenance
+    monkeypatch.setattr(media_delivery, "current_mode", lambda: provenance.METADATA_FULL)
+
+
 @pytest.fixture
 def shape():
     row = next(r for r in bundled_rows() if any(route.canonical == "/v1/videos" and "POST" in route.methods for route in r.routes))
@@ -45,10 +53,10 @@ def test_a_malformed_wire_id_names_no_job_and_is_a_400_invalid_id(shape, bad):
 
 
 @pytest.mark.parametrize(("status", "wire", "own", "progress"), [
-    ("queued", "queued", "queued", 0), ("running", "in_progress", "running", 0),
+    ("queued", "queued", "queued", 0), ("running", "in_progress", "running", 60),
     ("succeeded", "completed", "succeeded", 100), ("failed", "failed", "failed", 0), ("canceled", "failed", "failed", 0)])
 def test_status_uses_the_openai_word_beside_the_job_stores_own(shape, status, wire, own, progress):
-    answer = body(shape.render_status(view(status=status)))
+    answer = body(shape.render_status(view(status=status, progress=progress if status == "running" else 0)))
     assert (answer["id"], answer["object"], answer["status"], answer["azizam_status"], answer["progress"]) == (
         "video_mj_a", "video", wire, own, progress)
     assert answer["created_at"] == 100 and answer["error"] is None
@@ -59,7 +67,7 @@ def test_status_carries_the_failure_and_the_request_facts_the_run_kept(shape):
     failed = view(status="failed", failure=RunFailure(code="oom", category="upstream", message="out of memory"),
                   result_metadata={"model": "m", "size": "640x480", "seconds": 4, "unrelated": 1})
     answer = body(shape.render_status(failed))
-    assert answer["error"] == {"code": "oom", "message": "out of memory"}
+    assert answer["error"] == {"code": "video_generation_failed", "message": "out of memory"}
     assert (answer["model"], answer["size"], answer["seconds"]) == ("m", "640x480", 4) and "unrelated" not in answer
 
 
@@ -85,7 +93,7 @@ def test_delete_answers_the_deleted_object_and_a_stuck_cancel_is_409(shape):
 
 @pytest.mark.parametrize(("status", "word"), [("queued", "queued"), ("running", "in_progress"), ("failed", "failed")])
 def test_content_of_an_unfinished_job_is_404_not_ready_with_the_status_word(shape, status, word):
-    answer = shape.render_bytes(view(status=status), None, None)
+    answer = shape.render_bytes(view(status=status, progress=60 if status == "running" else 0), None, None)
     assert answer.status_code == 404 and body(answer)["error"]["code"] == "video_not_ready"
     assert f"status={word}" in body(answer)["error"]["message"]
 

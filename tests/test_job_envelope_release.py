@@ -83,13 +83,15 @@ def test_the_paths_are_found_in_the_code():
                   for n in own_nodes(function) if isinstance(n, ast.Call)}
         assert called & RELEASES, f"{path.relative_to(ROOT)}:{name} deletes media_jobs rows but never releases envelopes"
     # Each has a behavioural test here.
-    assert set(found) == set(DELETE_PATHS), f"delete paths and their tests differ: {sorted(set(found) ^ set(DELETE_PATHS))}"
+    tested = set(DELETE_PATHS) | OWN_TESTS
+    assert set(found) == tested, f"delete paths and their tests differ: {sorted(set(found) ^ tested)}"
     # Each caller of a deleting function is a path too. A new caller needs its own test.
     reached = {name: callers for name, callers in callers_of(set(found) | {"delete_succeeded"}).items()}
     known = {
         "delete_succeeded_in": {"gateway/media_jobs.py:delete_succeeded", "gateway/prompt_memory.py:remove_missing_media"},
         "delete_succeeded": set(),
         "reap_tombstones": {"gateway/workflow_run.py:delete"},
+        "discard_failed": {"gateway/workflow_run.py:_await_submit"},
     }
     assert reached == known, f"a new caller deletes job rows: {reached}"
 
@@ -159,6 +161,27 @@ DELETE_PATHS: dict[str, Callable[[Path, str], None]] = {
     "delete_succeeded_in": delete_succeeded_in_one_transaction,
     "reap_tombstones": reap_tombstones_after_the_window,
 }
+
+
+# Paths that delete only a job in a state the common fixture (two finished jobs) does not hold; each has its own test below.
+OWN_TESTS = {"discard_failed"}
+
+
+def test_discarding_a_failed_job_releases_its_references_and_leaves_a_job_that_did_not_fail(tmp_path: Path):
+    db = tmp_path / "media_jobs.db"
+    media_jobs.init_db(db)
+    failed = media_jobs.create(
+        media_jobs.MediaJob(intent="image.generate", request_id="failed", status=media_jobs.STATUS_FAILED, progress=0),
+        envelope=envelope_for("f"), path=db)
+    doomed, kept = two_finished_jobs(db)
+    assert media_jobs.discard_failed(doomed, path=db) is False, "a job that did not fail stays"
+    assert count(db, "SELECT COUNT(*) FROM media_jobs WHERE job_id = ?", doomed) == 1
+    assert media_jobs.discard_failed(failed.job_id, path=db) is True
+    assert count(db, "SELECT COUNT(*) FROM media_jobs WHERE job_id = ?", failed.job_id) == 0
+    assert count(db, "SELECT COUNT(*) FROM job_envelope WHERE job_id = ?", failed.job_id) == 0
+    assert count(db, "SELECT COUNT(*) FROM definition_ref WHERE job_id = ?", failed.job_id) == 0
+    assert count(db, "SELECT COUNT(*) FROM job_envelope WHERE job_id NOT IN (SELECT job_id FROM media_jobs)") == 0
+    assert count(db, "SELECT COUNT(*) FROM job_envelope WHERE job_id = ?", kept) == 1
 
 
 @pytest.mark.parametrize("name", sorted(DELETE_PATHS))

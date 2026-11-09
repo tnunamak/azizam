@@ -70,6 +70,14 @@
       ]
     },
     {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
+    },
+    {
       "path": "proxy.py",
       "function": "_run_image_media_job",
       "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
@@ -91,6 +99,14 @@
       "source_sha256": "cab9bb47be2f4c73bf6f47209d68cd3f884c3bc005240b83df5c97eed5428e2e",
       "call": "append_event",
       "event": "'completed'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_fail",
+      "source_sha256": "66ff6f0f8b43df092aa47a5d263fd8efa92f4d1f1571d385b6fdd296ed920c6b",
+      "call": "append_event",
+      "event": "'failed'",
       "access": "content:job:read"
     },
     {
@@ -136,49 +152,9 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_create",
-      "source_sha256": "9423aa22fb189b6969397712dff0b864bf2a89ed3b909a1ac2cc139938bb11e5",
+      "source_sha256": "937b7c65c70897fadfda060b87142b7ebf114be8ca04286db9f92af580fae336",
       "call": "append_event",
       "event": "'queued'",
-      "access": "content:job:read"
-    },
-    {
-      "path": "gateway/workflow_run.py",
-      "function": "_before_retry",
-      "source_sha256": "48d200a49a43f91b2f48cbc6082380b3b9219324c6c243dc7eb838a87c9e8d79",
-      "call": "append_event",
-      "event": "'retry'",
-      "access": "content:job:read"
-    },
-    {
-      "path": "gateway/workflow_run.py",
-      "function": "_run",
-      "source_sha256": "28616f0ee643c23d162c9aae2d47c995e63b91b7936e426cf72248cae815720e",
-      "call": "append_event",
-      "event": "'started'",
-      "access": "content:job:read"
-    },
-    {
-      "path": "gateway/workflow_run.py",
-      "function": "_run",
-      "source_sha256": "28616f0ee643c23d162c9aae2d47c995e63b91b7936e426cf72248cae815720e",
-      "call": "append_event",
-      "event": "'attempt'",
-      "access": "content:job:read"
-    },
-    {
-      "path": "gateway/workflow_run.py",
-      "function": "_run",
-      "source_sha256": "28616f0ee643c23d162c9aae2d47c995e63b91b7936e426cf72248cae815720e",
-      "call": "append_event",
-      "event": "'succeeded'",
-      "access": "content:job:read"
-    },
-    {
-      "path": "gateway/workflow_run.py",
-      "function": "_fail",
-      "source_sha256": "66ff6f0f8b43df092aa47a5d263fd8efa92f4d1f1571d385b6fdd296ed920c6b",
-      "call": "append_event",
-      "event": "'failed'",
       "access": "content:job:read"
     },
     {
@@ -206,6 +182,14 @@
       "access": "content:job:read"
     },
     {
+      "path": "gateway/workflow_run.py",
+      "function": "_before_retry",
+      "source_sha256": "48d200a49a43f91b2f48cbc6082380b3b9219324c6c243dc7eb838a87c9e8d79",
+      "call": "append_event",
+      "event": "'retry'",
+      "access": "content:job:read"
+    },
+    {
       "path": "proxy.py",
       "function": "_run_image_media_job",
       "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
@@ -219,6 +203,22 @@
       "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
       "call": "append_event",
       "event": "'retry'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/job_retry_hint.py",
+      "function": "write",
+      "source_sha256": "d36924af8aa509bfd0148a986c421363fcc803b29c8894dad5a8f3d70d259ea1",
+      "call": "append_event",
+      "event": "'retry_after'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
+      "call": "append_event",
+      "event": "'started'",
       "access": "content:job:read"
     },
     {
@@ -257,6 +257,14 @@
       "path": "proxy.py",
       "function": "_protocol_image_result",
       "source_sha256": "ff9be2f2c4ebfbfa7330965d633a1a990c7a303b8091488030fe238f76c08f2f",
+      "call": "append_event",
+      "event": "'succeeded'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -328,14 +336,6 @@
         "succeeded"
       ],
       "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
-      "access": "content:job:read"
-    },
-    {
-      "path": "gateway/job_retry_hint.py",
-      "function": "write",
-      "source_sha256": "d36924af8aa509bfd0148a986c421363fcc803b29c8894dad5a8f3d70d259ea1",
-      "call": "append_event",
-      "event": "'retry_after'",
       "access": "content:job:read"
     }
   ],
