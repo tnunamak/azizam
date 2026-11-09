@@ -585,7 +585,7 @@ def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
                               record_revision=1, binding_key="comfyui", created_at_s=1, updated_at_s=1)
 
     class Owner:
-        receipt = type("Receipt", (), {"job_id": None})()      # a submit receipt names the job it queued
+        receipt = type("Receipt", (), {"job_id": None, "metadata": {}})()      # a submit receipt names the job it queued
         def report(self, **outcome): calls["report"].append(outcome)
         def handoff(self): calls["handoff"].append(1)
         def dispatching(self, backend): calls["backend"].append(backend)

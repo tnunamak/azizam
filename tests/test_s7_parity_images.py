@@ -35,6 +35,16 @@ from tests.support.s7_parity_images_facts import (
 )
 from tests.support.s7_parity_images_rig import ROW_PREFIX, observe
 
+
+@pytest.fixture(autouse=True)
+def _no_registered_secrets():
+    """The log scrubber is process state: a value an earlier test registered (the word ``test``, for one) would take letters out of
+    the engine address in a failure text on the row path only, and the two paths would differ by what ran before."""
+    from gateway import log_scrub
+    log_scrub.clear()
+    yield
+    log_scrub.clear()
+
 GEN = "/v1/images/generations"
 EDIT = "/v1/images/edits"
 VAR = "/v1/images/variations"
