@@ -78,6 +78,14 @@ def _reference_bytes(value: Any) -> tuple[bytes, str, str | None] | None:
 
 
 async def read_body(shape: OpenAIVideoCreate, request: Request) -> dict[str, Any] | Response:
+    """The parsed body, read once: the hand-off check and the run request both ask, and an upload stream reads only once."""
+    cached = getattr(request.state, "video_body", None)
+    if cached is None:
+        cached = request.state.video_body = await _parse_body(request)
+    return cached
+
+
+async def _parse_body(request: Request) -> dict[str, Any] | Response:
     content_type = request.headers.get("content-type", "")
     if any(kind in content_type for kind in FORM_TYPES):
         try:
@@ -113,6 +121,17 @@ def _beyond(seconds: Any, limit: float) -> bool:
 Picked = tuple[WorkflowEntry, "video_grid.VideoManifest", str, str]
 
 
+def _old_spelling(snapshot: RegistrySnapshot, row: FrontendRow, name: str) -> str:
+    """A caller may still send a workflow under the key the old route knew, its short name with the capability in front
+    (``<capability>-<short id>``). It names the same workflow as the short id, so it resolves there when it names nothing itself."""
+    if not name or snapshot.names.owner("workflow", name) is not None or snapshot.names.owner("workflow_alias", name) is not None:
+        return name
+    for entry in _wire.candidates(snapshot, row, None):
+        if name == short_name(entry):
+            return entry.id
+    return name
+
+
 def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, snapshot: RegistrySnapshot,
            hooks: Any) -> Picked | LegacyRoute | Response:
     """The workflow a create runs, or the reason it does not run here: a refusal, or a hand-off to the old pipeline for what the
@@ -123,8 +142,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     resolved = hooks.resolve_model(public_model)
     if isinstance(resolved, Response):
         return resolved
-    chosen = _wire.choose_workflow(snapshot, row, target=resolved or None, supplied=["prompt"], not_found=lambda target: refuse(
-        404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found"))
+    chosen = _wire.choose_workflow(snapshot, row, target=_old_spelling(snapshot, row, resolved) or None, supplied=["prompt"],
+                                   not_found=lambda target: refuse(404, f"Model '{public_model}' is not available for video generation.",
+                                                                   param="model", code="model_not_found"))
     if isinstance(chosen, Response):
         return chosen
     from gateway.frontend_shapes import shapes
