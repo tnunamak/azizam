@@ -142,6 +142,7 @@ async def run_round(
     say: Callable[[str], None] = lambda _text: None,
     on_progress: Callable[[int], None] = lambda _percent: None,
     resume_prompt_id: str | None = None,
+    on_submitted: Callable[[str], None] = lambda _prompt_id: None,
 ) -> RoundResult:
     """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first.
 
@@ -163,6 +164,7 @@ async def run_round(
         except MalformedResponse as error:
             raise RoundFailure(NO_PROMPT_ID) from error
         prompt_id = ref.id
+        on_submitted(prompt_id)
         say(f"{adapter.label} {label} {'resumed' if resume_prompt_id else 'submitted'}: {prompt_id}")
 
         remaining = float(max_wait_s)

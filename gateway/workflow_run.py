@@ -1021,11 +1021,12 @@ class WorkflowRunCore:
             return None
 
     def _record_result_metadata(self, job_id: str, result_metadata: Mapping[str, Any]) -> None:
-        """Keep the adapter's result metadata on the still-running job, as it gave it (the job store refuses unsafe
+        """Keep the adapter's result metadata on the still-running job, as it gave it (a later call adds to what an earlier one kept) (the job store refuses unsafe
         content). It does nothing once the job is terminal."""
         try:
+            kept = ((media_jobs.get(job_id, audience="internal", path=self._path) or {}).get("metadata") or {}).get(RESULT_METADATA_KEY)
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
-                                     metadata_patch={RESULT_METADATA_KEY: plain(result_metadata)})
+                                     metadata_patch={RESULT_METADATA_KEY: plain({**(kept if isinstance(kept, Mapping) else {}), **result_metadata})})
         except ValueError:
             log.warning("job %s result metadata was not stored", job_id, exc_info=True)
 

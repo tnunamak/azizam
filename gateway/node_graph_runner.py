@@ -55,6 +55,9 @@ def _has_alpha(raw: bytes) -> bool:
 MAX_FILES_PER_REQUEST = 10
 
 
+ENGINE_PROMPT_KEY = "engine_prompt"      # the engine's id of the prompt a run submitted, kept as soon as it is known
+
+
 class RunFailed(Exception):
     """A run that failed. The attributes are what the core records: ``code``, ``category``, ``client_message``,
     ``upstream_status`` and ``retryable``. The core retries only when ``retry_reason`` is set."""
@@ -356,7 +359,8 @@ class NodeGraphRunner:
                 adapter, session, payload, headers, graph=graph, label=label, max_wait_s=float(host.max_wait_s()),
                 control_timeout=host.control_timeout(), resume_prompt_id=resume, cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
-                on_progress=ctx.record_progress)
+                on_progress=ctx.record_progress, on_submitted=lambda prompt_id: media_jobs.update_status(
+                    ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={ENGINE_PROMPT_KEY: prompt_id}, path=media_jobs.DB_PATH))
         except graph_round.RoundFailure as failed:
             # The submit marker only means "a submit may be in flight": a round that ended in failure leaves none.
             if resume is None:
@@ -432,6 +436,10 @@ class NodeGraphRunner:
 
     async def _store(self, ctx: RunContext, adapter: Any, files: list[bytes], name: str, limits: Any) -> ResultBundle:
         from gateway.engine_protocol.assets import served_media_type
+        # A job whose cancel was asked for while its files were being fetched stores nothing: it ends canceled here.
+        job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        if (job.get("metadata") or {}).get("cancel_requested_at"):
+            raise media_jobs.CancellationPending()
         store = result_bundle.LimitedAssetStore(adapter._assets, limits)
         saved = []
         for raw in files:

@@ -303,10 +303,11 @@ def test_video_75_missing_output_is_a_video_asset_error(tmp_path):
         await drive(w, vid, "completed", wait=False)
         assert (await settled(w, vid)).status == "failed"
         response = await w.content(vid)
-        # The whole row of video-texts.md (content_view_error): the /view refusal is seen below, and the content route
-        # answers 502 with the engine's status, nothing else.
+        # The content route answers 502 with an api_error body, as the old route did for a /view refusal. The old message
+        # named the engine and its HTTP status ("ComfyUI /view error: 404"); the run core says what the run recorded.
+        # Reported as a difference: engine names stay out of core code (ENGINE_KNOWLEDGE_BOUNDARY).
         assert response.status_code == 502
-        assert response.json() == {"error": {"message": "ComfyUI /view error: 404", "type": "api_error"}}
+        assert response.json() == {"error": {"message": "No images generated", "type": "api_error"}}
         assert w.video_files() == {}
         assert w.asset_id(vid) is None
         refused = w.engine.calls("GET", "/view")
@@ -373,10 +374,15 @@ def test_video_79_missing_cursor_does_not_restart_pagination(tmp_path):
     run(tmp_path, exercise)
 
 
+def not_polls(w):
+    """The engine calls that are not a live run's own looks at its prompt (history and queue reads)."""
+    return [r for r in w.engine.requests if not (r.method == "GET" and (r.url.path.startswith("/history/") or r.url.path == "/queue"))]
+
+
 def test_video_80_list_entry_fields_error_and_queue_fallback(tmp_path):
     async def exercise(w):
         done, running, failed = await three_videos(w, ("completed", "queued", "failed"))
-        requests = len(w.engine.requests)
+        requests = len(not_polls(w))
         response = await w.listing()
         assert response.status_code == 200
         entries = {x["id"]: x for x in response.json()["data"]}
@@ -392,7 +398,7 @@ def test_video_80_list_entry_fields_error_and_queue_fallback(tmp_path):
         # The list reads the job store; it asks the engine nothing. (The list wire keeps its own status words,
         # `succeeded` for a finished video, beside the status route's `completed`: design 3.4 renders list items "with
         # the status body of its own store", which would change that word; reported to the design owner.)
-        assert len(w.engine.requests) == requests
+        assert len(not_polls(w)) == requests
     run(tmp_path, exercise)
 
 

@@ -27538,7 +27538,8 @@ async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
     """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
     file stops being reachable there. A job the engine never took has none; a failure is not the caller's."""
     job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
-    prompt_id = ((job or {}).get("metadata") or {}).get("protocol_job")
+    kept = (job or {}).get("metadata") or {}
+    prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
     if not prompt_id:
         return
     try:
