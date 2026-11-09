@@ -75,11 +75,12 @@ def test_a_report_without_a_failure_still_records_and_says_so(tmp_path):
 
 
 def test_same_failure_from_two_agents_is_one_report_with_a_count(tmp_path):
-    clock = iter([1000, 2000, 3000])
-    svc = ProblemReports(tmp_path / "p.db", destinations=lambda: [], post=FakePoster(), now=lambda: next(clock))
+    t = [1000]
+    svc = ProblemReports(tmp_path / "p.db", destinations=lambda: [], post=FakePoster(), now=lambda: t[0])
     svc.note_failure(A1, FAILURE)
     svc.note_failure(A2, {**FAILURE, "error": "metadata dropped at 87% (job 9120)"})  # other numbers, same failure
     first = run(svc.submit(A1, {"category": "failure", "summary": "one"}))
+    t[0] = 2000
     second = run(svc.submit(A2, {"category": "failure", "summary": "two, in my own words"}))
     assert second["duplicate"] is True and second["report_id"] == first["report_id"] and second["count"] == 2
     rows = svc.list()
