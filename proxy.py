@@ -4697,7 +4697,7 @@ async def _reference_transcript(
     if meta.get("transcript"):
         return str(meta["transcript"])
     stt = (config.get("backends") or {}).get("stt")
-    if not isinstance(stt, Mapping) or not stt.get("host"):
+    if not isinstance(stt, Mapping) or not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
         raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
     if receipt is not None:
         receipt.metadata.setdefault("stt", {"field_count": 1, "file_count": 1, "attempts_started": 0, "chunked": False})

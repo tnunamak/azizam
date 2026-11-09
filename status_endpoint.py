@@ -571,7 +571,8 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
             row["observed_at_s"] = int(time.time())
             return row
         # The systemd batch runs alongside the HTTP probes. Each lifecycle row waits for the batch, not for them.
-        systemd_states = asyncio.ensure_future(_systemd_lifecycle_states(lifecycle_targets, backends))
+        # With no lifecycle target nothing awaits it, and a task nobody awaits is left pending after this returns.
+        systemd_states = asyncio.ensure_future(_systemd_lifecycle_states(lifecycle_targets, backends)) if lifecycle_targets else None
 
         async def lifecycle_probe(target):
             # Shielded: a lifecycle probe that hits its deadline must not cancel the batch the other rows wait on.

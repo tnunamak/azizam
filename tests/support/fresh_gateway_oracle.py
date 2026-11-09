@@ -131,7 +131,7 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
         return httpx.AsyncClient(transport=OnlyFake(), trust_env=False, **kwargs)
 
     record = {"host": "127.0.0.1", "port": 18991, "enabled": state != "disabled",
-              "health_endpoint": "/health"}
+              "health_endpoint": "/health", "capabilities": ["audio.transcriptions"]}
     if state == "partial":
         record.pop("port")  # No alternative address is supplied.
     config = {"backends": {} if state == "absent" else {"stt": record}}
@@ -165,8 +165,16 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
             }
             stage = "config"
             try:
+                # The real selection gate the public route uses: only an enabled record with a host and port
+                # that declares the capability is chosen. A disabled or incomplete row is never selected.
+                import proxy
+                with patch.dict(proxy.config, {"backends": config["backends"]}):
+                    selected = proxy.service_for_capability("audio.transcriptions")
+                if selected is None:
+                    raise stt.SttNotConfigured("No enabled STT service is configured")
                 execution = stt.SttExecutionConfig.from_service(
-                    service_id="stt", service_config=raw, config_directory=scratch)
+                    service_id=selected[0], service_config={**raw, "capabilities": record["capabilities"]},
+                    config_directory=scratch)
                 stage = "sender"
                 # The direct route is out of scope. Its scoped caller contract is:
                 # an empty execution address refuses before constructing a request.

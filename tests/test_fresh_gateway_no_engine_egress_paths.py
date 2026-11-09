@@ -45,7 +45,7 @@ def test_scoped_engine_path_has_no_egress_without_an_enabled_complete_row(tmp_pa
         assert report["writer_calls"] == 0
         assert report["history"] == []
         if path.startswith("stt-"):
-            assert report["refused_at"] in {"config", "sender"}
+            assert report["refused_at"] in {"config", "sender"}  # "config": selection gate or address reader
         elif state == "partial":
             assert [(row["key"], row["status"], row["live_status"]) for row in report["rows"]] == [
                 ("stt", "not_configured", "not_configured")]
