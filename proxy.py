@@ -27357,6 +27357,21 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> str:
         return _workflow_run_prompt_retention(caller, body.get("extensions") if isinstance(body.get("extensions"), Mapping) else {})
 
+    def check_reference(self, caller: Any, data: bytes, contract: Mapping[str, Any], input_name: str) -> Any:
+        """The refusals the removed route gave a reference picture, with its 400 body, before the file is staged anywhere."""
+        try:
+            accepts = _input_accepts({"inputs": contract.get("inputs")}, input_name)
+            _media_input_resolver().check_upload(
+                caller, data, destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts)
+        except _InputReferenceError as error:
+            message = str(error)
+        except media_inputs.MediaInputError as error:
+            message = error.message
+        else:
+            return None
+        return Response(content=json.dumps({"error": {"message": message, "type": "invalid_request_error"}}),
+                        status_code=400, media_type="application/json")
+
     async def source(self, job_id: str, wire_id: str, caller: Any) -> Any:
         return await video_source.resolve_source(job_id, wire_id, caller, _workflow_job_service())
 

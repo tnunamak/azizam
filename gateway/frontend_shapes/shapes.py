@@ -575,6 +575,11 @@ class VideoHooks:
         """Remember the prompt of a new job under ``key``; True when it was kept."""
         return False
 
+    def check_reference(self, caller: Any, data: bytes, contract: Mapping[str, Any], input_name: str) -> Response | None:
+        """Refuse a reference picture before any effect: the deployment's disclosure rule for where it would go, and the
+        types the contract's input accepts. No file is stored and nothing is leased; a Response refuses the request."""
+        return None
+
     async def source(self, job_id: str, wire_id: str, caller: Any) -> Any:
         """The stored clip a wire id names, read from its file (a ``VideoSource``), or the refusal to give (a ``SourceRefused``).
         None: this deployment cannot read a source, and the request is refused as an unreadable one."""

@@ -292,6 +292,9 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     if reference is not None:
         decoded = _reference_bytes(reference)
         target = roles.get(shapes.REFERENCE_KIND, "input_reference")
+        refused_reference = hooks.check_reference(caller, decoded[0], chosen.contract, target)
+        if refused_reference is not None:
+            return refused_reference
         staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
         if isinstance(staged, Response):
             return staged
