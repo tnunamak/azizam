@@ -160,16 +160,23 @@ def inspect_store(store: str) -> tuple[int, dict]:
 
             _check_snapshot_deadline(deadline)
             inventory = rollback_job_inventory(snapshot)
+            _check_snapshot_deadline(deadline)
             try:
                 assert_rollback_ready(snapshot)
             except RollbackRefused as error:
-                return 2, {
+                verdict = 2, {
                     "ready": False, "reason": error.code,
                     "job_ids": error.job_ids, "inventory": inventory,
                 }
-            return 0, {
-                "ready": True, "reason": None, "job_ids": [], "inventory": inventory,
-            }
+            else:
+                verdict = 0, {
+                    "ready": True, "reason": None, "job_ids": [], "inventory": inventory,
+                }
+            _check_snapshot_deadline(deadline)
+        # Cleanup is part of the same budget; do not return a verdict from
+        # inside the context while private files are still being removed.
+        _check_snapshot_deadline(deadline)
+        return verdict
     except StoreRefused as error:
         return refused(error.reason)
     except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError, ImportError):
