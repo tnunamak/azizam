@@ -23,7 +23,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from gateway.extensions import ExtensionError, multipart_extensions
-from gateway.video_inputs import parse_bracket_form
+from gateway.video_inputs import coerce_form_scalars, parse_bracket_form
 from gateway.workflow_call import sniff
 from gateway.workflow_runtime_types import MEDIA_PATH_UNSUPPORTED, MediaRef, RunRefused, RunRequest
 
@@ -177,7 +177,8 @@ async def _upload_chunks(upload) -> AsyncIterator[bytes]:
 
 
 async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool, library_ref,
-                           idempotency_key: str | None, wait_s: float) -> RunRequest | RunRefused:
+                           idempotency_key: str | None, wait_s: float,
+                           declared_inputs: Mapping | None = None) -> RunRequest | RunRefused:
     """The wire request of the generic run route as a ``RunRequest``.
 
     JSON: ``{"inputs": {...}, "binding": "<key>"?, "extensions": {...}?}``. Multipart: a text part ``inputs`` holding
@@ -187,6 +188,11 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
     ``multipart_extensions`` for the JSON part, ``parse_bracket_form`` for the bracket parts. A media input may be a
     library asset ``{"asset_id": "..."}`` in ``inputs``; ``library_ref(asset_id)`` returns its ``MediaRef`` or None when
     the caller may not read it. A file part addressed below a top-level name is ``media_path_unsupported``.
+
+    A multipart form may also send a value input as its own text part named by the input, as a plain HTML form or
+    ``curl -F`` sends it. Only a name the workflow declares (``declared_inputs``, the contract's ``inputs``) that is not a
+    media input is read this way; the text is read as the declared type, and a value that does not read is left as text
+    for the core's validation to name. One input sent both as a part and inside ``inputs`` is refused.
     """
     content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
     media: dict[str, list[MediaRef]] = {}
@@ -198,6 +204,8 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
             return _invalid("invalid_form", "the multipart form is malformed or exceeds a form limit", status=400)
         raw_inputs, binding = _text(form.get("inputs")), _text(form.get("binding"))
         brackets: list[tuple[str, str]] = []
+        specs = declared_inputs if isinstance(declared_inputs, Mapping) else {}
+        values: dict[str, str] = {}
         for name in form.keys():
             if name in _BODY_KEYS or name.startswith(_BRACKET_CONTROL):
                 if any(_text(part) is None for part in form.getlist(name)):
@@ -205,9 +213,17 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
                 if name.startswith(_BRACKET_CONTROL):
                     brackets.extend((name, str(part)) for part in form.getlist(name))
                 continue
-            for part in form.getlist(name):
+            parts = form.getlist(name)
+            spec = specs.get(name)
+            if isinstance(spec, Mapping) and spec.get("type") != "asset" and all(_text(part) is not None for part in parts):
+                if len(parts) != 1:
+                    return _invalid("invalid_request", f"{name}: a value input is sent as one part")
+                values[name] = str(parts[0])
+                continue
+            for part in parts:
                 if _text(part) is not None:
-                    return _invalid("invalid_request", f"{name}: a value part must be named inputs or binding")
+                    return _invalid("invalid_request",
+                                    f"{name}: a value part must be named inputs, binding or a declared value input")
                 if _NESTED.search(name):
                     return _invalid(MEDIA_PATH_UNSUPPORTED, f"{name}: a file part is named by a top-level input")
                 staged = await spool.stage(name, _upload_chunks(part), filename=getattr(part, "filename", None),
@@ -219,6 +235,13 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
             inputs = json.loads(raw_inputs) if raw_inputs else {}
         except (ValueError, RecursionError):  # nested past the parser's depth is not valid JSON either
             return _invalid("invalid_request", "inputs is not valid JSON")
+        if values:
+            if not isinstance(inputs, Mapping):
+                return _invalid("invalid_request", "inputs must be an object")
+            both = sorted(set(values) & set(inputs))
+            if both:
+                return _invalid("invalid_request", f"{both[0]}: sent both as a form part and inside inputs")
+            inputs = {**inputs, **coerce_form_scalars(values, specs)}
         try:
             controls = multipart_extensions(form.get("extensions"))
             extensions = parse_bracket_form([("extensions", controls), *brackets]).get("extensions", {})

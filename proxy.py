@@ -27286,9 +27286,11 @@ async def _run_workflow_open(workflow_id: str, request: Request, auth_context: A
     spool = request_spool.FileRequestSpool(
         _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
     with request_spool.request_scope(request, spool):
+        declared = getattr(snapshot.get(workflow_id), "contract", None) or {}
         run_request = await request_spool.read_run_request(
             request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),
-            idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s)
+            idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s,
+            declared_inputs=declared.get("inputs") if isinstance(declared, Mapping) else None)
         if isinstance(run_request, RunRefused):
             owner.report(status="failed", reason=run_request.code)
             return _workflow_run_response(run_request)
