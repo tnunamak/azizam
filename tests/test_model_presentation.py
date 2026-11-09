@@ -708,6 +708,21 @@ def test_classification_follows_the_model_list_type():
     assert product_capability(Capability(intent="chat.completions", backend="one"), {LISTED_METADATA_KEY: listed}) == "rerank"
 
 
+def test_an_undeclared_audio_subtype_comes_from_the_shipped_capability_words(monkeypatch):
+    from gateway import model_presentation
+    from gateway.model_presentation import product_capability
+    # Both shipped speech words name speech.
+    assert product_capability(Capability(intent="audio.speech", backend="one")) == "speech"
+    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "speech"
+    # A word the table does not list stays generic audio, whatever its spelling.
+    assert product_capability(Capability(intent="speech.voice_check", backend="one")) == "audio"
+    # The table decides, not the intent's spelling.
+    monkeypatch.setattr(model_presentation, "INTENT_CAPABILITIES", {"speech.synthesis": "audio"})
+    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "audio"
+    monkeypatch.setattr(model_presentation, "INTENT_CAPABILITIES", {"audio.generate": "sfx"})
+    assert product_capability(Capability(intent="audio.generate", backend="one")) == "sfx"
+
+
 def test_embeddings_capability_uses_the_voice_glossary_label():
     # The engine keeps its configured name; the capability uses the glossary term.
     service = {"name": "Document search", "capabilities": ["embeddings"]}
