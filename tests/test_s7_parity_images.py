@@ -1389,10 +1389,9 @@ def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_
     assert set(sleeps(a_old)).isdisjoint(image_round), "the old audio route uses the image schedule?"
     assert_same(a_old, a_row, status, sleeps, engine_without_probes)
 
-    # The old video route polls nothing inside the gateway: it answers "queued" and each status read asks the engine, so its
-    # side has no sleeps at all (read at 7daa31769). The video row runs the job in the gateway and polls at its own 5 s.
-    v_old, v_row = cell(tmp_path / "video", "vc", "success")
-    assert sleeps(v_old) == []
+    # The video create is a row on the run core now, on both sides of the cell: the job runs in the gateway and polls at its own
+    # 5 s. (The old video route polled nothing inside the gateway, read at 7daa31769; the s7 video files hold that comparison.)
+    _v_old, v_row = cell(tmp_path / "video", "vc", "success")
     assert sleeps(v_row) and set(sleeps(v_row)) == {5.0}
     assert set(sleeps(v_row)).isdisjoint(image_round)
 
