@@ -578,6 +578,9 @@ class FrontendRow:
     # Where the receipt opens (S7 parity M1): "before_policy" leaves a closed ``rejected`` receipt when the route policy
     # denies the request; "after_policy" (default) leaves none.
     receipt_opens: Literal["before_policy", "after_policy"] = "after_policy"
+    # How a refusal of the request (a 4xx) closes the receipt: "failed" (default) or "rejected", the word the old image
+    # routes wrote. A refusal by the service or the gateway (a 5xx) closes failed under either word.
+    refusal_receipt: Literal["failed", "rejected"] = "failed"
     # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
     job_failure_text: Literal["adapter", "category_copy"] = "adapter"
     # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits

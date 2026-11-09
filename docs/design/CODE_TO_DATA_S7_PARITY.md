@@ -200,7 +200,7 @@ and a reason. Nothing else may differ.
   run used; the old routes hashed the old manifest file. `manifest_id` and `manifest_version` keep their values.
 - `receipt_status_words`: a row receipt closes as `succeeded` where the old image route wrote `ok`, and as `failed` (with
   `metadata.terminal_reason`) where it wrote `error`. A refusal of the request (a 4xx: policy, body, unknown model) still
-  closes as `rejected`; the lifecycle owner accepts `rejected` as a terminal status. The Usage and Activity pages label
+  closes as `rejected`; the lifecycle owner accepts `rejected` as a terminal status. Which word a 4xx refusal takes is row data (`refusal_receipt: rejected | failed`, default `failed`); only the four image rows declare `rejected`, so the mesh row keeps `failed`. The Usage and Activity pages label
   both vocabularies the same way. Test `test_images_receipt_status_words_refusal_is_rejected_service_state_is_failed`.
 - `event_driven_wait` is not a delta: the 0.1 s poll in `JobService.wait` was a defect. The writer that ends a job wakes
   its waiters (`gateway/job_wake.py`); a bounded 1 s fallback read covers a job another process ends.

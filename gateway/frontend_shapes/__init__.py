@@ -46,6 +46,13 @@ def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> Any:
     return value
 
 
+def _refusal_receipt(row_id: str, raw: Mapping[str, Any]) -> Any:
+    value = raw.get("refusal_receipt", "failed")
+    if value not in ("failed", "rejected"):
+        raise RowError(f"{row_id}: refusal_receipt must be failed or rejected")
+    return value
+
+
 def _row(raw: Mapping[str, Any]) -> FrontendRow:
     row_id = raw.get("id")
     if not isinstance(row_id, str) or not row_id:
@@ -84,7 +91,8 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_names=next(iter(names)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
-                       receipt_opens=_receipt_opens(row_id, raw))
+                       receipt_opens=_receipt_opens(row_id, raw),
+                       refusal_receipt=_refusal_receipt(row_id, raw))
 
 
 def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:

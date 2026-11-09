@@ -206,7 +206,7 @@ def test_a_busy_pool_answers_503_and_closes_one_receipt_failed(rig):
 
 
 @pytest.mark.parametrize("name", ["seed_negative", "missing_image", "not_multipart", "not_a_picture"])
-def test_a_refused_body_closes_one_receipt_rejected(rig, name):
+def test_a_refused_body_closes_one_receipt_failed(rig, name):
     bodies = {
         "seed_negative": dict(form("-1")),
         "missing_image": dict(files={"seed": (None, "1")}),
@@ -220,7 +220,7 @@ def test_a_refused_body_closes_one_receipt_rejected(rig, name):
 
     status, receipt = run_async(go)
     assert status in (400, 422)
-    assert receipt["status"] == "rejected"      # a refusal of the request, not a failure of the work (I2 decision 1)
+    assert receipt["status"] == "failed"      # the mesh row declares no refusal vocabulary: the old route closed these failed
     assert len(receipts(RAW)) == 1
     assert rig.downstream == []
 
@@ -464,3 +464,13 @@ def test_route_intent_is_the_one_value_for_receipt_and_job_row():
     assert workflow_run.is_run_job({"intent": "image.generate", "metadata": {"mode": workflow_run.RUN_INTENT}})
     assert workflow_run.is_run_job({"intent": workflow_run.RUN_INTENT})
     assert not workflow_run.is_run_job({"intent": "image.generate", "metadata": {"mode": "async_image_generation"}})
+
+
+def test_the_refusal_vocabulary_is_row_data_and_only_the_image_rows_declare_the_image_words():
+    """A row says how a refusal of the request (a 4xx) closes its receipt. The old image routes wrote ``rejected``; every
+    other row keeps ``failed`` unless its data says otherwise."""
+    from gateway.frontend_shapes import bundled_rows
+    words = {row.id: row.refusal_receipt for row in bundled_rows()}
+    image_rows = {"images-generations", "images-edits", "images-variations", "image-jobs"}
+    assert {rid for rid, word in words.items() if word == "rejected"} == image_rows
+    assert {word for word in words.values()} <= {"rejected", "failed"}
