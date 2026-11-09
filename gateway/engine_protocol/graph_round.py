@@ -169,12 +169,14 @@ async def run_round(
         polls = 0
         next_look_s = ORPHAN_GRACE_S
         unseen = 0
+        cancel_refused = False
         while remaining > 0 and (cadence.max_polls is None or polls < cadence.max_polls):
-            if await is_disconnected():
+            if not cancel_refused and await is_disconnected():
                 # The round ends as canceled only once the engine has dropped the prompt. A cancel the engine did not accept
-                # leaves the prompt running there, so the round keeps its place and asks again at the next look.
+                # leaves the prompt running there: the round asks once, then follows the prompt as it would without the cancel.
                 if await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="client disconnect", timeout=control_timeout, say=say):
                     raise RoundFailure(DISCONNECTED, prompt_id=prompt_id)
+                cancel_refused = True
             delay = min(cadence.ramp_s[polls] if polls < len(cadence.ramp_s) else cadence.interval_s, remaining)
             polls += 1
             if delay:

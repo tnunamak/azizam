@@ -19,6 +19,14 @@ from gateway.frontend_shapes._base import TERMINAL
 from gateway.workflow_runtime_types import CallerContext, JobService, RequestFacts, RunJobView
 
 WIRE_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "completed", "failed": "failed", "canceled": "failed"}
+
+
+def effective_status(view: RunJobView) -> str:
+    """The job store's status word, except that a run the engine has not reported on yet is still queued: the store marks a
+    run ``running`` when it hands the prompt over, and the wire says ``in_progress`` only once the engine reports it running."""
+    return "queued" if view.status == "running" and not view.progress else view.status
+
+
 EXPIRES_AFTER_S = 86400                 # the old record's expiry: a day after it was made
 MEDIA_TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}
 FALLBACK_MEDIA_TYPE = "application/octet-stream"
@@ -60,8 +68,9 @@ class VideoViews:
 
     def status_body(self, view: RunJobView, facts: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """The video object of one job: the wire's status word beside the job store's own, and the facts its request kept."""
-        status = WIRE_STATUS.get(view.status, "queued")
-        own = "failed" if view.status == "canceled" else view.status
+        state = effective_status(view)
+        status = WIRE_STATUS.get(state, "queued")
+        own = "failed" if state == "canceled" else state
         body: dict[str, Any] = {
             "id": self.wire_id(view.job_id), "object": self.wire_name, "azizam_object": f"{self.wire_name}.generation",
             "status": status, "azizam_status": own, "progress": 100 if view.status == "succeeded" else view.progress,
@@ -77,7 +86,8 @@ class VideoViews:
                 if view.result_metadata.get(name) is not None:
                     body[name] = view.result_metadata[name]
         if view.failure is not None:
-            body["error"] = {"code": view.failure.code, "message": view.failure.message}
+            # The code is the wire's own word for any failed job, as it always was; the message keeps the cause.
+            body["error"] = {"code": f"{self.wire_name}_generation_failed", "message": view.failure.message}
         return body
 
     def list_item(self, view: RunJobView, facts: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -126,7 +136,7 @@ class VideoViews:
         ``full``. ``full`` is for the maker only, while the prompt is kept. ``none`` strips the metadata from the bytes
         sent (never from the stored copy)."""
         if view.status != "succeeded":
-            word = WIRE_STATUS.get(view.status, "queued")
+            word = WIRE_STATUS.get(effective_status(view), "queued")
             return _wire.error_response(404, f"{self.wire_name.capitalize()} content is not ready yet (status={word})",
                                         code=f"{self.wire_name}_not_ready")
         refs = [ref for ref in self.media_refs(view) if ref.media_type.startswith(self.output_prefix)]
