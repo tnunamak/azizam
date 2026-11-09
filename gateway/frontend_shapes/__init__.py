@@ -76,11 +76,32 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
     if len(answers) != 1 or not answers <= {None, *shape_forms}:
         raise RowError(f"{row_id}: runtime_policy.default_answer must be one of {sorted(shape_forms) or 'none (the shape has no answer forms)'}, "
                        "the same on every route")
-    return FrontendRow(id=row_id, shape=raw["shape"], routes=routes, selects=dict(selects), mode=raw["mode"],
-                       job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)),
+    names = {route.runtime_policy.get("receipt_names", "id") for route in routes}
+    if len(names) != 1 or not names <= {"id", "short"}:
+        raise RowError(f"{row_id}: runtime_policy.receipt_names must be id or short, the same on every route")
+    return FrontendRow(id=row_id, shape=raw["shape"], result_headers=_names(row_id, raw, "result_headers"),
+                       result_receipt=_names(row_id, raw, "result_receipt"), refusal_bodies=_refusal_bodies(row_id, raw), routes=routes, selects=dict(selects), mode=raw["mode"],
+                       job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_names=next(iter(names)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
                        receipt_opens=_receipt_opens(row_id, raw))
+
+
+def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:
+    """A row's mapping of metadata keys to names (header names, receipt metadata names): text on both sides."""
+    found = raw.get(key) or {}
+    if not isinstance(found, Mapping) or not all(isinstance(k, str) and isinstance(v, str) and v for k, v in found.items()):
+        raise RowError(f"{row_id}: {key} must map metadata keys to names")
+    return dict(found)
+
+
+def _refusal_bodies(row_id: str, raw: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    found = raw.get("refusal_bodies") or {}
+    if not isinstance(found, Mapping) or not all(
+            isinstance(code, str) and isinstance(body, Mapping) and set(body) == {"message", "type"}
+            and all(isinstance(text, str) and text for text in body.values()) for code, body in found.items()):
+        raise RowError(f"{row_id}: refusal_bodies must map a code to its message and type")
+    return {code: dict(body) for code, body in found.items()}
 
 
 def parse_rows(document: Mapping[str, Any]) -> tuple[FrontendRow, ...]:

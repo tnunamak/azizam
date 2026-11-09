@@ -245,8 +245,9 @@ class NodeGraphRunner:
             plan.warnings.append(f"requested {plan.total} but produced {len(collected)} after {rounds} round(s)")
         processed = await self._stages(ctx, collected)
         bundle = await self._store(ctx, adapter, processed, result_name or next(iter(outputs)), limits)
+        freed = models_freed or bool(getattr(plan.state, "models_freed", False))
         ctx.record_result_metadata({"rounds": rounds, "returned": len(processed), "warnings": list(plan.warnings),
-                                    "models_freed": models_freed or bool(getattr(plan.state, "models_freed", False))})
+                                    **({"models_freed": True} if freed else {})})
         protocol_jobs._commit_bundle(runtime, ctx.job_id, bundle, clear_marker=True)
 
     async def _one_round(self, ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, target,
@@ -279,6 +280,8 @@ class NodeGraphRunner:
             if (batching is not None and failed.out_of_memory and not retry_freed()
                     and await batching.free_after_refusal(plan, session)):
                 return None
+            if failed.queue_position is not None:       # a timed-out caller is told where its job stood in the engine's queue
+                ctx.record_result_metadata({"queue_position": failed.queue_position})
             raise failure_of(failed, adapter, conn, failure_binding) from failed
         finally:
             if probe is not None:

@@ -44,6 +44,8 @@ def mount_rows(rig: GatewayRig) -> None:
     rig.monkeypatch.setattr(proxy.app.router, "routes", [*routes, *proxy.app.router.routes])
     # The run core keeps the job-store path it was first built with: a core an earlier test built must not serve this rig.
     rig.monkeypatch.setattr(proxy, "_workflow_core_cache", None)
+    # Likewise the job spool: it keeps the directory it was first built over, which an earlier test's rig removed.
+    rig.monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", None)
 
 
 @dataclass

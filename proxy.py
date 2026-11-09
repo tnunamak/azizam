@@ -28,6 +28,7 @@ from gateway.public_failure import PublicFailure
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
 
+import inspect
 import asyncio
 import shutil
 import base64
@@ -123,7 +124,8 @@ from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.engine_protocol.types import ResultContext
-from gateway.workflow_runtime_types import JobNotFound, MediaRef, ResultUnavailable, RunRefused
+from gateway.workflow_runtime_types import (
+    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -9301,7 +9303,7 @@ async def proxy_graph_image_request(
 # a defensive allow-listed alias (not an OpenAI SDK field) so a non-SDK
 # client using the plural, unbracketed name still works instead of being
 # silently ignored.
-_EDIT_IMAGE_FIELD_NAMES = ("image[]", "image", "images")
+_EDIT_IMAGE_FIELD_NAMES = frontend_wire_shapes.IMAGE_PARTS
 
 
 def _collect_edit_image_uploads(form: Any) -> list[Any]:
@@ -25982,10 +25984,17 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
-def _run_job_content(job_id: str, caller: Any) -> Response | None:
-    """A finished run's content, when it has exactly one file result, is that file in its own media type; else None."""
+def _run_job_content(job_id: str, caller: Any, request: Any = None) -> Response | None:
+    """A finished run's content: the wire of the row that took the job reads it its own way; else, with exactly one file
+    result, that file in its own media type; else None."""
     service = _workflow_job_service()
     view = service.get(job_id, caller) if service is not None else None
+    if view is not None and view.status == "succeeded":
+        stored = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        row = {r.id: r for r in frontend_shapes.bundled_rows()}.get(str((stored.get("metadata") or {}).get("frontend") or ""))
+        read = frontend_shapes.build_shape(row).render_content(view, service, caller, request) if row is not None else None
+        if read is not None:
+            return read
     refs = [ref for ref in (view.results or ()) if ref.asset_id is not None] if view is not None else []
     if len(refs) != 1:
         return None
@@ -26067,7 +26076,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
            headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
     if workflow_run.is_run_job(job):  # first: a run's row carries its route's intent, which may be mesh.generate
-        single = await asyncio.to_thread(_run_job_content, job_id, auth_context)
+        single = await asyncio.to_thread(_run_job_content, job_id, auth_context, request)
         if single is not None:
             return single
     if intent == mesh_api.MESH_INTENT:
@@ -26786,7 +26795,9 @@ class _WorkflowRunPort:
                 staged[name] = await stage(connection(), filename="input" + suffix, data=data,
                                            media_type=ref.wire_media_type or ref.media_type)
             except (TransportFailure, ProtocolUpstreamError) as exc:
-                raise ProtocolError("The engine did not take an input file.", code="asset_upload_failed") from exc
+                # An engine that answered 200 without a name for the file is told apart from one that refused it.
+                reason = "upload_no_name" if getattr(exc, "status", None) == 200 else "upload_failed"
+                raise node_graph_runner.RunFailed(reason, "upstream", client_errors.REASONS[reason], upstream_status=502) from exc
         return staged
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
@@ -26828,6 +26839,7 @@ class _AdaptiveBatching:
         estimate: Optional[int]
         free_before: Optional[int]
         batch_limit: Any
+        counts: bool = True            # the workflow takes a batch size: a round can ask for several pictures at once
         models_freed: bool = False
 
     async def plan(self, session, ctx, inputs, options):
@@ -26847,7 +26859,7 @@ class _AdaptiveBatching:
         name = str(contract.get("id") or "")
         state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
                             free_before=await graph_free_vram_bytes(session.client),
-                            batch_limit=(spec.get("batch_size") or {}).get("maximum"))
+                            batch_limit=(spec.get("batch_size") or {}).get("maximum"), counts="batch_size" in spec)
         return node_graph_runner.Plan(total=total, max_rounds=max(1, total + 2), warnings=warnings, state=state)
 
     async def target(self, plan, session, round_no, remaining):
@@ -26871,7 +26883,7 @@ class _AdaptiveBatching:
         return target
 
     def round_inputs(self, plan, target):
-        return {"batch_size": max(1, int(target))}
+        return {"batch_size": max(1, int(target))} if plan.state.counts else {}
 
     def probe(self, plan, session, round_no):
         return _VramProbe(session.client) if plan.state.estimate is None else None
@@ -26893,9 +26905,25 @@ class _AdaptiveBatching:
 
 
 def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):
-    """Rounds are sized from free memory for a workflow that takes a count of pictures; any other run is one round."""
+    """Rounds are sized from free memory for a workflow that takes a count of pictures or answers with pictures; any other run
+    is one round."""
     spec = ctx.pin.contract.get("inputs") or {}
-    return _AdaptiveBatching() if "batch_size" in spec else None
+    pictures = any(str((out or {}).get("media_type") or "").startswith("image/") for out in (ctx.pin.contract.get("outputs") or {}).values())
+    return _AdaptiveBatching() if "batch_size" in spec or pictures else None
+
+
+def _graph_binding_problem(binding: Any) -> str | None:
+    """Why the graph service behind ``binding`` cannot take a run: not configured, switched off, or held out by the operator."""
+    found = _workflow_engine(binding.adapter_id)
+    if found is None:
+        return workflow_run.BINDING_UNAVAILABLE
+    service_id, record, _, _ = found
+    held = str(_operator_service_availability_overrides().get(service_id, {}).get("state") or "").strip().lower()
+    if record.get("enabled", True) is False or held == "disabled":
+        return SERVICE_DISABLED
+    if held in {"maintenance", "draining"}:
+        return SERVICE_NOT_ADMITTING
+    return None
 
 
 def _graph_runner_host() -> node_graph_runner.GraphHost:
@@ -26921,7 +26949,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
 
     return node_graph_runner.GraphHost(
         engine=_workflow_engine, identity=identity,
-        problem=lambda binding: None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE,
+        problem=_graph_binding_problem,
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
         max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
@@ -26943,6 +26971,24 @@ _register_graph_runner()
 # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.ImageJobs.shape_id] = _image_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipart.shape_id] = image_edit_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[
+    frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
+    """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
+    context, error = _prepare_image_edit_mask_context(source_image_content=image, mask_content=mask)
+    if error is not None:
+        return error
+    return _apply_edit_mask_as_source_alpha(context), context.mask_mode
+
+
+frontend_wire_shapes.MASKING["source_alpha"] = _mask_into_source_alpha
+frontend_wire_shapes.JOB_DOCUMENT["job"] = lambda job_id: (
+    _image_media_job_client_payload(job, None) if (job := media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)) else None)
+# What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
+frontend_wire_shapes.FIXED_INPUTS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = lambda: {
+    "prompt": IMAGE_VARIATIONS_PROMPT, "denoise": _image_variations_denoise()}
 
 
 def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
@@ -27042,6 +27088,8 @@ _RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
 class _RunReceiptOwner(ReceiptLifecycleOwner):
     """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
 
+    short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
+
     def handoff(self) -> "_RunReceiptOwner":
         super().handoff()
         _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
@@ -27054,18 +27102,40 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     identity = auth.identity
     # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
     # activity read their capability from it. A route that declares none records the generic run intent.
-    return _RunReceiptOwner(RouteReceipt(
+    owner = _RunReceiptOwner(RouteReceipt(
         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
-        app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
+    owner.short_names = row.receipt_names == "short"
+    return owner
+
+
+def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
+    for name, kind, reason in notes:
+        _record_image_input(owner.receipt, name, rejected_reason=(reason or kind) if kind == "rejected" else None,
+                            ignored_reason=(reason or kind) if kind == "ignored" else None)
+
+
+def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
+    for name, value, warning in facts:
+        owner.receipt.metadata[name] = value
+        if warning:
+            owner.receipt.add_warning(warning)
 
 
 def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
                       contract_digest: str | None) -> None:
-    owner.receipt.resolved_workflow = workflow_id
-    owner.receipt.attach_manifest(manifest_id=workflow_id,
-                                  manifest_version=None if record_revision is None else str(record_revision),
-                                  manifest_hash=contract_digest)
+    receipt = owner.receipt
+    version = None if record_revision is None else str(record_revision)
+    name = workflow_id
+    if owner.short_names:
+        # The image routes named the workflow by what follows its intent, and its version was the contract's own.
+        name = workflow_id.removeprefix(f"{receipt.intent}.")
+        receipt.requested_workflow = name
+        entry = WORKFLOW_SNAPSHOTS.current().get(workflow_id) if WORKFLOW_SNAPSHOTS is not None else None
+        version = str(entry.contract.get("version")) if entry is not None and entry.contract.get("version") else version
+    receipt.resolved_workflow = name
+    receipt.attach_manifest(manifest_id=workflow_id, manifest_version=version, manifest_hash=contract_digest)
 
 
 def _pinned_of_job(job_id: str) -> Any:
@@ -27076,10 +27146,27 @@ def _pinned_of_job(job_id: str) -> Any:
         return None
 
 
+def _row_route_policy(path: str) -> dict[str, Any] | None:
+    """The policy a mounted row's route declares for its path (its ``runtime_policy`` data), as policy-request fields.
+    None when the path has none of its own; the registry's route policy then decides."""
+    wanted = inspect.signature(make_policy_request).parameters
+    for row in frontend_shapes.bundled_rows():
+        for route in row.routes:
+            if path == route.canonical or path in route.aliases:
+                fields = {k: v for k, v in route.runtime_policy.items() if k in wanted}
+                return fields if fields else None
+    return None
+
+
+frontend_wire_shapes.ASSET_URLS.update({
+    "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
+    "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
+})
+
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
 _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     authenticate=lambda request, path: authenticate_request(request, path),
-    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path),
+    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=DERIVED._RUNTIME_ROUTE_POLICY.get(path) or _row_route_policy(path)),
     core=_workflow_run_core,
     snapshot=lambda: WORKFLOW_SNAPSHOTS.current(),
     jobs=_workflow_job_service,
@@ -27090,6 +27177,8 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     open_receipt=_open_row_receipt,
     name_receipt=_name_row_receipt,
     pinned=_pinned_of_job,
+    record_inputs=_record_row_inputs,
+    record_facts=_record_row_facts,
 )
 
 

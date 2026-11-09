@@ -7,7 +7,7 @@ no model and no engine; the input names it sets come from the chosen workflow's 
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
 from starlette.requests import Request
@@ -59,14 +59,17 @@ def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
 
 
 def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s: int | None = None,
-                     wire_codes: frozenset[str] | None = None) -> Response:
+                     wire_codes: frozenset[str] | None = None, null_keyed: frozenset[str] = frozenset(),
+                     extra: Mapping[str, Any] | None = None) -> Response:
     if failure is None:
         return _wire.error_response(500, fallback, kind="api_error")
     status = failure.upstream_status if failure.category == "upstream" and failure.upstream_status else \
         _STATUS_BY_CATEGORY.get(failure.category, 500)
     response = _wire.error_response(status if status >= 400 else 502, failure.message,
                                     kind="invalid_request_error" if status < 500 else "api_error",
-                                    code=failure.code if wire_codes is None or failure.code in wire_codes else None)
+                                    code=failure.code if wire_codes is None or failure.code in wire_codes else None,
+                                    null_code=failure.code in null_keyed,
+                                    **({"param": None} if failure.code in null_keyed else {}), **(extra or {}))
     if retry_after_s is not None and failure.retryable:
         seconds = client_errors.retry_after(str(retry_after_s))
         if seconds:
@@ -99,6 +102,10 @@ class Shape:
     # The failure codes this wire carries. None: every code the core gives. A wire whose clients never saw the core's
     # codes lists the few it did send; any other failure is told by its status and message alone.
     wire_codes: ClassVar[frozenset[str] | None] = None
+    # Failure codes whose answer carries ``"code": null`` and ``"param": null`` (the wire's clients saw those keys).
+    null_keyed_codes: ClassVar[frozenset[str]] = frozenset()
+    # Result facts a failed job's answer repeats as fields of its error (the wire's clients read them there).
+    failure_fields: ClassVar[tuple[str, ...]] = ()
     # Whether a workflow this shape refuses is refused at save, when no other row serves it (a single-purpose wire).
     save_gate: ClassVar[bool] = False
     # The answer forms the wire lets a caller ask for, and the wire field that carries the choice. None: no choice.
@@ -144,8 +151,10 @@ class Shape:
     async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                              spool: RequestSpool) -> RunRequest | Response:
         uploads: list[tuple[str, Any]] = []
+        request.state.input_notes = _wire.begin_notes()
+        request.state.receipt_facts = _wire.begin_facts()
         if self.body == "multipart":
-            read = await _wire.split_form(request, self.form_limits(row, snapshot, spool))
+            read = await _wire.split_form(request, self.form_limits(row, snapshot, spool), self.unreadable_form)
             if isinstance(read, Response):
                 return read
             fields, uploads = read
@@ -161,13 +170,29 @@ class Shape:
         if row.default_answer and not answer.get(self.answer_field):
             answer = {**answer, self.answer_field: row.default_answer}
         request.state.answer_form = answer
-        target = _wire.pop_str(fields, "model") or self.default_target()
-        servable = lambda entry: not self.profile(entry.contract)  # noqa: E731
+        refused = self.precheck(fields, uploads)
+        if refused is not None:
+            return refused
+        named = _wire.pop_str(fields, "model")
+        # A workflow the row's service has no binding for (another service runs it) is no workflow of this row.
+        backend = next((route.runtime_policy["backend"] for route in row.routes if route.runtime_policy.get("backend")), None)
+        servable = lambda entry: not self.profile(entry.contract) and (backend is None or backend in entry.bindings)  # noqa: E731
+        target = self.refine_target(named or self.default_target(), named=bool(named), uploads=uploads,
+                                    exists=lambda name: not isinstance(
+                                        _wire.choose_workflow(snapshot, row, target=name, supplied=[], servable=servable), Response))
         pool = _wire.candidates(snapshot, row, servable)
         supplied = [*fields, *(name for entry in pool for name in _wire.asset_input_names(entry) if uploads)]
-        chosen = _wire.choose_workflow(snapshot, row, target=target, supplied=supplied, servable=servable)
+        chosen = _wire.choose_workflow(snapshot, row, target=target, supplied=supplied, servable=servable,
+                                       not_found=self.no_such_model)
         if isinstance(chosen, Response):
             return chosen
+        refused = self.postcheck(chosen, fields, uploads)
+        if refused is not None:
+            return refused
+        prepared = await self.prepare_uploads(chosen, uploads, request)
+        if isinstance(prepared, Response):
+            return prepared
+        uploads = prepared
         mapping = self.file_inputs(chosen, [name for name, _ in uploads])
         if isinstance(mapping, Response):
             return mapping
@@ -186,6 +211,32 @@ class Shape:
         shaped refusal. The fields are read, not removed: ``transport_fields`` keeps them out of the inputs."""
         return {}, {}
 
+    def unreadable_form(self) -> Response:
+        """Hook: what a multipart body that does not parse is told."""
+        return _wire.error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
+
+    def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        """Hook: refusals the wire made before it looked up any workflow."""
+        return None
+
+    def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
+                      exists: Callable[[str], bool]) -> str | None:
+        """Hook: the workflow name a request runs, from the name it sent (or the default) and the files it carries."""
+        return target
+
+    def no_such_model(self, target: str) -> Response | None:
+        """Hook: how the wire tells that a name selects nothing (None: the common answer)."""
+        return None
+
+    def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        """Hook: refusals the wire made once the workflow is known."""
+        return None
+
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+                              ) -> list[tuple[str, Any]] | Response:
+        """Hook: the file parts the run is given, once the workflow is known (a wire may fold one part into another)."""
+        return uploads
+
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""
         return inputs
@@ -199,7 +250,7 @@ class Shape:
     async def to_response(self, outcome: RunJobView | RunRefused, row: FrontendRow, *, jobs: JobService,
                           caller: CallerContext, request: Any = None) -> Response:
         if isinstance(outcome, RunRefused):
-            return _wire.refused_response(outcome)
+            return _wire.refused_response(outcome, row.refusal_bodies.get(outcome.code))
         if row.mode == "job":
             return self.render_job(outcome)
         try:
@@ -208,14 +259,18 @@ class Shape:
             return _wire.error_response(404, "Job not found", code="job_not_found")
         if view.status == "failed":
             return failure_response(view.failure, fallback="The job failed",
-                                    retry_after_s=self.retry_after(view, jobs, caller), wire_codes=self.wire_codes)
+                                    retry_after_s=self.retry_after(view, jobs, caller), wire_codes=self.wire_codes,
+                                    null_keyed=self.null_keyed_codes,
+                                    extra={name: view.result_metadata[name] for name in self.failure_fields if name in view.result_metadata})
         if view.status == "canceled":
             return _wire.error_response(409, "The job was canceled", code="job_canceled")
         if view.status != "succeeded":
             return _wire.error_response(504, "The job did not finish in time", kind="api_error", code=self.timeout_code)
         try:
-            answer = getattr(getattr(request, "state", None), "answer_form", None) or {}
-            return await self.render_success(view, jobs, caller, answer)
+            answer = {**(getattr(getattr(request, "state", None), "answer_form", None) or {}), "request": request}
+            response = await self.render_success(view, jobs, caller, answer)
+            response.headers.update(_wire.result_headers(row.result_headers, {**view.result_metadata, **answer}))
+            return response
         except (JobNotFound, ResultUnavailable):
             return _wire.error_response(404, "The result is not available", code="result_unavailable")
 
@@ -236,6 +291,10 @@ class Shape:
     async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
                              answer: Mapping[str, Any] | None = None) -> Response:
         raise NotImplementedError
+
+    def render_content(self, view: RunJobView, jobs: JobService, caller: CallerContext, request: Any) -> Response | None:
+        """Hook: how a finished job of this wire is read at the jobs route; None: as the file it holds."""
+        return None
 
     @staticmethod
     def read(view: RunJobView, ref: ResultRef, jobs: JobService, caller: CallerContext) -> bytes:

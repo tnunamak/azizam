@@ -39,6 +39,7 @@ REASONS: dict[str, str] = {
     "upstream_out_of_memory": "The engine ran out of memory. Try a smaller request.",
     "upstream_invalid_reply": "The engine's reply could not be read.",
     "upload_failed": "Image upload failed: the engine refused the file.",
+    "upload_no_name": "No filename returned from upload",
     "mask_upload_failed": "Mask upload failed: the engine refused the file.",
     "asset_upload_failed": "Asset upload failed: the engine refused the file.",
     "proxy_error": "The gateway could not complete this request. Try again.",

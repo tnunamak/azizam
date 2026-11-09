@@ -585,6 +585,17 @@ class FrontendRow:
     # The answer form a request that names none gets (``runtime_policy.default_answer``); one of the forms the row's shape
     # accepts. None: the shape's own rule.
     default_answer: str | None = None
+    # How the request receipt names the workflow it ran (``runtime_policy.receipt_names``): "id" is the workflow id;
+    # "short" is the id without its intent prefix, as the image routes always wrote it.
+    receipt_names: Literal["id", "short"] = "id"
+    # What a sync answer shows of the run's result metadata, as header names by metadata key (a list joins with "; ", a
+    # boolean is "true" or "false", a key the run did not return adds none); and which of it the receipt keeps, as
+    # receipt metadata names by metadata key. Row data: ``result_headers`` and ``result_receipt``.
+    result_headers: Mapping[str, str] = field(default_factory=dict)
+    result_receipt: Mapping[str, str] = field(default_factory=dict)
+    # The words a refusal of this row has for a code the core refused with: ``{code: {"message", "type"}}``. The answer has
+    # that message and type and no code (what the route's callers always saw). Row data: ``refusal_bodies``.
+    refusal_bodies: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
 
 class FrontendShape(Protocol):

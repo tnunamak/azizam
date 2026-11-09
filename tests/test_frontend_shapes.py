@@ -50,7 +50,7 @@ def snapshot(*names: str) -> FakeSnapshot:
 VIDEO_EDIT = {"id": "video.edit.demo", "version": "1", "intent": "video.edit", "schema_version": 2,
               "inputs": {"prompt": {"type": "string", "required": True},
                          "video": {"type": "asset", "accepts": ["video/mp4"], "required": True}},
-              "outputs": {"video": {"media_type": "video/mp4"}}, "bindings": {"fake": {}}}
+              "outputs": {"video": {"media_type": "video/mp4"}}, "bindings": {"comfyui": {}}}
 ROWS = {row.id: row for row in bundled_rows()}
 
 
@@ -209,7 +209,7 @@ def test_a_workflow_is_addressed_by_its_id_or_by_its_id_without_the_intent() -> 
     short = run_request("images-generations", json_request({"prompt": "a fox", "model": "krea2-turbo"}), snap)
     assert short.workflow_id == "image.generate.krea2-turbo"
     unknown = run_request("images-generations", json_request({"prompt": "a fox", "model": "no-such"}), snap)
-    assert unknown.status_code == 404 and json.loads(unknown.body)["error"]["code"] == "workflow_not_found"
+    assert unknown.status_code == 404 and json.loads(unknown.body)["error"]["code"] == "model_not_found"
     wrong_row = run_request("images-generations", json_request({"prompt": "a fox", "model": "qwen-image-2.1-edit"}), snap)
     assert wrong_row.status_code == 404                 # the row's selection bounds what a short name can reach
 
@@ -235,8 +235,8 @@ def test_the_picture_encoding_fields_of_the_wire_are_not_workflow_inputs() -> No
 
 @pytest.mark.parametrize("payload,status,code", [
     (b"{", 400, None), (b"[]", 400, None),
-    ({"prompt": "x", "model": "no.such.workflow"}, 404, "workflow_not_found"),
-    ({"prompt": "x", "model": "image.edit.qwen-image-2.1-edit"}, 404, "workflow_not_found"),   # needs a file: not this wire's
+    ({"prompt": "x", "model": "no.such.workflow"}, 404, "model_not_found"),
+    ({"prompt": "x", "model": "image.edit.qwen-image-2.1-edit"}, 404, "model_not_found"),   # needs a file: not this wire's
 ])
 def test_a_malformed_json_request_is_the_shapes_own_error(payload: Any, status: int, code: str | None) -> None:
     response = run_request("images-generations", json_request(payload), snapshot("flux2-klein", "qwen-image-2.1-edit"))

@@ -900,7 +900,11 @@ frontends:
   - id: images-generations
     shape: openai.images.json
     mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
+    receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
     lists_as_model: true
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
@@ -908,11 +912,15 @@ frontends:
       - methods: [POST]
         canonical: /v1/images/generations
         aliases: [/openai/v1/images/generations]
-        runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: images-edits
     shape: openai.images.multipart
     mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
+    receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source, image_mask: X-Image-Mask, image_mask_source: X-Image-Mask-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
     lists_as_model: true
     selects: {match: {inputs: {prompt: {type: string}, source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
@@ -920,28 +928,34 @@ frontends:
       - methods: [POST]
         canonical: /v1/images/edits
         aliases: [/openai/v1/images/edits]
-        runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: images-variations
     shape: openai.images.variations
     mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
+    receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
     selects: {match: {inputs: {source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
     routes:
       - methods: [POST]
         canonical: /v1/images/variations
         aliases: [/openai/v1/images/variations]
-        runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: image-jobs
     shape: openai.images.jobs
     mode: job
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
+    receipt_opens: before_policy
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
     routes:
       - methods: [POST]
         canonical: /gateway/v1/media/jobs/image-generations
-        runtime_policy: {default_answer: b64_json, job_failure_text: category_copy, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_failure_text: category_copy, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: audio-generate
     shape: openai.audio.json
     mode: sync

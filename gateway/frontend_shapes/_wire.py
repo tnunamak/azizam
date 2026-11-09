@@ -3,6 +3,7 @@ rendering a refusal. Nothing here names an intent, a workflow, a model or an eng
 
 from __future__ import annotations
 
+import contextvars
 import json
 from dataclasses import dataclass
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
@@ -34,6 +35,56 @@ FORM_PART_HEAD_BYTES = 8 << 10      # the boundary and headers around one part
 WORKFLOW_AMBIGUOUS = "workflow_ambiguous"
 
 
+_NOTES: contextvars.ContextVar[list[tuple[str, str, str | None]]] = contextvars.ContextVar("input_notes")
+
+
+def begin_notes() -> list[tuple[str, str, str | None]]:
+    """Start the list of inputs this request's shape accepts, ignores or refuses; the row server writes it to the receipt."""
+    notes: list[tuple[str, str, str | None]] = []
+    _NOTES.set(notes)
+    return notes
+
+
+_FACTS: contextvars.ContextVar[list[tuple[str, Any, str | None]]] = contextvars.ContextVar("receipt_facts")
+
+
+def begin_facts() -> list[tuple[str, Any, str | None]]:
+    """Start the list of facts this request's shape puts on the receipt (a value to keep, and a warning to raise)."""
+    facts: list[tuple[str, Any, str | None]] = []
+    _FACTS.set(facts)
+    return facts
+
+
+def fact(name: str, value: Any, warning: str | None = None) -> None:
+    """The shape adjusted something the caller asked for: ``name`` holds ``value`` on the receipt, with ``warning`` if any."""
+    facts = _FACTS.get(None)
+    if facts is not None:
+        facts.append((name, value, warning))
+
+
+def result_headers(names: Mapping[str, str], facts: Mapping[str, Any]) -> dict[str, str]:
+    """The headers a row shows of a run's facts: one per fact the run returned, under the name the row gives it."""
+    headers: dict[str, str] = {}
+    for key, header in names.items():
+        value = facts.get(key)
+        if value is None or value == [] or value == "":
+            continue
+        if isinstance(value, bool):
+            headers[header] = "true" if value else "false"
+        elif isinstance(value, (list, tuple)):
+            headers[header] = "; ".join(str(item) for item in value)
+        else:
+            headers[header] = str(value)
+    return headers
+
+
+def note(name: str, *, rejected: str | None = None, ignored: str | None = None) -> None:
+    """The shape met input ``name``: accepted, or refused (``rejected`` is the reason), or ignored (``ignored``)."""
+    notes = _NOTES.get(None)
+    if notes is not None:
+        notes.append((name, "rejected" if rejected else "ignored" if ignored else "accepted", rejected or ignored))
+
+
 def error_response(status: int, message: str, *, kind: str = "invalid_request_error", code: str | None = None,
                    headers: Mapping[str, str] | None = None, null_code: bool = False, **extra: Any) -> Response:
     """The OpenAI-shaped error body: ``{"error": {"message", "type", "code"?}}``."""
@@ -46,7 +97,7 @@ def error_response(status: int, message: str, *, kind: str = "invalid_request_er
     return JSONResponse({"error": body}, status_code=status, headers=dict(headers or {}))
 
 
-def refused_response(refused: RunRefused) -> Response:
+def refused_response(refused: RunRefused, words: Mapping[str, str] | None = None) -> Response:
     """A ``RunRefused`` in the OpenAI error vocabulary: the status and code of the refusal, the problems by path,
     ``Retry-After`` when the core says when to come back."""
     extra: dict[str, Any] = {}
@@ -54,6 +105,8 @@ def refused_response(refused: RunRefused) -> Response:
         extra["problems"] = [problem.as_dict() for problem in refused.problems]
     seconds = client_errors.retry_after(str(refused.retry_after_s))  # None when the core names no time
     headers = {"Retry-After": seconds} if seconds else None
+    if words:               # the row's own words for this refusal: its message and type, and no code
+        return error_response(refused.http_status, words["message"], kind=words["type"], headers=headers)
     kind = "invalid_request_error" if refused.http_status < 500 else "api_error"
     return error_response(refused.http_status, refused.message, kind=kind, code=refused.code, headers=headers, **extra)
 
@@ -146,7 +199,7 @@ def _bounded(request: Request, budget: float) -> Request:
     return Request(request.scope, receive)
 
 
-async def split_form(request: Request, limits: FormLimits) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
+async def split_form(request: Request, limits: FormLimits, unreadable: Callable[[], Response] | None = None) -> tuple[dict[str, Any], list[tuple[str, Any]]] | Response:
     """A multipart body as its fields and its file parts (name, upload) in the order received. The body is bounded
     while it is read: its bytes by ``limits.body_budget``, its file and text parts by their counts. A file part whose
     name is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
@@ -160,7 +213,8 @@ async def split_form(request: Request, limits: FormLimits) -> tuple[dict[str, An
         return error_response(413, "The request body is larger than this route accepts", code="payload_too_large")
     except (MultiPartException, HTTPException, ValueError):  # the parser's own error is a ValueError
         _close_spills(parser)
-        return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
+        return unreadable() if unreadable is not None else error_response(
+            400, "The request body is not valid multipart/form-data", code="invalid_request_body")
     fields: dict[str, Any] = {}
     uploads: list[tuple[str, Any]] = []
     for name, value in form.multi_items():
@@ -206,7 +260,8 @@ def required_inputs(entry: WorkflowEntry) -> set[str]:
 
 
 def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str | None, supplied: Sequence[str],
-                    servable: Callable[[WorkflowEntry], bool] | None = None) -> WorkflowEntry | Response:
+                    servable: Callable[[WorkflowEntry], bool] | None = None,
+                    not_found: Callable[[str], Response | None] | None = None) -> WorkflowEntry | Response:
     """The workflow this request runs. A named target resolves through the snapshot's name view (a workflow id or
     alias) and must be one the row selects. With no target the row's selection narrows to the workflows whose
     required inputs the request supplies; exactly one must remain."""
@@ -221,8 +276,8 @@ def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str
         short = [entry for entry in pool if entry.id == f"{entry.contract.get('intent')}.{target}"]
         if len(short) == 1:        # a workflow is also addressed by its id without the intent that starts it
             return short[0]
-        return error_response(404, f"The model {target!r} does not exist or is not available on this route",
-                              code=WORKFLOW_NOT_FOUND, param="model")
+        return (not_found(target) if not_found is not None else None) or error_response(
+            404, f"The model {target!r} does not exist or is not available on this route", code=WORKFLOW_NOT_FOUND, param="model")
     fitting = [entry for entry in pool if required_inputs(entry) <= set(supplied)]
     if len(fitting) == 1:
         return fitting[0]
