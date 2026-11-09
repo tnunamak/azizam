@@ -7931,7 +7931,6 @@ def _store_asset_bytes(
     ``sources`` (``[{"asset_id", "name"}]``, the assets it was made from). It is kept in the file's sidecar and the
     Library reads it; nothing here depends on which workflow made the file. ``keep_prompt=False`` stores a file that
     is an input of the run, not its result: the run's prompt belongs to the result, so none is kept for this file."""
-    import sys, traceback; print("DBGSTORE", kind, suffix, file=sys.stderr); traceback.print_stack(limit=8, file=sys.stderr)
     from gateway import private_io
     kind = str(kind).strip().lower()
     if kind not in _ASSET_SUFFIXES_BY_KIND:

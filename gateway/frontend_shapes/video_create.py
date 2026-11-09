@@ -334,7 +334,9 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     extensions = body.get("extensions")
     from gateway.frontend_shapes._base import IDEMPOTENCY_HEADER
     return RunRequest(
-        workflow_id=chosen.id, inputs=inputs, media=media, options=options, facts=facts,
+        workflow_id=chosen.id, inputs=inputs, media=media,
+        sources={name: () for name in media},      # the reference is temporary: the Library keeps no note of it, as the old route did
+        options=options, facts=facts,
         idempotency_key=request.headers.get(IDEMPOTENCY_HEADER) or None, frontend_id=row.id,
         failure_text=row.job_failure_text, retries=row.job_retries,
         extensions=dict(extensions) if isinstance(extensions, Mapping) else {},
