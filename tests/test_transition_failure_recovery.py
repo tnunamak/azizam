@@ -177,10 +177,14 @@ def test_a_verified_cold_start_recorded_before_a_crash_goes_on_to_open_with_the_
     assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
 
 
-@pytest.mark.parametrize(("resident", "clean", "state"), [("beta", True, "failed_closed"), ("alpha", False, "failed_closed"),
-                                                          ("alpha", None, "reconciling")])
-def test_a_recorded_cold_start_refreshes_the_clean_evidence_before_it_continues(tmp_path, monkeypatch, resident, clean, state) -> None:
-    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+@pytest.mark.parametrize(("verify", "resident", "clean", "state"), [
+    (True, "alpha", False, "failed_closed"), (True, "alpha", None, "reconciling"),
+    (True, "beta", True, "reconciling"),   # clean, but the load is no longer the target: the open check holds it
+    (False, "beta", True, "failed_closed"),  # the shipped policy checks the target by name
+])
+def test_a_recorded_cold_start_refreshes_the_clean_evidence_before_it_continues(
+        tmp_path, monkeypatch, verify, resident, clean, state) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=verify)
     op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="reset", outcome="no_change",
                               evidence="restore:reset:clean:serving_cold", target="alpha")
     engine.resident, engine.clean = resident, clean
