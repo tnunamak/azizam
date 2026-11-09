@@ -633,7 +633,7 @@ def listed_jobs(db, tmp_path, count, *, intent="demo.listing", scope="app-1"):
     core, port, _ = make_core(db, tmp_path, snap)
     ids = []
     for index in range(count):
-        view = run(core.submit_run(request(idempotency_key=f"list-{index}", intent=intent), Caller(scope=scope), snapshot=snap))
+        view = run(core.submit_run(request(idempotency_key=f"{intent}-{scope}-{index}", intent=intent), Caller(scope=scope), snapshot=snap))
         ids.append(view.job_id)
         with sqlite3.connect(db) as conn:
             conn.execute("UPDATE media_jobs SET created_at = ? WHERE job_id = ?", (100 * (index + 1), view.job_id))
