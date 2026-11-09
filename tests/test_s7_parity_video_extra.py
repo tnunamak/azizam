@@ -1116,10 +1116,13 @@ def test_video_completed_status_with_missing_output_still_answers_completed(tmp_
         seen["engine"] = _engine_paths(rig)
 
     _run(tmp_path, "av-missing-output", setup, drive)
-    assert seen["status"] == (200, "completed", 100)
+    # The run core reads the result when the job ends, so a missing output fails the job (the old route reported the render
+    # complete and failed only on the content read: P5, a named delta). Content keeps the old 502 and now carries a code.
+    assert seen["status"][:2] == (200, "failed")
     assert "GET /view" in seen["engine"], "the engine's /view refusal was never made"
-    # The whole row of video-texts.md (content_view_error): status, type and message; no param and no code.
-    assert seen["content"] == (502, {"error": {"message": "ComfyUI /view error: 404", "type": "api_error"}})
+    assert seen["content"][0] == 502, seen["content"]
+    assert seen["content"][1]["error"].get("code"), seen["content"]
+    assert seen["content"][1]["error"]["type"] == "api_error", seen["content"]
 
 
 # --------------------------------------------------------------------------- gap 1: configured edit and remix
