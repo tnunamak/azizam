@@ -16,7 +16,8 @@ describe("the Home to Try hand-off", () => {
     expect(window.sessionStorage.getItem("azizam.home.handoff")).not.toContain("fox.png");
     const taken = takeHomeHandoff("mesh");
     expect(taken).toMatchObject({ capability: "mesh", model: "m", prompt: "a note" });
-    expect(taken?.files).toEqual([picture]);
+    expect(taken?.files).toHaveLength(1);
+    expect(taken?.files?.[0]).toBe(picture);
     expect(takeHomeHandoff("mesh")).toBeNull();
   });
 
@@ -43,7 +44,11 @@ it("keeps ordered input names with their in-memory files and consumes them once"
   const ending = new File(["e"], "end.png", { type: "image/png" });
   storeHomeHandoff({ capability: "video", model: "m", prompt: "", files: [picture, ending], file_inputs: ["image", "last_frame"] });
   expect(window.sessionStorage.getItem("azizam.home.handoff")).not.toContain("last_frame");
-  expect(takeHomeHandoff("video")).toMatchObject({ files: [picture, ending], file_inputs: ["image", "last_frame"] });
+  const taken = takeHomeHandoff("video");
+  expect(taken?.file_inputs).toEqual(["image", "last_frame"]);
+  expect(taken?.files?.map((file) => file.name)).toEqual(["fox.png", "end.png"]);
+  expect(taken?.files?.[0]).toBe(picture);
+  expect(taken?.files?.[1]).toBe(ending);
   expect(takeHomeHandoff("video")).toBeNull();
 });
 

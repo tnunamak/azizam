@@ -6,13 +6,17 @@ import { TRANSCRIBE_FILE_SLOTS } from "./transcribe-mode";
 const png = new File(["p"], "fox.png", { type: "image/png" });
 const wav = new File(["w"], "voice.wav", { type: "audio/wav" });
 
+// File equality does not identify which file was assigned.
+const names = (chosen: Record<string, File | null>) =>
+  Object.fromEntries(Object.entries(chosen).map(([input, file]) => [input, file?.name ?? null]));
+
 describe("assignHandoffFiles", () => {
   it("gives a file to the required input of its media family first", () => {
     const slots = [
       { inputName: "mask", required: false, family: "image" },
       { inputName: "source", required: true, family: "image" },
     ];
-    expect(assignHandoffFiles([png], slots)).toEqual({ source: png });
+    expect(names(assignHandoffFiles([png], slots))).toEqual({ source: png.name });
   });
 
   it("matches each file to the input of its own family", () => {
@@ -20,31 +24,29 @@ describe("assignHandoffFiles", () => {
       { inputName: "voice", required: true, family: "audio" },
       { inputName: "photo", required: true, family: "image" },
     ];
-    expect(assignHandoffFiles([png, wav], slots)).toEqual({ photo: png, voice: wav });
+    expect(names(assignHandoffFiles([png, wav], slots))).toEqual({ photo: png.name, voice: wav.name });
   });
 
   it("lets an input that declares no family take any file, and drops a file nothing takes", () => {
-    expect(assignHandoffFiles([wav], [{ inputName: "any", required: true, family: "" }])).toEqual({ any: wav });
+    expect(names(assignHandoffFiles([wav], [{ inputName: "any", required: true, family: "" }]))).toEqual({ any: wav.name });
     expect(assignHandoffFiles([wav], [{ inputName: "photo", required: true, family: "image" }])).toEqual({});
   });
 });
 
 describe("the slots a panel declares", () => {
   it("Photo to 3D takes a picture and refuses a recording", () => {
-    expect(assignHandoffFiles([png], MESH_FILE_SLOTS)).toEqual({ image: png });
+    expect(names(assignHandoffFiles([png], MESH_FILE_SLOTS))).toEqual({ image: png.name });
     expect(assignHandoffFiles([wav], MESH_FILE_SLOTS)).toEqual({});
   });
 
   it("Transcribe takes a recording and refuses a picture", () => {
-    expect(assignHandoffFiles([wav], TRANSCRIBE_FILE_SLOTS)).toEqual({ audio: wav });
+    expect(names(assignHandoffFiles([wav], TRANSCRIBE_FILE_SLOTS))).toEqual({ audio: wav.name });
     expect(assignHandoffFiles([png], TRANSCRIBE_FILE_SLOTS)).toEqual({});
   });
 });
 
 describe("Home files bound by workflow input name", () => {
   // toEqual treats any two File objects as equal, so compare which file (by name) each input got.
-  const names = (chosen: Record<string, File | null>) =>
-    Object.fromEntries(Object.entries(chosen).map(([input, file]) => [input, file?.name ?? null]));
   const ending = new File(["e"], "end.png", { type: "image/png" });
   const video = new File(["v"], "source.mp4", { type: "video/mp4" });
   const keyframes = [
