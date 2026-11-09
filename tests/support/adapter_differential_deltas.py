@@ -21,7 +21,13 @@ from typing import Any, Mapping, Sequence
 KINDS = frozenset({
     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
     "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "remove",
+    # The video move (CODE_TO_DATA_S7_VIDEO_MOVE.md section 5.4). Each names one thing that differs and nothing else.
+    "video_id_namespace", "record_store_moved", "orphan_marked_by_runner", "receipt_names_job", "status_follows_runner",
 })
+#: The video-move kinds. None of them may change an HTTP status or an error body: a delta of one of these kinds whose
+#: path goes through a ``status`` that follows ``response`` (the HTTP status) or through an ``error`` is refused.
+VIDEO_KINDS = frozenset({"video_id_namespace", "record_store_moved", "orphan_marked_by_runner", "receipt_names_job",
+                         "status_follows_runner"})
 #: Places a moved route keeps identical (golden design section 4): engine requests, every header, the receipt's
 #: accepted inputs and resolved workflow, and the stored asset rows. No kind may name a path through one of them.
 KEPT_IDENTICAL = frozenset({"engine_requests", "headers", "accepted_inputs", "resolved_workflow", "assets"})
@@ -43,6 +49,12 @@ class Delta:
     new: Any
     reason: str
 
+    def _video_problems(self) -> list[str]:
+        try:
+            return _video_problems_of(self.path)
+        except DeltaError:
+            return []                       # the malformed path is reported by ``problems``
+
     def problems(self) -> list[str]:
         out = []
         if self.kind not in KINDS:
@@ -63,12 +75,24 @@ class Delta:
                 out.append(str(error))
             if kept:
                 out.append(f"{self.path}: {kept[0]!r} is kept identical by a moved route; fix the shape, not the golden")
+            if self.kind in VIDEO_KINDS:
+                out.extend(self._video_problems())
         # A remove of a list item names that whole item as its old value (a replay drops one engine call or one
         # listed job); every other delta names one leaf value, so it cannot hide a change inside a subtree.
         removes_list_item = self.kind == "remove" and self.path.endswith("]")
         if any(isinstance(value, (dict, list)) for value in (self.new,) + (() if removes_list_item else (self.old,))):
             out.append(f"{self.path}: a delta names one value, not a subtree")
         return out
+
+
+def _video_problems_of(path: str) -> list[str]:
+    steps = [step for part in path.split("#") for step in _steps(part)]
+    out = []
+    if any(a == "response" and b == "status" for a, b in zip(steps, steps[1:])):
+        out.append(f"{path}: a video-move delta cannot change an HTTP status")
+    if "error" in steps:
+        out.append(f"{path}: a video-move delta cannot change an error body")
+    return out
 
 
 def _steps(path: str) -> list[str | int]:
