@@ -90,7 +90,17 @@ performs the required erasure when that switch is enabled.
 `gateway/local_capabilities.py`: ordered `alias_operations` name intent,
 input/output modalities and sync/job execution; ordered `workflow_families`
 name the config section, enabled flag, intent, modalities and resource tier.
-Alias names and workflow section names must be unique within their list.
+Ordered `backend_rows` map declared capability triggers to flags, intents,
+modalities, streaming, sync/job execution, GPU needs and optional display facts.
+Groups run in endpoints, speech, recognition order; within each group, backend
+order comes first and row order second. A row is emitted once if any trigger
+matches. Unknown triggers are skipped. Optional `vision` names a trigger and
+input override; `resources_from: backend` delegates resource parsing to the
+existing backend resource parser. Other rows use only their declared GPU need.
+Alias names and workflow section names must be unique within their list;
+backend triggers must be unique across rows (case-insensitive).
 The loader rejects unknown/missing fields and invalid values with the file and
-logical row, then freezes both tables at import. Restart after editing the file.
+logical row, then freezes all three tables at import. Restart after editing the
+file. The original two-table loader API and files without `backend_rows` remain
+supported; an omitted list is empty, with no hard-coded backend fallback.
 This file does not probe workflow files or enable a backend by itself.

@@ -53,3 +53,76 @@ workflow_families:
     input_modalities: [text]
     output_modalities: [audio]
     resource_tier: batch
+
+backend_rows:
+  - group: endpoints
+    triggers: [chat]
+    flag: llm
+    intent: chat.completions
+    inputs: [text]
+    outputs: [text]
+    streaming: true
+    execution: sync
+    gpu_required: true
+    vision:
+      trigger: vision
+      inputs: [text, image]
+  - group: endpoints
+    triggers: [completions]
+    flag: llm
+    intent: text.completions
+    inputs: [text]
+    outputs: [text]
+    streaming: true
+    execution: sync
+    gpu_required: true
+  - group: endpoints
+    triggers: [embeddings]
+    flag: embeddings
+    intent: text.embeddings
+    inputs: [text]
+    outputs: [text]
+    streaming: false
+    execution: sync
+    gpu_required: false
+    resources_from: backend
+  - group: speech
+    triggers: [speech, tts]
+    flag: tts
+    intent: speech.synthesis
+    inputs: [text]
+    outputs: [audio]
+    streaming: true
+    execution: sync
+    gpu_required: true
+    tags:
+      - response_format:wav
+      - response_format:mp3
+      - response_format:opus
+      - response_format:aac
+      - response_format:flac
+      - response_format:pcm
+  - group: recognition
+    triggers: [transcriptions, stt]
+    flag: stt
+    intent: speech.transcription
+    inputs: [audio]
+    outputs: [text]
+    streaming: false
+    execution: sync
+    gpu_required: true
+    action_label: Transcribe
+    recordable_inputs: [audio]
+  - group: recognition
+    triggers: [translations, translation]
+    flag: stt
+    intent: speech.translation
+    inputs: [audio]
+    outputs: [text]
+    streaming: false
+    execution: sync
+    gpu_required: true
+    action_label: Translate
+    recordable_inputs: [audio]
+    caveats:
+      - Only advertised when the local STT backend declares translation support.
