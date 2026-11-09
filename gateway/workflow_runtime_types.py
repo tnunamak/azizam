@@ -48,7 +48,8 @@ ID_CLASH = "id_clash"
 BOUND_EXCEEDED = "workflow_bound_exceeded"
 GENERATION_MISMATCH = "generation_mismatch"
 SPOOL_MISSING = "spool_missing"
-PIN_NOT_RECORDED = "pin_not_recorded"
+PIN_NOT_RECORDED = "pin_not_recorded"                  # the job has no envelope row at all
+DEFINITION_UNAVAILABLE = "definition_unavailable"      # the job has an envelope whose pin cannot be read (blob gone or changed)
 SUBMISSION_UNKNOWN = "submission_unknown"
 ENVELOPE_VERSION_UNSUPPORTED = "envelope_version_unsupported"
 IDEMPOTENCY_CONFLICT = "idempotency_conflict"          # the key was used for a different request identity (409)
@@ -392,8 +393,12 @@ class RunRequest:
     idempotency_key: str | None = None
     wait_s: float = 0.0
     # The request controls, by namespace (``extensions`` on the wire): the prompt-memory control reaches the job's
-    # payload, where the prompt-memory rules decide what is kept. Not part of run identity.
+    # payload, where the prompt-memory rules decide what is kept. The raw extensions are not part of run identity.
     extensions: Mapping[str, Any] = field(default_factory=dict)
+    # The EFFECTIVE prompt-retention decision ("keep" or "forget"), after the header, the body and the member and
+    # household policy are combined. Part of run identity: a changed decision on a key is a different request, never a
+    # replay of a run that was remembered. Empty: the caller took no decision, and identity is what it was.
+    prompt_retention: str = ""
     frontend_id: str = "workflows"
     # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
     request_id: str | None = None

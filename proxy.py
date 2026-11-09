@@ -23822,17 +23822,22 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
     )
 
 
-_RECOVERY_FENCE_MS: int | None = None
+# The request ids of the receipts that were open when startup recovery began: the stopped gateway's. A receipt opened
+# after that is a live request's and is never closed by recovery, whatever its timestamp says.
+_RECOVERY_OPEN_RECEIPTS: frozenset[str] | None = None
 
 
 def _recover_workflow_runs() -> None:
     """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
     runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
     # No task of a stopped gateway is left to close the receipt of a run it was serving. That covers a receipt whose job
-    # does not exist yet (the body was still arriving) and one whose job ended before the receipt closed. Only a receipt
-    # accepted before recovery began is closed: a request this process opens after that point keeps its own.
-    global _RECOVERY_FENCE_MS
-    _RECOVERY_FENCE_MS = int(time.time() * 1000)
+    # does not exist yet (the body was still arriving), one whose job ended before the receipt closed, and one whose run
+    # recovery itself ends. The receipts open now are the stopped gateway's, so the snapshot of them is taken first and
+    # only those are closed; the unfinished runs are listed before recovery settles any of them.
+    global _RECOVERY_OPEN_RECEIPTS
+    _RECOVERY_OPEN_RECEIPTS = receipt_store.open_request_ids()
+    run_request_ids = [str(job.get("request_id") or "") for job in media_jobs.unfinished(path=media_jobs.DB_PATH)
+                       if workflow_run.is_run_job(job)]
     core = _workflow_run_core()
     if core is not None:         # first: a run settled from its committed result closes its receipt as succeeded
         try:
@@ -23842,10 +23847,9 @@ def _recover_workflow_runs() -> None:
         else:
             if report.counts:
                 _MEDIA_JOB_LOG.info("workflow runs recovered: %s", dict(report.counts))
-    receipt_store.close_orphans_on_paths(row_routes.row_paths(_MOUNTED_ROW_IDS), opened_before_ms=_RECOVERY_FENCE_MS)
-    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
-        if workflow_run.is_run_job(job):
-            receipt_store.close_orphan(str(job.get("request_id") or ""), opened_before_ms=_RECOVERY_FENCE_MS)
+    receipt_store.close_orphans_on_paths(row_routes.row_paths(_MOUNTED_ROW_IDS), among=_RECOVERY_OPEN_RECEIPTS)
+    for request_id in run_request_ids:     # a receipt already closed (a replayed success) stays as it closed
+        receipt_store.close_orphan(request_id, among=_RECOVERY_OPEN_RECEIPTS)
 
 
 def _recover_media_jobs() -> None:
@@ -26815,8 +26819,8 @@ class _WorkflowRunPort:
 
     def close_recovered_receipt(self, request_id: str, status: str, reason: str) -> None:
         """Startup recovery settled a run from its committed result: close the receipt a stopped gateway left open, unless
-        this process opened it after recovery began."""
-        receipt_store.close_recovered(request_id, status, reason, opened_before_ms=_RECOVERY_FENCE_MS)
+        it was opened after recovery began."""
+        receipt_store.close_recovered(request_id, status, reason, among=_RECOVERY_OPEN_RECEIPTS)
 
     async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
         """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
@@ -27243,6 +27247,16 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     return response
 
 
+def _workflow_run_prompt_retention(auth_context: AuthContext, extensions: Mapping[str, Any]) -> str:
+    """The effective prompt-retention decision of a run request, "keep" or "forget": the header, the body's control and
+    the member and household policy combined, as the payload spool combines them. It is part of the run's identity, so
+    a changed decision on one Idempotency-Key is a conflict and never a replay of a remembered run."""
+    memory = prompt_memory.decide_for_person(
+        _auth_person_id(auth_context), {"extensions": dict(extensions)}, admin_path=ADMIN_STORE.path,
+        request_forget=request_history_slot.prompts_forget())
+    return "forget" if not memory.keep and memory.reason != "no_person" else "keep"
+
+
 async def _run_workflow_open(workflow_id: str, request: Request, auth_context: AuthContext, core: Any, snapshot: Any,
                              owner: "_RunReceiptOwner", request_id: str, wait_s: float) -> Response:
     """The steps of the generic run route after its receipt opens. Each exit reports the outcome, or hands the receipt to
@@ -27268,7 +27282,8 @@ async def _run_workflow_open(workflow_id: str, request: Request, auth_context: A
         entry = snapshot.get(workflow_id)
         if entry is not None:
             _name_row_receipt(owner, entry.id, entry.record_revision, entry.contract_digest)
-        run_request = dataclasses.replace(run_request, request_id=request_id)
+        run_request = dataclasses.replace(run_request, request_id=request_id,
+                                          prompt_retention=_workflow_run_prompt_retention(auth_context, run_request.extensions))
         view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
     if isinstance(view, RunRefused):
         owner.report(status="failed", reason=view.code)

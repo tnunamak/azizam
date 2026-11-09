@@ -996,16 +996,23 @@ def test_audio_61_content_handle_is_none_for_a_job_submitted_with_none(tmp_path)
         assert _content_md(rig, job_id) == "none"
 
 
-def test_audio_61_job_records_the_submit_metadata_choice(tmp_path):
-    """audio-61 (inventory: the job keeps the submit's metadata choice for its content GET). The old code and the new
-    path both record metadata_mode 'none' on the job for a submit that asked for it. (The first version of this test put
-    the request body (extensions inside "request"), where the runner reads it.)"""
-    with GatewayRig("audio-61-job", tmp_path) as rig:
+@pytest.mark.parametrize("choice", ["none", "full"])
+def test_audio_61_job_records_the_submit_metadata_choice(tmp_path, choice):
+    """audio-61 (inventory: the job keeps the submit's metadata choice for its content GET). Under an explicitly full
+    metadata plan the job records the metadata choice the submit made, 'none' and 'full' alike, and the signed content
+    handle stays md=none whichever it was (the old code signs every audio handle with no delivery mode). The 'full'
+    case is the contrast that fails an implementation which always stores 'none'. (The request body, not the envelope,
+    carries the control: extensions inside "request", where the runner reads it.)"""
+    body = {"intent": "audio.generate",
+            "request": {**BODY, "extensions": {"com.azizam.workflow": {"metadata": choice}}}}
+    with GatewayRig(f"audio-61-job-{choice}", tmp_path) as rig:
         _jobs_ok(rig)
-        job_id = _submit_and_run(rig, NONE_JOB_BODY)
+        rig._exit.enter_context(authenticated(identity(plan_for(metadata="full"))))
+        job_id = _submit_and_run(rig, body)
         _require(_stored(rig, job_id)["status"] == media_jobs.STATUS_SUCCEEDED, "the job did not succeed")
         metadata = _stored(rig, job_id).get("metadata") or {}
-        assert metadata.get("metadata_mode") == "none"
+        assert metadata.get("metadata_mode") == choice
+        assert _content_md(rig, job_id) == "none"
 
 
 def test_audio_61_content_handle_ignores_the_get_override_on_a_none_job(tmp_path):

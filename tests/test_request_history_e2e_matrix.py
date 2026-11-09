@@ -137,6 +137,8 @@ class World:
     shape: Shape | None = None
     calls: list[str] = field(default_factory=list)
     reply_payload: dict = field(default_factory=dict)
+    # The file the fake graph engine returns for a video result; None: the bare MP4_HEAD stand-in.
+    view_bytes: bytes | None = None
 
 
 @pytest.fixture
@@ -225,7 +227,7 @@ def world(fake_upstreams, monkeypatch, tmp_path):
                 # The save node of the workflow each shape runs: the rife video one, the qwen image edit one.
                 "6" if video else "10": {"images": [{"filename": filename, "type": "output"}]}}}})
         if request.url.path == "/view":
-            return httpx.Response(200, content=MP4_HEAD + b"rendered-video" if video else comfy_png(),
+            return httpx.Response(200, content=(w.view_bytes or MP4_HEAD + b"rendered-video") if video else comfy_png(),
                                   headers={"content-type": "video/mp4" if video else "image/png"})
         pytest.fail("unexpected graph HTTP path")
 
