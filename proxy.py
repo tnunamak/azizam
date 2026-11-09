@@ -116,6 +116,7 @@ from gateway import request_history, request_history_api, request_history_captur
 from gateway.http_tls import tls_context
 from gateway import asset_types, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
+from gateway import video_grid
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
@@ -10911,48 +10912,6 @@ def _find_video_manifest(workflow_name: str, workflow_cfg: dict) -> Optional[dic
     return None
 
 
-def _parse_size_clamped(size_str: str, max_size_str: str, multiple: int = 32) -> tuple[int, int]:
-    """Parse 'WxH', clamp to per-workflow max_size, floor to a multiple.
-
-    `multiple` is 32 for most workflows; LTX-2.5 needs 64 (its first
-    stage runs at half size, which must itself be a multiple of 32). Sizes are
-    floored (not rejected) so any OpenAI-style size string stays usable; the
-    created job reports the size actually used.
-    """
-    width, height = parse_size(size_str or "1280x720")
-    if max_size_str:
-        try:
-            mw, mh = parse_size(max_size_str)
-            if mw and mh:
-                width = min(width, mw)
-                height = min(height, mh)
-        except Exception:
-            pass
-    multiple = max(1, int(multiple))
-    width = max(64, (width // multiple) * multiple)
-    height = max(64, (height // multiple) * multiple)
-    return width, height
-
-
-def _seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offset: int = 1) -> int:
-    """Translate request `seconds` to a latent `length` of the form step*k+offset.
-
-    Defaults are the LTX rule (8k+1). MiniMax H3 uses step=17, offset=5.
-
-    Rounds to the *nearest* representable 8k+1 length (vs flooring). For
-    fps=24 this gives ~0.333s granularity, so a request like seconds=3
-    produces length=73 (3.0417s actual, +0.0417s drift) instead of the
-    old length=65 (2.7083s, -0.2917s drift). Callers should compare
-    `length / frame_rate` against `seconds` to decide whether to surface
-    `X-Duration-Adjusted`.
-    """
-    frames = max(1, int(round(seconds * frame_rate)))
-    # LTX latent length convention: lengths of form 8k+1 (1, 9, 17, ...)
-    # Round to nearest k, not floor.
-    k = max(1, int(round((frames - offset) / float(step))))
-    return k * step + offset
-
-
 def _video_id_from_prompt_id(prompt_id: str) -> str:
     return f"{VIDEO_ID_PREFIX}{prompt_id}"
 
@@ -12232,16 +12191,13 @@ async def _proxy_graph_video_create(
         )
 
     size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
-    width, height = _parse_size_clamped(
-        size,
-        workflow_cfg.get("max_size", "1280x720"),
-        int(workflow_cfg.get("size_multiple", 32)),
-    )
+    width, height = video_grid.resolve_size(size, video_grid.SizeSpec(
+        default="", max=workflow_cfg.get("max_size", "1280x720"), multiple=int(workflow_cfg.get("size_multiple", 32))))
     # The output keeps the source clip's frame rate for video-conditioned workflows.
     frame_rate = float(source_fps or workflow_cfg.get("frame_rate", 25))
     # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5; Wan: 4k+1).
     length_step = int(workflow_cfg.get("length_step", 8))
-    length = _seconds_to_length(
+    length = video_grid.seconds_to_length(
         seconds_val,
         frame_rate,
         step=length_step,
@@ -12848,9 +12804,10 @@ async def _submit_video_chain(
     size = body.get("size")
     if not size and probe is not None:
         size = f"{probe.width}x{probe.height}"
-    width, height = _parse_size_clamped(
+    width, height = video_grid.resolve_size(
         str(size or workflow_cfg.get("default_size") or "960x512"),
-        workflow_cfg.get("max_size", "1280x720"), int(workflow_cfg.get("size_multiple", 32)))
+        video_grid.SizeSpec(default="", max=workflow_cfg.get("max_size", "1280x720"),
+                            multiple=int(workflow_cfg.get("size_multiple", 32))))
 
     try:
         seed_val = int(body["seed"]) if body.get("seed") is not None else random.randint(0, 2**32 - 1)

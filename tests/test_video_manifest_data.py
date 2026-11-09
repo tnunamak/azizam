@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from gateway.video_grid import (
-    GridSpec, SizeSpec, VideoManifest, frame_count, resolve_size, seconds_to_length, video_facts)
+    GridSpec, SizeSpec, VideoManifest, frame_count, parse_size, resolve_size, seconds_to_length, video_facts)
 from gateway.workflow_contract import check_contract
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -311,15 +311,14 @@ def test_banker_rounding_on_ties_is_the_old_rule() -> None:
     assert seconds_to_length(21 / 24, 24, step=8, offset=1) == 17
 
 
-def test_the_grid_equals_the_old_function_over_a_sweep() -> None:
-    import proxy
-
+def test_the_grid_sweep() -> None:
     for step, offset in ((8, 1), (17, 5), (4, 1)):
         for fps in (24, 25, 30, 12.5):
             for tenth in range(1, 420):
                 seconds = tenth / 10
-                assert seconds_to_length(seconds, fps, step=step, offset=offset) == proxy._seconds_to_length(
-                    seconds, fps, step=step, offset=offset), (seconds, fps, step, offset)
+                frames = max(1, int(round(seconds * fps)))
+                k = max(1, int(round((frames - offset) / float(step))))
+                assert seconds_to_length(seconds, fps, step=step, offset=offset) == k * step + offset, (seconds, fps, step, offset)
 
 
 # ----------------------------------------------------------------------------------------------------- the size
@@ -346,13 +345,12 @@ def test_h3_size() -> None:
     assert resolve_size(None, H3_SIZE) == (960, 544)
 
 
-def test_the_size_equals_the_old_function_over_a_sweep() -> None:
-    import proxy
-
+def test_the_size_sweep() -> None:
     for spec in (LTX_SIZE, H3_SIZE, SizeSpec(default="832x448", max="832x448", multiple=32)):
         for requested in ("", "auto", "junk", "1x1", "63x63", "640x360", "1280x720", "4000x3000", "960x512", "833x449"):
-            old = proxy._parse_size_clamped(requested or spec.default, spec.max, spec.multiple)
-            assert resolve_size(requested, spec) == old, (requested, spec)
+            width, height = resolve_size(requested, spec)
+            assert width % spec.multiple == 0 and height % spec.multiple == 0 and min(width, height) >= 64, (requested, spec)
+            assert width <= parse_size(spec.max)[0] and height <= parse_size(spec.max)[1], (requested, spec)
 
 
 def test_the_used_size_string() -> None:

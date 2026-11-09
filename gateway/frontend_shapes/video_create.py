@@ -18,7 +18,7 @@ from starlette.responses import Response
 
 from gateway import provenance, video_controls, video_grid, video_form, media_delivery
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import LegacyRoute
+from gateway.frontend_shapes._base import LegacyRoute, coerce
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE, detect_unknown_top_level_fields
 from gateway.video_extensions import STANDARD_VIDEO_CREATE_FIELDS
 from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapshot, RequestSpool, RunRequest, WorkflowEntry
@@ -96,6 +96,10 @@ def _workflow_block(body: Mapping[str, Any]) -> Mapping[str, Any]:
     return {k: v for k, v in block.items() if k not in provenance.RESERVED_GATEWAY_CONTROLS}
 
 
+def _is_asset(entry: WorkflowEntry, name: str) -> bool:
+    return ((entry.contract.get("inputs") or {}).get(name) or {}).get("type") == "asset"
+
+
 def _beyond(seconds: Any, limit: float) -> bool:
     try:
         return seconds is not None and float(seconds) > limit
@@ -121,25 +125,37 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     if isinstance(chosen, Response):
         return chosen
     from gateway.frontend_shapes import shapes
-    manifest = video_grid.video_facts(chosen, shapes.REFERENCE_KIND)
+    kind = shapes.REFERENCE_KIND
+    manifest = video_grid.video_facts(chosen)
     reference = body.get("input_reference")
-    if manifest is None or manifest.chain:
+    if manifest is None or manifest.chain or manifest.length is None:
         return LegacyRoute(LEGACY_CREATE, body)
-    variant = snapshot.get(manifest.reference_variant) if reference and manifest.reference_variant else None
-    if variant is not None and video_grid.video_facts(variant, shapes.REFERENCE_KIND) is not None:
-        chosen, manifest = variant, video_grid.video_facts(variant, shapes.REFERENCE_KIND)
+    variant = snapshot.get(manifest.variants[kind]) if reference and manifest.variants.get(kind) else None
+    if variant is not None and video_grid.video_facts(variant) is not None:
+        chosen, manifest = variant, video_grid.video_facts(variant)
+    if manifest.length is None or manifest.grid is None or manifest.size is None:
+        return LegacyRoute(LEGACY_CREATE, body)
     name = short_name(chosen)
-    if manifest.needs_reference and not reference:
+    if kind in manifest.requires and not reference:
         return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
     seconds = body.get("seconds")
-    if body.get("shots") is not None or _beyond(seconds, manifest.max_seconds):
+    limit = manifest.length.max_seconds
+    if body.get("shots") is not None or _beyond(seconds, limit):
         if manifest.variants.get("long"):
             return LegacyRoute(LEGACY_CREATE, body)
-        return refuse(400, f"Model {name} cannot render shots or clips longer than {manifest.max_seconds:g} s; use a long-video model",
+        return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
                       param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
-    if (manifest.other_requires or manifest.select_subject or body.get("inputs") or _workflow_block(body)
-            or (reference is not None and _reference_bytes(reference) is None)):
+    block = _workflow_block(body)
+    if ((manifest.requires - {kind, "extensions"}) or manifest.select_subject or body.get("inputs")
+            or ("extensions" in manifest.requires and not block)
+            or (reference is not None and _reference_bytes(reference) is None)
+            or any(_wire.declared(chosen, key) and _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
+    undeclared = next((key for key in block if not _wire.declared(chosen, key)), None)
+    if undeclared is not None:
+        # A name the manifest does not declare is not a workflow input; a declared one is never refused, even when it fills a role.
+        return refuse(400, f"extensions.workflow.{undeclared} is not an input of model {name}",
+                      param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{undeclared}", code="invalid_workflow_extension")
     return chosen, manifest, name, public_model
 
 
@@ -187,18 +203,26 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     chosen, manifest, name, public_model = picked
     reference, seconds = body.get("input_reference"), body.get("seconds")
 
+    grid, limits = manifest.grid, manifest.length
     try:
-        seconds_value = float(seconds) if seconds is not None else min(DEFAULT_SECONDS, manifest.max_seconds)
+        seconds_value = float(seconds) if seconds is not None else min(limits.default_seconds or DEFAULT_SECONDS, limits.max_seconds)
     except (TypeError, ValueError):
         return refuse(400, "seconds must be a number")
-    if seconds_value < manifest.min_seconds or seconds_value > manifest.max_seconds:
-        return refuse(400, f"seconds must be between {manifest.min_seconds} and {manifest.max_seconds} for model {name}")
+    if seconds_value < limits.min_seconds or seconds_value > limits.max_seconds:
+        return refuse(400, f"seconds must be between {limits.min_seconds} and {limits.max_seconds} for model {name}")
     if body.get("size") is not None and not isinstance(body["size"], str):
         return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
-    width, height = video_grid.clamp_size(body.get("size"), manifest)
-    length = video_grid.seconds_to_length(seconds_value, manifest.fps, step=manifest.step, offset=manifest.offset,
-                                          min_frames=manifest.min_frames, max_frames=manifest.max_frames)
-    actual_seconds = round(length / manifest.fps, 4)
+    width, height = video_grid.resolve_size(body.get("size"), manifest.size)
+    length = video_grid.frame_count(seconds_value, None, grid)
+    roles = manifest.roles
+    block = _workflow_block(body)
+    chosen_length = block.get(roles.get("length", "length"))
+    if chosen_length is not None:                    # the manifest's own length input (frames) wins over seconds, as it always did
+        try:
+            length = int(chosen_length)
+        except (TypeError, ValueError):
+            return refuse(400, f"{roles['length']} must be an integer", param=roles["length"])
+    actual_seconds = round(length / grid.fps, 4)
     # An omitted seed stays out of the request: the core draws it once, inside the claimed transaction, so two requests that
     # differ only by a missing seed are one request for the idempotency key. The drawn value reaches the facts by a ref.
     seed: int | None = None
@@ -214,7 +238,6 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     inputs: dict[str, Any] = {"prompt": prompt}
     if seed is not None:
         inputs["seed"] = seed
-    roles = manifest.roles
 
     def put(role: str, value: Any) -> None:
         target = roles.get(role, role)
@@ -224,12 +247,15 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     put("width", width)
     put("height", height)
     put("length", length)
-    put("frame_rate", int(manifest.fps) if float(manifest.fps).is_integer() else manifest.fps)
+    put("frame_rate", int(grid.fps) if float(grid.fps).is_integer() else grid.fps)
+    for key, value in block.items():
+        if key not in (roles.get("length"), roles.get("width"), roles.get("height")):
+            inputs[key] = coerce(chosen, key, value)
     if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:
         decoded = _reference_bytes(reference)
-        target = roles.get(manifest.reference, "input_reference")
+        target = roles.get(shapes.REFERENCE_KIND, "input_reference")
         staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
         if isinstance(staged, Response):
             return staged
@@ -247,7 +273,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
                   "actual_seconds": actual_seconds, "length_frames": length}
     facts: dict[str, Any] = {
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
-        "length_frames": length, "frame_rate": manifest.fps,
+        "length_frames": length, "frame_rate": grid.fps,
         "provenance": provenance.build_provenance_record(
             kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
@@ -261,7 +287,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         facts[video_controls.AUDIO_CONTROL] = False
     if context is not None and context.requested_mode:
         facts["metadata_mode"] = context.requested_mode
-    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": manifest.fps}
+    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": grid.fps}
     if audio_off:
         options[video_controls.AUDIO_CONTROL] = False
     request.state.video_facts = facts

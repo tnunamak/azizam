@@ -521,3 +521,20 @@ def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_rec
     answer = client.post("/v1/videos", json={"model": "nope-model", "prompt": "x"})
     assert answer.status_code == 404 and answer.json()["error"]["code"] == "model_not_found"
     assert calls["legacy"] == [] and len(calls["policy"]) == 1 and len(calls["receipt"]) == 1
+
+
+def test_keyframes_create_sends_frames_and_is_accepted() -> None:
+    """An input the manifest declares is never refused as an extension, even when it fills a role: ``frames`` is the keyframes
+    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is refused."""
+    key = video_contract("ltx-2.5-keyframes", requires=["extensions"], image=False)
+    key["inputs"]["frames"] = {"type": "integer", "minimum": 9, "maximum": 241}
+    key["video"]["roles"]["length"] = "frames"
+    del key["inputs"]["length"]
+    snapshot = snap(key)
+    block = {"com.azizam.workflow": {"frames": 49}}
+    run_request = read({"model": "ltx-2.5-keyframes", "prompt": "p", "seconds": 5, "extensions": block}, snapshot)
+    assert isinstance(run_request, RunRequest), run_request
+    assert run_request.inputs["frames"] == 49
+    refused = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"bogus": 1}}}, snapshot)
+    assert refused.status_code == 400
+    assert json.loads(refused.body)["error"]["param"].endswith(".bogus")
