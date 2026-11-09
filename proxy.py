@@ -13459,7 +13459,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
                 job = await _graph_history(client, prompt_id, headers)
                 entry: dict[str, Any] = {
                     "id": video_id,
-                    "object": "video",
+                    "object": shape.wire_name,
                     "model": record.get("model"),
                     "size": record.get("size"),
                     "seconds": record.get("seconds"),
