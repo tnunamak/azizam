@@ -64,7 +64,7 @@ Every refusal the old create, edit, extend, status, content, list and delete rou
 
 ## Notes
 
-- `size_number`, `model_number` and a non-mapping `extensions.workflow` on extend answer 500 with no error body on the old code (an unhandled type error), and `size_bad_text` and an unknown `extensions.workflow` key on create answer 200 (the bad value is ignored). These are old defects, not contract: no test pins them, and a new path may answer 400.
+- Old defects with two allowed answers. A numeric `model` or `size` answers 500 with no error body on the old code (an unhandled type error); a new path may answer 400 `invalid_request_error`. An unparsable text `size` is ignored on the old code (200, default size); a new path may answer 400 `invalid_request_error`. A non-mapping `extensions.workflow` on extend answers 500 on the old code, and an unknown `extensions.workflow` key on create answers 200. The tests accept exactly these alternatives and never a different status.
 - `remix_missing_source` and `edit_missing_source` use a source id that does not exist. The unconfigured-route rows use a source the caller owns, with `videos.remix_workflow` unset, so they reach the 501 branch.
 - `scail_without_source` answers `model_not_found` because the rig has no such model. `long_video_not_supported_shots` is reached by configuring a model with no chain workflow. `content_no_video_output` is a finished prompt whose outputs hold no video file. `create_engine_unavailable` is a create with the engine unreachable.
 - A text pin may not be weakened by any delta kind.

@@ -754,9 +754,16 @@ def test_video_06_frame_grid_and_dimensions_are_in_the_submitted_graph(world, se
 
 
 def test_video_07_clamped_default_size_is_the_size_in_the_graph(world):
-    """video-07: an unparsable size answers the default size and renders at that size."""
+    """video-07: an unparsable size is either refused 400 `invalid_request_error` (the alternative video-texts.md allows)
+    or answered with the default size, rendered at that size (the old behaviour). It is never a 500."""
     async def drive():
-        response = await create(world, size="bad")
+        response = await world.rig.call("POST", "/v1/videos", json_body={**CREATE, "size": "bad"})
+        assert response.status_code in (200, 400), response.text
+        if response.status_code == 400:
+            assert response.json()["error"]["type"] == "invalid_request_error"
+            assert not world.engine.prompts
+            return
+        await submitted(world, 1)
         assert response.json()["size"] == "1024x704"
         graph = world.engine.prompts["p1"]["prompt"]
         assert graph["20"]["inputs"]["value"] == 1024

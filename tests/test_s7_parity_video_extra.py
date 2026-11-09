@@ -960,7 +960,8 @@ def test_video_create_field_validation_today(tmp_path, body, status, message_par
 
 
 def test_video_create_size_is_clamped_to_the_nearest_supported_size(tmp_path):
-    """An unparsable size is not refused: the create answers 200 with the default-clamped size (1024x704)."""
+    """An unparsable size is either refused 400 `invalid_request_error` (allowed by video-texts.md) or answered 200 with the
+    default-clamped size (1024x704, the old behaviour); it is never a 500."""
     seen = {}
 
     def setup(rig):
@@ -969,15 +970,19 @@ def test_video_create_size_is_clamped_to_the_nearest_supported_size(tmp_path):
     async def drive(rig):
         response = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v", "size": "bad"})
         seen["status"], seen["size"] = response.status_code, response.json().get("size")
+        seen["error_type"] = (response.json().get("error") or {}).get("type")
 
     _run(tmp_path, "av-create-size", setup, drive)
-    assert seen["status"] == 200
-    assert seen["size"] == "1024x704"
+    assert seen["status"] in (200, 400)
+    if seen["status"] == 200:
+        assert seen["size"] == "1024x704"
+    else:
+        assert seen["error_type"] == "invalid_request_error"
 
 
-def test_video_create_non_string_model_is_an_unhandled_500_today(tmp_path):
-    """Pins a defect, not a behaviour to keep: a numeric ``model`` makes the old create route raise and answer a bare
-    500 "Internal Server Error", with no engine call. The row path may only change this with a manifest entry."""
+def test_video_create_non_string_model_is_refused_without_an_engine_call(tmp_path):
+    """A numeric ``model`` is either refused 400 `invalid_request_error` (allowed by video-texts.md) or, as the old create
+    route did, answered by an unhandled 500. Either way no engine call is made and no video is created."""
     seen = {}
 
     def setup(rig):
@@ -989,7 +994,9 @@ def test_video_create_non_string_model_is_an_unhandled_500_today(tmp_path):
         seen["engine"] = len(rig.recorder.engine)
 
     _run(tmp_path, "av-create-model-int", setup, drive)
-    assert seen["status"] == 500
+    assert seen["status"] in (400, 500)
+    if seen["status"] == 400:
+        assert '"invalid_request_error"' in seen["text"]
     assert seen["engine"] == 0
 
 
@@ -1079,11 +1086,14 @@ def test_video_completed_status_with_missing_output_still_answers_completed(tmp_
         status = await rig.call("GET", f"/v1/videos/{video_id}")
         seen["status"] = (status.status_code, status.json()["status"], status.json()["progress"])
         content = await rig.call("GET", f"/v1/videos/{video_id}/content")
-        seen["content"] = content.status_code
+        seen["content"] = (content.status_code, content.json())
+        seen["engine"] = _engine_paths(rig)
 
     _run(tmp_path, "av-missing-output", setup, drive)
     assert seen["status"] == (200, "completed", 100)
-    assert seen["content"] == 502
+    assert "GET /view" in seen["engine"], "the engine's /view refusal was never made"
+    # The whole row of video-texts.md (content_view_error): status, type and message; no param and no code.
+    assert seen["content"] == (502, {"error": {"message": "ComfyUI /view error: 404", "type": "api_error"}})
 
 
 # --------------------------------------------------------------------------- gap 1: configured edit and remix

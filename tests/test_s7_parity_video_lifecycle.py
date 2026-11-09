@@ -93,6 +93,20 @@ def test_video_62_absent_engine_job_is_orphaned(tmp_path):
     run(tmp_path, exercise)
 
 
+def bad_history_count(w):
+    """How many history answers the engine has sent in a malformed or wrong-shape mode (recorded by the rig)."""
+    return len(w.engine.bad_history)
+
+
+async def bad_history_polls(w, count, *, before, timeout_s=5.0):
+    """Wait until the engine has answered ``count`` more history reads with the bad body than it had at ``before``."""
+    import time
+    deadline = time.monotonic() + timeout_s
+    while bad_history_count(w) < before + count:
+        assert time.monotonic() < deadline, f"the runner never read the {w.engine.history_mode} history again"
+        await asyncio.sleep(0.005)
+
+
 @pytest.mark.parametrize("mode", ["malformed", "wrong_shape"])
 def test_video_63_bad_history_does_not_orphan_live_job(tmp_path, mode):
     async def exercise(w):
@@ -104,8 +118,11 @@ def test_video_63_bad_history_does_not_orphan_live_job(tmp_path, mode):
         # that is malformed or of the wrong shape never counts toward orphaning, however many grace periods pass.
         w.engine.history_mode = mode
         await drive(w, vid, "missing", wait=False)
+        await bad_history_polls(w, 1, before=0)                # a runner poll read the bad body before the grace ends
         w.now += 4 * 15.0
+        seen_before = bad_history_count(w)
         await drive(w, vid, "missing", wait=False)
+        await bad_history_polls(w, 1, before=seen_before)      # and another one after the grace has long passed
         response = await w.status(vid)
         assert response.status_code == 200
         assert response.json()["status"] == "in_progress"
@@ -283,13 +300,14 @@ def test_video_75_missing_output_is_a_video_asset_error(tmp_path):
         await drive(w, vid, "completed", wait=False)
         assert (await settled(w, vid)).status == "failed"
         response = await w.content(vid)
-        assert response.status_code >= 400
-        body = response.json()
-        assert isinstance(body.get("error"), dict)
-        assert isinstance(body["error"].get("message"), str) and body["error"]["message"]
+        # The whole row of video-texts.md (content_view_error): the /view refusal is seen below, and the content route
+        # answers 502 with the engine's status, nothing else.
+        assert response.status_code == 502
+        assert response.json() == {"error": {"message": "ComfyUI /view error: 404", "type": "api_error"}}
         assert w.video_files() == {}
         assert w.asset_id(vid) is None
-        assert w.engine.calls("GET", "/view")
+        refused = w.engine.calls("GET", "/view")
+        assert refused, "the engine's /view refusal was never made"
     run(tmp_path, exercise)
 
 
@@ -304,11 +322,12 @@ def test_video_76_bad_list_parameters_are_400(tmp_path, params, param):
     run(tmp_path, exercise)
 
 
-async def three_videos(w):
+async def three_videos(w, states=("completed", "completed", "completed")):
+    """Three independent jobs, each driven to its own state (a terminal job is never driven to another state)."""
     ids = []
-    for _ in range(3):
+    for state in states:
         vid = await w.create()
-        await drive(w, vid, "completed")
+        await drive(w, vid, state)
         ids.append(vid)
         w.now += 10
     return ids
@@ -353,9 +372,7 @@ def test_video_79_missing_cursor_does_not_restart_pagination(tmp_path):
 
 def test_video_80_list_entry_fields_error_and_queue_fallback(tmp_path):
     async def exercise(w):
-        done, running, failed = await three_videos(w)
-        await drive(w, running, "queued")
-        await drive(w, failed, "failed")
+        done, running, failed = await three_videos(w, ("completed", "queued", "failed"))
         requests = len(w.engine.requests)
         response = await w.listing()
         assert response.status_code == 200

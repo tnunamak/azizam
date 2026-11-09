@@ -53,6 +53,7 @@ class Engine:
         self.cancel_error = False
         self.cancelled = True
         self.history_mode: str | None = None
+        self.bad_history: list[str] = []         # the history answers the engine sent in a malformed or wrong-shape mode
         self.view_error = False
         self.view_started: asyncio.Event | None = None
         self.view_release: asyncio.Event | None = None
@@ -71,6 +72,8 @@ class Engine:
             return httpx.Response(200, json=STATS)
         if method == "GET" and path.startswith("/history/"):
             pid = path.rsplit("/", 1)[-1]
+            if self.history_mode in {"malformed", "wrong_shape"}:
+                self.bad_history.append(self.history_mode)
             if self.history_mode == "malformed":
                 return httpx.Response(200, content=b"{broken-json", headers={"content-type": "application/json"})
             if self.history_mode == "wrong_shape":

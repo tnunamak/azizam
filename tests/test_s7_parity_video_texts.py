@@ -16,7 +16,7 @@ import proxy
 from tests.support import video_rig
 from tests.support.adapter_differential_rig import GatewayRig
 from tests.support.config_snapshot import publish_section
-from tests.support.video_rig import JOB_PREFIX, MODEL, drive, run
+from tests.support.video_rig import JOB_PREFIX, MODEL, drive, run, settled
 
 TABLE = Path(__file__).resolve().parents[1] / "docs" / "design" / "c2d-s7-parity" / "video-texts.md"
 NS = "com.azizam.workflow"
@@ -28,9 +28,11 @@ def table() -> dict[str, dict]:
         if not line.startswith("| ") or line.startswith("| case") or line.startswith("|---"):
             continue
         case, status, kind, param, code, message = (cell.strip() for cell in line.strip().strip("|").split(" | ", 5))
-        cleaned = lambda cell: None if cell == "-" else cell.strip("`")
-        rows[case] = {"status": int(status), "type": cleaned(kind), "param": cleaned(param), "code": cleaned(code),
-                      "message": message.replace("\\|", "|")}
+        row = {"status": int(status)}
+        for name, cell in (("type", kind), ("param", param), ("code", code), ("message", message.replace("\\|", "|"))):
+            if cell != "-":                       # a dash is a field the refusal does not carry
+                row[name] = cell.strip("`") if name != "message" else cell
+        rows[case] = row
     return rows
 
 
@@ -127,15 +129,25 @@ def fill(value, vid):
 
 
 async def make_video(w) -> str:
-    """A video the caller owns, on either kind of store (a job, or an old record)."""
+    """A video the caller owns, on either kind of store (a job, or an old record). The id is registered with the world,
+    so ``drive`` can find the engine prompt of a job."""
     response = await w.call("POST", "/v1/videos", json_body={"model": MODEL, "prompt": "waves"})
     assert response.status_code == 200, response.text
-    return response.json()["id"]
+    return w.track(response.json()["id"])
 
 
-async def finish(w, vid):
-    if vid.startswith("video_" + JOB_PREFIX.removeprefix("video_")):
-        await drive(w, vid, "completed")
+def is_job(vid: str) -> bool:
+    return vid.startswith(JOB_PREFIX)
+
+
+async def finish(w, vid, *, ends_failed=False):
+    """Let the engine complete the prompt. Faults are set BEFORE this runs. A job's runner meets them now, so a job whose
+    /view or history is faulty ends ``failed``; an old record meets them when the content route reads the engine."""
+    if is_job(vid):
+        await drive(w, vid, "completed", wait=not ends_failed)
+        if ends_failed:
+            view = await settled(w, vid)
+            assert view.status == "failed", view
     else:
         w.engine.states[vid.removeprefix("video_")] = "completed"
 
@@ -152,8 +164,7 @@ def test_the_refusal_is_exactly_the_row(tmp_path, case):
 
     async def exercise(w):
         vid = await make_video(w) if "video" in needs else ""
-        if "completed" in needs:
-            await finish(w, vid)
+        consumed = []
         if "remix_off" in needs or "remix_on" in needs:
             publish_section(w.rig.monkeypatch, "videos", {**proxy.config["videos"],
                             "remix_workflow": None if "remix_off" in needs else "video-ltx-2.5-t2v"})
@@ -166,16 +177,25 @@ def test_the_refusal_is_exactly_the_row(tmp_path, case):
             w.engine.view_error = True
         if "no_video_file" in needs:
             original = video_rig.history_done
-            w.rig.monkeypatch.setattr(video_rig, "history_done", lambda kind, name, **k: original(kind, "clip.png", **k))
+
+            def history_without_a_video(kind, name, **k):
+                consumed.append(name)
+                return original(kind, "clip.png", **k)
+            w.rig.monkeypatch.setattr(video_rig, "history_done", history_without_a_video)
+        if "completed" in needs:
+            await finish(w, vid, ends_failed="view_error" in needs or "no_video_file" in needs)
         if "disabled" in needs:
             w.rig.set(proxy, "COMFY_ENABLED", False)
         response = await asyncio.wait_for(w.call(method, fill(path, vid), **fill(kwargs, vid)), timeout=20)
         seen["status"], seen["body"] = response.status_code, response.json()
+        if "view_error" in needs:
+            assert w.engine.calls("GET", "/view"), "the engine never saw the /view the fault was set for"
+        if "no_video_file" in needs:
+            assert consumed, "the engine history with no video file was never read"
 
     run(tmp_path, exercise)
     error = seen["body"].get("error") or {}
-    got = {"status": seen["status"], "type": error.get("type"), "param": error.get("param"), "code": error.get("code"),
-           "message": error.get("message")}
+    got = {"status": seen["status"], **{name: error[name] for name in ("type", "param", "code", "message") if name in error}}
     assert got == want, case
 
 
@@ -189,5 +209,5 @@ def test_create_engine_unavailable_is_exactly_the_row(tmp_path):
             return await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": MODEL})
         response = asyncio.run(go())
     error = response.json()["error"]
-    assert {"status": response.status_code, "type": error.get("type"), "param": error.get("param"),
-            "code": error.get("code"), "message": error.get("message")} == want
+    assert {"status": response.status_code,
+            **{name: error[name] for name in ("type", "param", "code", "message") if name in error}} == want
