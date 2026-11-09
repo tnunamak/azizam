@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-BLOCK = "video"            # the key of the block in a contract
-REFERENCE = "image"        # what a manifest calls a picture the request supplies: the name in ``requires``, ``variants`` and ``roles``
 
 
 @dataclass(frozen=True)
@@ -34,25 +32,32 @@ class VideoManifest:
     requires: tuple[str, ...] = ()
     select_subject: bool = False
     chain: bool = False
+    reference: str = ""      # what the manifest calls a picture the request supplies (in ``requires``, ``variants`` and ``roles``)
 
     @property
     def needs_reference(self) -> bool:
-        return REFERENCE in self.requires
+        return self.reference in self.requires
 
     @property
     def reference_variant(self) -> str | None:
         """The workflow that takes the request's picture when one is sent."""
-        return self.variants.get(REFERENCE)
+        return self.variants.get(self.reference)
 
     @property
     def other_requires(self) -> frozenset[str]:
         """What the manifest requires beyond a picture: a request the create wire does not read."""
-        return frozenset(self.requires) - {REFERENCE}
+        return frozenset(self.requires) - {self.reference}
 
 
-def video_facts(entry: Any) -> VideoManifest | None:
+def _block(entry: Any) -> Any:
+    """The manifest's block for its own family: the contract names the family as the start of its intent."""
+    contract = getattr(entry, "contract", None) or {}
+    return contract.get(str(contract.get("intent") or "").split(".")[0])
+
+
+def video_facts(entry: Any, reference: str = "") -> VideoManifest | None:
     """The typed ``video`` block of a workflow entry's contract; None when the contract has none."""
-    block = (entry.contract or {}).get(BLOCK) if entry is not None else None
+    block = _block(entry)
     if not isinstance(block, Mapping):
         return None
     size, length, grid = (block.get(name) or {} for name in ("size", "length", "grid"))
@@ -65,7 +70,7 @@ def video_facts(entry: Any) -> VideoManifest | None:
         min_frames=int(grid["min_frames"]) if grid.get("min_frames") is not None else None,
         max_frames=int(grid["max_frames"]) if grid.get("max_frames") is not None else None,
         variants=dict(block.get("variants") or {}), requires=tuple(block.get("requires") or ()),
-        select_subject=bool(block.get("select_subject")), chain=bool(block.get("chain")))
+        select_subject=bool(block.get("select_subject")), chain=bool(block.get("chain")), reference=reference)
 
 
 def seconds_to_length(seconds: float, fps: float, *, step: int, offset: int,

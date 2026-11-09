@@ -9269,7 +9269,7 @@
    "type": "APIRoute"
   },
   {
-   "endpoint": "proxy.videos_create",
+   "endpoint": "gateway.row_routes._handler.<locals>.serve",
    "include_in_schema": true,
    "methods": [
     "POST"
@@ -9282,7 +9282,7 @@
    "type": "APIRoute"
   },
   {
-   "endpoint": "proxy.videos_create",
+   "endpoint": "gateway.row_routes._handler.<locals>.serve",
    "include_in_schema": true,
    "methods": [
     "POST"

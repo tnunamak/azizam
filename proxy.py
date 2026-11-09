@@ -123,6 +123,7 @@ from gateway import pinned_runtime, request_spool, workflow_run
 from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
+from gateway.frontend_shapes import video_create as frontend_video_create
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
     SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
@@ -27210,7 +27211,7 @@ async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapp
 
 
 frontend_wire_shapes.VIDEO_HOOKS = _DeploymentVideoHooks()
-frontend_wire_shapes.DEFAULT_WORKFLOWS["openai.video.create"] = lambda: _video_default_workflow()
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIVideoCreate.shape_id] = lambda: _video_default_workflow()
 
 frontend_wire_shapes.ASSET_URLS.update({
     "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
@@ -27233,8 +27234,8 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     pinned=_pinned_of_job,
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
-    legacy={"videos.create": _legacy_video_create},
-    openapi={"videos-create": VIDEOS_CREATE_OPENAPI},
+    legacy={frontend_video_create.LEGACY_CREATE: _legacy_video_create},
+    openapi={_MOUNTED_VIDEO_ROW_IDS[0]: VIDEOS_CREATE_OPENAPI},
 )
 
 

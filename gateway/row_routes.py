@@ -102,9 +102,10 @@ def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None
         row = rows[row_id]
         shape = build_shape(row)
         for route in row.routes:
-            app.add_api_route(route.canonical, _handler(deps, row, shape, route.canonical), methods=list(route.methods),
-                              include_in_schema=True, name=f"row:{row.id}:{route.canonical}",
-                              openapi_extra={**deps.openapi.get(row.id, {}), **operation_security.openapi_extra(operation_security.APP_KEY)})
+            for path in (route.canonical, *route.aliases):      # an alias answers as the canonical path: same policy and receipt
+                app.add_api_route(path, _handler(deps, row, shape, route.canonical), methods=list(route.methods),
+                                  include_in_schema=True, name=f"row:{row.id}:{path}",
+                                  openapi_extra={**deps.openapi.get(row.id, {}), **operation_security.openapi_extra(operation_security.APP_KEY)})
 
 
 def run_facts(workflow_id: str, contract: Mapping[str, Any]) -> dict[str, str]:

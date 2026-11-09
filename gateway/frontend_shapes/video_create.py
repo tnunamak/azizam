@@ -140,13 +140,13 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         404, f"Model '{public_model}' is not available for video generation.", param="model", code="model_not_found"))
     if isinstance(chosen, Response):
         return chosen
-    manifest = video_grid.video_facts(chosen)
+    manifest = video_grid.video_facts(chosen, shapes.REFERENCE_KIND)
     reference = body.get("input_reference")
     if manifest is None or manifest.chain:
         return LegacyRoute(LEGACY_CREATE, body)
     variant = snapshot.get(manifest.reference_variant) if reference and manifest.reference_variant else None
-    if variant is not None and video_grid.video_facts(variant) is not None:
-        chosen, manifest = variant, video_grid.video_facts(variant)
+    if variant is not None and video_grid.video_facts(variant, shapes.REFERENCE_KIND) is not None:
+        chosen, manifest = variant, video_grid.video_facts(variant, shapes.REFERENCE_KIND)
     name = short_name(chosen)
     if manifest.needs_reference and not reference:
         return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
@@ -166,6 +166,8 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         return refuse(400, "seconds must be a number")
     if seconds_value < manifest.min_seconds or seconds_value > manifest.max_seconds:
         return refuse(400, f"seconds must be between {manifest.min_seconds} and {manifest.max_seconds} for model {name}")
+    if body.get("size") is not None and not isinstance(body["size"], str):
+        return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
     width, height = video_grid.clamp_size(body.get("size"), manifest)
     length = video_grid.seconds_to_length(seconds_value, manifest.fps, step=manifest.step, offset=manifest.offset,
                                           min_frames=manifest.min_frames, max_frames=manifest.max_frames)
@@ -194,7 +196,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:
         decoded = _reference_bytes(reference)
-        target = roles.get(video_grid.REFERENCE, "input_reference")
+        target = roles.get(manifest.reference, "input_reference")
         staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
         if isinstance(staged, Response):
             return staged

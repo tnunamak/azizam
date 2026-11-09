@@ -3441,13 +3441,13 @@
       "access": "content:job:read+content:creation:link"
     },
     {
-      "handler": "proxy.videos_create",
+      "handler": "gateway.row_routes._handler.<locals>.serve",
       "method": "POST",
       "path": "/openai/v1/videos",
       "access": "own-account+content:creation:reuse"
     },
     {
-      "handler": "proxy.videos_create",
+      "handler": "gateway.row_routes._handler.<locals>.serve",
       "method": "POST",
       "path": "/v1/videos",
       "access": "own-account+content:creation:reuse"

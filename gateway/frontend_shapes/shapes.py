@@ -258,6 +258,7 @@ class _Bytes:
 
 IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
 MASK_PART = "mask"
+REFERENCE_KIND = IMAGE_PARTS[1]                  # what a video manifest calls the picture a request supplies
 SECOND_CHOICE = ".multi_image"                   # DEFAULT_WORKFLOWS key suffix: the default when several pictures arrive
 _DIMENSIONS = re.compile(r"[0-9]+x[0-9]+")
 
