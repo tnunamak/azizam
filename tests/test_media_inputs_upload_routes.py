@@ -63,7 +63,8 @@ def resolver_calls(monkeypatch):
 
 def ended(rig) -> bool:
     """The request is over: no live lease, and a file an upload made has been removed."""
-    return live_rows() == 0 and lease_rows() == 0 and stored_files(rig) == []
+    assert (live_rows(), lease_rows(), stored_files(rig)) == (0, 0, [])
+    return True
 
 
 def stored_files(rig) -> list[str]:
