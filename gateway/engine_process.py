@@ -154,7 +154,10 @@ class ProcessDriver:
             if not allowed:
                 return False
             address = _declared_address(svc, port)
-            if self._port_in_use(urlsplit(address).hostname or "", port):
+            hostname = urlsplit(address).hostname if address else None
+            if not hostname:  # a record that names no address is refused, never assumed to be on this computer
+                return False
+            if self._port_in_use(hostname, port):
                 return False
             if not self._restart_available(ident, cfg):
                 return False

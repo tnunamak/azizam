@@ -173,3 +173,21 @@ def test_release_records_give_the_same_origins_as_their_connection_address():
             checked += 1
             assert service_registry.engine_origin(config) == service_registry.origin_of(base)
     assert checked
+
+
+# --- the three defects named by the independent inventory ---------------------------------------------------------------
+
+def test_a_hostless_partial_stt_record_does_not_fall_back_to_loopback_5092():
+    execution = stt_chunking.SttExecutionConfig.from_service(
+        service_id="stt", service_config={"port": 5092}, config_directory=proxy.CONFIG_PATH.parent)
+    assert execution.host == ""
+
+
+def test_a_lifecycle_record_with_unload_url_and_no_address_posts_nowhere(monkeypatch):
+    posted: list[str] = []
+    monkeypatch.setattr(lifecycle_drivers.engine_egress, "request_sync", lambda *a, **k: posted.append(a) or None, raising=False)
+    record = {"driver_config": {"unload_url": "/v1/model/unload"}}
+    driver = lifecycle_drivers.HttpLoadUnloadDriver()
+    assert driver._base_url(record) == ""
+    driver.stop(record)
+    assert posted == []
