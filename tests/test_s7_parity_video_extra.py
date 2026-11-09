@@ -1121,6 +1121,7 @@ def test_video_completed_status_with_missing_output_still_answers_completed(tmp_
     assert seen["status"][:2] == (200, "failed")
     assert "GET /view" in seen["engine"], "the engine's /view refusal was never made"
     assert seen["content"][0] == 502, seen["content"]
+    assert seen["content"][1]["error"].get("code"), seen["content"]
     assert seen["content"][1]["error"]["type"] == "api_error", seen["content"]
 
 
@@ -1433,7 +1434,7 @@ def test_video_provenance_embeds_the_prompt_only_when_the_plan_allows(tmp_path, 
     _run(tmp_path, f"av-provenance-{plan}", setup, drive)
     code, body, text = seen["content"]
     video_id = seen["video_id"]
-    assert seen["status"] == "completed", text
+    assert seen["status"] == "completed"
     assert code == 200, text
     assert body[4:8] == b"ftyp"
     if plan == "full":
