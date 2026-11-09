@@ -807,7 +807,10 @@ pytest = 0  # no-egress oracle gaps: +12; MCP delivery refused and the moved rep
 # Status coverage (2026-11-08): +2 cases in owner-status.spec.tsx (a busy or unchecked engine still serves its capability); measured 3928 (vitest list --root web).
 # Status coverage review (2026-11-08): +9 cases in owner-status.spec.tsx (starting, faulted, other-label and provider spares); measured 3937.
 # Builder A carried test (2026-11-08): +1 case in owner-status.spec.tsx (a degraded spare that shares a label is a fault on record).
-vitest = 3990  # dot 2270: +7 in web/tests/try-workflow-media.spec.ts (generic failure reason)
+# Home media slots (2026-11-09): +17 cases in web/src/app/_home (home-model, home-page, handoff specs); measured 4000 (vitest list --json --root web).
+# Home media slots round 2 (2026-11-09): +3 cases in home-page.spec.tsx (chip is the change control, chip order, slot icons); measured 4003 (vitest list --json --root web).
+# Try named hand-off (2026-11-09): +8 cases (handoff-files +7, Home handoff +1); measured 4011 (vitest list --json --root web).
+vitest = 4022  # dot 2270: +7 in web/tests/try-workflow-media.spec.ts (generic failure reason); Home media slots: +32 (3990 + 32, to be re-measured)
 # Builder E2 (2026-11-08): +45 cases in web/src/app/workflows/owner-view.spec.tsx; measured 3983 (vitest run).
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
@@ -885,7 +888,8 @@ vitest = 3990  # dot 2270: +7 in web/tests/try-workflow-media.spec.ts (generic f
 # Gate lists: playwright.config.ts 667 + live-data 3 + household 18 = 688 (playwright test --list).
 # Trains r114 and r115 (2026-10-30): Try mesh viewer and App request history cases; the r114 gate counted 694.
 # Library pick everywhere (2026-11-06): +35 Playwright cases (library-pick-everywhere.spec.ts across its projects); playwright test --list rose 679 -> 714.
-playwright = 736
+# Home media slots (2026-11-09): +8 Playwright cases in e2e/home-media-slots.spec.ts (4 rows at 1440 and 390 px); playwright test --list 723 + live-data 3 + household 18 = 744.
+playwright = 745
 # Builder E2 (2026-11-08): +1 case in e2e/workflows-owner.spec.ts (owner flow, chromium only); not yet run, see the report.
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's

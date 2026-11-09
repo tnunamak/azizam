@@ -44,7 +44,7 @@ import {
 import { outputKindOf } from "./workflow-input-meta";
 import { MESH_CAPABILITY, MESH_FILE_SLOTS, meshDetailChoices, meshModeState } from "./mesh-mode";
 import { MeshMode } from "./mesh-panel";
-import { assignHandoffFiles, type PanelFiles } from "./handoff-files";
+import { assignHandoffFiles, hasRequiredHandoffFiles, type PanelFiles } from "./handoff-files";
 import { TRANSCRIBE_FILE_SLOTS } from "./transcribe-mode";
 import { costFrom } from "./result-cost";
 import { chatDefaultChoice } from "./chat-default";
@@ -1189,7 +1189,7 @@ function workflowFileSpecs(workflow: WorkflowOption): WorkflowExampleFile[] {
 }
 
 /** The files Home sent, set on a workflow's file inputs (see assignHandoffFiles). */
-function filesForWorkflow(workflow: WorkflowOption, files: File[]): Record<string, File | null> {
+function filesForWorkflow(workflow: WorkflowOption, files: File[], fileInputs?: string[]): Record<string, File | null> {
   return assignHandoffFiles(
     files,
     workflowFileSpecs(workflow).map((spec) => ({
@@ -1197,7 +1197,17 @@ function filesForWorkflow(workflow: WorkflowOption, files: File[]): Record<strin
       required: spec.required === true,
       family: workflow.inputs.find((input) => input.name === spec.inputName)?.media_type?.split("/")[0] ?? "",
     })),
+    fileInputs,
   );
+}
+
+/** Files a hand-off could not bind stay out of the request, with their names visible. */
+function droppedHandoffNotice(files: File[], chosen: Record<string, File | null>): string | null {
+  const assigned = new Set(Object.values(chosen));
+  const dropped = files.filter((file) => !assigned.has(file));
+  return dropped.length
+    ? `Could not attach ${dropped.map((file) => file.name).join(", ")}. Choose a matching file.`
+    : null;
 }
 
 function stringValue(value: unknown) {
@@ -1579,6 +1589,8 @@ export default function TryPage() {
   // one run, on the tab this page opened, once that tab is showing and its list has loaded.
   const homeHandoff = useRef<HomeHandoff | null | undefined>(undefined);
   const [handoffPending, setHandoffPending] = useState(false);
+  const [handoffNotice, setHandoffNotice] = useState<string | null>(null);
+  const handoffWorkflowId = useRef<string | null>(null);
   // Files Home sent to a workflow: they take the workflow's file inputs once that workflow's form is set up.
   const handoffFiles = useRef<File[]>([]);
   useEffect(() => {
@@ -1590,12 +1602,16 @@ export default function TryPage() {
       return;
     }
     const files = taken.files ?? [];
-    if (taken.prompt) {
+    if (taken.prompt && requestedTab !== "workflow") {
       const words = taken.prompt;
       setPrompt((current) => ({ ...current, [requestedTab]: words }));
     }
     const panel = PANEL_FILES[requestedTab];
-    if (panel) setPanelFiles((current) => ({ ...current, ...assignHandoffFiles(files, panel.slots) }));
+    if (panel) {
+      const chosen = assignHandoffFiles(files, panel.slots, taken.file_inputs);
+      setPanelFiles((current) => ({ ...current, ...chosen }));
+      setHandoffNotice(droppedHandoffNotice(files, chosen));
+    }
     if (panel?.startsItself) {
       // The panel takes its files and starts itself.
       homeHandoff.current = null;
@@ -1613,21 +1629,24 @@ export default function TryPage() {
     if (!handoffPending || !homeHandoff.current || !requestedTab || activeTab !== requestedTab) return;
     const section: CatalogSection = requestedTab === "workflow" ? "workflows" : "models";
     if (catalogState[section] !== "ready" && catalogState[section] !== "empty") return;
-    // Files for a workflow wait until its form has taken them: a form with file inputs and none chosen is not ready.
+    // Wait for this workflow's form and every required file, even for a prompt-only hand-off.
     if (
       requestedTab === "workflow" &&
-      homeHandoff.current.files?.length &&
-      selectedWorkflow &&
-      workflowFileSpecs(selectedWorkflow).length > 0 &&
-      !Object.values(workflowFiles).some(Boolean)
+      (!selectedWorkflow ||
+        handoffWorkflowId.current !== selectedWorkflow.id ||
+        initializedWorkflowId.current !== selectedWorkflow.id ||
+        !hasRequiredHandoffFiles(workflowFileSpecs(selectedWorkflow), workflowFiles))
     )
       return;
+    const panel = PANEL_FILES[requestedTab];
+    if (panel && !hasRequiredHandoffFiles(panel.slots, panelFiles)) return;
     const form = formRefs.current[requestedTab];
     if (!form) return;
     homeHandoff.current = null;
+    handoffWorkflowId.current = null;
     setHandoffPending(false);
     form.requestSubmit();
-  }, [handoffPending, activeTab, requestedTab, catalogState, prompt, selectedWorkflow, workflowFiles]);
+  }, [handoffPending, activeTab, requestedTab, catalogState, prompt, selectedWorkflow, workflowFiles, panelFiles]);
 
   useEffect(() => {
     try {
@@ -1709,6 +1728,12 @@ export default function TryPage() {
       setWorkflowFiles(draft.files);
       return;
     }
+    const handoff = homeHandoff.current;
+    const target = handoff?.model ?? requestedWorkflow;
+    const takesHandoff = requestedTab === "workflow" && Boolean(handoff) &&
+      (!target || target === selectedWorkflow.id || target === selectedWorkflow.short_id ||
+        selectedWorkflow.aliases?.includes(target));
+    if (takesHandoff) handoffWorkflowId.current = selectedWorkflow.id;
     const body = workflowExampleBody(selectedWorkflow);
     const inputs = workflowDefaults(
       selectedWorkflow.inputs,
@@ -1716,13 +1741,20 @@ export default function TryPage() {
       selectedWorkflow.inputMapping,
     );
     const example = JSON.stringify(inputs, null, 2);
+    // Keep the example's other fields, but never replace the person's prompt with its sample words.
+    if (takesHandoff && handoff?.prompt) inputs.prompt = handoff.prompt;
     setPrompt((current) => ({
       ...current,
-      workflow: example,
+      workflow: JSON.stringify(inputs, null, 2),
     }));
     setBaseWords((current) => ({ ...current, workflow: example }));
-    setWorkflowFiles(filesForWorkflow(selectedWorkflow, handoffFiles.current));
-    handoffFiles.current = [];
+    const files = takesHandoff ? handoffFiles.current : [];
+    const chosen = filesForWorkflow(selectedWorkflow, files, takesHandoff ? handoff?.file_inputs : undefined);
+    setWorkflowFiles(chosen);
+    if (takesHandoff) {
+      setHandoffNotice(droppedHandoffNotice(files, chosen));
+      handoffFiles.current = [];
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkflow]);
 
@@ -2826,6 +2858,10 @@ export default function TryPage() {
         </p>
       ) : null}
 
+      {handoffNotice && displayedTab === requestedTab ? (
+        <p role="status" className="text-muted-foreground text-sm">{handoffNotice}</p>
+      ) : null}
+
       <Tabs value={displayedTab} onValueChange={(value) => chooseTab(value as TryTab)}>
         {/* A phone has no room for seven task names in a row, and a strip
             that scrolls hides the ones past the edge. A select lists them
@@ -2918,6 +2954,13 @@ export default function TryPage() {
                       value={model[tab.value]}
                       options={choices}
                       onChange={(value) => {
+                        if (tab.value === "workflow" && value !== model.workflow) {
+                          homeHandoff.current = null;
+                          handoffWorkflowId.current = null;
+                          handoffFiles.current = [];
+                          setHandoffPending(false);
+                          setHandoffNotice(null);
+                        }
                         setModel((current) => ({
                           ...current,
                           [tab.value]: value,

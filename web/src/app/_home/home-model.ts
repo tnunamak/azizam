@@ -137,6 +137,10 @@ export function tryHasOwnTab(kind: string): boolean {
 
 /** One kind of file a capability takes, as its declared input modality says. */
 export interface MediaInput {
+  /** A manifest input, when the row names each required file separately. */
+  name?: string;
+  /** The input’s own phrase, including its article, such as "an ending picture". */
+  label?: string;
   /** The modality as the data names it ("image", "audio", or any other word a new engine declares). */
   modality: string;
   /** What the person is asked for, in a word: the gateway's input word for the modality, else the modality itself. */
@@ -172,12 +176,21 @@ export interface ComposerInputs {
  */
 export function composerInputs(row: HomeCapability | null): ComposerInputs {
   const takes = (row?.input_modalities ?? []).map((modality) => modality.toLowerCase());
-  if (!takes.length) return { text: "required", media: [] };
+  if (!takes.length && row?.required_media_inputs === undefined) return { text: "required", media: [] };
   const required = new Set(
     (row?.required_input_modalities ?? (takes.includes("text") ? ["text"] : takes)).map((modality) => modality.toLowerCase()),
   );
   const acceptsText = takes.includes("text");
-  const media = takes
+  const media = row?.required_media_inputs !== undefined
+    ? row.required_media_inputs.slice(0, 3).map((input): MediaInput => ({
+        name: input.name,
+        label: input.label,
+        modality: input.modality,
+        word: row.input_words?.[input.modality] ?? input.modality,
+        accept: input.accepts.length ? input.accepts.join(",") : undefined,
+        required: true,
+      }))
+    : takes
     .filter((modality) => modality !== "text")
     .map((modality): MediaInput => ({
       modality,
@@ -189,14 +202,19 @@ export function composerInputs(row: HomeCapability | null): ComposerInputs {
   return { text: !acceptsText ? "none" : required.has("text") ? "required" : "optional", media };
 }
 
-/** The input's word with its article, for a sentence: "a picture", "a recording". */
+/** Stable per-slot identity; old rows still keep one file per modality. */
+export function mediaInputKey(input: MediaInput): string {
+  return input.name ?? input.modality;
+}
+
+/** The input's label, or its old word with an article: "a picture", "a recording". */
 export function mediaPhrase(input: MediaInput): string {
-  return `${/^[aeiou]/i.test(input.word) ? "an" : "a"} ${input.word}`;
+  return input.label ?? `${/^[aeiou]/i.test(input.word) ? "an" : "a"} ${input.word}`;
 }
 
 /** Whether a file can be given to a media input: its type fits the accept filter, or the input takes any file. */
 export function fitsMediaInput(file: File, input: MediaInput): boolean {
-  return fileFitsTypes(file, input.accept ? [input.accept] : undefined);
+  return fileFitsTypes(file, input.accept ? input.accept.split(",") : undefined);
 }
 
 /** The capability row that can make a picture from words alone, so a typed description can become the picture a
