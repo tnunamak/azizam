@@ -174,7 +174,9 @@ class Shape:
         if refused is not None:
             return refused
         named = _wire.pop_str(fields, "model")
-        servable = lambda entry: not self.profile(entry.contract)  # noqa: E731
+        # A workflow the row's service has no binding for (another service runs it) is no workflow of this row.
+        backend = next((route.runtime_policy["backend"] for route in row.routes if route.runtime_policy.get("backend")), None)
+        servable = lambda entry: not self.profile(entry.contract) and (backend is None or backend in entry.bindings)  # noqa: E731
         target = self.refine_target(named or self.default_target(), named=bool(named), uploads=uploads,
                                     exists=lambda name: not isinstance(
                                         _wire.choose_workflow(snapshot, row, target=name, supplied=[], servable=servable), Response))
