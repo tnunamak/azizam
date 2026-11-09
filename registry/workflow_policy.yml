@@ -34,6 +34,7 @@ workflows:
   image.generate.sdxl-seamless-tile: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   mesh.generate.trellis-2: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   video.edit.rife-interpolate: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  video.edit.video-mux: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   video.edit.scail-2-replace: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   video.generate.ltx-2.5-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
   video.generate.ltx-2.5-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}

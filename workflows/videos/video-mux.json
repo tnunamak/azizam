@@ -1,0 +1,56 @@
+{
+    "_meta": {
+        "name": "video-mux",
+        "description": "Put an audio track onto a video. Reads the video's frames and frame rate, loads the new track, and writes one video with the new track as its sound. Core ComfyUI nodes only.",
+        "seed_node": null
+    },
+    "1": {
+        "class_type": "LoadVideo",
+        "inputs": {
+            "file": "input.mp4"
+        }
+    },
+    "2": {
+        "class_type": "GetVideoComponents",
+        "inputs": {
+            "video": [
+                "1",
+                0
+            ]
+        }
+    },
+    "3": {
+        "class_type": "LoadAudio",
+        "inputs": {
+            "audio": "input.wav"
+        }
+    },
+    "4": {
+        "class_type": "CreateVideo",
+        "inputs": {
+            "images": [
+                "2",
+                0
+            ],
+            "audio": [
+                "3",
+                0
+            ],
+            "fps": [
+                "2",
+                2
+            ]
+        }
+    },
+    "5": {
+        "class_type": "SaveVideo",
+        "inputs": {
+            "video": [
+                "4",
+                0
+            ],
+            "filename_prefix": "video-mux",
+            "format": "auto"
+        }
+    }
+}

@@ -190,7 +190,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
              "image.generate.flux2-klein-snofs",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
-             "mesh.generate.trellis-2"}
+             "mesh.generate.trellis-2", "video.edit.video-mux"}
     records = {record.id: record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records() if record.id not in added}
     with monkeypatch.context() as patch:
         patch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(rs.build({}, rs.BundledRelease(records, ()), generation=1)))

@@ -1,0 +1,43 @@
+schema_version: 2
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.edit.video-mux
+intent: video.edit
+capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
+display_name: Add a Soundtrack to a Video
+purpose: Put an audio track onto a video
+description: Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.
+typical_seconds: 5
+inputs:
+  source_video:
+    label: a video to add sound to
+    help: The video that gets the new sound.
+    type: asset
+    accepts:
+      - video/*
+    required: true
+  source_audio:
+    label: a sound to add
+    help: The song or sound to put on the video.
+    type: asset
+    accepts:
+      - audio/*
+    required: true
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/video-mux.json
+    selectors:
+      video: {node: '5', key: images, from: output_dir, decode: none, take: first}
+    map:
+      source_video:
+        - node: "1"
+          input: file
+      source_audio:
+        - node: "3"
+          input: audio
