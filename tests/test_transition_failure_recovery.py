@@ -566,3 +566,40 @@ def test_a_revalidation_hold_carries_the_recorded_outcome_not_no_change(tmp_path
     engine.clean = True
     _restart(runtime, op_id)
     assert all(outcome != "no_change" or (evidence or "").startswith("restore:reset") for outcome, evidence in seen), seen
+
+
+# -- an unknown reset is not run again; a hold from the previous format still re-reads the clean check (review 2327) -------
+
+
+def test_a_reset_whose_outcome_is_unknown_is_never_run_again_by_the_next_restart(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.reset_outcome, engine.query_outcome, engine.clean = "unknown", "unknown", True
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="restore", outcome="partial",
+                              evidence="restore:failed:state_not_known_clean", target="alpha")
+    engine.resident = "alpha"
+    first = _restart(runtime, op_id)
+    assert (first.state, gates.state("dom")) == ("reconciling", "reconciling")
+    assert engine.resets == 1
+    second = _restart(runtime, op_id)
+    assert engine.resets == 1, "the second restart queries the dispatched reset; it does not run it again"
+    assert (second.state, gates.state("dom")) == ("reconciling", "reconciling")
+
+
+@pytest.mark.parametrize("evidence", ["restore:failed:state_not_known_clean", "reset:target_not_verified_clean"])
+@pytest.mark.parametrize("clean", [True, False])
+def test_a_hold_written_in_the_previous_format_re_reads_the_clean_check(tmp_path, monkeypatch, evidence, clean) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.clean = clean
+    executor = runtime.executor()
+    begun = executor.store.begin(domain="dom", kind="wake", idempotency_key="old-hold", target="alpha",
+                                 incarnation="inc-1", config_revision=1)
+    op_id = begun.operation.op_id
+    executor.store.write_intent(op_id, StepIntent(step="restore", effect_key=f"{op_id}:restore:revalidate",
+                                                  expected_incarnation="inc-1"),
+                                EffectResult(outcome="unknown", evidence_ref=f"revalidate:{evidence}"))
+    executor.store.finish(op_id, "reconciling", "reconciling")
+    engine.resident = "alpha"
+    done = _restart(runtime, op_id)
+    want = ("succeeded", "open") if clean else ("failed_closed", "failed_closed")
+    assert (done.state, gates.state("dom")) == want, (done.state, done.step, done.evidence_ref)
+    assert engine.resets == 0, "the reset already ran; it is not run again"
