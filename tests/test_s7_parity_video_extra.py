@@ -1456,6 +1456,51 @@ def test_video_provenance_embeds_the_prompt_only_when_the_plan_allows(tmp_path, 
         assert b"make it dusk" not in body
 
 
+@pytest.mark.parametrize("memory", ["off", "kept", "forgotten"])
+def test_the_library_sidecar_origin_block_holds_no_prompt_text(tmp_path, memory):
+    """P6: the sidecar of a run's file has an ``origin`` block (workflow name, request id, whether the workflow takes text) that
+    the old route did not write. It is accepted only because it never holds the prompt: not when prompt memory is off, not
+    while it keeps the prompt, and not after the maker forgot it. Every sidecar and every cached file is searched for the text."""
+    from gateway import admin_store
+    phrase = "a very particular prompt about lighthouses"
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+        if memory != "off":
+            admin_db = rig.tmp / "admin.db"
+            admin_store.init_db(admin_db)
+            person = admin_store.upsert_oidc_user("issuer", "origin-maker", path=admin_db)
+            admin_store.put_operator_setting(
+                "prompt_memory", {"default_remember": True, "never_keep": False, "retention_cap": "3_months"}, path=admin_db)
+            rig.set(proxy.ADMIN_STORE, "path", admin_db)
+            rig._exit.enter_context(authenticated(identity(
+                everything(media_metadata="none", receipt_detail="full"), person_id=person["id"])))
+
+    async def drive(rig):
+        created = await rig.call("POST", "/v1/videos", json_body={"prompt": phrase, "model": "ltx-2.5-t2v"})
+        video_id = created.json()["id"]
+        assert (await _audit_wait(rig, video_id))["status"] == "completed"
+        content = await rig.call("GET", f"/v1/videos/{video_id}/content")
+        assert content.status_code == 200
+        if memory == "forgotten":
+            assert (await rig.call("DELETE", f"/v1/videos/{video_id}")).status_code == 200
+        files = {p.name: p.read_bytes() for p in rig.cache.iterdir() if p.is_file()}
+        seen["files"] = files
+        seen["sidecars"] = {name: json.loads(data) for name, data in files.items() if name.endswith(".json")}
+
+    _run(tmp_path, f"origin-{memory}", setup, drive)
+    origins = [meta["origin"] for meta in seen["sidecars"].values() if "origin" in meta]
+    assert origins, f"no sidecar holds an origin block: {sorted(seen['files'])}"
+    for origin in origins:
+        assert set(origin) <= {"workflow_name", "request_id", "takes_text", "sources"}, origin
+        assert phrase not in json.dumps(origin)
+    # The sidecars never hold the text, whatever the memory does; the stored files carry none either. (The kept prompt lives only
+    # in the prompt table, which is not in the cache.)
+    leaked = [name for name, data in seen["files"].items() if phrase.encode() in data]
+    assert leaked == [], leaked
+
+
 # ---- V3b contract tests from the video parity oracle audit ----
 
 
