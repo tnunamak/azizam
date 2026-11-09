@@ -191,7 +191,9 @@ def test_a_live_wal_is_read_not_ignored_and_the_store_and_wal_are_untouched(tmp_
         assert result.stderr == ""
         assert result.returncode == 2, "the running job lives only in the WAL; an immutable read would call the store ready"
         assert json.loads(result.stdout) == {
-            "ready": False, "reason": "running_jobs", "job_ids": ["live"], "inventory": [],
+            "ready": False, "reason": "running_jobs", "job_ids": ["live"],
+            "inventory": [{"envelope_version": None, "job_id": "live", "reason": "pin_not_recorded",
+                           "status": "running", "workflow": "w"}],
         }
         assert {item: source_state(item) for item in files} == before
         assert not Path(str(path) + "-journal").exists()
