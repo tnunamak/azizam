@@ -27,6 +27,7 @@ def effective_status(view: RunJobView) -> str:
     return "queued" if view.status == "running" and not view.progress else view.status
 
 
+NO_RESULT = "no_result"              # the run core's failure code for a run that ended without a result file
 EXPIRES_AFTER_S = 86400                 # the old record's expiry: a day after it was made
 MEDIA_TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}
 FALLBACK_MEDIA_TYPE = "application/octet-stream"
@@ -135,6 +136,9 @@ class VideoViews:
         ``metadata_mode`` is the one the request asked for; without it the job's own submit-time choice stands, and then
         ``full``. ``full`` is for the maker only, while the prompt is kept. ``none`` strips the metadata from the bytes
         sent (never from the stored copy)."""
+        if view.status == "failed" and view.failure is not None and view.failure.code == NO_RESULT:
+            # The run ended with no file to keep: the content is missing on the engine's side, as the old route answered.
+            return _wire.error_response(502, view.failure.message, kind="api_error")
         if view.status != "succeeded":
             word = WIRE_STATUS.get(effective_status(view), "queued")
             return _wire.error_response(404, f"{self.wire_name.capitalize()} content is not ready yet (status={word})",
@@ -144,7 +148,9 @@ class VideoViews:
             return _wire.error_response(500, f"No {self.wire_name} output found in job", kind="api_error")
         ref = refs[0]
         facts = jobs.request_facts(view.job_id, caller)
-        mode = metadata_mode or (facts.get("metadata_mode") if facts is not None else None) or provenance.METADATA_FULL
+        # The mode asked for, else the one the job recorded, else the plan's own default (as the old route resolved it).
+        mode = (metadata_mode or (facts.get("metadata_mode") if facts is not None else None)
+                or media_delivery.current_mode() or provenance.METADATA_FULL)
         if mode == provenance.METADATA_FULL and (
                 facts is None or facts.maker_person_id is None or facts.maker_person_id != caller_person_id
                 or facts.prompt is None or never_keep):
