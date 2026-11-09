@@ -465,6 +465,7 @@ class Executor:
         self._submit_locks: dict[str, asyncio.Lock] = {}
         self._tasks: dict[str, "asyncio.Task[None]"] = {}
         self._ready = False
+        self._recovery_pending = False  # a durable hold failed: the next admission reconciles again
         self._reconcile_lock: Optional[asyncio.Lock] = None
 
     # -- submit -------------------------------------------------------------
@@ -475,7 +476,7 @@ class Executor:
             await self.ensure_reconciled()
         except Exception as exc:  # noqa: BLE001 - the table read and then failed mid-reconcile: refuse, never a 500
             print(f"[transition-gate] reconcile before {domain!r} submit failed: {type(exc).__name__}", flush=True)
-        if not self._ready:
+        if not self._ready or self._recovery_pending:
             # Nothing begins before the leftover operations are settled: the reconcile must never find an
             # operation that a task of this process is driving.
             raise TransitionUnavailable(domain, reason="reconciling", retry_after_s=5)
@@ -614,6 +615,9 @@ class Executor:
         except Exception as exc:  # noqa: BLE001 - the table cannot be written: hold the gate in memory
             print(f"[transition-gate] cannot record the hold of {operation.op_id}: {type(exc).__name__}", flush=True)
             self._gate_hold(operation.domain, "reconciling")
+            # The row still says running. Keep the in-memory hold until a durable write succeeds, and have the next
+            # admission reconcile before it accepts work, so storage coming back never leaves a wedged domain.
+            self._recovery_pending = True
 
     def _order(self) -> list[StepName]:
         return [name for name in STEP_ORDER if name in self._steps]
@@ -658,7 +662,7 @@ class Executor:
     # -- recovery -----------------------------------------------------------
 
     def reconciled(self) -> bool:
-        return self._ready
+        return self._ready and not self._recovery_pending
 
     async def ensure_reconciled(self) -> None:
         """Run ``reconcile_startup`` once, the first time the transition table reads as readable.
@@ -668,7 +672,7 @@ class Executor:
         entry (``submit``, ``ensure_awake``, and the gateway's admission) calls this; it is a flag read once the
         reconcile has run, and a no-op while the table still cannot be read. One lock makes it run once.
         """
-        if self._ready:
+        if self._ready and not self._recovery_pending:
             return
         gates = getattr(self.store, "gates", None)
         if gates is not None and not gates.readable():
@@ -678,7 +682,7 @@ class Executor:
         if self._reconcile_lock is None:
             self._reconcile_lock = asyncio.Lock()
         async with self._reconcile_lock:
-            if not self._ready:
+            if not self._ready or self._recovery_pending:
                 await self.reconcile_startup()
 
     async def reconcile_startup(self) -> None:
@@ -690,7 +694,9 @@ class Executor:
         (the drain counts its deadline from its first intent). The gate of every such domain is already
         ``closed`` or ``reconciling`` in the table, so nothing is admitted while this runs.
         """
-        for operation in await asyncio.to_thread(self.store.unfinished):
+        leftover = await asyncio.to_thread(self.store.unfinished)  # unreadable: raises, the pending flag stays as it was
+        self._recovery_pending = False  # a hold that cannot be written sets it again
+        for operation in leftover:
             if operation.op_id in self._tasks:
                 continue  # a task of this process drives it; only an operation nothing drives is recovered
             try:
