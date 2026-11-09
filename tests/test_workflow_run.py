@@ -773,6 +773,15 @@ def test_request_facts_are_written_with_the_job_and_read_back_whole(db, tmp_path
     assert "request_facts" not in json.dumps(media_jobs.get(view.job_id, audience="client", path=db))
 
 
+def test_the_audio_fact_survives_the_job_stores_key_guard(db, tmp_path):
+    """The job store refuses the key name ``audio`` inside metadata (it can hold media bytes); the fact is kept under
+    another stored name and read back under its own."""
+    _, port, view = submit_one(db, tmp_path, facts={"audio": False})
+    assert dict(WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())) == {"audio": False}
+    stored = media_jobs.get(view.job_id, audience="internal", path=db)["metadata"]["request_facts"]
+    assert "audio" not in stored
+
+
 def test_a_job_that_recorded_no_facts_has_an_empty_mapping_and_an_unreadable_job_has_none(db, tmp_path):
     _, port, view = submit_one(db, tmp_path)
     service = WorkflowJobService(port=port, path=db)

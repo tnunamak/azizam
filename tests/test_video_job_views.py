@@ -104,7 +104,7 @@ def test_the_fake_service_lists_what_the_shape_renders(shape):
     jobs = FakeJobService(core)
     for index, name in enumerate(("mj_a", "mj_b", "mj_c")):
         core.jobs[name] = view(name, created_at_s=100 + index)
-    views, more = jobs.list(None, intent="x", limit=2)
+    views, more = jobs.list(None, intents=("x",), limit=2)
     assert [v.job_id for v in views] == ["mj_c", "mj_b"] and more is True
     with pytest.raises(JobNotFound):
-        jobs.list(None, intent="x", limit=2, after_id="nope")
+        jobs.list(None, intents=("x",), limit=2, after_id="nope")

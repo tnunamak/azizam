@@ -424,13 +424,19 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
         progress=100 if status == media_jobs.STATUS_SUCCEEDED else int(job.get("progress") or 0))
 
 
+# The job store refuses some key names inside a job's metadata (they can hold media bytes). A fact keeps its public name in
+# ``RequestFacts`` and is stored under the name here.
+_FACT_STORED_AS = {"audio": "audio_track"}
+_FACT_PUBLIC_AS = {stored: public for public, stored in _FACT_STORED_AS.items()}
+
+
 def request_facts_record(facts: Mapping[str, Any]) -> dict[str, Any]:
-    """The facts a request wants kept, checked and made plain. A key outside ``REQUEST_FACT_KEYS`` is refused (ValueError);
-    a key with no value is dropped."""
+    """The facts a request wants kept, checked and made plain, as the job's metadata stores them. A key outside
+    ``REQUEST_FACT_KEYS`` is refused (ValueError); a key with no value is dropped."""
     unknown = sorted(set(facts) - REQUEST_FACT_KEYS)
     if unknown:
         raise ValueError(f"request facts hold only the listed keys, not {unknown}")
-    return {key: plain(value) for key, value in facts.items() if value is not None}
+    return {_FACT_STORED_AS.get(key, key): plain(value) for key, value in facts.items() if value is not None}
 
 
 # ----------------------------------------------------------------------------------------------------- the core
@@ -1155,7 +1161,8 @@ class WorkflowJobService:
         except JobNotFound:
             return None
         recorded = (job.get("metadata") or {}).get(REQUEST_FACTS_KEY)
-        values = {k: v for k, v in recorded.items() if k in REQUEST_FACT_KEYS} if isinstance(recorded, Mapping) else {}
+        values = ({_FACT_PUBLIC_AS.get(k, k): v for k, v in recorded.items() if _FACT_PUBLIC_AS.get(k, k) in REQUEST_FACT_KEYS}
+                  if isinstance(recorded, Mapping) else {})
         maker = str(job.get("maker_person_id") or "")
         own = bool(maker) and self._port.maker(caller) == maker
         prompt = None
@@ -1173,19 +1180,19 @@ class WorkflowJobService:
             return (), False
         direction = "ASC" if order == "asc" else "DESC"
         marks = ",".join("?" for _ in wanted)
-        sql = (f"SELECT job_json FROM media_jobs WHERE intent IN ({marks}) "
+        sql = (f"SELECT job_json, created_at FROM media_jobs WHERE intent IN ({marks}) "
                "AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone) "
                f"ORDER BY created_at {direction}, job_id {direction}")
         page: list[dict[str, Any]] = []
         seen_cursor = after_id is None
         has_more = False
         with media_jobs.connection(self._path) as conn:
-            for (job_json,) in conn.execute(sql, wanted):
+            for job_json, created_at in conn.execute(sql, wanted):
                 job = media_jobs.for_audience(json.loads(job_json), "internal")
                 if not is_run_job(job) or not self._port.can_read(job, caller):
                     continue
                 if after_key is not None:
-                    position = (int(job.get("created_at") or 0), str(job["job_id"]))
+                    position = (int(created_at or 0), str(job["job_id"]))
                     if (position <= after_key) if order == "asc" else (position >= after_key):
                         continue
                 elif not seen_cursor:
