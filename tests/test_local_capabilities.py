@@ -7,6 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -323,6 +325,72 @@ class SummarySafetyTest(unittest.TestCase):
             self.assertNotIn("backend", entry)
             self.assertNotIn("policy_sources", entry)
             self.assertNotIn("policy_reasons", entry)
+
+
+
+# Slice 1 pins the defects without changing production behavior. Keep these
+# strict: once slice 2 repairs a binding, XPASS must force removal of its marker.
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="slice 2: workflow families must not bind an undeclared ComfyUI backend",
+)
+def test_workflow_family_absent_comfyui_has_no_capabilities(family, intent):
+    config = {
+        "backends": {},
+        family: {"workflows": {"sample": {"file": "sample.json"}}},
+    }
+
+    assert _by_intent(build_local_capabilities(config), intent) == []
+
+
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="slice 2: workflow families must honor their configured backend",
+)
+def test_workflow_family_uses_configured_backend(family, intent):
+    config = {
+        "backends": {
+            "comfyui": {"name": "ComfyUI"},
+            "other": {"name": "Another workflow backend"},
+        },
+        family: {
+            "backend": "other",
+            "workflows": {"sample": {"file": "sample.json"}},
+        },
+    }
+
+    caps = _by_intent(build_local_capabilities(config), intent)
+    assert len(caps) == 1
+    assert caps[0].workflow == "sample"
+    assert caps[0].backend == "other"
+
+
+def test_image_family_requires_comfyui_control():
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    del config["backends"]["comfyui"]
+
+    without_comfyui = build_local_capabilities(config)
+    assert _by_intent(without_comfyui, "image.generate") == []
+    assert _by_intent(without_comfyui, "image.edit") == []
+
+    # Positive control rules out a fixture which never advertised images.
+    with_comfyui = build_local_capabilities(REPRESENTATIVE_CONFIG)
+    assert [c.model for c in _by_intent(with_comfyui, "image.generate")] == [
+        "flux2-klein-4b",
+    ]
+    assert [c.model for c in _by_intent(with_comfyui, "image.edit")] == [
+        "flux2-klein-4b-edit",
+    ]
 
 
 if __name__ == "__main__":
