@@ -26521,7 +26521,19 @@ def _signed_asset_content_response(
         return Response(status_code=304, headers=headers)
     data = cache_path.read_bytes()
     if md_raw == provenance.METADATA_FULL:
-        data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
+        try:
+            data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
+        except media_metadata.MediaMetadataError as exc:
+            # The stored prompt is the maker's own text; the reason names only its cause, never its content.
+            print(f"[proxy] full metadata restore failed for {asset_id}: {exc}", flush=True)
+            return Response(
+                content=json.dumps({"error": {
+                    "message": "This file cannot hold its stored prompt as metadata. "
+                               "Download it with md=provenance or md=none instead.",
+                    "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            )
     try:
         data = media_delivery.deliver_bytes(
             data, cache_path.suffix, md_raw or provenance.METADATA_NONE
