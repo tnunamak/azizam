@@ -580,7 +580,9 @@ def test_a_reset_whose_outcome_is_unknown_is_never_run_again_by_the_next_restart
     first = _restart(runtime, op_id)
     assert (first.state, gates.state("dom")) == ("reconciling", "reconciling")
     assert engine.resets == 1
+    print("FIRST", first.step, first.step_outcome, first.evidence_ref, first.step_intent)
     second = _restart(runtime, op_id)
+    print("SECOND", second.step, second.step_outcome, second.evidence_ref, second.step_intent)
     assert engine.resets == 1, "the second restart queries the dispatched reset; it does not run it again"
     assert (second.state, gates.state("dom")) == ("reconciling", "reconciling")
 
