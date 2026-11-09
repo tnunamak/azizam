@@ -468,7 +468,11 @@ def _public_destination(item: Mapping[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------- admin routes
 
 
-def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, admin_path: Path) -> APIRouter:
+def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports,
+                                  admin_path: Path | Callable[[], Path]) -> APIRouter:
+    def where() -> Path:  # read per request, like the store's own path: the admin database can move
+        return Path(admin_path() if callable(admin_path) else admin_path)
+
     router = APIRouter(prefix="/admin/api/problem-reports", tags=["Problem reports"])
 
     def guard(request: Request):
@@ -496,7 +500,7 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
         ctx = guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return {"destinations": [_public_destination(d) for d in destinations_from_settings(admin_path)]}
+        return {"destinations": [_public_destination(d) for d in destinations_from_settings(where())]}
 
     @router.put("/destinations")
     async def put_destinations(request: Request):
@@ -506,18 +510,19 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
         try:
             body = await request.json()
             items = body.get("destinations") if isinstance(body, dict) else None
-            stored = destinations_from_settings(admin_path)
+            path = where()
+            stored = destinations_from_settings(path)
             checked = _validate_destinations(items, stored)
         except ProblemReportError as exc:
             return _error(400, "invalid_request", str(exc))
         except ValueError:
             return _error(400, "invalid_request", "the body must be JSON")
         session = getattr(ctx, "browser_session", None)
-        checked, unused = _store_secrets(checked, stored, admin_path=admin_path, session=session)
-        admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=admin_path)
+        checked, unused = _store_secrets(checked, stored, admin_path=path, session=session)
+        admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=path)
         for ref in unused:  # a replaced, cleared or moved secret is deleted, not left behind
             try:
-                secret_store.delete_provider_secret(ref, db_path=admin_path, session=session)
+                secret_store.delete_provider_secret(ref, db_path=path, session=session)
             except KeyError:
                 pass
         return {"destinations": [_public_destination(d) for d in checked]}
