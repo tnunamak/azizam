@@ -28,6 +28,11 @@ field and the three code examples). Every other byte is as before.
 Re-captured at the train 35 gate: the generic run route takes full ids, so the two video-edit workflows' sync path in
 their ``openapi_catalog`` and ``member_catalog`` entries (and rife-interpolate's example request and code examples) name
 the full id, and their sync ``output`` says the route answers a media job. Every other byte is as before.
+
+Re-captured when asset inputs took their modality from declared accepts, not the intent name. Eight workflows moved, and
+only their input modalities in ``capabilities``, ``member_catalog``, ``home`` and ``projected``: the mesh picture input
+``asset`` to ``image``; the six image-to-video and keyframe workflows ``video`` to ``image``; scail-2-replace gains
+``image``. Every other entry is as before.
 """
 
 from __future__ import annotations
