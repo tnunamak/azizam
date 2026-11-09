@@ -4,7 +4,11 @@ A leaf module: the catalog (``model_presentation``) and the access-plan
 evaluator (``access_plans``) both read it, so neither imports the other.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from types import MappingProxyType
+
+import yaml
 
 CAPABILITY_LABELS = {
     "chat": "Chat", "image": "Images", "video": "Video", "speech": "Voice",
@@ -23,50 +27,49 @@ MODEL_KIND_LABELS = {
     "speech": CAPABILITY_LABELS["speech"], "transcribe": CAPABILITY_LABELS["transcribe"],
 }
 MODEL_KINDS = tuple(MODEL_KIND_LABELS)
-PROTOCOL_CAPABILITIES = {
-    "llm.execution": "chat", "typesafe-systemone": "decide",
-    "chat": "chat", "completions": "chat", "chat.completions": "chat", "vision": "chat",
-    "speech": "speech", "tts": "speech", "audio.speech": "speech", "speech.synthesis": "speech",
-    "transcriptions": "transcribe", "transcription": "transcribe", "stt": "transcribe",
-    "audio.transcriptions": "transcribe", "speech.transcription": "transcribe",
-    "speech.translation": "transcribe", "images": "image", "image": "image", "generations": "image",
-    "image.generate": "image", "image.edit": "image", "videos": "video", "video": "video",
-    "video.generate": "video", "embeddings": "embed", "text.embeddings": "embed",
-    "rerank": "rerank", "text.rerank": "rerank", "decisions": "decide",
-    "decision.systemone": "decide", "music": "music", "sfx": "sfx", "audio": "audio",
-    "audio.generate": "audio", "mesh": "mesh",
-}
+# Capability spellings are shipped data. Keep these imported names and their
+# insertion order stable; callers share read-only tables loaded once at import.
+CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "capability_words.yml"
 
-# The one mapping from a route intent to a capability (design §2.2, RT M4).
-# The catalog's service capability names, plus the intents routes emit that
-# the catalog does not name. tests/test_access_plans.py fails if a route emits
-# an intent missing here.
-INTENT_CAPABILITIES = {
-    **PROTOCOL_CAPABILITIES,
-    "text.completions": "chat",
-    "chat.responses": "chat",
-    "chat.generate": "chat",
-    "chat.messages": "chat",
-    "chat.messages.count_tokens": "chat",
-    "music.generate": "music",
-    "sfx.generate": "sfx",
-    "audio.transcriptions": "transcribe",
-    "image.variation": "image",
-    "video.remix": "video",
-    "video.edit": "video",
-    "video.extend": "video",
-    "image.analyze": "image",
-    "mesh.generate": "mesh",
-    # Route spellings protocol frontends use for the same work.
-    "embedding": "embed",
-    "images.generate": "image",
-    "images.generations": "image",
-    "images.edit": "image",
-    "images.edits": "image",
-    "audio.transcribe": "transcribe",
-    "audio.translations": "transcribe",
-    "videos.generate": "video",
-}
+
+def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
+    """Read the versioned word maps, refusing invalid data before callers import them."""
+    def invalid(word: object, reason: str) -> ValueError:
+        return ValueError(f"{path.name}: word {word!r} {reason}")
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise invalid("<document>", f"could not be loaded: {error}") from error
+    if not isinstance(document, dict):
+        raise invalid("<document>", "must be a mapping")
+    for key in document:
+        if key not in {"schema_version", "protocol_words", "route_intents"}:
+            raise invalid(key, "is an unknown top-level key")
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise invalid("schema_version", "must be the integer 1")
+
+    tables: list[dict[str, str]] = []
+    for section in ("protocol_words", "route_intents"):
+        rows = document.get(section)
+        if not isinstance(rows, dict):
+            raise invalid(section, "must be a mapping")
+        table: dict[str, str] = {}
+        for word, capability in rows.items():
+            if not isinstance(word, str) or not word.strip():
+                raise invalid(word, f"in {section} must be a non-empty string")
+            if not isinstance(capability, str) or capability not in CAPABILITY_LABELS:
+                raise invalid(word, f"in {section} names unknown capability {capability!r}")
+            table[word] = capability
+        tables.append(table)
+    protocol, extra_intents = tables
+    for word, capability in extra_intents.items():
+        if word in protocol and protocol[word] != capability:
+            raise invalid(word, "has conflicting capabilities in protocol_words and route_intents")
+    return MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents})
+
+
+PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES = load_capability_words()
 
 
 # The OpenAI-compatible endpoints the gateway's lifecycle hop serves (``/internal/litellm/local/{backend}/v1<path>``),

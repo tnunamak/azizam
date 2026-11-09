@@ -15,6 +15,8 @@ The managed LiteLLM substrate is the sole exception. Its gateway-derived
 endpoint/protocol fields are locked and it cannot be removed; its name, enabled
 state, and note remain editable.
 
+`capability_words.yml` maps protocol words and extra route intents to capability ids; `gateway/capability_ids.py` validates schema version 1 and loads read-only ordered tables at import. Restart after editing it.
+
 ## Protocol descriptions
 
 `registry/protocols/*.yml` hold protocol descriptions: data that says how

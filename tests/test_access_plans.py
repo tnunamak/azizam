@@ -213,7 +213,7 @@ def test_all_work_types_includes_a_capability_added_later(monkeypatch):
     # A capability added after both plans were saved: the code gains it, the stored documents do not change.
     monkeypatch.setattr(access_plans, "CAPABILITIES", (*CAPABILITIES, "teleport"))
     monkeypatch.setitem(access_plans.CAPABILITY_LABELS, "teleport", "Teleport")
-    monkeypatch.setitem(access_plans.INTENT_CAPABILITIES, "teleport.now", "teleport")
+    monkeypatch.setattr(access_plans, "INTENT_CAPABILITIES", {**access_plans.INTENT_CAPABILITIES, "teleport.now": "teleport"})
     assert evaluate(access(later), PolicyRequest(intent="teleport.now")).allowed
     decision = evaluate(access(listed), PolicyRequest(intent="teleport.now"))
     assert decision.denied and decision.code == NOT_IN_ACCESS_PLAN
