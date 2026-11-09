@@ -1160,11 +1160,11 @@ def test_home_media_accepts_scalar_uses_the_existing_modality_derivation(monkeyp
 
     def derived(inputs, *, intent):
         calls.append((inputs, intent))
-        return ("derived-modality",)
+        return ("audio",)  # not what video/* gives, so the answer can only come from the shared derivation
 
     monkeypatch.setattr(home, "_derive_input_modalities", derived)
     assert home._required_media_inputs(cap, (record,)) == [
-        {"name": "clip", "label": "Your clip", "modality": "derived-modality", "accepts": ["video/*"]},
+        {"name": "clip", "label": "Your clip", "modality": "audio", "accepts": ["video/*"]},
     ]
     assert calls == [({"clip": {"type": "asset", "label": "Your clip",
                                 "accepts": ["video/*"], "required": True}}, "video.edit")]
