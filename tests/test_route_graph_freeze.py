@@ -240,7 +240,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-09 for the problem-report admin routes under /admin/api/problem-reports (see ADDED_PATHS):
         # only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing else).
         # Before it the digest was 78dec8a0e5e1d3dcc0b2f74ba44fb14ac552d8a9d8eb0a04ccf185358775b158.
-        assert route_graph.openapi_digest(proxy.app) == "DIGEST"
+        assert route_graph.openapi_digest(proxy.app) == "08a9bb3cd24fc180577b69df6a6c7acc5f4fc456b8d7b25bf09ba650a49b2dd7"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
