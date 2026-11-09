@@ -412,7 +412,7 @@ class NodeGraphRunner:
         job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
         record = ((job.get("metadata") or {}).get(REQUEST_FACTS_KEY) or {}).get("provenance")
         if not isinstance(record, Mapping) or not record:
-            raise RuntimeError("DBG no record " + repr(list(((job.get("metadata") or {}).get(REQUEST_FACTS_KEY) or {}).keys())) + repr(list((job.get("metadata") or {}).keys())))
+            return files
         if self.host.wire_id is not None:
             record = with_wire_id(record, self.host.wire_id(ctx.job_id))
         return [await asyncio.to_thread(media_delivery.attach_provenance, raw, _media_type_of(raw), record) for raw in files]
