@@ -16596,6 +16596,7 @@ workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
 
 
 _MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts
+_MOUNTED_VIDEO_ROW_IDS = ("videos-create",)
 
 
 def _mount_3d_rows(app: FastAPI) -> None:
@@ -16604,6 +16605,13 @@ def _mount_3d_rows(app: FastAPI) -> None:
 
 
 FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
+
+
+def _mount_video_rows(app: FastAPI) -> None:
+    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, _MOUNTED_VIDEO_ROW_IDS)
+
+
+FRONTEND_TRANSLATORS.register_owned("videos", _mount_video_rows)
 
 
 def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
@@ -34696,7 +34704,6 @@ FRONTEND_TRANSLATORS.register("identity", {
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.delete": SelfAuthOp(assets_delete, frozenset({"DELETE"}), openapi_extra={**ASSETS_DELETE_OPENAPI}, auth=operation_security.APP_KEY),
-    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
     "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.APP_KEY),
