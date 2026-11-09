@@ -1936,10 +1936,13 @@ class HttpLoadUnloadDriver:
 
     @staticmethod
     def _base_url(svc: Mapping[str, Any]) -> str:
-        """The address this driver dials: the one the credential fingerprint covers (``service_registry.lifecycle_dial_url``)."""
+        """The address this driver dials: the engine's one address (``service_registry.engine_origin``).
+
+        A key is sent only when this origin is the one it was bound to (``_credentials``), so an address read from
+        ``connection.address`` cannot receive a key bound elsewhere."""
         from gateway import service_registry
 
-        return service_registry.lifecycle_dial_url(svc)
+        return service_registry.engine_origin(svc)
 
     @classmethod
     def _credentials(cls, svc: Mapping[str, Any], dc: Mapping[str, Any], base_url: str) -> tuple[str, str] | None:
