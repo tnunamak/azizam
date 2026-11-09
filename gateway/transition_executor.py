@@ -838,6 +838,7 @@ class Executor:
         held_outcome, _, recorded = (operation.evidence_ref or "").removeprefix(REVALIDATE).partition(":")
         if held_outcome not in ("no_change", "partial"):
             # A hold from the format before the outcome was recorded in it: the recorded pair is the evidence alone.
+            # (Typed holds, ``revalidate:<outcome>:...``, were never released: no store holds an older typed form.)
             recorded = (operation.evidence_ref or "").removeprefix(REVALIDATE)
             owed = getattr(self._steps.get(operation.step), "revalidation_owed", None)  # type: ignore[arg-type]
             legacy = owed(dataclasses.replace(operation, step_outcome="unknown", evidence_ref=recorded)) if owed else None

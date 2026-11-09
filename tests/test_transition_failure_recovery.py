@@ -612,3 +612,5 @@ def test_a_hold_written_in_the_previous_format_re_reads_the_clean_check(tmp_path
     want = ("succeeded", "open") if clean else ("failed_closed", "failed_closed")
     assert (done.state, gates.state("dom")) == want, (done.state, done.step, done.evidence_ref)
     assert engine.resets == 0, "the reset already ran; it is not run again"
+    cleans = [call for call in engine.calls if call[0] == "transition.clean"]
+    assert len(cleans) == 1, "the clean check was read once, not skipped"
