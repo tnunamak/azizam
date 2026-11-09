@@ -475,7 +475,7 @@ def test_video_7_59_status_maps_running_to_in_progress_and_history_success_to_co
     seen = {}
 
     def setup(rig):
-        _comfy(rig, running_polls=1)
+        _comfy(rig, running_polls=6)      # the runner polls on its own now; the engine stays busy long enough to be seen
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
@@ -676,7 +676,7 @@ def test_video_10_85_deleting_a_queued_video_cancels_it_on_the_engine(tmp_path):
     seen = {}
 
     def setup(rig):
-        _comfy(rig, running_polls=5)
+        _comfy(rig, running_polls=10 ** 6)      # the runner polls on its own: the engine stays busy until it is cancelled
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
@@ -853,11 +853,15 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
     seen = {}
 
     def setup(rig):
-        _comfy_with_failing_cancel(rig, running_polls=5)
+        _comfy_with_failing_cancel(rig, running_polls=10 ** 6)      # the engine stays busy: the video is still rendering
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
         video_id = created.json()["id"]
+        for _ in range(500):                        # the job's runner submits the prompt after the answer
+            if "POST /prompt" in _engine_paths(rig):
+                break
+            await asyncio.sleep(0)
         failed = await rig.call("DELETE", f"/v1/videos/{video_id}", label="delete with a failing cancel")
         seen["failed_status"] = failed.status_code
         seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code
