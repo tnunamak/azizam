@@ -454,6 +454,10 @@ class NodeGraphAdapter:
         # The UI-format twin embedded in outputs. None means the outputs carry no embedded graph.
         self._derive_ui = derive_ui or (lambda _graph: None)
 
+    def embed_workflow_with(self, derive_ui: Callable[[Mapping[str, Any]], dict | None]) -> None:
+        """Set the source of the UI-format graph the outputs of this adapter embed (the adapter was built without one)."""
+        self._derive_ui = derive_ui
+
     # --- sessions ---------------------------------------------------------------------------
 
     @asynccontextmanager
@@ -574,9 +578,11 @@ class NodeGraphAdapter:
             raise MalformedResponse("No prompt_id returned")
         return JobRef(op, str(prompt_id))
 
-    def compile(self, op: str, request: CanonicalRequest) -> tuple[dict[str, Any], dict[str, Any]]:
+    def compile(self, op: str, request: CanonicalRequest, *, edit: Callable[[dict[str, Any]], None] | None = None
+                ) -> tuple[dict[str, Any], dict[str, Any]]:
         """The graph a manifest-backed request compiles to, and the prompt body that carries it: ``(graph, payload)``. A
-        round that polls the prompt names nodes of ``graph`` in a failure."""
+        round that polls the prompt names nodes of ``graph`` in a failure. ``edit`` changes the compiled graph before the
+        body is made."""
         manifest = request.params.get("manifest")
         if not isinstance(manifest, Mapping):
             raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
@@ -584,6 +590,8 @@ class NodeGraphAdapter:
         pinned = request.params.get("template")
         template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)
         graph = compile_workflow(manifest, self.binding, template, request.body)
+        if edit is not None:
+            edit(graph)
         return graph, build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
 
     def _workflow_payload(self, op: str, request: CanonicalRequest) -> dict[str, Any]:

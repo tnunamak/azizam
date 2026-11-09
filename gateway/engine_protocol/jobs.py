@@ -116,7 +116,8 @@ def _result_context(runtime) -> ResultContext:
     return context() if context is not None else ResultContext(result_bundle.ResultLimits())
 
 
-def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: bool = True) -> ResultBundle:
+def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: bool = True,
+                   metadata: dict | None = None, **status_args) -> ResultBundle:
     """Stage the bundle and, in one transaction, publish it and end the job (D3, D4). The attempt marker is cleared in
     that same commit. Raises ``ResultRefused`` for a result that breaks a limit (nothing is published, the stage is
     aborted) and ``CancellationPending`` for a cancel that has not settled."""
@@ -130,8 +131,8 @@ def _commit_bundle(runtime, job_id: str, bundle: ResultBundle, *, clear_marker: 
                 items = [{'asset_ref': asset.id, 'media_type': asset.content_type, 'size_bytes': asset.size} for asset in result.assets]
                 result_bundle.stage_assets_in(conn, job_id, attempt, name, items, limits=limits)
 
-    patch = {'protocol_submitting': False} if clear_marker else None
-    result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH)
+    patch = {**({'protocol_submitting': False} if clear_marker else {}), **(metadata or {})} or None
+    result_bundle.complete_job(job_id, stage, limits=limits, metadata_patch=patch, path=media_jobs.DB_PATH, **status_args)
     return bundle
 
 

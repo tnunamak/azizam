@@ -918,3 +918,30 @@ def test_the_finish_time_is_set_once_and_a_later_write_to_a_finished_job_does_no
     media_jobs.update_status(view.job_id, "succeeded", metadata_patch={"bookkeeping": 1}, now=later, path=db)
     again = service.get(view.job_id, Caller())
     assert (again.finished_at_s, again.updated_at_s) == (done.finished_at_s, later)
+def test_a_waiter_wakes_on_the_terminal_write_without_a_poll_sleep(db, tmp_path, monkeypatch):
+    """I2 decision 2: the writer that ends a job wakes its waiters; the wait holds no 0.1 s poll."""
+    core, port, view, _ = submitted(db, tmp_path)
+    service = WorkflowJobService(port=port, path=db)
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def spy(delay=0, result=None):
+        slept.append(float(delay))
+        return await real_sleep(delay, result)
+
+    monkeypatch.setattr(asyncio, "sleep", spy)
+
+    async def scenario():
+        waiter = asyncio.ensure_future(service.wait(view.job_id, Caller(), 30))
+        for _ in range(5):
+            await real_sleep(0)                      # the waiter is parked
+        assert not waiter.done()
+        media_jobs.update_status(view.job_id, media_jobs.STATUS_RUNNING, path=db)
+        media_jobs.update_status(view.job_id, media_jobs.STATUS_FAILED, error="x", path=db)
+        for _ in range(3):                           # a few loop turns, far below any poll interval
+            await real_sleep(0)
+        return waiter.done(), (await waiter).status
+
+    done_quickly, status = run(scenario())
+    assert done_quickly and status == "failed"
+    assert slept == [0.0] * len(slept) and all(d == 0.0 for d in slept), slept     # only the test's own turns

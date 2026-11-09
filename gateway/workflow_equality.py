@@ -446,18 +446,26 @@ def dump_tree(root: Path, corpus_file: Path, python: str | None = None) -> dict[
 
 
 def apply_binding_edits(workflow_id: str, bindings: dict[str, Any], edits: tuple[dict[str, Any], ...]) -> dict[str, Any]:
-    """Replay the named edits that are not the converter's: today only ``remove`` of one key."""
+    """Replay the named edits that are not the converter's: ``remove`` of one key, and ``add`` of one key with its value (the key
+    must be absent, or hold that value already)."""
     out = copy.deepcopy(bindings)
     for edit in edits:
         if edit["workflow"] != workflow_id:
             continue
-        if edit["operation"] != "remove":
+        if edit["operation"] not in ("remove", "add"):
             raise ValueError(f"unknown binding edit operation: {edit['operation']}")
         node: Any = out
         *parents, last = edit["path"]
         for part in parents:
             node = node[part]
-        del node[last]
+        if edit["operation"] == "remove":
+            del node[last]
+        else:
+            # An add never replaces: the key is absent, or already holds exactly the value the edit adds.
+            if last in node and node[last] != edit["value"]:
+                raise ValueError(f"binding edit add for {workflow_id} {'/'.join(map(str, edit['path']))} would replace "
+                                 f"{node[last]!r} with {edit['value']!r}; an add needs an absent target")
+            node[last] = copy.deepcopy(edit["value"])
     return out
 
 

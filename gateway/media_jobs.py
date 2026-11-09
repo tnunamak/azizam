@@ -27,7 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
-from gateway import media_input_leases, request_connections, request_source
+from gateway import job_wake, media_input_leases, request_connections, request_source
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -1788,6 +1788,8 @@ def update_status(
         if before_commit is not None:
             before_commit(conn, updated.to_dict("internal"))
         conn.commit()
+    if is_terminal(status):
+        job_wake.wake(job_id)
     return updated.to_dict("internal")
 
 

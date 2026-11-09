@@ -162,7 +162,7 @@
     "WorkflowInputs_image_edit_image_identity": "2a6881abf8b7b078d875f716778e09f1660b673ef76479f25d6623439adae8b1",
     "WorkflowInputs_image_edit_qwen_image_2_1_edit": "79cf5575b0891f1f5355d01801dd845af91868a7a13aab0d4aa7364aa4314614",
     "WorkflowInputs_image_edit_qwen_image_2_1_edit_multiref": "65f6fc97bc4e917b6cb872034131b1d2aee4c343123f08ca6b760dd44ec0c0aa",
-    "WorkflowInputs_image_edit_qwen_image_2_1_inpaint": "089be36262d69df9922b49f62c8970b017334b3e3d647c6d1232f9d515b51036",
+    "WorkflowInputs_image_edit_qwen_image_2_1_inpaint": "04252f3b32bab3ca78ef9194ee6a8fc5844656480f93c303786edc714cfd3009",
     "WorkflowInputs_image_edit_seedvr2_upscale": "5fb3f38a64ce47359cbb6ef464d371ec0c7bd0af52d6b073398a340e5675eef8",
     "WorkflowInputs_image_generate_anima_turbo": "401481a3ac079ac29ab89e56d9525bb7958ce1db37dc101403f78fa2d4384d05",
     "WorkflowInputs_image_generate_flux2_klein_4b": "fdb9d37c2d660017d86438999f993e83f35ccfeebe2a3114b7a80e2194df3dcd",

@@ -897,6 +897,7 @@ frontends:
     refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
     result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
@@ -913,6 +914,7 @@ frontends:
     refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source, image_mask: X-Image-Mask, image_mask_source: X-Image-Mask-Source}
     result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
@@ -929,6 +931,7 @@ frontends:
     refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
     result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
@@ -941,9 +944,11 @@ frontends:
   - id: image-jobs
     shape: openai.images.jobs
     mode: job
-    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    refusal_bodies: {service_disabled: {message: This service is not available right now., code: resource_admission_denied, retry_after_s: 30}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
+    run_receipt_path: /v1/images/generations
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
     routes:

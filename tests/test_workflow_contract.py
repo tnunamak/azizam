@@ -514,9 +514,17 @@ def test_the_bundled_files_are_schema_two_and_the_frozen_copies_are_schema_one()
 
 def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but_for_the_named_edits():
     named = {"ace-step-1.5-xl-turbo"}
+    staged = {"flux2-klein-4b-edit", "flux2-klein-edit"}     # each lists the one result stage that applies its mask
     for path in V1_FIXTURES:
         converted, _ = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / path.name).read_text(encoding="utf-8"))
+        if path.stem in staged:
+            assert bundled["bindings"]["comfyui"].pop("result_processing") == ["post_composite_mask"], path.name
+        if path.stem == "qwen-image-2.1-inpaint":       # the feather the workflow's own graph applies, not a default of 48
+            spec = converted["inputs"]["mask_feather"]
+            assert spec.pop("default") == 48
+            assert bundled["inputs"]["mask_feather"]["description"].startswith(spec["description"])
+            spec["description"] = bundled["inputs"]["mask_feather"]["description"]
         if path.stem not in named:
             assert without_section_additions(bundled, converted) == converted, path.name
     ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))

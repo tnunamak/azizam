@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Any, AsyncContextManager, Awaitable, Callable, ContextManager, Iterable, Mapping
@@ -34,7 +35,9 @@ from gateway.frontend_shapes import _wire, build_shape, bundled_rows
 from gateway.frontend_shapes._base import LegacyRoute
 from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
-    FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
+    JOB_NOT_CREATED, FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
+
+log = logging.getLogger(__name__)
 
 PREFER_ASYNC = "respond-async"
 REQUEST_ID_HEADER = "x-request-id"
@@ -79,6 +82,12 @@ class RowRouteDeps:
     # openapi: the OpenAPI operation documents of rows, by row id (the request and answer schemas the generic route does not know).
     openapi: Mapping[str, Mapping[str, Any]] = dataclasses.field(default_factory=dict)
     legacy: Mapping[str, Callable[[Request, Any, Mapping[str, Any]], Awaitable[Response]]] = dataclasses.field(default_factory=dict)
+    # record_refusal(owner, caller, refused): the receipt of a request the run core refused keeps the evidence of why the
+    # service could not take it (the resource decision), as an admission refusal would have left it.
+    record_refusal: Callable[[Any, Any, RunRefused], None] | None = None
+    # job_record(request, caller, request_id) -> what the old job route stored on the job row besides the run's own fields
+    # (``RunRequest.job_record``), for a row that declares ``run_receipt_path``.
+    job_record: Callable[[Request, Any, str], Awaitable[Mapping[str, Any]]] | None = None
 
 
 def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
@@ -133,6 +142,13 @@ def _outcome(view: RunJobView | None, *, waited: bool = True) -> tuple[str, str]
     return "failed", "wait_timeout"
 
 
+def refusal_status(row: FrontendRow, http_status: int) -> str:
+    """How a refusal closes the row's receipt. A refusal of the request (a 4xx) closes with the word the row declares
+    (``refusal_receipt``: ``failed`` by default, ``rejected`` where the old route wrote it); a refusal by the service or the
+    gateway (a 5xx) is always ``failed``."""
+    return row.refusal_receipt if 400 <= int(http_status) < 500 else "failed"
+
+
 def route_backend(row: FrontendRow, path: str) -> str | None:
     """The service the matched route declares its receipt files under (``runtime_policy.backend``); None when it declares none."""
     route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
@@ -164,7 +180,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
             async with deps.open_receipt(caller, request_id, canonical, row) as owner:
                 denied = await asyncio.to_thread(deps.enforce_policy, caller, canonical)
                 if denied is not None:
-                    owner.report(status="failed", reason="policy_denied")
+                    owner.report(status=refusal_status(row, denied.status_code), reason="policy_denied")
                     denied.headers[REQUEST_ID_HEADER] = request_id
                     return denied
                 response = await answer(request, caller, owner, request_id)
@@ -182,7 +198,7 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         core = deps.core()
         if core is None:
             response = deps.refused(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
-            owner.report(status="failed", reason="workflow_runtime_unavailable")
+            owner.report(status=refusal_status(row, response.status_code), reason="workflow_runtime_unavailable")
             return response
         snapshot = deps.snapshot()
         spool = deps.new_spool()
@@ -210,7 +226,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
             owner.report(status="failed", reason="legacy_handoff_late")
             return _wire.error_response(500, "This request is not served", kind="api_error")
         if isinstance(run_request, Response):
-            owner.report(status="failed", reason=f"http_{run_request.status_code}")
+            owner.report(status=refusal_status(row, run_request.status_code), reason=f"http_{run_request.status_code}")
             return run_request
         entry = snapshot.get(run_request.workflow_id)
         facts: dict[str, str] = {}
@@ -220,12 +236,24 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
             facts = run_facts(entry.id, entry.contract)
             setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
         run_request = dataclasses.replace(run_request, request_id=request_id, intent=intent)
+        if row.run_receipt_path and deps.job_record is not None:
+            run_request = dataclasses.replace(run_request, run_receipt_path=row.run_receipt_path,
+                                              job_record=await deps.job_record(request, caller, request_id))
+            if run_request.run_refusal:
+                # The refusal is made when the job runs: it takes the row's words for a refused request then.
+                run_request = dataclasses.replace(run_request, run_refusal={**run_request.run_refusal, "receipt": row.refusal_receipt})
         # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
         # finished job still answers that job when its backend has become unavailable (S7 parity 6.2).
-        outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
+        try:
+            outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
+        except Exception:  # noqa: BLE001 - the store failed: nothing was kept, and the client gets a fixed sentence
+            log.exception("a run could not be stored")
+            outcome = RunRefused(500, JOB_NOT_CREATED, "the job could not be created")
     if isinstance(outcome, RunRefused):
+        if deps.record_refusal is not None:
+            deps.record_refusal(owner, caller, outcome)
         refusal = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
-        owner.report(status="failed", reason=outcome.code)
+        owner.report(status=refusal_status(row, refusal.status_code), reason=outcome.code)
         return refusal
     if row.backend_at_run:                                # the run exists: the service it runs on is now the receipt's
         owner.dispatching(backend)
@@ -237,6 +265,11 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         response = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
         owner.report(status="succeeded", reason=f"http_{response.status_code}")
         return response
+    if answered.mode == "job" and row.run_receipt_path:
+        # The run files a receipt of its own. This one is the submit's: it closes with the answer to the submit, on a replay too,
+        # and never with the outcome of the job a replay names (that stays on the run's receipt).
+        owner.report(status="succeeded", reason="accepted")
+        return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
     if answered.mode == "job" and outcome.disposition == "new":
         # The core closes the receipt when the job ends; nothing may await between this call and leaving the receipt.
         owner.handoff()

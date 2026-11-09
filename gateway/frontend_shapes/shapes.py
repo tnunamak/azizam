@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 
 import json
 
-from gateway import client_errors, image_extensions, image_output
+from gateway import client_errors, image_extensions, image_output, provenance
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL, LegacyRoute, Shape, coerce, job_object
 from gateway.frontend_shapes.video_views import VideoViews
@@ -100,7 +100,8 @@ class OpenAIImagesJson(Shape):
         extensions = wire.get("extensions")
         block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
         if isinstance(block, Mapping):
-            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()})
+            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()
+                           if name not in provenance.RESERVED_GATEWAY_CONTROLS})
         dimensions = self.dimensions(wire.get("size"))
         if dimensions is not None and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
             inputs["width"], inputs["height"] = dimensions
@@ -113,7 +114,10 @@ class OpenAIImagesJson(Shape):
     # The top-level wire fields this route accepts; any other is refused (a workflow's own inputs go under ``extensions``).
     standard_fields: ClassVar[frozenset[str]] = image_extensions.STANDARD_IMAGE_GENERATE_FIELDS
 
-    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()
+    # A field the wire does not know is refused when the request is read (False), or taken and refused by the run (True).
+    refuses_unknown_at_run: ClassVar[bool] = False
+
+    def read_wire(self, request: Request, fields: dict[str, Any], upload_names: Sequence[str] = ()
                   ) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """The options that change the picture or its encoding (they reach the adapter and the run's identity), and the
         answer form (how this request wants the pictures shown). Each is checked as the wire always checked it."""
@@ -124,7 +128,13 @@ class OpenAIImagesJson(Shape):
             return fields.get(name) not in (None, "")
 
         unknown = image_extensions.detect_unknown_top_level_fields({**fields, **dict.fromkeys(upload_names)}, self.standard_fields)
-        if unknown:
+        if unknown and self.refuses_unknown_at_run:
+            # The job route took the field at submit and its run refused it: the run fails the job with this refusal.
+            name, message = next(iter(unknown.items()))
+            request.state.run_refusal = {"status": 400, "code": "unknown_parameter", "category": "invalid_input", "message": message}
+            for field_name in unknown:
+                fields.pop(field_name, None)
+        elif unknown:
             for name, reason in unknown.items():
                 _wire.note(name, rejected=reason)
             name, message = next(iter(unknown.items()))
@@ -138,6 +148,13 @@ class OpenAIImagesJson(Shape):
             if not isinstance(extensions, Mapping):
                 return refuse("extensions must be a JSON object string", "extensions", "invalid_json")
             fields["extensions"] = extensions
+        block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
+        for control in (provenance.RESERVED_GATEWAY_CONTROLS if isinstance(block, Mapping) else ()):
+            if control in block:                             # a gateway control belongs to no workflow: it is checked here
+                try:
+                    provenance.parse_metadata_mode(block[control])
+                except provenance.MetadataModeError as error:
+                    return refuse(str(error), f"extensions.{image_extensions.WORKFLOW_EXTENSION_NAMESPACE}.{control}", "invalid_value")
 
         refused = self.front(fields)
         if refused is not None:
@@ -241,7 +258,19 @@ class OpenAIImagesJson(Shape):
 ECHOED = ("output_format", "background", "quality", "size")
 
 
-MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response
+MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response; "post_composite": (picture, mask) -> mode | Response
+
+
+PICTURE_SIZE: dict[str, Callable[[bytes], tuple[int, int] | None]] = {}    # the deployment's picture reading: "picture": bytes -> (width, height) | None
+
+
+async def _peek(upload: Any) -> bytes:
+    """A file part's content, left readable."""
+    if isinstance(upload, _Bytes):
+        return upload.content
+    data = await upload.read()
+    await upload.seek(0)
+    return data
 
 
 class _Bytes:
@@ -251,6 +280,7 @@ class _Bytes:
 
     def __init__(self, filename: str | None, content: bytes) -> None:
         self.filename, self._content = filename, content
+        self.content = content
 
     async def read(self, size: int = -1) -> bytes:
         block, self._content = (self._content, b"") if size < 0 else (self._content[:size], self._content[size:])
@@ -296,6 +326,7 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     files = "any"                  # an edit may take several pictures (a workflow with more than one required asset)
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
     not_object_text = "The request body must be a JSON object"
+    size_from_picture: ClassVar[bool] = True   # a request that asks for no size runs, and answers with, the picture's own
 
     def dimensions(self, text: Any) -> tuple[int, int] | None:
         size = read_size(text)
@@ -325,27 +356,72 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     def check_count(self, count: int) -> Response | None:
         return None
 
-    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request, fields: dict[str, Any]
                               ) -> list[tuple[str, Any]] | Response:
+        prepared = await self._fold_mask(entry, uploads, request)
+        if isinstance(prepared, Response) or not self.size_from_picture or self.dimensions(fields.get("size")) is not None:
+            return prepared
+        first = next((upload for name, upload in prepared if name in IMAGE_PARTS), None)
+        read = PICTURE_SIZE.get("picture")
+        found = read(await _peek(first)) if first is not None and read is not None else None
+        if found is not None:                   # no size asked for: the run, and the answer, use the picture's own
+            fields["size"] = f"{found[0]}x{found[1]}"
+            answer = getattr(request.state, "answer_form", None)
+            if isinstance(answer, dict):
+                answer["size"] = fields["size"]
+        return prepared
+
+    async def _fold_mask(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+                         ) -> list[tuple[str, Any]] | Response:
         """A workflow whose binding asks for the mask in the source picture's alpha gets one picture and no mask part."""
         masks = [upload for name, upload in uploads if name == MASK_PART]
+        if masks:       # a request with a mask is not asked to make a cutout of the picture
+            request.state.run_options = {"masked": True}
         compose = MASKING.get("source_alpha")
+        if masks and not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
+            return await self._check_composite(entry, uploads, masks[0], request)
         if not masks or compose is None or not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
             return uploads
         first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
         if first is None:
             return uploads
-        made = compose(await first.read(), await masks[0].read())
+        original = await first.read()
+        made = compose(original, await masks[0].read())
         if isinstance(made, Response):
             _wire.note(MASK_PART, rejected="invalid_mask")
             return made
         content, mode = made
+        # The folded picture is the run's own input; the Library keeps the picture the caller sent as the result's source.
+        kept = _Bytes(first.filename, original)
+        kept.content_type = getattr(first, "content_type", None) or kept.content_type
+        request.state.source_uploads = [(name, kept) for name, upload in uploads if upload is first]
         answer = getattr(request.state, "answer_form", None)
         if isinstance(answer, dict):
             answer["image_mask"] = "workflow"
             answer["image_mask_source"] = mode
         return [(name, _Bytes(first.filename, content) if upload is first else upload)
                 for name, upload in uploads if name != MASK_PART]
+
+    async def _check_composite(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], mask: Any, request: Request
+                               ) -> list[tuple[str, Any]] | Response:
+        """A workflow whose binding lists the ``post_composite_mask`` stage keeps the mask as a file of the run; the mask is
+        read here so a bad one is refused before any work, and the answer names how it will be applied."""
+        check = MASKING.get("post_composite")
+        if check is None or not any("post_composite_mask" in (b.binding.get("result_processing") or ()) for b in entry.bindings.values()):
+            return uploads
+        first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
+        if first is None:
+            return uploads
+        mode = check(await _peek(first), await _peek(mask))
+        if isinstance(mode, Response):
+            _wire.note(MASK_PART, rejected="invalid_mask")
+            return mode
+        _wire.fact("", mode, "mask_mode:post_composite")
+        answer = getattr(request.state, "answer_form", None)
+        if isinstance(answer, dict):
+            answer["image_mask"] = "post-composite"
+            answer["image_mask_source"] = mode
+        return uploads
 
     def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
                       exists: Callable[[str], bool]) -> str | None:
@@ -413,6 +489,7 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
     shape_id = "openai.images.variations"
     files = "one"
+    size_from_picture = False
     standard_fields = image_extensions.STANDARD_IMAGE_VARIATIONS_FIELDS
 
     def check_count(self, count: int) -> Response | None:
@@ -435,7 +512,10 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
 class ImageJobs(OpenAIImagesJson):
     """The image jobs route: the request of the JSON images shape, answered as a job object (202, or 200 when the job
-    is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes."""
+    is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes. A field the wire does not
+    know is taken at submit and refused by the run, which fails the job (as the old job route did)."""
+
+    refuses_unknown_at_run = True
 
     shape_id = "openai.images.jobs"
     not_object_text = "JSON body must be an object"

@@ -167,8 +167,16 @@
     },
     {
       "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "ac68cc6ab0d8f6008c311a86f63a50370b0d6792e9fbaeb52be195df6bb9b81e",
+      "call": "append_event",
+      "event": "'succeeded'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
       "function": "_fail",
-      "source_sha256": "c42aa953767c6e3e06c0a033c5f659b0f1ffe6674d86396990c99ff66057e805",
+      "source_sha256": "66ff6f0f8b43df092aa47a5d263fd8efa92f4d1f1571d385b6fdd296ed920c6b",
       "call": "append_event",
       "event": "'failed'",
       "access": "content:job:read"
@@ -192,7 +200,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "1c2b652bb79dc6663404252d219d84ffbbee32e70fad738c97d6891a9cf3ebff",
+      "source_sha256": "3fc4e42bd363e64cbc41cadc193781ce2a3a7f93a398130a19797390e13fb3fd",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"

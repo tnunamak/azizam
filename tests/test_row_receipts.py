@@ -220,7 +220,7 @@ def test_a_refused_body_closes_one_receipt_failed(rig, name):
 
     status, receipt = run_async(go)
     assert status in (400, 422)
-    assert receipt["status"] == "failed"
+    assert receipt["status"] == "failed"      # the mesh row declares no refusal vocabulary: the old route closed these failed
     assert len(receipts(RAW)) == 1
     assert rig.downstream == []
 
@@ -515,3 +515,29 @@ def test_route_intent_is_the_one_value_for_receipt_and_job_row():
     assert workflow_run.is_run_job({"intent": "image.generate", "metadata": {"mode": workflow_run.RUN_INTENT}})
     assert workflow_run.is_run_job({"intent": workflow_run.RUN_INTENT})
     assert not workflow_run.is_run_job({"intent": "image.generate", "metadata": {"mode": "async_image_generation"}})
+
+
+def test_the_refusal_vocabulary_is_row_data_and_only_the_image_rows_declare_the_image_words():
+    """A row says how a refusal of the request (a 4xx) closes its receipt. The old image routes wrote ``rejected``; every
+    other row keeps ``failed`` unless its data says otherwise."""
+    from gateway.frontend_shapes import bundled_rows
+    words = {row.id: row.refusal_receipt for row in bundled_rows()}
+    image_rows = {"images-generations", "images-edits", "images-variations", "image-jobs"}
+    assert {rid for rid, word in words.items() if word == "rejected"} == image_rows
+    assert {word for word in words.values()} <= {"rejected", "failed"}
+
+
+def test_a_run_receipt_path_is_row_data_kept_in_the_snapshot_and_only_the_image_job_row_declares_it():
+    """A job whose old handler ran the sync route inside the job files a second receipt for the run under that route's path
+    (``run_receipt_path``). The path is row data: the snapshot reads it, and it changes the row's digest only when set."""
+    from gateway import registry_snapshot
+    from gateway.frontend_shapes import bundled_rows
+    declared = {row.id: row.run_receipt_path for row in bundled_rows() if row.run_receipt_path}
+    assert declared == {"image-jobs": "/v1/images/generations"}
+    raw = {"id": "x", "shape": "openai.images.jobs", "mode": "job", "receipt_protocol": "openai.images",
+           "routes": [{"methods": ["POST"], "canonical": "/x", "runtime_policy": {}}]}
+    plain = registry_snapshot.frontend_row(raw)
+    kept = registry_snapshot.frontend_row({**raw, "run_receipt_path": "/y"})
+    assert plain.run_receipt_path == "" and kept.run_receipt_path == "/y"
+    assert registry_snapshot._row_value(plain) != registry_snapshot._row_value(kept)
+    assert "run_receipt_path" not in registry_snapshot._row_value(plain)
