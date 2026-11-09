@@ -118,6 +118,8 @@ def _load_capability_prefixes() -> tuple[list[tuple[str, str]], str]:
     default = document.get("default")
     if not isinstance(default, str) or not default.strip() or default != default.strip():
         raise invalid("default must be a nonempty string without surrounding spaces")
+    if any(control in default for control in "\t\r\n"):
+        raise invalid("default must not contain tab, CR or LF")
     rows = document.get("prefixes")
     if not isinstance(rows, list):
         raise invalid("prefixes must be an ordered list")
@@ -132,10 +134,14 @@ def _load_capability_prefixes() -> tuple[list[tuple[str, str]], str]:
         prefix, capability = row.get("prefix"), row.get("capability")
         if not isinstance(prefix, str) or not prefix.strip() or prefix != prefix.strip():
             raise invalid(f"prefixes[{index}].prefix must be a nonempty string without surrounding spaces")
+        if any(control in prefix for control in "\t\r\n"):
+            raise invalid(f"prefixes[{index}].prefix must not contain tab, CR or LF")
         if prefix in seen:
             raise invalid(f"prefixes[{index}] has duplicate prefix: {prefix!r}")
         if not isinstance(capability, str) or not capability.strip() or capability != capability.strip():
             raise invalid(f"prefixes[{index}].capability must be a nonempty string without surrounding spaces")
+        if any(control in capability for control in "\t\r\n"):
+            raise invalid(f"prefixes[{index}].capability must not contain tab, CR or LF")
         seen.add(prefix)
         prefixes.append((prefix, capability))
     return prefixes, default
