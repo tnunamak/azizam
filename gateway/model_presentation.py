@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from gateway import model_metadata
-from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
+from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES, PROTOCOL_CAPABILITIES
 from gateway.service_registry import LEGACY_RESIDENCY_KEY, is_litellm_service_record, is_remote_provider_config
 
 
@@ -246,9 +246,9 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     subtype = next((hint for hint in hints if hint in _AUDIO_SUBTYPES), None)
     if subtype:
         return subtype
-    # Kept until speech producers declare their subtype (local TTS, stable aliases
-    # and root-module rows build speech.synthesis with no capability field).
-    return "speech" if intent.startswith(("speech.", "audio.speech")) else "audio"
+    # No declared subtype: the shipped capability words (registry/capability_words.yml) name it.
+    word = INTENT_CAPABILITIES.get(intent)
+    return word if word in _AUDIO_SUBTYPES else "audio"
 
 
 def friendly_name(value: str) -> str:
