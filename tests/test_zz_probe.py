@@ -32,33 +32,23 @@ def test_probe(tmp_path):
         configure_remix(w, "video-ltx-2.5-t2v")
         await rec("remix_source_video_ext", w.call("POST", f"/v1/videos/{vid}/remix", json_body={"prompt": "x", "extensions": {"com.azizam.workflow": {"source_video": "x"}}}))
         await rec("create_unknown_ext_key", post({"prompt": "x", "model": MODEL, "extensions": {"com.azizam.workflow": {"nope": 1}}}))
-        for m in ("ltx-2.5-i2v", "minimax-h3-t2v", "minimax-h3", "ltx-2.5-long", "video-long", "scail-2-replace", "minimax-h3-i2v"):
-            await rec("shots_" + m, post({"prompt": "x", "model": m, "shots": [{"prompt": "a", "seconds": 2}]}))
-            await rec("seconds60_" + m, post({"prompt": "x", "model": m, "seconds": "60"}))
-        for m in ("ltx-2.5-long", "video-long", "minimax-h3"):
-            await rec("shotsstr_" + m, post({"prompt": "x", "model": m, "shots": "not json"}))
-            await rec("shotsempty_" + m, post({"prompt": "x", "model": m, "shots": []}))
-            await rec("shotsnonobj_" + m, post({"prompt": "x", "model": m, "shots": [5]}))
-            await rec("shotsnoprompt_" + m, post({"prompt": "x", "model": m, "shots": [{"seconds": 2}]}))
-            await rec("shotsnosec_" + m, post({"prompt": "x", "model": m, "shots": [{"prompt": "a"}]}))
-            await rec("shotsbadopt_" + m, post({"prompt": "x", "model": m, "extensions": {"com.azizam.workflow": {"zzz": 1}}, "seconds": "60"}))
-        # extend invalid_*
-        await rec("extend_bad_ext", w.call("POST", "/v1/videos/extensions", json_body={"video": {"id": vid}, "prompt": "p", "extensions": {"com.azizam.workflow": {"zzz": 1}}}))
-        await rec("extend_shots_str", w.call("POST", "/v1/videos/extensions", json_body={"video": {"id": vid}, "prompt": "p", "shots": "x"}))
-        await rec("extend_ext_not_map", w.call("POST", "/v1/videos/extensions", json_body={"video": {"id": vid}, "prompt": "p", "extensions": "x"}))
-        # engine down at create
-        w.engine.history_mode = None
-        # legacy: no output
+        import copy
+        from tests.support.config_snapshot import publish_section
+        wf = copy.deepcopy(proxy.config["videos"]["workflows"])
+        rows.append({"case": "wfkeys", "body": {"k": {k: [v.get("chain_workflow"), v.get("max_seconds")] for k, v in wf.items()}}, "status": 0})
+        for k in wf:
+            wf[k].pop("chain_workflow", None)
+        publish_section(w.rig.monkeypatch, "videos", {**proxy.config["videos"], "workflows": wf})
+        await rec("nochain_shots", w.call("POST", "/v1/videos", json_body={"prompt": "x", "model": MODEL, "shots": [{"prompt": "a", "seconds": 2}]}))
+        await rec("nochain_seconds", w.call("POST", "/v1/videos", json_body={"prompt": "x", "model": MODEL, "seconds": "9"}))
         old = video_rig.history_done
-        video_rig.history_done = lambda *a, **k: {k.get("prompt_id", "p9"): {"status": {"status_str": "success", "completed": True, "messages": []}, "outputs": {}}}
-        lv = legacy_video_record(w, "old-p9")
-        w.engine.states["old-p9"] = "completed"
-        await rec("content_no_output", w.call("GET", f"/v1/videos/{lv}/content"))
-        video_rig.history_done = old
+        import tests.support.video_rig as vr
+        vr.history_done = lambda kind, name, **k: old(kind, "clip.png", **k)
+        await rec("content_no_output", w.call("GET", f"/v1/videos/{vid}/content"))
+        vr.history_done = old
         w.engine.history_mode = "unavailable"
-        lv2 = legacy_video_record(w, "old-p8")
-        await rec("legacy_status_engine_down", w.call("GET", f"/v1/videos/{lv2}"))
-        await rec("legacy_content_engine_down", w.call("GET", f"/v1/videos/{lv2}/content"))
+        await rec("legacy_status_engine_down", w.call("GET", f"/v1/videos/{vid}"))
+        await rec("legacy_content_engine_down", w.call("GET", f"/v1/videos/{vid}/content"))
         w.engine.history_mode = None
         await rec("remix_missing_source", w.call("POST", "/v1/videos/video_nosuch/remix", json_body={"prompt": "x"}))
         await rec("edit_missing_source", w.call("POST", "/v1/videos/edits", json_body={"prompt": "x", "video": {"id": "video_nosuch"}}))
