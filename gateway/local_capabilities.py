@@ -95,8 +95,7 @@ def build_local_capabilities(
     capabilities.extend(_build_tts_capabilities(backends, flags))
     capabilities.extend(_build_stt_capabilities(backends, flags))
     capabilities.extend(_build_image_capabilities(config, backends, flags))
-    capabilities.extend(_build_video_capabilities(config, backends, flags, known_files))
-    capabilities.extend(_build_audio_capabilities(config, backends, flags, known_files))
+    capabilities.extend(_build_workflow_capabilities(config, backends, flags, known_files))
 
     return capabilities
 
@@ -433,56 +432,45 @@ def _build_image_capabilities(
     return out
 
 
-def _build_video_capabilities(
+# Section, enabled flag, intent, input/output modalities, resource tier.
+_WORKFLOW_FAMILIES = (
+    ("videos", "videos", INTENT_VIDEO_GENERATE, ("text",), ("video",), "expensive"),
+    ("audio", "audio", INTENT_AUDIO_GENERATE, ("text",), ("audio",), "batch"),
+)
+
+
+def _build_workflow_capabilities(
     config: Mapping[str, Any],
     backends: Mapping[str, Any],
     flags: Mapping[str, bool],
     known_files: set[str],
 ) -> list[Capability]:
-    if not flags.get("videos", True):
-        return []
-    videos = _as_mapping(config.get("videos"))
-    if not videos:
-        return []
-    backend = "comfyui" if "comfyui" in backends else "comfyui"  # canonical
-    workflows = _as_mapping(videos.get("workflows"))
-    aliases = _as_mapping(videos.get("aliases"))
-    return _workflow_family_capabilities(
-        intent=INTENT_VIDEO_GENERATE,
-        backend=backend,
-        workflows=workflows,
-        aliases=aliases,
-        input_modalities=("text",),
-        output_modalities=("video",),
-        known_files=known_files,
-        resource_tier="expensive",
-    )
-
-
-def _build_audio_capabilities(
-    config: Mapping[str, Any],
-    backends: Mapping[str, Any],
-    flags: Mapping[str, bool],
-    known_files: set[str],
-) -> list[Capability]:
-    if not flags.get("audio", True):
-        return []
-    audio = _as_mapping(config.get("audio"))
-    if not audio:
-        return []
-    workflows = _as_mapping(audio.get("workflows"))
-    aliases = _as_mapping(audio.get("aliases"))
-    backend = "comfyui" if "comfyui" in backends else "comfyui"
-    return _workflow_family_capabilities(
-        intent=INTENT_AUDIO_GENERATE,
-        backend=backend,
-        workflows=workflows,
-        aliases=aliases,
-        input_modalities=("text",),
-        output_modalities=("audio",),
-        known_files=known_files,
-        resource_tier="batch",
-    )
+    out: list[Capability] = []
+    for (
+        section_key, flag_key, intent, input_modalities, output_modalities,
+        resource_tier,
+    ) in _WORKFLOW_FAMILIES:
+        if not flags.get(flag_key, True):
+            continue
+        section = _as_mapping(config.get(section_key))
+        if not section:
+            continue
+        backend = section.get("backend", "comfyui")
+        if not isinstance(backend, str) or backend not in backends:
+            continue
+        out.extend(
+            _workflow_family_capabilities(
+                intent=intent,
+                backend=backend,
+                workflows=_as_mapping(section.get("workflows")),
+                aliases=_as_mapping(section.get("aliases")),
+                input_modalities=input_modalities,
+                output_modalities=output_modalities,
+                known_files=known_files,
+                resource_tier=resource_tier,
+            )
+        )
+    return out
 
 
 def _workflow_family_capabilities(
