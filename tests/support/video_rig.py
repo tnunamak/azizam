@@ -59,6 +59,7 @@ class Engine:
         self.view_started: asyncio.Event | None = None
         self.view_release: asyncio.Event | None = None
         self.before_cancel = None
+        self.outputs: dict[str, Any] | None = None   # the outputs a finished prompt's history holds (default: one clip at node 60)
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         await request.aread()
@@ -82,6 +83,9 @@ class Engine:
             if self.history_mode == "unavailable":
                 raise httpx.ConnectError("test engine unavailable", request=request)
             state = self.states.get(pid)
+            if state == "completed" and self.outputs is not None:
+                return httpx.Response(200, json={pid: {"status": {"status_str": "success", "completed": True, "messages": []},
+                                                       "outputs": self.outputs}})
             if state == "completed":
                 return httpx.Response(200, json=history_done("images", "clip.mp4", prompt_id=pid, node="60"))
             if state == "running":

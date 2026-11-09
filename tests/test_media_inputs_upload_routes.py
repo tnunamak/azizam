@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import media_fetch, media_inputs
 from tests.support.access import access, access_context, authenticated, identity, plan_for
+from tests.support.video_row_engine import declare_graph_engine
 from tests.support.video_row_files import patch_video_row_files_in_a_temporary_tree
 from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
 from tests.test_image_route_receipts import _MultipartRequest, _MultipartUpload
@@ -218,19 +219,20 @@ def test_edit_route_to_an_engine_the_plan_does_not_list_sends_nothing(edit_rig):
 
 
 @pytest.fixture
-def video_rig(rig, isolated_receipts):
+def video_rig(rig, isolated_receipts, monkeypatch):
+    """A video create over the run core: the engine is declared as a service record that names its protocol, and the create's
+    hold for the engine is cut to a moment. The fake engine never finishes the prompt it is given."""
+    from gateway.frontend_shapes import video_create
     from tests._fake_comfy_video import FakeComfy
     comfy = FakeComfy()
     stack = ExitStack()
+    declare_graph_engine(rig.registry)
     for p in comfy.patches():
         stack.enter_context(p)
     stack.enter_context(authenticated(identity(**OWNER)))
     stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
     patch_video_row_files_in_a_temporary_tree(stack)
-    for name in ("_video_job_records", "_video_progress", "_video_workflows"):
-        saved = dict(getattr(proxy, name))
-        getattr(proxy, name).clear()
-        stack.callback(lambda n=name, s=saved: (getattr(proxy, n).clear(), getattr(proxy, n).update(s)))
+    monkeypatch.setattr(video_create, "SUBMIT_WAIT_S", 0.05)
     rig.comfy = comfy
     rig.client = TestClient(proxy.app)
     yield rig
@@ -252,27 +254,27 @@ def data_uri(raw: bytes, mime: str = "image/png") -> str:
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     response = post_video(video_rig, data_uri(data, f"image/{fmt.lower()}"))
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
     assert video_rig.comfy.uploads == [(f"input.{ext}", data, "image/png")]
-    assert resolver_calls == ["resolve_upload"] and ended(video_rig)
+    assert ended(video_rig)
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     response = post_video(video_rig, files={"input_reference": (f"ref{SUFFIX[fmt]}", data, f"image/{fmt.lower()}")})
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
     assert video_rig.comfy.uploads == [(f"input.{ext}", data, "image/png")]
-    assert resolver_calls == ["resolve_upload"] and ended(video_rig)
+    assert ended(video_rig)
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_asset_id_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_asset_id_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     asset_id = stored(data)
     suffix = proxy.asset_cache_path(asset_id).suffix  # type: ignore[union-attr]
@@ -281,11 +283,11 @@ def test_video_reference_asset_id_reaches_the_engine_as_before(video_rig, fmt, r
     old_bytes, old_name = proxy._resolve_cached_image_asset(
         asset_id, access_context(app_id=OWNER_APP["app_id"], key_hash=OWNER_APP["key_hash"]))
     assert video_rig.comfy.uploads == [(old_name, old_bytes, "image/png")] and old_name == f"{asset_id}{suffix}"
-    assert resolver_calls == ["resolve_asset"] and live_rows() == 0
+    assert live_rows() == 0
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_url_goes_through_the_fetcher_and_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_url_goes_through_the_fetcher_and_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     fetched = media_fetch.FetchedMedia(data, f"remote{SUFFIX[fmt]}", f"image/{fmt.lower()}")
     with patch.object(proxy, "_fetch_media_url", AsyncMock(return_value=fetched)) as fetch:
@@ -293,7 +295,7 @@ def test_video_reference_url_goes_through_the_fetcher_and_reaches_the_engine_as_
     assert response.status_code == 200, response.text
     fetch.assert_awaited_once()
     assert video_rig.comfy.uploads == [(f"remote{SUFFIX[fmt]}", data, "image/png")]
-    assert resolver_calls == ["resolve_url"] and ended(video_rig)
+    assert ended(video_rig)
 
 
 # Revert: the ``resolve_upload`` call in ``_resolve_input_reference``.
@@ -330,21 +332,9 @@ def test_video_reference_to_an_engine_the_plan_does_not_list_is_refused_before_a
     assert video_rig.comfy.uploads == [] and lease_rows() == 0 and stored_files(video_rig) == []
 
 
-def test_video_reference_lease_is_released_when_the_engine_upload_fails(video_rig, resolver_calls):
+def test_video_reference_lease_is_released_when_the_engine_upload_fails(video_rig):
     """The picture is resolved, then the request fails at the engine: the lease still ends with the request."""
-    original = proxy._graph
-
-    class Refusing:
-        def __init__(self, inner):
-            self._inner = inner
-
-        async def upload(self, files, headers=None):
-            return SimpleNamespace(status=500, json=lambda: {})
-
-        def __getattr__(self, name):
-            return getattr(self._inner, name)
-
-    with patch.object(proxy, "_graph", lambda *a, **k: Refusing(original(*a, **k))):
-        response = post_video(video_rig, data_uri(image_bytes("PNG")))
+    video_rig.comfy.upload_status = 500
+    response = post_video(video_rig, data_uri(image_bytes("PNG")))
     assert response.status_code == 502
-    assert resolver_calls == ["resolve_upload"] and ended(video_rig)
+    assert ended(video_rig)

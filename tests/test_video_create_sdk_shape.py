@@ -21,7 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from test_video_remix_replace import NEW_ID, RemixReplaceBase  # noqa: E402
+from test_video_remix_replace import RemixReplaceBase  # noqa: E402
+from tests.support.video_row_engine import use_graph_engine  # noqa: E402
 
 
 def _multipart_request(parts: list[tuple[str, bytes, dict[str, str] | None]]) -> Request:
@@ -125,7 +126,12 @@ class VideoCreateMultipartParsingTests(unittest.TestCase):
 
 
 class VideoCreateRealSdkTests(RemixReplaceBase):
-    """The real openai-python client talks to the real app over a fake ComfyUI."""
+    """The real openai-python client talks to the real app over a fake ComfyUI. A plain create is a run-core job, so the
+    engine is declared the way the run core finds it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        use_graph_engine(self.stack)
 
     def test_real_sdk_create_submits_multipart_and_parses_gateway_response(self) -> None:
         import openai
@@ -153,7 +159,7 @@ class VideoCreateRealSdkTests(RemixReplaceBase):
         self.assertEqual(graph["20"]["inputs"]["value"], 1280)
         self.assertEqual(graph["21"]["inputs"]["value"], 704)
         self.assertEqual(graph["22"]["inputs"]["value"], 97)
-        self.assertEqual(video.id, NEW_ID)
+        self.assertTrue(video.id.startswith("video_mj_"), video.id)      # a job's id, not the engine's prompt id
         self.assertEqual(video.object, "video")
         self.assertEqual(video.model, "sora-2")
         self.assertEqual(video.status, "queued")
