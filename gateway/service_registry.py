@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
 import yaml
@@ -1939,10 +1940,23 @@ def engine_base_address(config: Mapping[str, Any]) -> str:
     if isinstance(connection, Mapping):
         candidates.append(connection.get("address"))
     for candidate in candidates:
-        raw = str(candidate or "").strip().rstrip("/")
+        raw = str(candidate or "").strip()
         if raw and origin_of(raw):
-            return raw
+            return _trim_path_slash(raw)
     return ""
+
+
+def _trim_path_slash(url: str) -> str:
+    """*url* without a trailing slash on its path. A slash that ends a query value is part of the value."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), parts.query, ""))
+
+
+def join_base_path(base: str, endpoint: str) -> str:
+    """*endpoint* appended to the path of *base*; the base's query stays a query, after the joined path."""
+    parts = urlsplit(base)
+    path = parts.path.rstrip("/") + "/" + endpoint.lstrip("/")
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
 
 
 NOT_CONFIGURED_REASON = "its service record names no address (host and port)"

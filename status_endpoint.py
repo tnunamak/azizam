@@ -357,7 +357,7 @@ def _lifecycle_backend_targets(config: dict) -> list[dict[str, Any]]:
     backends = config.get("backends", {}) or {}
     targets: list[dict[str, Any]] = []
     for key, cfg in backends.items():
-        if not isinstance(cfg, dict):
+        if not isinstance(cfg, dict) or not _is_enabled(cfg):
             continue
         lifecycle = cfg.get("lifecycle")
         if not isinstance(lifecycle, Mapping):
@@ -631,7 +631,7 @@ async def _llama_props_and_slots(config: Mapping[str, Any]) -> tuple[Optional[di
         return None, None
     try:
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
-            props = await _get(client, f"{origin}/props")
+            props = await _get(client, service_registry.join_base_path(origin, "/props"))
             return props, None
     except Exception:
         return None, None
@@ -999,8 +999,8 @@ async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[di
     try:
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             queue, stats = await asyncio.gather(
-                _get(client, f"{origin}/queue"),
-                _get(client, f"{origin}/system_stats"),
+                _get(client, service_registry.join_base_path(origin, "/queue")),
+                _get(client, service_registry.join_base_path(origin, "/system_stats")),
             )
         if isinstance(queue, dict):
             running = queue.get("queue_running") or []
@@ -2781,7 +2781,7 @@ async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
     async def _health(client, service_id: str):
         record = backends.get(service_id) or {}
         origin = service_registry.engine_base_address(record) if _is_enabled(record) else ""
-        return await _get(client, f"{origin}/health") if origin else None  # no address: not configured, not probed
+        return await _get(client, service_registry.join_base_path(origin, "/health")) if origin else None  # no address: not configured, not probed
 
     try:
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:

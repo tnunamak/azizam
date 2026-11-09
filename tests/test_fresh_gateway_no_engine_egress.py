@@ -36,6 +36,7 @@ def _forbidden(report):
 
 def test_fresh_gateway_has_zero_engine_egress(tmp_path):
     report = run_oracle(tmp_path)
+    assert report["preloaded_at_guard"] == [], "an application module was imported before the guards"
     for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
         assert report["derived"][key] == "", key
     for key in ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "COMFY_ENABLED"):
@@ -48,6 +49,7 @@ def test_fresh_gateway_has_zero_engine_egress(tmp_path):
 
 @pytest.mark.parametrize("kind,call", [
     ("connect", "connect"), ("dns", "getaddrinfo"), ("gethostbyname", "gethostbyname"), ("udp", "sendto"),
+    ("connect_ex", "connect_ex"), ("gethostbyname_ex", "gethostbyname_ex"), ("sendmsg", "sendmsg"),
 ])
 def test_an_import_time_attempt_that_swallows_its_error_still_fails(tmp_path, kind, call):
     report = run_oracle(tmp_path, inject=kind)

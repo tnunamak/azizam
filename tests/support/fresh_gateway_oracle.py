@@ -34,9 +34,8 @@ def _install_guards() -> None:
 
     for method in ("connect", "connect_ex", "sendto", "sendmsg"):
         setattr(socket.socket, method, forbid(method))
-    for function in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "getnameinfo", "create_connection"):
-        if function != "create_connection":
-            setattr(socket, function, forbid(function))
+    for function in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "getnameinfo"):
+        setattr(socket, function, forbid(function))
 
 
 def _inject(kind: str) -> None:
@@ -45,6 +44,9 @@ def _inject(kind: str) -> None:
         "connect": lambda: socket.socket().connect(("203.0.113.1", 80)),
         "dns": lambda: socket.getaddrinfo("engine.invalid", 80),
         "gethostbyname": lambda: socket.gethostbyname("engine.invalid"),
+        "connect_ex": lambda: socket.socket().connect_ex(("203.0.113.1", 80)),
+        "gethostbyname_ex": lambda: socket.gethostbyname_ex("engine.invalid"),
+        "sendmsg": lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendmsg([b"x"], [], 0, ("203.0.113.1", 53)),
         "udp": lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b"x", ("203.0.113.1", 53)),
     }[kind]
     try:
@@ -56,6 +58,7 @@ def _inject(kind: str) -> None:
 def main(argv: list[str]) -> int:
     scratch = Path(argv[1])
     inject = argv[argv.index("--inject") + 1] if "--inject" in argv else None
+    preloaded = sorted(m for m in sys.modules if m.split(".")[0] in {"proxy", "gateway", "status_endpoint", "tests"})
     _install_guards()
     if inject:
         _inject(inject)
@@ -84,6 +87,7 @@ def main(argv: list[str]) -> int:
     report["released"] = service_registry.origin_of(
         service_registry.release_registry()["services"]["litellm"]["config"]["default_base_url"])
     report["attempts"] = ATTEMPTS
+    report["preloaded_at_guard"] = preloaded
     print(json.dumps(report))
     return 0
 
