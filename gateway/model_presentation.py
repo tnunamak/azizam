@@ -209,6 +209,10 @@ _TYPE_CAPABILITIES = {
     "reranking": "rerank", "decision": "decide",
 }
 _AUDIO_SUBTYPES = ("music", "sfx", "speech")
+# The wire value for a capability no contract classifies. It is not a product
+# capability (not in CAPABILITY_LABELS), so it takes the generic label and icon,
+# and no intent word leaks into the catalog.
+UNCLASSIFIED_CAPABILITY = "other"
 
 
 def product_capability(capability: Any, metadata: Mapping[str, Any] | None = None) -> str:
@@ -217,8 +221,9 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     The listed model's `type` and modalities decide, else the capability's
     intent and modalities read through the same contract. Audio that turns
     audio into text is `transcribe`; other audio takes a declared subtype
-    (`capability: music`, a `capability:sfx` tag) or the speech intent, else
-    stays generic `audio`. Never inferred from model IDs.
+    (`capability: music`, a `capability:sfx` tag), else stays generic
+    `audio`. With no contract it is UNCLASSIFIED_CAPABILITY. Never inferred
+    from model IDs or intent spelling.
     """
     metadata = metadata or {}
     intent = capability if isinstance(capability, str) else capability.intent
@@ -228,7 +233,7 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
         getattr(capability, "output_modalities", ()),
     )
     if contract is None:
-        return intent.split(".", 1)[0]
+        return UNCLASSIFIED_CAPABILITY
     if contract.type != "audio":
         return _TYPE_CAPABILITIES[contract.type]
     if "audio" in contract.input_modalities and "audio" not in contract.output_modalities:
@@ -239,7 +244,7 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     subtype = next((hint for hint in hints if hint in _AUDIO_SUBTYPES), None)
     if subtype:
         return subtype
-    return "speech" if intent.startswith(("speech.", "audio.speech")) else "audio"
+    return "audio"
 
 
 def friendly_name(value: str) -> str:
