@@ -847,7 +847,7 @@ async def _models_section(config: dict, props: Optional[dict], slots: Optional[l
     # Image workflows: list ComfyUI api_workflows dir.
     image_workflows: list[str] = []
     try:
-        comfy_cfg = config.get("backends", {}).get("comfyui", {})
+        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
         wf_dir = comfy_cfg.get("workflows_dir")
         if wf_dir:
             p = Path(wf_dir)
@@ -973,6 +973,9 @@ def _safe_float(s: str) -> Optional[float]:
         return None
 
 
+_GRAPH_SERVICE_ID = "comfyui"  # the id of the graph engine's service record (proxy._GRAPH_BACKEND_ID)
+
+
 async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:
     async def _get(client, url):
         try:
@@ -981,7 +984,7 @@ async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[di
         except Exception:
             return None
 
-    origin = service_registry.engine_origin(((config or {}).get("backends") or {}).get("comfyui") or {})
+    origin = service_registry.engine_origin(((config or {}).get("backends") or {}).get(_GRAPH_SERVICE_ID) or {})
     if not origin:  # the record names no address: the graph engine is not configured
         return None, None
     try:
@@ -1889,7 +1892,7 @@ def _capabilities(config: dict) -> list[dict]:
 def _image_capabilities(config: dict) -> list[dict]:
     out: list[dict] = []
     try:
-        comfy_cfg = config.get("backends", {}).get("comfyui", {})
+        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
         wf_dir = comfy_cfg.get("workflows_dir")
         if not wf_dir:
             return out
@@ -4420,7 +4423,7 @@ def _build_models(
 
     image_workflows: list[str] = []
     try:
-        comfy_cfg = config.get("backends", {}).get("comfyui", {})
+        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
         wf_dir = comfy_cfg.get("workflows_dir")
         if wf_dir:
             p = Path(wf_dir)

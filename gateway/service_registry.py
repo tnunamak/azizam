@@ -1888,6 +1888,18 @@ def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
     return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
 
 
+def host_port_origin(config: Mapping[str, Any]) -> str:
+    """``scheme://host:port`` from the record's host and port, or ``""`` unless it names both. No default stands in."""
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if not host or port in (None, ""):
+        return ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
+    scheme = str(config.get("scheme") or "http").strip() or "http"
+    return f"{scheme}://{host}:{port}"
+
+
 def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
     """Where a lifecycle driver of this record dials: its host and port, else the origin of its base URL.
 
@@ -1895,14 +1907,7 @@ def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
     fingerprint covers, so a change to it is the owner's on a record that holds a key. Empty when the record names
     no address; the driver then has nowhere to send a key.
     """
-    host = str(config.get("host") or "").strip()
-    port = config.get("port")
-    if host and port not in (None, ""):
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
-        scheme = str(config.get("scheme") or "http").strip() or "http"
-        return f"{scheme}://{host}:{port}"
-    return origin_of(service_base_url(config))
+    return host_port_origin(config) or origin_of(service_base_url(config))
 
 
 def engine_origin(config: Mapping[str, Any]) -> str:

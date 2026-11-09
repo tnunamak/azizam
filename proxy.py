@@ -873,7 +873,7 @@ def _backend_host_map(backends: Mapping[str, Any] | None, listed: Callable[[str,
     for bid, bcfg in (backends or {}).items():
         if not isinstance(bcfg, Mapping) or not listed(bid, bcfg):
             continue
-        origin = service_registry.engine_origin(bcfg)
+        origin = service_registry.host_port_origin(bcfg)
         if origin:  # a record that names no address is not listed
             result[bid] = origin
     return result
@@ -1935,7 +1935,7 @@ def _backend_base_url(backend: str) -> str:
     """The service's own base URL: the registry-derived host, else the address its record names ("" when none)."""
     if backend in DERIVED.LLM_BACKEND_HOSTS:
         return DERIVED.LLM_BACKEND_HOSTS[backend]
-    return service_registry.engine_origin((config.get("backends") or {}).get(backend) or {})
+    return service_registry.host_port_origin((config.get("backends") or {}).get(backend) or {})
 
 
 def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
@@ -4390,7 +4390,7 @@ def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
         env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
         base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
         if not base_url:
-            base_url = service_registry.engine_origin(service_config)
+            base_url = service_registry.host_port_origin(service_config)
         dialed = runtime_secrets.url(service_config, "health_endpoint", base=base_url, join=_probe_join).strip()
         if not dialed:
             return _probe_join(base_url, "/health") if base_url else ""
@@ -5371,11 +5371,21 @@ def _stt_execution_snapshot(
         if selected is None:
             return None
         service_id, service_config = selected
-    return stt_chunking.SttExecutionConfig.from_service(
+    execution = stt_chunking.SttExecutionConfig.from_service(
         service_id=service_id,
         service_config=stt_measurement.trial_config(service_id, service_config),
         config_directory=CONFIG_PATH.parent,
     )
+    if not execution.host:
+        raise stt_chunking.SttNotConfigured(f"The STT service {service_id!r} is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
+    return execution
+
+
+def _stt_configuration_refusal(error: stt_chunking.SttConfigurationError) -> Response:
+    """The 503 for a service whose limits are invalid, or whose record names no address (said plainly)."""
+    if isinstance(error, stt_chunking.SttNotConfigured):
+        return _stt_error(str(error), status_code=503, code="stt_not_configured")
+    return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
 
 
 _SAFE_STT_RECEIPT_INPUTS = frozenset(
@@ -5613,8 +5623,8 @@ async def _dispatch_selected_stt_route(
                 skipped_notes = _speech_skipped_engine_notes(peeked)
     try:
         execution = _stt_execution_snapshot(operation, selected_service)
-    except stt_chunking.SttConfigurationError:
-        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+    except stt_chunking.SttConfigurationError as error:
+        return _stt_configuration_refusal(error)
     if execution is None:
         # No service can be dispatched. Preserve the generic route gate for
         # this no-target case; once a target exists, policy always uses its id.
@@ -5885,8 +5895,8 @@ async def proxy_stt_request(
     if execution_snapshot is None:
         try:
             execution = _stt_execution_snapshot(operation)
-        except stt_chunking.SttConfigurationError:
-            return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+        except stt_chunking.SttConfigurationError as error:
+            return _stt_configuration_refusal(error)
     else:
         execution = execution_snapshot
     if execution is None:
@@ -5970,8 +5980,8 @@ async def proxy_stt_request(
                 if service_changed:
                     try:
                         target_execution = _stt_execution_snapshot(operation, target_service)
-                    except stt_chunking.SttConfigurationError:
-                        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+                    except stt_chunking.SttConfigurationError as error:
+                        return _stt_configuration_refusal(error)
                     if target_execution is None:
                         return _stt_error("The selected STT service is unavailable.", status_code=503, code="stt_backend_unavailable")
                     # The parsed upload keeps its original workspace after alias routing.

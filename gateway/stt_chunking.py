@@ -117,6 +117,10 @@ class SttConfigurationError(SttExecutionError):
     """The effective service record does not define a safe execution budget."""
 
 
+class SttNotConfigured(SttConfigurationError):
+    """The service record names no address, so a request has nowhere to go."""
+
+
 class SttCancelled(SttExecutionError):
     """A client disconnect or correlated request cancellation won a race."""
 
@@ -278,9 +282,7 @@ class SttExecutionConfig:
                 raise SttConfigurationError(f"STT {name} must be finite and {qualification}")
             return result
 
-        origin = service_registry.engine_origin(raw)
-        if not origin:
-            raise SttConfigurationError(f"STT is not configured: {service_registry.NOT_CONFIGURED_REASON}")
+        origin = service_registry.engine_origin(raw)  # "" when the record names no address: a request refuses, nothing is dialed
 
         fallback = bundled_chunking_defaults()
         threshold = positive_float("threshold_seconds", fallback["threshold_seconds"])

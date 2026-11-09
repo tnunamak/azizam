@@ -401,10 +401,10 @@ def engine_read_request(
     if not config.get("probe_with_inference_connection"):
         root = fallback_root
         if not root:
-            root = service_registry.engine_origin(config)
+            root = service_registry.host_port_origin(config)
         return (f"{root.rstrip('/')}/{endpoint.lstrip('/')}", {}) if root else None
     if not fallback_root:
-        fallback_root = service_registry.engine_origin(config)
+        fallback_root = service_registry.host_port_origin(config)
     try:
         connection = inference_connection(
             record, "", fallback_address=f"{fallback_root}/v1" if fallback_root else "",
@@ -1939,7 +1939,7 @@ class HttpLoadUnloadDriver:
         """The address this driver dials: the one the credential fingerprint covers (``service_registry.lifecycle_dial_url``)."""
         from gateway import service_registry
 
-        return service_registry.engine_origin(svc)
+        return service_registry.lifecycle_dial_url(svc)
 
     @classmethod
     def _credentials(cls, svc: Mapping[str, Any], dc: Mapping[str, Any], base_url: str) -> tuple[str, str] | None:

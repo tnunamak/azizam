@@ -119,10 +119,15 @@ def test_status_shows_the_reason_for_a_record_with_no_address():
     assert status_endpoint._unconfigured_rows(_config(tts={"health_endpoint": "/health", **NON_DEFAULT})) == []
 
 
-def test_stt_without_an_address_refuses_and_names_it():
-    with pytest.raises(stt_chunking.SttConfigurationError, match="names no address"):
-        stt_chunking.SttExecutionConfig.from_service(
-            service_id="stt", service_config={"timeout": 5}, config_directory=proxy.CONFIG_PATH.parent)
+def test_stt_without_an_address_refuses_and_names_it(monkeypatch):
+    execution = stt_chunking.SttExecutionConfig.from_service(
+        service_id="stt", service_config={"timeout": 5}, config_directory=proxy.CONFIG_PATH.parent)
+    assert execution.host == ""  # the budget is valid; the request path refuses
+    monkeypatch.setitem(proxy.config.setdefault("backends", {}), "stt", {"timeout": 5})
+    with pytest.raises(stt_chunking.SttNotConfigured, match="names no address"):
+        proxy._stt_execution_snapshot("transcriptions", "stt")
+    response = proxy._stt_configuration_refusal(stt_chunking.SttNotConfigured("x names no address"))
+    assert response.status_code == 503
 
 
 def test_lifecycle_driver_dials_nothing_for_a_record_with_no_address():
