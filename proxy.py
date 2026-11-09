@@ -27351,10 +27351,15 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         return effective
 
     def note_policy(self, caller: Any) -> None:
+        """The route's policy allowed this request (it was enforced before the receipt opened); the receipt says so, with the
+        detail level of the plan, as the old media receipts did."""
         receipt = _ROW_RECEIPT.get()
-        policy = DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/videos") or _row_route_policy("/v1/videos")
-        if receipt is not None and policy is not None and isinstance(caller, AuthContext):
-            evaluate_and_apply(caller.identity, make_policy_request(**policy), receipt)
+        if receipt is None or not isinstance(caller, AuthContext):
+            return
+        receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
+        access = getattr(caller.identity, "access", None)
+        if access is not None:
+            receipt.visibility = access.receipt_detail
 
     def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
         _begin_media_delivery(caller, _ROW_RECEIPT.get())
