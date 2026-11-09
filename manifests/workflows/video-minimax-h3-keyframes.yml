@@ -68,7 +68,7 @@ inputs:
     step: 17
     offset: 5
     minimum: 22
-    maximum: 498
+    maximum: 362
   width:
     label: Width
     help: Video width in pixels.

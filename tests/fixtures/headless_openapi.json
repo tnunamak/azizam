@@ -1051,7 +1051,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
-            "maximum": 497,
+            "maximum": 241,
             "minimum": 9,
             "type": "integer",
             "x-azizam-offset": 1,
@@ -1090,7 +1090,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
-            "maximum": 497,
+            "maximum": 241,
             "minimum": 9,
             "type": "integer",
             "x-azizam-offset": 1,
@@ -1180,7 +1180,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
-            "maximum": 498,
+            "maximum": 362,
             "minimum": 22,
             "type": "integer",
             "x-azizam-offset": 5,
@@ -1212,7 +1212,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
-            "maximum": 498,
+            "maximum": 362,
             "minimum": 22,
             "type": "integer",
             "x-azizam-offset": 5,
@@ -2987,7 +2987,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
-            "maximum": 497,
+            "maximum": 241,
             "minimum": 9,
             "type": "integer",
             "x-azizam-offset": 1,
@@ -3065,7 +3065,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 8N+1 grid; wins over `seconds`.",
-            "maximum": 497,
+            "maximum": 241,
             "minimum": 9,
             "type": "integer",
             "x-azizam-offset": 1,
@@ -3295,7 +3295,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
-            "maximum": 498,
+            "maximum": 362,
             "minimum": 22,
             "type": "integer",
             "x-azizam-offset": 5,
@@ -3355,7 +3355,7 @@
         "properties": {
           "frames": {
             "description": "Exact frame count on the 17N+5 grid; wins over `seconds`.",
-            "maximum": 498,
+            "maximum": 362,
             "minimum": 22,
             "type": "integer",
             "x-azizam-offset": 5,

@@ -13,7 +13,7 @@ from typing import Any
 
 
 def without_section_additions(bundled: Mapping[str, Any], origin: Mapping[str, Any]) -> dict[str, Any]:
-    """``bundled`` minus its capability section and minus every role input (and its mapping) the origin document lacks, with the largest value of the role inputs it has restored."""
+    """``bundled`` minus its capability section and minus every role input (and its mapping) the origin document lacks."""
     document = copy.deepcopy(dict(bundled))
     capability = document.get("capability")
     section = document.get(capability) if isinstance(capability, str) and capability not in ("inputs", "outputs", "bindings") else None
@@ -22,11 +22,6 @@ def without_section_additions(bundled: Mapping[str, Any], origin: Mapping[str, A
     del document[capability]
     for input_name in (section.get("roles") or {}).values():
         if input_name in origin.get("inputs", {}):
-            # A role input the origin had keeps its definition except the largest value, which V5a raised to the longest
-            # frame count the declared seconds and frame rates can compute.
-            before = origin["inputs"][input_name]
-            if "maximum" in before and "maximum" in document["inputs"][input_name]:
-                document["inputs"][input_name]["maximum"] = before["maximum"]
             continue
         document["inputs"].pop(input_name, None)
         for key, body in document["bindings"].items():

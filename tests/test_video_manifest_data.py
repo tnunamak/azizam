@@ -446,7 +446,12 @@ def spec_range(manifest: dict, role: str) -> tuple[float, float]:
     return spec["minimum"], spec["maximum"]
 
 
-@pytest.mark.parametrize("path", [p for p in MANIFESTS if not load(p)["video"].get("chain")], ids=lambda p: p.stem)
+# The keyframe manifests' length role is their long-standing ``frames`` input, whose public maximum (241 and 362) a test pins;
+# whether the shape may exceed it at a high frame rate is V5c's decision, so they are not in this check.
+FILLED_LENGTH = [p for p in MANIFESTS if not load(p)["video"].get("chain") and "keyframes" not in p.stem]
+
+
+@pytest.mark.parametrize("path", FILLED_LENGTH, ids=lambda p: p.stem)
 def test_the_length_input_fits_every_length_the_declared_ranges_can_compute(path: Path) -> None:
     manifest = load(path)
     video = manifest["video"]
@@ -466,9 +471,7 @@ def test_the_length_input_fits_every_length_the_declared_ranges_can_compute(path
 
 @pytest.mark.parametrize("name,rate,expected", [
     ("video-ltx-2.5-t2v", 30, 297), ("video-ltx-2.5-t2v", 50, 497), ("video-ltx-2.5-i2v", 50, 497),
-    ("video-ltx-2.5-keyframes", 50, 497), ("video-ltx-2.5-keyframes-mid", 50, 497),
     ("video-minimax-h3-t2v", 50, 498), ("video-minimax-h3-i2v", 50, 498),
-    ("video-minimax-h3-keyframes", 50, 498), ("video-minimax-h3-keyframes-mid", 50, 498),
 ])
 def test_ten_seconds_at_a_high_frame_rate_fits_the_length_input(name: str, rate: int, expected: int) -> None:
     manifest = load(ROOT / "manifests" / "workflows" / f"{name}.yml")
