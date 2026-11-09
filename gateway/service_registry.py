@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from typing import Any
 
 import yaml
@@ -1888,6 +1889,18 @@ def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
     return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
 
 
+def host_port_origin(config: Mapping[str, Any]) -> str:
+    """``scheme://host:port`` from the record's host and port, or ``""`` unless it names both. No default stands in."""
+    host = str(config.get("host") or "").strip()
+    port = config.get("port")
+    if not host or port in (None, ""):
+        return ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
+    scheme = str(config.get("scheme") or "http").strip() or "http"
+    return f"{scheme}://{host}:{port}"
+
+
 def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
     """Where a lifecycle driver of this record dials: its host and port, else the origin of its base URL.
 
@@ -1895,14 +1908,94 @@ def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
     fingerprint covers, so a change to it is the owner's on a record that holds a key. Empty when the record names
     no address; the driver then has nowhere to send a key.
     """
-    host = str(config.get("host") or "").strip()
-    port = config.get("port")
-    if host and port not in (None, ""):
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
-        scheme = str(config.get("scheme") or "http").strip() or "http"
-        return f"{scheme}://{host}:{port}"
-    return origin_of(service_base_url(config))
+    return host_port_origin(config) or origin_of(service_base_url(config))
+
+
+def engine_origin(config: Mapping[str, Any]) -> str:
+    """The ``scheme://host:port`` an engine's record names, or ``""`` when it names no address.
+
+    The one reading of an engine's address: the record's host and port, else the origin of its base URL, else its
+    ``connection.address``. ``""`` means the engine is not configured. No caller supplies a host or port of its own.
+    """
+    origin = lifecycle_dial_url(config)
+    if origin:
+        return origin
+    connection = config.get("connection")
+    return origin_of(str(connection.get("address") or "")) if isinstance(connection, Mapping) else ""
+
+
+class EngineAddressError(ValueError):
+    """A named execution address is invalid; no lower-priority address may replace it."""
+
+
+def engine_base_address(config: Mapping[str, Any]) -> str:
+    """The full base URL an engine's record names, or ``""`` when it names none or names an invalid one.
+
+    Never raises: startup, derived config and dispatch read every record through it, so one malformed record leaves
+    that engine not configured instead of stopping the gateway. A named invalid URL never falls through to a
+    lower-priority address. Pages that show why use ``checked_engine_base_address``.
+    """
+    try:
+        return checked_engine_base_address(config)
+    except EngineAddressError:
+        return ""
+
+
+def checked_engine_base_address(config: Mapping[str, Any]) -> str:
+    """The full base URL an engine's record names, keeping the scheme, the port and any path prefix; ``""`` when none.
+
+    For dispatch and for probes written relative to that base. Host and port name a bare ``scheme://host:port``. A
+    base URL, ``connection.address`` or standalone ``address`` is kept whole (no trailing slash), so ``https://203.0.113.9:8443/prefix`` posts to
+    ``/prefix/...``. ``engine_origin`` is the origin only: use it for credential-origin comparisons and for endpoints
+    defined against the origin. A named invalid URL raises EngineAddressError instead of choosing another address.
+    """
+    bare = host_port_origin(config)
+    if bare:
+        return bare
+    connection = config.get("connection")
+    candidates = [config.get(key) for key in ("base_url", "api_base", "default_base_url")]
+    fields = ["base_url", "api_base", "default_base_url"]
+    if isinstance(connection, Mapping):
+        candidates.append(connection.get("address"))
+        fields.append("connection.address")
+    # Existing sources keep their order; the accepted standalone address is used when none of them is named.
+    candidates.append(config.get("address"))
+    fields.append("address")
+    for field, candidate in zip(fields, candidates):
+        raw = str(candidate or "").strip()
+        if not raw:
+            continue
+        if not origin_of(raw):
+            # Name only the field: an address can contain a credential.
+            raise EngineAddressError(f"service record {field} is not a valid HTTP(S) address")
+        return _trim_path_slash(raw)
+    return ""
+
+
+def _trim_path_slash(url: str) -> str:
+    """*url* without a trailing slash on its path. A slash that ends a query value is part of the value."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), parts.query, ""))
+
+
+def join_base_path(base: str, endpoint: str) -> str:
+    """*endpoint* appended to the path of *base*; the two queries are merged, not stacked.
+
+    The endpoint is parsed on its own: only its path joins the base path. Both queries survive as written (no
+    re-encoding). A name in both queries keeps the endpoint's value: the endpoint is the more specific request.
+    The endpoint's fragment is dropped on purpose, and so is the base's: neither is sent to a server.
+    """
+    parts = urlsplit(base)
+    ep = urlsplit(endpoint)
+    path = parts.path.rstrip("/") + "/" + ep.path.lstrip("/")
+    # Names compare decoded (``%74enant`` and ``tenant`` are one name to a server); the pairs are kept as written.
+    own = {unquote_plus(item.split("=", 1)[0]) for item in ep.query.split("&") if item}
+    kept = [item for item in parts.query.split("&") if item and unquote_plus(item.split("=", 1)[0]) not in own]
+    query = "&".join([*kept, *(item for item in ep.query.split("&") if item)])
+    return urlunsplit((parts.scheme, parts.netloc, path, query, ""))
+
+
+NOT_CONFIGURED_REASON = "its service record names no address (host and port)"
 
 
 def _dialed_origins(config: Mapping[str, Any]) -> frozenset[str]:

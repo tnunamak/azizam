@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/engine_record_defaults.schema.json",
+  "title": "Engine record defaults",
+  "description": "Values an engine's service record may leave out, by service id. Closed: no address (host, port, base URL) may appear here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["defaults"],
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "propertyNames": {"minLength": 1},
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeout": {"type": "integer", "minimum": 1},
+          "video_timeout": {"type": "integer", "minimum": 1},
+          "health_endpoint": {"type": "string", "pattern": "^/"},
+          "model_id": {"type": "string", "minLength": 1},
+          "default_model": {"type": "string", "minLength": 1},
+          "workflows_dir": {"type": "string", "minLength": 1},
+          "video_workflows_dir": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

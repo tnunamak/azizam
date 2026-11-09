@@ -47,7 +47,7 @@ from starlette.formparsers import (
 )
 from starlette.requests import ClientDisconnect
 
-from gateway import off_loop_spawn, private_io, private_tmp
+from gateway import off_loop_spawn, private_io, private_tmp, service_registry
 from gateway.alias_policy import transform_specs
 from gateway.resource_claims import (
     AdmissionDecision,
@@ -115,6 +115,10 @@ class SttExecutionError(RuntimeError):
 
 class SttConfigurationError(SttExecutionError):
     """The effective service record does not define a safe execution budget."""
+
+
+class SttNotConfigured(SttConfigurationError):
+    """The service record names no address, so a request has nowhere to go."""
 
 
 class SttCancelled(SttExecutionError):
@@ -278,13 +282,10 @@ class SttExecutionConfig:
                 raise SttConfigurationError(f"STT {name} must be finite and {qualification}")
             return result
 
-        host = str(raw.get("host") or "127.0.0.1").strip()
         try:
-            port = int(raw.get("port", 5092))
-        except (TypeError, ValueError) as error:
-            raise SttConfigurationError("STT port must be an integer") from error
-        if not host or not 0 < port < 65536:
-            raise SttConfigurationError("STT service host and port are invalid")
+            origin = service_registry.checked_engine_base_address(raw)  # No address: the request path refuses.
+        except service_registry.EngineAddressError as error:
+            raise SttNotConfigured(str(error)) from error
 
         fallback = bundled_chunking_defaults()
         threshold = positive_float("threshold_seconds", fallback["threshold_seconds"])
@@ -339,7 +340,7 @@ class SttExecutionConfig:
 
         return cls(
             service_id=service_id,
-            host=f"http://{host}:{port}",
+            host=origin,
             timeout_seconds=timeout,
             deadline_seconds=deadline,
             chunking_enabled=_as_bool(chunking.get("enabled", True)),

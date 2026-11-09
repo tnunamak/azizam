@@ -33,6 +33,9 @@ class RecordedRequest:
     headers: Mapping[str, str]
     body: bytes
     exchange: str | None
+    # Optional ASGI raw_path is deliberately not reconstructed from decoded path.
+    raw_path: bytes = b""
+    raw_query: bytes = b""
 
     @property
     def json(self) -> Any:
@@ -137,9 +140,15 @@ class FakeUpstream:
                 break
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
         query = dict(parse_qsl(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True))
-        probe = RecordedRequest(scope["method"], scope["path"], query, headers, bytes(body), None)
+        probe = RecordedRequest(
+            scope["method"], scope["path"], query, headers, bytes(body), None,
+            raw_path=scope.get("raw_path", b""), raw_query=scope.get("query_string", b""),
+        )
         exchange, violation = self._select(probe)
-        recorded = RecordedRequest(probe.method, probe.path, query, headers, probe.body, exchange.id if exchange else None)
+        recorded = RecordedRequest(
+            probe.method, probe.path, query, headers, probe.body, exchange.id if exchange else None,
+            raw_path=probe.raw_path, raw_query=probe.raw_query,
+        )
         with self._lock:
             self.requests.append(recorded)
             if violation:
@@ -228,6 +237,9 @@ def _request_view(request: RecordedRequest) -> dict[str, Any]:
     view: dict[str, Any] = {
         "method": request.method,
         "path": request.path,
+        # Latin-1 is a reversible byte-to-string mapping for JSON matchers.
+        "raw_path": request.raw_path.decode("latin-1"),
+        "raw_query": request.raw_query.decode("latin-1"),
         "query": dict(request.query),
         "headers": dict(request.headers),
     }

@@ -387,7 +387,7 @@ def engine_read_request(
     Legacy records retain their original root-relative, keyless probes.
     A missing inference key does not prevent an unauthenticated probe.
     """
-    from gateway import admin_store
+    from gateway import admin_store, service_registry
     from gateway.engine_check import join_url
     from gateway.engine_connection import InferenceConnectionError, inference_connection
 
@@ -400,11 +400,11 @@ def engine_read_request(
     # protocol prefix, safe headers and origin-bound inference credential.
     if not config.get("probe_with_inference_connection"):
         root = fallback_root
-        if not root and config.get("port"):
-            root = f"http://{config.get('host', '127.0.0.1')}:{config['port']}"
+        if not root:
+            root = service_registry.host_port_origin(config)
         return (f"{root.rstrip('/')}/{endpoint.lstrip('/')}", {}) if root else None
-    if not fallback_root and config.get("port"):
-        fallback_root = f"http://{config.get('host', '127.0.0.1')}:{config.get('port')}"
+    if not fallback_root:
+        fallback_root = service_registry.host_port_origin(config)
     try:
         connection = inference_connection(
             record, "", fallback_address=f"{fallback_root}/v1" if fallback_root else "",
@@ -1695,6 +1695,8 @@ class HttpLoadUnloadDriver:
         if not (dc.get("unload_url") or dc.get("unload_url_entries")):
             return
         base_url = self._base_url(svc)
+        if not base_url:  # the record names no address: nothing is dialed
+            return
         keys = self._credentials(svc, dc, base_url)
         if keys is None:
             return
@@ -1784,6 +1786,8 @@ class HttpLoadUnloadDriver:
             return False
 
         base_url = self._base_url(svc)
+        if not base_url:  # the record names no address: nothing is dialed
+            return False
         keys = self._credentials(svc, dc, base_url)
         if keys is None:
             return False
@@ -1932,10 +1936,13 @@ class HttpLoadUnloadDriver:
 
     @staticmethod
     def _base_url(svc: Mapping[str, Any]) -> str:
-        """The address this driver dials: the one the credential fingerprint covers (``service_registry.lifecycle_dial_url``)."""
+        """The address this driver dials: the engine's one address (``service_registry.engine_origin``).
+
+        A key is sent only when this origin is the one it was bound to (``_credentials``), so an address read from
+        ``connection.address`` cannot receive a key bound elsewhere."""
         from gateway import service_registry
 
-        return service_registry.lifecycle_dial_url(svc) or "http://127.0.0.1:80"
+        return service_registry.engine_origin(svc)
 
     @classmethod
     def _credentials(cls, svc: Mapping[str, Any], dc: Mapping[str, Any], base_url: str) -> tuple[str, str] | None:

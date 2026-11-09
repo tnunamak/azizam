@@ -61,6 +61,13 @@ rights for transcripts and alignment files, but no separate audio licence.
 Public hosting does not establish reuse rights. Its audio is excluded from
 the default measurement selection and requires an explicit sample choice.
 
+## Engine record defaults
+
+`engine_record_defaults.yml` holds the values an engine's service record may leave out: request timeouts, the default
+model, the health path and the workflow directories, by service id. `engine_record_defaults.schema.json` is its closed
+schema, and `gateway/engine_record_defaults.py` reads it. A value in the record wins. The file never holds an address:
+a record that names no host and port is an engine that is not configured (docs/design/CODE_TO_DATA.md, S8).
+
 ## Retention
 
 `retention.yml` holds the bundled defaults of the request-retention contract:

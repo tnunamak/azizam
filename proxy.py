@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
-from gateway import engine_egress
+from gateway import engine_egress, engine_record_defaults
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway import registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
@@ -874,11 +874,9 @@ def _backend_host_map(backends: Mapping[str, Any] | None, listed: Callable[[str,
     for bid, bcfg in (backends or {}).items():
         if not isinstance(bcfg, Mapping) or not listed(bid, bcfg):
             continue
-        host = bcfg.get("host", "127.0.0.1")
-        port = bcfg.get("port")
-        if not port:
-            continue
-        result[bid] = f"http://{host}:{port}"
+        origin = service_registry.host_port_origin(bcfg)
+        if origin:  # a record that names no address is not listed
+            result[bid] = origin
     return result
 
 
@@ -1419,15 +1417,20 @@ def _stored_registry_for_boot() -> dict[str, Any] | None:
         return None
 
 
-def _workflows_directory(configured: Any, default: str) -> Path:
-    """A workflow directory from a registry record: absolute as given, else relative to proxy.py."""
-    path = Path(str(configured if configured is not None else default))
+def _record_default(service_id: str, record: Mapping[str, Any], key: str) -> Any:
+    """The record's own value for *key*, else the release default (registry/engine_record_defaults.yml)."""
+    return engine_record_defaults.record_value(service_id, record, key)
+
+
+def _workflows_directory(configured: Any) -> Path:
+    """A workflow directory from a registry record or the release default: absolute as given, else relative to proxy.py."""
+    path = Path(str(configured))
     return path if path.is_absolute() else (Path(__file__).parent / path).resolve()
 
 
 def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
     """The model id the embeddings service's record names (its default when the record names none)."""
-    return ((backends or {}).get("embeddings") or {}).get("model_id", "nomic-embed-text-v1.5")
+    return engine_record_defaults.record_value("embeddings", (backends or {}).get("embeddings"), "model_id")
 
 
 def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
@@ -1447,27 +1450,28 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
     return {
-        "TTS_HOST": f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}",
-        "STT_HOST": f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}",
-        "EMBEDDINGS_HOST": f"http://{emb_c.get('host', '127.0.0.1')}:{emb_c.get('port', 5061)}",
-        "COMFY_HOST": f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}",
-        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True),
-        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True),
-        "STT_TIMEOUT": int(stt_c.get("timeout", 120)),
-        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)),
-        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True),
+        # A record that names no address gives "" here and the engine is not configured: nothing is dialed.
+        "TTS_HOST": service_registry.engine_base_address(tts_c),
+        "STT_HOST": service_registry.engine_base_address(stt_c),
+        "EMBEDDINGS_HOST": service_registry.engine_base_address(emb_c),
+        "COMFY_HOST": service_registry.engine_base_address(cfy_c),
+        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
+        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
+        "STT_TIMEOUT": int(_record_default("stt", stt_c, "timeout")),
+        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
+        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_base_address(cfy_c)),
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
-        "TTS_TIMEOUT": int(tts_c.get("timeout", 120)),
-        "EMBEDDINGS_HEALTH_ENDPOINT": emb_c.get("health_endpoint", "/health"),
-        "EMBEDDINGS_TIMEOUT": int(emb_c.get("timeout", 120)),
+        "TTS_TIMEOUT": int(_record_default("tts", tts_c, "timeout")),
+        "EMBEDDINGS_HEALTH_ENDPOINT": _record_default("embeddings", emb_c, "health_endpoint"),
+        "EMBEDDINGS_TIMEOUT": int(_record_default("embeddings", emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": int(cfy_c.get("timeout", 300)),
-        "COMFY_DEFAULT_MODEL": cfy_c.get("default_model", "flux2-klein-4b"),
-        "COMFY_VIDEO_TIMEOUT": int(cfy_c.get("video_timeout", 1800)),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(cfy_c.get("workflows_dir"), "./workflows/images"),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(cfy_c.get("video_workflows_dir"), "./workflows"),
+        "COMFY_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "timeout")),
+        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_BACKEND_ID, cfy_c, "default_model"),
+        "COMFY_VIDEO_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_timeout")),
+        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "workflows_dir")),
+        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_workflows_dir")),
         "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(cfy_c, "images").binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
@@ -1934,11 +1938,10 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
 
 
 def _backend_base_url(backend: str) -> str:
-    """The service's own base URL: the registry-derived host, else its record's host and port."""
+    """The service's own base URL: the registry-derived host, else the address its record names ("" when none)."""
     if backend in DERIVED.LLM_BACKEND_HOSTS:
         return DERIVED.LLM_BACKEND_HOSTS[backend]
-    cfg = (config.get("backends") or {}).get(backend) or {}
-    return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
+    return service_registry.host_port_origin((config.get("backends") or {}).get(backend) or {})
 
 
 def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
@@ -4393,11 +4396,7 @@ def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
         env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
         base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
         if not base_url:
-            host = str(service_config.get("host") or "127.0.0.1").strip()
-            port = service_config.get("port")
-            if host and port not in (None, ""):
-                scheme = str(service_config.get("scheme") or "http").strip() or "http"
-                base_url = f"{scheme}://{host}:{port}"
+            base_url = service_registry.host_port_origin(service_config)
         dialed = runtime_secrets.url(service_config, "health_endpoint", base=base_url, join=_probe_join).strip()
         if not dialed:
             return _probe_join(base_url, "/health") if base_url else ""
@@ -4699,7 +4698,7 @@ async def _reference_transcript(
     if meta.get("transcript"):
         return str(meta["transcript"])
     stt = (config.get("backends") or {}).get("stt")
-    if not isinstance(stt, Mapping) or not stt.get("host"):
+    if not isinstance(stt, Mapping) or not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
         raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
     if receipt is not None:
         receipt.metadata.setdefault("stt", {"field_count": 1, "file_count": 1, "attempts_started": 0, "chunked": False})
@@ -4719,7 +4718,7 @@ async def _reference_transcript(
         )
         _require_egress_lease("stt")
         resp = await _stt_adapter(stt).invoke(
-            AdapterConnection(address=f"http://{stt['host']}:{stt['port']}",
+            AdapterConnection(address=service_registry.engine_base_address(stt),
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
             "stt.transcribe", clip,
         )
@@ -5378,11 +5377,21 @@ def _stt_execution_snapshot(
         if selected is None:
             return None
         service_id, service_config = selected
-    return stt_chunking.SttExecutionConfig.from_service(
+    execution = stt_chunking.SttExecutionConfig.from_service(
         service_id=service_id,
         service_config=stt_measurement.trial_config(service_id, service_config),
         config_directory=CONFIG_PATH.parent,
     )
+    if not execution.host:
+        raise stt_chunking.SttNotConfigured(f"The STT service {service_id!r} is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
+    return execution
+
+
+def _stt_configuration_refusal(error: stt_chunking.SttConfigurationError) -> Response:
+    """The 503 for a service whose limits are invalid, or whose record names no address (said plainly)."""
+    if isinstance(error, stt_chunking.SttNotConfigured):
+        return _stt_error(str(error), status_code=503, code="stt_not_configured")
+    return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
 
 
 _SAFE_STT_RECEIPT_INPUTS = frozenset(
@@ -5620,8 +5629,8 @@ async def _dispatch_selected_stt_route(
                 skipped_notes = _speech_skipped_engine_notes(peeked)
     try:
         execution = _stt_execution_snapshot(operation, selected_service)
-    except stt_chunking.SttConfigurationError:
-        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+    except stt_chunking.SttConfigurationError as error:
+        return _stt_configuration_refusal(error)
     if execution is None:
         # No service can be dispatched. Preserve the generic route gate for
         # this no-target case; once a target exists, policy always uses its id.
@@ -5892,8 +5901,8 @@ async def proxy_stt_request(
     if execution_snapshot is None:
         try:
             execution = _stt_execution_snapshot(operation)
-        except stt_chunking.SttConfigurationError:
-            return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+        except stt_chunking.SttConfigurationError as error:
+            return _stt_configuration_refusal(error)
     else:
         execution = execution_snapshot
     if execution is None:
@@ -5977,8 +5986,8 @@ async def proxy_stt_request(
                 if service_changed:
                     try:
                         target_execution = _stt_execution_snapshot(operation, target_service)
-                    except stt_chunking.SttConfigurationError:
-                        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+                    except stt_chunking.SttConfigurationError as error:
+                        return _stt_configuration_refusal(error)
                     if target_execution is None:
                         return _stt_error("The selected STT service is unavailable.", status_code=503, code="stt_backend_unavailable")
                     # The parsed upload keeps its original workspace after alias routing.
@@ -16690,10 +16699,10 @@ def _identity_face_client() -> identity_api.FaceServiceClient:
     transition-enabled domain never names it, and the check keeps a future declared domain from reaching it unleased."""
     _require_egress_lease(_IDENTITY_FACE_SERVICE_ID)
     bcfg = _identity_face_cfg()
-    return identity_api.FaceServiceClient(
-        f"http://{bcfg.get('host', '127.0.0.1')}:{bcfg.get('port', 8021)}",
-        timeout=float(bcfg.get("timeout", 120)),
-    )
+    origin = service_registry.engine_base_address(bcfg)
+    if not origin:
+        raise identity_api.FaceServiceNotConfigured(f"The face service is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
+    return identity_api.FaceServiceClient(origin, timeout=float(bcfg.get("timeout", 120)))
 
 
 async def _identity_ensure_face_service() -> Response | None:
@@ -16701,9 +16710,10 @@ async def _identity_ensure_face_service() -> Response | None:
     from gateway.lifecycle_drivers import driver_for_service
 
     bcfg = dict(_identity_face_cfg())
-    if not bcfg:
+    if not service_registry.engine_base_address(bcfg):
+        reason = "" if not bcfg else f": {service_registry.NOT_CONFIGURED_REASON}"
         return Response(
-            content=json.dumps({"error": {"message": "The face service is not configured.", "type": "service_unavailable"}}),
+            content=json.dumps({"error": {"message": f"The face service is not configured{reason}.", "type": "service_unavailable"}}),
             status_code=503, media_type="application/json",
         )
     driver = driver_for_service("faces", {"faces": bcfg})
@@ -21009,7 +21019,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         return await _deny_realtime(websocket, denied)
 
     service = (config.get("backends") or {}).get(_REALTIME_SERVICE_ID)
-    if not service or not service.get("port"):
+    if not service or not service.get("port") or not service.get("host"):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     admission = _dispatch_admission_response(
         "audio.realtime", auth_context=auth_context, resource_class="audio",
@@ -21029,7 +21039,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         _require_egress_lease(_REALTIME_SERVICE_ID)
     except TransitionUnavailable as refused:
         return await _fail_open_realtime(websocket, "The Realtime service is not admitting sessions.", _transition_error_code(refused))
-    url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
+    url = realtime_proxy.upstream_url(str(service["host"]), int(service["port"]), dict(websocket.query_params))
     try:
         upstream = await ws_connect(
             url, max_size=realtime_proxy.MAX_FRAME_BYTES, compression=None, open_timeout=10, ping_interval=20, ping_timeout=60,
@@ -33983,7 +33993,7 @@ def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> 
     raw_url = str(cfg.get("url") or cfg.get("base_url") or "").strip()
     if raw_url:
         return raw_url.rstrip("/")
-    host = str(cfg.get("host", "127.0.0.1")).strip()
+    host = str(cfg.get("host") or "").strip()  # a record with no host names no address
     port = cfg.get("port")
     if not host or port is None:
         return ""

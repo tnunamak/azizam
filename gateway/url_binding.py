@@ -112,9 +112,7 @@ def base_of(record: Mapping[str, Any], path: str) -> str:
         address = str(connection.get("address") or "").strip() if isinstance(connection, Mapping) else ""
         if address:
             return address
-        if config.get("port") not in (None, ""):
-            return f"http://{config.get('host') or '127.0.0.1'}:{config['port']}"
-        return service_registry.service_base_url(config)
+        return service_registry.host_port_origin(config) or service_registry.service_base_url(config)
     if ".driver_config." in f".{path}":
         return service_registry.lifecycle_dial_url(config)
     return service_registry.service_base_url(config)
