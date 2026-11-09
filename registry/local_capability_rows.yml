@@ -1,0 +1,55 @@
+schema_version: 1
+alias_operations:
+  - name: chat
+    intent: chat.completions
+    input_modalities: [text]
+    output_modalities: [text]
+    execution: sync
+  - name: embeddings
+    intent: text.embeddings
+    input_modalities: [text]
+    output_modalities: [embedding]
+    execution: sync
+  - name: images
+    intent: image.generate
+    input_modalities: [text]
+    output_modalities: [image]
+    execution: job
+  - name: image_edits
+    intent: image.edit
+    input_modalities: [text, image]
+    output_modalities: [image]
+    execution: job
+  - name: videos
+    intent: video.generate
+    input_modalities: [text]
+    output_modalities: [video]
+    execution: job
+  - name: speech
+    intent: speech.synthesis
+    input_modalities: [text]
+    output_modalities: [audio]
+    execution: sync
+  - name: transcriptions
+    intent: speech.transcription
+    input_modalities: [audio]
+    output_modalities: [text]
+    execution: sync
+  - name: audio_generate
+    intent: audio.generate
+    input_modalities: [text]
+    output_modalities: [audio]
+    execution: job
+workflow_families:
+  - section: videos
+    enabled_flag: videos
+    intent: video.generate
+    input_modalities: [text]
+    output_modalities: [video]
+    resource_tier: expensive
+  - section: audio
+    enabled_flag: audio
+    intent: audio.generate
+    input_modalities: [text]
+    output_modalities: [audio]
+    resource_tier: batch

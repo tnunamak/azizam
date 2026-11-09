@@ -5,9 +5,9 @@ Given a ``proxy_config.yml``-shaped dict (and optional enabled flags), produce
 gateway is locally configured to serve. This replaces the small hard-coded
 set the gateway has historically advertised.
 
-This module is pure:
+Capability builders are pure after package rows load once at import:
 
-* No filesystem reads. Workflow file existence and adapter binaries are not
+* No per-call filesystem reads. Workflow file existence and adapter binaries are not
   probed here. Callers may pass optional ``known_workflow_files`` metadata
   (a set of relative paths the caller has already inventoried) to suppress
   "workflow file may not exist on disk" caveats.
@@ -36,7 +36,11 @@ leak local paths even when the ``internal`` audience is requested.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from pathlib import Path
+from types import MappingProxyType
 from typing import Any
+
+import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate
 from gateway.model_files import missing_model_file_caveat, model_file_availability
@@ -100,16 +104,91 @@ def build_local_capabilities(
     return capabilities
 
 
-_ALIAS_INTENTS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str]] = {
-    "chat": (INTENT_CHAT, ("text",), ("text",), "sync"),
-    "embeddings": (INTENT_EMBEDDINGS, ("text",), ("embedding",), "sync"),
-    "images": (INTENT_IMAGE_GENERATE, ("text",), ("image",), "job"),
-    "image_edits": (INTENT_IMAGE_EDIT, ("text", "image"), ("image",), "job"),
-    "videos": (INTENT_VIDEO_GENERATE, ("text",), ("video",), "job"),
-    "speech": (INTENT_SPEECH, ("text",), ("audio",), "sync"),
-    "transcriptions": (INTENT_TRANSCRIPTIONS, ("audio",), ("text",), "sync"),
-    "audio_generate": (INTENT_AUDIO_GENERATE, ("text",), ("audio",), "job"),
-}
+_LOCAL_CAPABILITY_ROWS_PATH = (
+    Path(__file__).resolve().parents[1] / "registry" / "local_capability_rows.yml"
+)
+
+
+def load_local_capability_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+) -> tuple[
+    Mapping[str, tuple[str, tuple[str, ...], tuple[str, ...], str]],
+    tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
+]:
+    """Load ordered package facts; errors identify the file and logical row."""
+    source = Path(path)
+
+    def fail(where: str, message: str) -> None:
+        raise ValueError(f"{source}: {where}: {message}")
+
+    def fields(row: Any, required: set[str], where: str) -> None:
+        if not isinstance(row, Mapping):
+            fail(where, "must be a mapping")
+        missing = required - row.keys()
+        unknown = row.keys() - required
+        if missing:
+            fail(where, f"missing fields: {', '.join(sorted(missing))}")
+        if unknown:
+            fail(where, f"unknown fields: {', '.join(sorted(map(str, unknown)))}")
+
+    def text(row: Mapping[str, Any], key: str, where: str) -> str:
+        value = row[key]
+        if not isinstance(value, str) or not value.strip():
+            fail(where, f"{key} must be a non-empty string")
+        return value
+
+    def modalities(row: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
+        value = row[key]
+        if not isinstance(value, list) or not value or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            fail(where, f"{key} must be a non-empty list of non-empty strings")
+        return tuple(value)
+
+    try:
+        document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        fail("document row 0", f"could not read rows: {error}")
+    fields(document, {"schema_version", "alias_operations", "workflow_families"}, "document row 0")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        fail("document row 0", "schema_version must be 1")
+
+    aliases = {}
+    families = []
+    common = {"intent", "input_modalities", "output_modalities"}
+    for table, name_key, required in (
+        ("alias_operations", "name", common | {"name", "execution"}),
+        ("workflow_families", "section", common | {"section", "enabled_flag", "resource_tier"}),
+    ):
+        rows = document[table]
+        if not isinstance(rows, list):
+            fail("document row 0", f"{table} must be a list")
+        names = set()
+        for number, row in enumerate(rows, start=1):
+            where = f"{table} row {number}"
+            fields(row, required, where)
+            name = text(row, name_key, where)
+            if name in names:
+                fail(where, f"duplicate name: {name!r}")
+            names.add(name)
+            intent = text(row, "intent", where)
+            inputs = modalities(row, "input_modalities", where)
+            outputs = modalities(row, "output_modalities", where)
+            if table == "alias_operations":
+                execution = text(row, "execution", where)
+                if execution not in {"sync", "job"}:
+                    fail(where, "execution must be sync or job")
+                aliases[name] = (intent, inputs, outputs, execution)
+            else:
+                flag = text(row, "enabled_flag", where)
+                tier = text(row, "resource_tier", where)
+                if tier not in {"batch", "expensive"}:
+                    fail(where, "resource_tier must be batch or expensive")
+                families.append((name, flag, intent, inputs, outputs, tier))
+    return MappingProxyType(aliases), tuple(families)
+
+
+_ALIAS_INTENTS, _WORKFLOW_FAMILIES = load_local_capability_rows()
 
 
 def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]:
@@ -440,13 +519,6 @@ def _build_image_capabilities(
             )
         )
     return out
-
-
-# Section, enabled flag, intent, input/output modalities, resource tier.
-_WORKFLOW_FAMILIES = (
-    ("videos", "videos", INTENT_VIDEO_GENERATE, ("text",), ("video",), "expensive"),
-    ("audio", "audio", INTENT_AUDIO_GENERATE, ("text",), ("audio",), "batch"),
-)
 
 
 def _build_workflow_capabilities(

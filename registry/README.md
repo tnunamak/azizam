@@ -83,3 +83,14 @@ it succeeds. A transient database lock defers the stored-ID check to repair;
 it does not by itself invalidate the retention file.
 Slice 1 refuses `household.never_keep: true` in this file; the owner setting
 performs the required erasure when that switch is enabled.
+
+## Local capability rows
+
+`local_capability_rows.yml` is schema-version-1 package data for
+`gateway/local_capabilities.py`: ordered `alias_operations` name intent,
+input/output modalities and sync/job execution; ordered `workflow_families`
+name the config section, enabled flag, intent, modalities and resource tier.
+Alias names and workflow section names must be unique within their list.
+The loader rejects unknown/missing fields and invalid values with the file and
+logical row, then freezes both tables at import. Restart after editing the file.
+This file does not probe workflow files or enable a backend by itself.
