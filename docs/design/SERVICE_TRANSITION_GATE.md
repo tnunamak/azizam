@@ -281,6 +281,7 @@ The private admission evidence gains `service_id`. That ships as its own small c
   check (absent, stale, foreign incarnation or timed out) writes a `<step>:revalidate` intent with an unknown outcome and
   holds `reconciling`; the settled outcome is never overwritten, and the next restart or the owner's resolve judges it
   again. `failed_closed` accepts another transition and `reconciling` does not, so the two are not interchangeable.
+- **Every recovery that goes on re-checks the load (G14).** The query-settled branch, the revalidation branch and the plain resume all end in one function, `_resume_from`. If the next step is `open`, the target must be resident, the offering and ready now; otherwise the operation holds `reconciling` at `open` with `load_unverified_at_resume`. The clean check of a cold restore or reset is not a load check and does not replace it. A hold is one store write (`write_intent(..., held=)`), so a crash cannot leave the intent without the recorded evidence. The hold shows on `GET .../gate` (`reconciling`, `op_id`) and `GET .../transitions/{op_id}` (`step_outcome: unknown`, `evidence_ref`). Nothing retries on a timer: the next restart or the owner's resolve settles it.
 - **Compatibility is a map of strings.** Unknown means cold: an empty compatibility map never matches a published
   snapshot. A success is never attested for checkpoint, restore or reset.
 - **The new profile.** `declared-snapshot-ops-v1` declares all nine operations and the reviewed checkpoint, restore
