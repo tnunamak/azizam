@@ -6,6 +6,7 @@ media-type prefix) come from the shape that mixes this in, so no literal here na
 
 from __future__ import annotations
 
+import json
 import posixpath
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -91,8 +92,10 @@ class VideoViews:
         """The list object. An item is a job view (rendered here, with its facts by job id) or a body that is ready."""
         data = [dict(item) if isinstance(item, Mapping) else self.status_body(item, (facts or {}).get(item.job_id))
                 for item in items]
-        return JSONResponse({"object": "list", "data": data, "first_id": data[0]["id"] if data else None,
-                             "last_id": data[-1]["id"] if data else None, "has_more": has_more})
+        # The list route has always answered with json.dumps' own spacing; its clients and goldens see those bytes.
+        return Response(content=json.dumps({"object": "list", "data": data, "first_id": data[0]["id"] if data else None,
+                                            "last_id": data[-1]["id"] if data else None, "has_more": has_more}),
+                        media_type="application/json")
 
     def render_deleted(self, job_id: str) -> Response:
         return JSONResponse({"id": self.wire_id(job_id), "object": self.wire_name, "deleted": True})
