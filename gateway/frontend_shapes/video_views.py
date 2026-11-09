@@ -166,6 +166,9 @@ class VideoViews:
         try:
             if mode == provenance.METADATA_NONE:
                 content = media_delivery.deliver_bytes(content, suffix or ".bin", mode)
+            elif facts is not None and isinstance(facts.get("provenance"), Mapping) and facts["provenance"]:
+                # The stored copy is clean; the maker's full copy carries the record the request kept (as the old route stamped it).
+                content = media_delivery.attach_provenance(content, suffix or ".bin", facts["provenance"])
         except media_metadata.MediaMetadataError:
             return _wire.error_response(502, "Could not prepare video for delivery", kind="api_error")
         current = jobs.get(view.job_id, caller)           # the cancel fence: a job canceled or deleted while its file was
