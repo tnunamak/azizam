@@ -55,9 +55,11 @@ def _string_list(value: Any, name: str) -> tuple[str, ...]:
 
 
 def _route_identity(route: str) -> str:
-    """One route however it is spelled: no trailing slash, path parameters unnamed. Letter case stays (paths are
+    """One route however it is spelled: no trailing slash, path parameters unnamed. A parameter keeps its converter
+    (``{n:int}`` and ``{u:uuid}`` are two routes; ``{a}`` and ``{b:str}`` are one). Letter case stays (paths are
     case-sensitive)."""
-    return re.sub(r"\{[^}/]*\}", "{}", route.rstrip("/") or "/")
+    trimmed = route[:-1] if len(route) > 1 and route.endswith("/") else route
+    return re.sub(r"\{[^}/:]*(?::([^}/]*))?\}", lambda match: "{:" + (match.group(1) or "str") + "}", trimmed)
 
 
 def load_extension_routes(
@@ -104,6 +106,8 @@ def load_extension_routes(
             route = row.get("canonical")
             if not isinstance(route, str) or not route.startswith("/"):
                 raise ValueError("extension route needs a canonical path")
+            if "//" in route:
+                raise ValueError(f"extension route has an empty path segment: {route!r}")
             route_inputs = frozenset(_string_list(row.get("route_inputs", []), "route_inputs"))
             prefixes: tuple[str, ...] = ()
             route_intent: str | None = None
