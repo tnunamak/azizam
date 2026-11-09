@@ -96,7 +96,9 @@ class VideoLedger:
         views, _ = self._jobs.list(caller, intents=self._intents, limit=limit + 1, after_key=boundary, order=order)
         merged: list[Hit] = [JobHit(view) for view in views]
         if self._legacy is not None:
-            older = [LegacyHit(raw, record) for raw, record in self._legacy.visible(caller)]
+            # An id in the job store's form names a job, never an older record (``lookup`` agrees): listing one here would give a
+            # cursor the next page refuses, or the same wire id twice.
+            older = [LegacyHit(raw, record) for raw, record in self._legacy.visible(caller) if not self._is_job_id(raw)]
             if boundary is not None:
                 older = [hit for hit in older if (hit.key > boundary if order == "asc" else hit.key < boundary)]
             older.sort(key=lambda hit: hit.key, reverse=order != "asc")

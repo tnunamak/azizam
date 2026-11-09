@@ -67,7 +67,9 @@ class Adapter:
             raise step
         return JobStatus(ref, step)
 
-    async def fetch_selected(self, conn, finished, binding, outputs, **kw):
+    async def fetch_selected(self, conn, finished, binding, outputs, names=None, **kw):
+        if names is not None:
+            names["out"] = ["clip_00001_.mp4"]
         return {"out": [b"file"]}
 
     async def cancel(self, *a, **kw):
@@ -100,6 +102,13 @@ def outcome(go):
         return asyncio.run(go())
     except graph_round.RoundFailure as failed:
         return failed
+
+
+def test_a_round_keeps_the_name_the_engine_gave_each_file(monkeypatch):
+    adapter, session = Adapter([JobState.succeeded]), Session([queue_with()])
+    _, _, go = run_round(monkeypatch, adapter, session)
+    result = outcome(go)
+    assert result.files == {"out": (b"file",)} and result.filenames == {"out": ("clip_00001_.mp4",)}
 
 
 def test_a_prompt_in_neither_history_nor_queue_twice_fifteen_seconds_apart_is_orphaned(monkeypatch):

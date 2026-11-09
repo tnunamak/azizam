@@ -71,6 +71,7 @@ class RoundResult:
 
     files: Mapping[str, tuple[bytes, ...]] = field(default_factory=dict)
     prompt_id: str = ""
+    filenames: Mapping[str, tuple[str, ...]] = field(default_factory=dict)      # the engine's name of each file, as ``files``
 
 
 async def queue_position(adapter: Any, session: Any, prompt_id: str, headers: Mapping[str, str], *, timeout: Any) -> Optional[int]:
@@ -200,14 +201,16 @@ async def run_round(
             position = await queue_position(adapter, session, prompt_id, headers, timeout=control_timeout)
             await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="timeout", timeout=control_timeout, say=say)
             raise RoundFailure(WAIT_EXCEEDED, prompt_id=prompt_id, queue_position=position)
+        filenames: dict[str, list[str]] = {}
         try:
             picked = await adapter.fetch_selected(session.conn, finished, binding, contract_outputs, limits=limits,
-                                                  headers=dict(headers), session=session)
+                                                  headers=dict(headers), session=session, names=filenames)
         except SelectionRefused as refusal:
             if refusal.code != "result_missing":
                 raise RoundFailure(RESULT_REFUSED, code=refusal.code, prompt_id=prompt_id) from refusal
             picked = {}
-        return RoundResult(files={name: tuple(files) for name, files in picked.items()}, prompt_id=prompt_id)
+        return RoundResult(files={name: tuple(files) for name, files in picked.items()}, prompt_id=prompt_id,
+                           filenames={name: tuple(names) for name, names in filenames.items()})
     except asyncio.CancelledError:
         if prompt_id:
             await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="request cancellation", timeout=control_timeout, say=say)

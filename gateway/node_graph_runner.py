@@ -216,6 +216,7 @@ class NodeGraphRunner:
         limits = host.limits()
         failure_binding = ctx.pin.envelope.binding_key
         collected: list[bytes] = []
+        collected_names: list[str] = []         # the engine's name of each collected file
         result_name: str | None = None
         rounds = 0
         models_freed = False
@@ -237,7 +238,7 @@ class NodeGraphRunner:
                         ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, 1,
                         None, headers, binding, outputs, limits, poll, f"round {rounds}/{plan.max_rounds} after model unload",
                         failure_binding, conn, retry_freed=lambda: True, staged=staged)
-                names, round_files = files
+                names, round_files, round_names = files
                 result_name = names or result_name
                 offset += max(1, len(round_files))
                 if not round_files:
@@ -246,6 +247,7 @@ class NodeGraphRunner:
                         raise RunFailed("upstream_empty", "upstream", f"{adapter.label} returned no images", upstream_status=502)
                     continue
                 collected.extend(round_files)
+                collected_names.extend(round_names)
                 remaining -= len(round_files)
                 if rounds == 1 and batching is not None:
                     await batching.measured(plan, session, rounds, target, probe)
@@ -257,7 +259,10 @@ class NodeGraphRunner:
         processed = await self._stages(ctx, collected)
         bundle = await self._store(ctx, adapter, processed, result_name or next(iter(outputs)), limits)
         freed = models_freed or bool(getattr(plan.state, "models_freed", False))
+        # One file keeps the name the engine gave it: a route that delivers it names the download and the Library entry by it.
+        filename = collected_names[0] if len(processed) == 1 and collected_names[:1] != [""] and collected_names else None
         ctx.record_result_metadata({"rounds": rounds, "returned": len(processed), "warnings": list(plan.warnings),
+                                    **({"filename": filename} if filename else {}),
                                     **({"models_freed": True} if freed else {})})
         protocol_jobs._commit_bundle(runtime, ctx.job_id, bundle, clear_marker=True)
 
@@ -304,8 +309,11 @@ class NodeGraphRunner:
         media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_job": result.prompt_id,
                                  "protocol_submitting": False}, path=media_jobs.DB_PATH)
         files = [raw for group in result.files.values() for raw in group]
+        filenames = [name for key in result.files for name in result.filenames.get(key, ())]
+        if len(filenames) != len(files):
+            filenames = [""] * len(files)
         name = next(iter(result.files)) if len(result.files) == 1 else None
-        return name, files
+        return name, files, filenames
 
     # -- the reviewed stages that read the run's own facts (a host may still supply a stage of the same name) ----------------
 

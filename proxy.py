@@ -13452,7 +13452,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
             for item in page:
                 if isinstance(item, JobHit):
                     facts = await asyncio.to_thread(_workflow_job_service().request_facts, item.view.job_id, auth_context)
-                    data.append(shape.status_body(item.view, facts))
+                    data.append(shape.list_item(item.view, facts))
                     continue
                 prompt_id, record = item
                 video_id = _video_id_from_prompt_id(prompt_id)

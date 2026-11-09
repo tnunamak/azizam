@@ -68,7 +68,7 @@ class VideoViews:
             "created_at": view.created_at_s, "completed_at": view.finished_at_s if view.status in TERMINAL else None,
             "expires_at": view.created_at_s + EXPIRES_AFTER_S if view.created_at_s is not None else None,
             "prompt": getattr(facts, "prompt", None), "remixed_from_video_id": None, "error": None, "updated_at": view.updated_at_s}
-        if facts is not None:
+        if facts:                       # the facts the request kept; none kept (an older job) falls back to the result metadata
             for key, name in BODY_FACTS:
                 if facts.get(key) is not None:
                     body[name] = facts[key]

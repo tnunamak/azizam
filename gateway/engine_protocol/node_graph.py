@@ -736,7 +736,8 @@ class NodeGraphAdapter:
 
     async def fetch_selected(self, conn: Connection, status: JobStatus, block: Mapping[str, Any], outputs: Mapping[str, Any], *,
                              limits: Any, headers: Any = UNSET,
-                             session: GraphSession | None = None) -> dict[str, list[bytes]]:
+                             session: GraphSession | None = None,
+                             names: dict[str, list[str]] | None = None) -> dict[str, list[bytes]]:
         """The bytes of each named result of a finished prompt, for a route that delivers files itself.
 
         ``status`` is the ``succeeded`` status that ``poll`` returned: the history entry it read is collected by the
@@ -744,6 +745,8 @@ class NodeGraphAdapter:
         ``output_selectors.FETCH_GATE`` and are bounded while they are read: the number of files, the bytes of one file and
         the total are the deployment's ``limits`` (D6). A file that cannot be read is left out. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
         Raises ``SelectionRefused`` (a result that is missing, ambiguous, malformed or over a limit, or a fetch that waited too long).
+
+        ``names``, when given, is filled with the engine's file name of each file returned, in the order of the bytes.
         """
         record = status.record
         if not isinstance(record, FinishedRecord):
@@ -759,12 +762,16 @@ class NodeGraphAdapter:
             async with output_selectors.FETCH_GATE.slot(limits), self._use(conn, session) as use:
                 for name, files in picked.items():
                     chosen[name] = []
+                    if names is not None:
+                        names[name] = []
                     for file in files:
                         room = min(limits.max_asset_bytes, limits.max_total_bytes - total)
                         data = await self._read_bounded(use, file, room, headers, limits)
                         if data:
                             total += len(data)
                             chosen[name].append(data)
+                            if names is not None:
+                                names[name].append(str(file.get("filename") or ""))
         except output_selectors.FetchRefused as refusal:
             raise SelectionRefused(refusal.code, str(refusal)) from refusal
         return chosen

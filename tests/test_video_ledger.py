@@ -166,3 +166,18 @@ def test_an_id_in_the_job_store_form_never_falls_back_to_an_older_record():
         book.page(None, 10, "video_mj_same", "asc")
     assert isinstance(book.lookup("video_plain-prompt", None), LegacyHit) and not book.names_a_job("video_plain-prompt")
     assert not book.names_a_job("not-a-wire-id")
+
+
+# ------------------------------------------------------------------------------------------------ a legacy record in the job-id form
+
+
+@pytest.mark.parametrize("order", ["desc", "asc"])
+@pytest.mark.parametrize("limit", [1, 2, 3, 10])
+def test_an_older_record_in_the_job_id_namespace_is_never_paged(order, limit):
+    # lookup refuses such an id for the older store, so a page that listed it would give a cursor the next page refuses
+    # (or the same wire id twice, once as the job and once as the record).
+    book, _ = ledger([view("mj_1", 100), view("mj_3", 300)],
+                     {"p2": {"created_at": 200}, "mj_stray": {"created_at": 250}, "mj_3": {"created_at": 300}})
+    expected = ["mj_1", "p2", "mj_3"]
+    assert all_pages(book, order, limit) == (expected if order == "asc" else expected[::-1])
+    assert book.lookup("video_mj_stray", None) is None
