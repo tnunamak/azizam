@@ -258,9 +258,9 @@ def test_the_library_index_of_a_job_takes_the_maker_from_the_facts_and_a_repeat_
     media_jobs.init_db(db)
     monkeypatch.setattr(media_jobs, "DB_PATH", db)
     facts = RequestFacts({"model": "m"}, prompt="p", maker_person_id="person-1")
-    first = media_ingestion.index_video_delivery(video_id="video_mj_a", asset_id="asset-1", filename="c.mp4",
+    first = media_ingestion.index_video_delivery(video_id="video_mj_a", asset_id="vid_" + "a" * 64, filename="c.mp4",
                                                  media_type="video/mp4", record=facts)
-    again = media_ingestion.index_video_delivery(video_id="video_mj_a", asset_id="asset-1", filename="c.mp4",
+    again = media_ingestion.index_video_delivery(video_id="video_mj_a", asset_id="vid_" + "a" * 64, filename="c.mp4",
                                                  media_type="video/mp4", record=facts)
     assert first is not None and again is not None and first.job_id == again.job_id
     assert first.maker_person_id == "person-1"
