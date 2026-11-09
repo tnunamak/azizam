@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -29,12 +30,18 @@ class StoreRefused(Exception):
         super().__init__(reason)
 
 
-def fingerprint(path: Path) -> tuple[int, ...]:
+def fingerprint(path: Path) -> tuple[object, ...]:
+    """File identity, times and a content hash: a same-size rewrite within one
+    timestamp tick still changes the hash."""
     value = path.stat()
     if not stat.S_ISREG(value.st_mode):
         raise StoreRefused("store_unreadable")
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
     return (value.st_dev, value.st_ino, value.st_size,
-            value.st_mtime_ns, value.st_ctime_ns)
+            value.st_mtime_ns, value.st_ctime_ns, digest.hexdigest())
 
 
 def _companion_size(path: Path, suffix: str) -> int | None:
@@ -81,13 +88,22 @@ def inspect_store(store: str) -> tuple[int, dict]:
             # uses the existing -shm), and the backup is one consistent read
             # even if the running gateway checkpoints meanwhile. Without one,
             # immutable keeps SQLite from creating a WAL or -shm next to the
-            # store, and the unchanged fingerprint proves the copy is whole.
+            # store, and the unchanged fingerprint (with a content hash) shows
+            # the copy is whole.
             uri = source.as_uri() + ("?mode=ro" if live_wal else "?mode=ro&immutable=1")
             with closing(sqlite3.connect(uri, uri=True)) as reader:
                 with closing(sqlite3.connect(str(snapshot))) as writer:
                     reader.backup(writer)
             require_no_hot_journal(source)
             if not live_wal and (has_live_wal(source) or fingerprint(source) != before):
+                raise StoreRefused("store_unreadable")
+            # A store with no job table (a 0-byte file, a wrong database)
+            # proves nothing about running jobs; the helpers would call it empty.
+            with closing(sqlite3.connect(str(snapshot))) as copy:
+                has_jobs = copy.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_jobs'"
+                ).fetchone()
+            if not has_jobs:
                 raise StoreRefused("store_unreadable")
 
             # Both helpers receive only the disposable copy. Their connection
@@ -111,8 +127,10 @@ def inspect_store(store: str) -> tuple[int, dict]:
             }
     except StoreRefused as error:
         return refused(error.reason)
-    except (OSError, sqlite3.Error, ValueError, TypeError):
-        # Includes unreadable SQLite headers/schema/rows and failed snapshots.
+    except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError, ImportError):
+        # Includes unreadable SQLite headers/schema/rows (a job_json that is
+        # valid JSON but not an object), failed snapshots and a gateway
+        # module that cannot import.
         return refused("store_unreadable")
 
 
