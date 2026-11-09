@@ -349,6 +349,72 @@ def test_missing_ffmpeg_fails_closed_even_when_no_codec_is_installed():
             raise AssertionError("missing ffmpeg must never return unstripped bytes")
 
 
+class MetadataArgumentTests(unittest.TestCase):
+    def test_argument_path_bytes_and_order_unchanged(self):
+        from unittest.mock import patch
+
+        tags = {"prompt": "first\rsecond", "workflow": "café=;#\\\nlast"}
+        with patch.object(mm, "_ffmpeg_rewrite", return_value=b"out") as rewrite, \
+                patch.object(mm, "_format_tags") as read:
+            self.assertEqual(mm.embed_media_tags(b"src", ".mp4", tags), b"out")
+        rewrite.assert_called_once_with(
+            b"src", ".mp4", None,
+            ["-metadata", "prompt=first\rsecond", "-metadata",
+             "workflow=café=;#\\\nlast", "-movflags", "+use_metadata_tags"],
+        )
+        read.assert_not_called()
+
+    def test_total_argument_budget_counts_utf8_flags_and_terminators(self):
+        from unittest.mock import patch
+
+        tags = {"a": "é" * 5, "b": "é" * 5}
+        # Each UTF-8 key=value is 12 bytes, plus 9 flag bytes and two NULs.
+        for limit, file_path in ((45, True), (46, False)):
+            with self.subTest(limit=limit), \
+                    patch.object(mm, "_TOTAL_ARG_LIMIT", limit, create=True), \
+                    patch.object(mm, "_format_tags", return_value={}) as read, \
+                    patch.object(mm, "_ffmpeg_rewrite", return_value=b"out") as rewrite:
+                self.assertEqual(mm.embed_media_tags(b"src", ".mp4", tags), b"out")
+                self.assertEqual("metadata_file" in rewrite.call_args.kwargs, file_path)
+                self.assertEqual(read.call_count, int(file_path))
+
+    def test_long_control_keys_and_values_fail_closed_including_wav(self):
+        from unittest.mock import patch
+
+        for suffix in (".mp4", ".wav"):
+            for control, cause in (("\r", "carriage return"), ("\x00", "NUL")):
+                for in_key in (False, True):
+                    tags = {
+                        "tag" + (control + "tail" if in_key else ""):
+                        "x" * mm._ARG_LIMIT + ("" if in_key else control + "tail")
+                    }
+                    with self.subTest(suffix=suffix, cause=cause, in_key=in_key), \
+                            patch.object(mm, "_format_tags", return_value={}), \
+                            patch.object(mm, "_ffmpeg_rewrite") as rewrite:
+                        with self.assertRaisesRegex(mm.MediaMetadataError, cause):
+                            mm.embed_media_tags(b"src", suffix, tags)
+                        rewrite.assert_not_called()
+
+    def test_file_path_rejects_unrepresentable_existing_tags(self):
+        from unittest.mock import patch
+
+        for control, cause in (("\r", "carriage return"), ("\x00", "NUL")):
+            with self.subTest(cause=cause), \
+                    patch.object(mm, "_format_tags", return_value={"kept": "a" + control + "b"}), \
+                    patch.object(mm, "_ffmpeg_rewrite") as rewrite:
+                with self.assertRaisesRegex(mm.MediaMetadataError, cause):
+                    mm.embed_media_tags(b"src", ".mp4", {"long": "x" * mm._ARG_LIMIT})
+                rewrite.assert_not_called()
+
+    def test_short_nul_is_a_metadata_error_not_a_subprocess_value_error(self):
+        from unittest.mock import patch
+
+        for suffix in (".mp4", ".wav"):
+            with self.subTest(suffix=suffix), patch.object(mm, "_ffmpeg_rewrite") as rewrite:
+                with self.assertRaisesRegex(mm.MediaMetadataError, "NUL"):
+                    mm.embed_media_tags(b"src", suffix, {"tag": "a\x00b"})
+                rewrite.assert_not_called()
+
 @unittest.skipUnless(HAVE_FFMPEG, SKIP_FF)
 class FfmpegTests(unittest.TestCase):
     @classmethod
@@ -498,6 +564,66 @@ class FfmpegTests(unittest.TestCase):
         self.assertEqual(tags.get("azizam_provenance"), BIG)
         self.assertEqual(tags.get("prompt"), '{"1": {}}')  # kept
         self.assertEqual(self.md5(out, ".mp4", "0:v"), self.md5(src, ".mp4", "0:v"))
+
+    def test_embed_many_tags_exceeding_total_command_line_limit(self):
+        values = {f"tag{i}": f"{i:02d}" + "x" * 89_998 for i in range(25)}
+        self.assertTrue(all(len(f"{k}={v}".encode("utf-8")) <= mm._ARG_LIMIT
+                            for k, v in values.items()))
+        self.assertGreater(sum(len(f"{k}={v}") for k, v in values.items()), 2 * 1024 * 1024)
+        src = self.make("many.mp4", self.VIDEO, ["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        out = mm.embed_media_tags(src, ".mp4", values, workdir=self.work)
+        got = mm.read_media_tags(out, ".mp4", workdir=self.work)
+        for key, value in values.items():
+            self.assertEqual(got.get(key), value, key)
+        self.assertEqual(got.get("prompt"), '{"1": {}}')
+        self.assertEqual(got.get("workflow"), '{"nodes": []}')
+        self.assertEqual(self.md5(out, ".mp4", "0:v"), self.md5(src, ".mp4", "0:v"))
+
+    def test_embed_long_carriage_return_round_trip_or_explicit_error(self):
+        self._assert_long_control_safe("\r", "carriage return")
+
+    def test_embed_long_nul_round_trip_or_explicit_error(self):
+        self._assert_long_control_safe("\x00", "NUL")
+
+    def _assert_long_control_safe(self, control, cause):
+        value = "before" + control + "after" + "x" * mm._ARG_LIMIT
+        for suffix, inputs, codecs in (
+            (".mp4", self.VIDEO, ["-c:v", "libx264", "-pix_fmt", "yuv420p"]),
+            (".wav", self.AUDIO, ["-c:a", "pcm_s16le"]),
+        ):
+            with self.subTest(suffix=suffix):
+                src = self.make("control" + suffix, inputs, codecs, tags=False)
+                try:
+                    out = mm.embed_media_tags(src, suffix, {"tag": value}, workdir=self.work)
+                except mm.MediaMetadataError as exc:
+                    self.assertIn(cause, str(exc))
+                else:
+                    got = mm.read_media_tags(out, suffix, workdir=self.work)
+                    key = "comment" if suffix == ".wav" else "tag"
+                    expected = "tag=" + value if suffix == ".wav" else value
+                    self.assertEqual(got.get(key), expected)
+
+    def test_embed_short_carriage_return_round_trip_including_wav(self):
+        value = "first\rsecond"
+        for suffix, inputs, codecs in (
+            (".mp4", self.VIDEO, ["-c:v", "libx264", "-pix_fmt", "yuv420p"]),
+            (".wav", self.AUDIO, ["-c:a", "pcm_s16le"]),
+        ):
+            with self.subTest(suffix=suffix):
+                src = self.make("short-cr" + suffix, inputs, codecs, tags=False)
+                out = mm.embed_media_tags(src, suffix, {"tag": value}, workdir=self.work)
+                got = mm.read_media_tags(out, suffix, workdir=self.work)
+                key = "comment" if suffix == ".wav" else "tag"
+                self.assertEqual(got.get(key), "tag=" + value if suffix == ".wav" else value)
+
+    def test_embed_file_path_escapes_all_metadata_syntax(self):
+        value = 'equals=;semicolon;#hash\\backslash\nnewline\n' * 4000
+        self.assertGreater(len(value.encode("utf-8")), mm._ARG_LIMIT)
+        src = self.make("long-syntax.mp4", self.VIDEO, ["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        out = mm.embed_media_tags(src, ".mp4", {"tag": value}, workdir=self.work)
+        got = mm.read_media_tags(out, ".mp4", workdir=self.work)
+        self.assertEqual(got.get("tag"), value)
+        self.assertEqual(got.get("workflow"), '{"nodes": []}')
 
     def test_embed_values_with_metadata_file_syntax_round_trip(self):
         tricky = 'a=b;c#d\\e\nline two {"q": "=;#"}'
