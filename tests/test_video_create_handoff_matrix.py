@@ -286,7 +286,7 @@ def _return_sites(source):
     """Small conservative dataflow census: constructors, local aliases, forwards.
 
     Function calls and assigned results propagate return kinds to a fixed point.
-    A new helper or imported constructor alias therefore cannot hide a site.
+    A new helper or imported/assigned constructor alias therefore cannot hide a site.
     This is a syntax ratchet, not a proof of arbitrary dynamic Python behavior.
     """
     tree = ast.parse(source)
@@ -299,6 +299,22 @@ def _return_sites(source):
             for alias in node.names:
                 if alias.name in constructors:
                     constructors[alias.asname or alias.name] = constructors[alias.name]
+
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or not isinstance(node.value, ast.Name):
+                continue
+            value = constructors.get(node.value.id, set())
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                old = constructors.get(target.id, set())
+                if value - old:
+                    constructors[target.id] = old | value
+                    changed = True
 
     def local_nodes(function):
         def walk(node):
@@ -408,7 +424,31 @@ def run():
     })
 
 
-@pytest.mark.parametrize("mutation", ["new-helper", "duplicate-site", "broader-guard"])
+def test_return_site_census_sees_assignment_constructor_aliases():
+    # ast.walk visits Annotated and Chained before Plain, requiring another pass.
+    source = """
+from example import LegacyRoute
+if True:
+    Plain = LegacyRoute
+Annotated: type = Plain
+Chained = Annotated
+def plain():
+    return Plain("videos.create", {})
+def annotated():
+    return Annotated("videos.create", {})
+def chained():
+    return Chained("videos.create", {})
+"""
+    assert _return_sites(source) == Counter({
+        ("plain", "legacy", ()): 1,
+        ("annotated", "legacy", ()): 1,
+        ("chained", "legacy", ()): 1,
+    })
+
+
+@pytest.mark.parametrize("mutation", [
+    "new-helper", "duplicate-site", "broader-guard", "assignment-new-site", "assignment-broader-guard",
+])
 def test_return_site_ratchet_rejects_added_or_broadened_sites(mutation):
     source = SHAPE_SOURCE.read_text(encoding="utf-8")
     if mutation == "new-helper":
@@ -417,10 +457,26 @@ def test_return_site_ratchet_rejects_added_or_broadened_sites(mutation):
     elif mutation == "duplicate-site":
         source = source.replace("return LegacyRoute(LEGACY_CREATE, body)",
                                 "return LegacyRoute(LEGACY_CREATE, body)\n        return LegacyRoute(LEGACY_CREATE, body)", 1)
-    else:
+    elif mutation == "broader-guard":
         source = source.replace("if manifest is None or manifest.chain or manifest.length is None:",
                                 "if True:", 1)
-    assert _return_sites(source) - _allowed_sites()
+    else:
+        source = source.replace('LEGACY_CREATE = "videos.create"',
+                                'Old = LegacyRoute\nLEGACY_CREATE = "videos.create"', 1)
+        if mutation == "assignment-new-site":
+            source = source.replace('    named = body.get("model") or shape.default_target()',
+                                    '    if body.get("prompt") == "newly legacy":\n'
+                                    '        return Old(LEGACY_CREATE, body)\n'
+                                    '    named = body.get("model") or shape.default_target()', 1)
+        else:
+            source = source.replace(
+                '    if manifest.chain or manifest.length is None or manifest.grid is None or manifest.size is None:\n'
+                '        return LegacyRoute(LEGACY_CREATE, body)',
+                '    if manifest.chain or manifest.length is None or manifest.grid is None or manifest.size is None '
+                'or body.get("prompt") == "newly legacy":\n'
+                '        return Old(LEGACY_CREATE, body)', 1)
+    unexpected = _return_sites(source) - _allowed_sites()
+    assert sum(unexpected.values()) == 1, unexpected
 
 
 def test_return_site_ratchet_allows_removing_a_handoff():
