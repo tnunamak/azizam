@@ -747,3 +747,15 @@ def test_undeclared_intent_family_never_reaches_product_wire():
     assert row["capability"] == kind
     assert row["capability_title"] == "AI"
     assert row["icon_key"] == "chat"
+
+
+def test_without_a_contract_the_declared_capability_decides():
+    from gateway.model_presentation import capability_presentation, product_capability
+
+    # Mesh has no /v1/models type; its manifest declares capability: mesh.
+    mesh = Capability(intent="mesh.generate", backend="one", input_modalities=("asset", "text"), capability="mesh")
+    assert product_capability(mesh) == "mesh"
+    assert capability_presentation(mesh)["capability_title"] == "3D models"
+    # A declared word outside the product vocabulary is not trusted onto the wire.
+    odd = Capability(intent="mesh.generate", backend="one", capability="smell")
+    assert product_capability(odd) == "other"

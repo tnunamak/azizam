@@ -222,7 +222,8 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     intent and modalities read through the same contract. Audio that turns
     audio into text is `transcribe`; other audio takes a declared subtype
     (`capability: music`, a `capability:sfx` tag), else stays generic
-    `audio`. With no contract it is UNCLASSIFIED_CAPABILITY. Never inferred
+    `audio`. With no contract it is the declared product capability (a manifest's
+    `capability: mesh`), else UNCLASSIFIED_CAPABILITY. Never inferred
     from model IDs or intent spelling.
     """
     metadata = metadata or {}
@@ -233,7 +234,8 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
         getattr(capability, "output_modalities", ()),
     )
     if contract is None:
-        return UNCLASSIFIED_CAPABILITY
+        declared = metadata.get("capability") or getattr(capability, "capability", None)
+        return declared if declared in CAPABILITY_LABELS else UNCLASSIFIED_CAPABILITY
     if contract.type != "audio":
         return _TYPE_CAPABILITIES[contract.type]
     if "audio" in contract.input_modalities and "audio" not in contract.output_modalities:
