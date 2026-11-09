@@ -6,5 +6,5 @@ def test_probe(tmp_path):
         w.engine.view_error = True
         await drive(w, vid, "completed", wait=False)
         await settled(w, vid)
-        assert 0, ((await w.status(vid)).json(), (await w.content(vid)).json(), w.view(vid))
+        assert 0, str(w.view(vid).failure)
     run(tmp_path, exercise)
