@@ -1,0 +1,365 @@
+"""The create path of the video wire as data (CODE_TO_DATA_S7_VIDEO_MOVE.md section 4, builder V5c).
+
+Three layers, none of which starts an engine:
+
+* the row data and the plumbing a video row needs (``unconfigured``, the 502 for a service that cannot be reached, the
+  legacy handoff);
+* the shape: a wire request read against a manifest's ``video`` block, in the order the old route checked it, with the old
+  words for each refusal, and the facts it records for the job;
+* the source of a remix or an edit (``video_source.resolve_source``).
+
+The manifests are in-memory contracts that follow the frozen ``video`` block (2.2), so these tests do not wait for the
+manifest data step."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+from types import MappingProxyType
+from typing import Any
+
+import pytest
+from starlette.requests import Request
+from starlette.responses import Response
+
+from gateway import frontend_shapes
+from gateway.frontend_shapes import RowError, bundled_rows, parse_rows
+from gateway.frontend_shapes import _base, shapes
+from gateway.workflow_run import BindingAvailability
+from gateway.workflow_runtime_types import RunJobView, RunRefused
+from tests.test_frontend_shapes import FakeSpool, json_request, make_request
+from tests.test_workflow_run import Caller, make_core, request as core_request, run, snapshot as core_snapshot  # noqa: F401
+from tests.test_workflow_run import CONTRACT, db  # noqa: F401
+from tests.workflow_runtime_fakes import FakeSnapshot, entry
+
+ROWS = {row.id: row for row in bundled_rows()}
+CALLER = "caller-1"
+SERVICE_UNREACHABLE = "service_unreachable"
+
+
+def _inputs(*extra: str) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "prompt": {"type": "string", "required": True},
+        "negative_prompt": {"type": "string"},
+        "seed": {"type": "integer", "minimum": 0},
+        "width": {"type": "integer", "required": True},
+        "height": {"type": "integer", "required": True},
+        "length": {"type": "integer", "required": True},
+        "frame_rate": {"type": "integer"},
+    }
+    if "image" in extra:
+        base["input_reference"] = {"type": "asset", "accepts": ["image/*"]}
+        base["image_strength"] = {"type": "number", "minimum": 0, "maximum": 1, "default": 0.7}
+    return base
+
+
+def video_contract(short: str = "ltx-2.5-t2v", *, grid: dict | None = None, variants: dict | None = None, requires: list | None = None,
+                   chain: bool = False, image: bool = False, size: dict | None = None, length: dict | None = None) -> dict[str, Any]:
+    roles = {"width": "width", "height": "height", "length": "length", "frame_rate": "frame_rate"}
+    if image:
+        roles |= {"image": "input_reference", "image_strength": "image_strength"}
+    return {
+        "id": f"video.generate.{short}", "version": "1", "schema_version": 2, "intent": "video.generate", "capability": "video",
+        "inputs": _inputs("image") if image else _inputs(),
+        "outputs": {"video": {"media_type": "video/mp4"}},
+        "video": {
+            "roles": roles,
+            "size": size or {"default": "960x512", "max": "1280x704", "multiple": 64},
+            "length": length or {"min_seconds": 1, "max_seconds": 10},
+            "grid": grid or {"fps": 24, "step": 8, "offset": 1},
+            "variants": variants or {}, "requires": requires or [], "chain": chain},
+        "bindings": {"comfyui": {}},
+    }
+
+
+def snap(*contracts: dict[str, Any]) -> FakeSnapshot:
+    return FakeSnapshot(1, MappingProxyType({c["id"]: entry(c) for c in contracts}))
+
+
+T2V = video_contract(variants={"image": "video.generate.ltx-2.5-i2v", "long": "video.generate.ltx-2.5-long"})
+I2V = video_contract("ltx-2.5-i2v", image=True, requires=["image"])
+LONG = video_contract("ltx-2.5-long", chain=True)
+SNAP = snap(T2V, I2V, LONG)
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 80
+
+
+@pytest.fixture(autouse=True)
+def no_deployment_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shapes, "DEFAULT_WORKFLOWS", {})
+    monkeypatch.setattr(shapes, "VIDEO_HOOKS", None)
+
+
+def read(body: Any, snapshot: FakeSnapshot = SNAP, *, row: str = "videos-create", spool: FakeSpool | None = None, **headers: str):
+    shape = frontend_shapes.build_shape(ROWS[row])
+    request = json_request(body, headers=headers) if not isinstance(body, Request) else body
+    return asyncio.run(shape.to_run_request(request, ROWS[row], snapshot, spool=spool or FakeSpool()))
+
+
+def error(response: Response) -> dict[str, Any]:
+    assert isinstance(response, Response), response
+    return json.loads(response.body)["error"]
+
+
+# ------------------------------------------------------------------------------------------------ the rows
+
+
+def test_the_create_row_carries_the_old_words_and_rules_as_data() -> None:
+    row = ROWS["videos-create"]
+    assert row.refusal_bodies["service_disabled"] == {"message": "Video generation not enabled", "type": "service_unavailable"}
+    assert (row.job_retries, row.job_failure_text) == ("none", "adapter")
+    assert dict(row.result_headers) == {"duration_adjusted": "X-Duration-Adjusted"}      # the only header the old create sent
+
+
+def test_a_remix_row_exists_and_both_source_rows_say_what_an_unconfigured_route_answers() -> None:
+    remix, edit = ROWS["videos-remix"], ROWS["videos-edit"]
+    assert remix.shape == "openai.video.remix" and remix.mode == "job"
+    assert [r.canonical for r in remix.routes] == ["/v1/videos/{video_id}/remix"]
+    assert remix.routes[0].runtime_policy["intent"] == "video.remix"
+    for row in (remix, edit):
+        assert row.unconfigured and row.unconfigured["status"] == 501 and row.unconfigured["code"] == "video_remix_not_configured"
+        assert row.unconfigured["message"]
+
+
+def test_a_row_parser_reads_unconfigured_and_refuses_a_malformed_one() -> None:
+    raw = {"id": "r", "shape": "openai.video.create", "mode": "job", "selects": {"ids": ["x"]},
+           "routes": [{"methods": ["POST"], "canonical": "/v1/x"}],
+           "unconfigured": {"status": 501, "code": "c", "message": "m"}}
+    assert parse_rows({"frontends": [raw]})[0].unconfigured == {"status": 501, "code": "c", "message": "m"}
+    with pytest.raises(RowError, match="unconfigured"):
+        parse_rows({"frontends": [{**raw, "unconfigured": {"status": 501}}]})
+
+
+# ------------------------------------------------------------------ the core: a service that cannot be reached
+
+
+def test_an_unreachable_service_is_a_502_naming_the_engine_and_no_job_exists(db, tmp_path) -> None:
+    core, port, _ = make_core(db, tmp_path, core_snapshot())
+    port.available = BindingAvailability(lambda binding: SERVICE_UNREACHABLE, None, lambda binding: "Engine Z unavailable at http://z:1")
+    gate = core.target_gate("demo.run", Caller(), snapshot=core._snapshots.current())
+    assert isinstance(gate, RunRefused) and (gate.http_status, gate.code) == (502, "service_unreachable")
+    assert gate.message == "Engine Z unavailable at http://z:1"
+    refused = run(core.submit_run(core_request(), Caller(), snapshot=core._snapshots.current()))
+    assert isinstance(refused, RunRefused) and refused.http_status == 502
+    from gateway import media_jobs
+    with media_jobs.connection(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0] == 0
+    assert port.engine_calls == 0
+
+
+# ------------------------------------------------------------------------------------ the shape: the happy path
+
+
+def test_a_plain_create_fills_size_frames_rate_and_seed_from_the_manifest_grid() -> None:
+    run_request = read({"prompt": "waves", "model": "ltx-2.5-t2v", "size": "1280x720", "seconds": 3, "seed": 7})
+    assert run_request.workflow_id == "video.generate.ltx-2.5-t2v"
+    assert run_request.inputs["prompt"] == "waves" and run_request.inputs["seed"] == 7
+    assert (run_request.inputs["width"], run_request.inputs["height"]) == (1280, 704)      # cut to the maximum, floored to 64
+    assert run_request.inputs["length"] == 73 and run_request.inputs["frame_rate"] == 24      # the documented 3 s at 24 fps
+    assert run_request.options == {"size": "1280x704", "seconds_frames": 73, "frame_rate": 24}
+    facts = run_request.facts
+    assert (facts["model"], facts["resolved_model"], facts["size"], facts["seconds"]) == ("ltx-2.5-t2v", "ltx-2.5-t2v", "1280x704", "3")
+    assert (facts["length_frames"], facts["frame_rate"], facts["seed"]) == (73, 24, 7)
+    assert facts["actual_seconds"] == round(73 / 24, 4)
+
+
+def test_a_request_without_size_seconds_or_seed_uses_the_manifest_defaults_and_draws_a_seed() -> None:
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v"})
+    assert (run_request.inputs["width"], run_request.inputs["height"]) == (960, 512)
+    assert run_request.facts["seconds"] == "5" and run_request.inputs["length"] == 121
+    assert isinstance(run_request.inputs["seed"], int) and run_request.facts["seed"] == run_request.inputs["seed"]
+    assert read({"prompt": "x", "model": "ltx-2.5-t2v"}).inputs["seed"] != run_request.inputs["seed"]
+
+
+def test_an_unreadable_size_is_cut_to_the_maximum_and_not_refused() -> None:
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "size": "bad"})
+    assert run_request.facts["size"] == "1024x704"
+
+
+def test_the_seconds_string_is_the_old_one_and_the_frame_count_follows_the_grid_bounds() -> None:
+    capped = snap(video_contract("cap", grid={"fps": 24, "step": 4, "offset": 1, "max_frames": 81}))
+    run_request = read({"prompt": "x", "model": "cap", "seconds": 8}, capped)
+    assert run_request.inputs["length"] == 81 and run_request.facts["seconds"] == "8"
+    assert read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": "3.5"}).facts["seconds"] == "3.5"
+
+
+def test_the_answer_to_a_create_is_the_old_video_object_with_the_names_the_caller_used() -> None:
+    run_request = read({"prompt": "waves", "model": "ltx-2.5-t2v", "seconds": 3, "size": "640x384"})
+    shape = frontend_shapes.build_shape(ROWS["videos-create"])
+    view = RunJobView(job_id="mj_a", status="queued", disposition="new", workflow_id=run_request.workflow_id, record_revision=1,
+                      binding_key="comfyui", created_at_s=1000, updated_at_s=1000)
+    request = make_request()
+    request.state.video_facts = dict(run_request.facts)
+    answer = asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request))
+    body = json.loads(answer.body)
+    assert answer.status_code == 200 and "location" not in answer.headers
+    assert (body["id"], body["object"], body["status"], body["progress"]) == ("video_mj_a", "video", "queued", 0)
+    assert (body["model"], body["azizam_resolved_model"], body["size"], body["seconds"]) == (
+        "ltx-2.5-t2v", "ltx-2.5-t2v", "640x384", "3")
+    assert (body["created_at"], body["expires_at"], body["completed_at"], body["error"]) == (1000, 1000 + 86400, None, None)
+    assert "azizam_status" not in body and "updated_at" not in body                  # the create answer never had them
+
+
+class _NoFacts:
+    """A job service that holds no recorded facts: the answer falls back to the facts the shape read."""
+
+    def request_facts(self, job_id, caller):
+        return None
+
+
+def test_an_adjusted_duration_is_told_in_the_header_and_an_exact_one_is_not() -> None:
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 3})
+    shape = frontend_shapes.build_shape(ROWS["videos-create"])
+    view = RunJobView(job_id="mj_a", status="queued", disposition="new", workflow_id=run_request.workflow_id, record_revision=1,
+                      binding_key="comfyui", created_at_s=1, updated_at_s=1)
+    request = make_request()
+    request.state.video_facts = dict(run_request.facts)
+    answer = asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request))
+    assert answer.headers["X-Duration-Adjusted"].startswith("requested=3 actual=3.0417 reason=")
+    exact = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 5, "size": "960x512"})      # 5 s is 121 frames: exact
+    request = make_request()
+    request.state.video_facts = dict(exact.facts)
+    quiet = asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request))
+    assert "X-Duration-Adjusted" not in quiet.headers
+
+
+# ------------------------------------------------------------------------- the shape: refusals, in the old order
+
+
+def test_a_body_that_is_not_json_is_the_old_400() -> None:
+    refused = read(make_request(b"{nope"))
+    assert refused.status_code == 400 and error(refused) == {"message": "Invalid JSON body", "type": "invalid_request_error"}
+
+
+def test_an_unknown_field_is_refused_with_its_name_and_the_unknown_parameter_code() -> None:
+    refused = read({"prompt": "x", "model": "ltx-2.5-t2v", "colour": "red"})
+    body = error(refused)
+    assert refused.status_code == 400 and body["param"] == "colour" and body["code"] == "unknown_parameter"
+
+
+def test_a_malformed_video_control_is_refused_before_the_prompt_is_read() -> None:
+    refused = read({"prompt": 5, "extensions": {"com.azizam.video": {"audio": "no"}}})
+    body = error(refused)
+    assert refused.status_code == 400 and body["code"] == "invalid_video_control" and "audio" in body["param"]
+
+
+@pytest.mark.parametrize(("body", "message", "param"), [
+    ({"prompt": ["a"]}, "prompt must be a string", "prompt"),
+    ({"prompt": "   "}, "prompt is required", None),
+    ({}, "prompt is required", None)])
+def test_the_prompt_is_checked_with_the_old_words(body: dict, message: str, param: str | None) -> None:
+    refused = read({"model": "ltx-2.5-t2v", **body})
+    found = error(refused)
+    assert refused.status_code == 400 and found["message"] == message and found.get("param") == param
+    assert found["type"] == "invalid_request_error" and "code" not in found
+
+
+def test_an_unknown_model_is_a_404_with_the_old_text_and_code() -> None:
+    refused = read({"prompt": "x", "model": "nope"})
+    body = error(refused)
+    assert refused.status_code == 404 and body["message"] == "Model 'nope' is not available for video generation."
+    assert (body["code"], body["param"]) == ("model_not_found", "model")
+
+
+@pytest.mark.parametrize(("seconds", "message"), [
+    (0, "seconds must be between 1.0 and 10.0 for model ltx-2.5-t2v"),
+    (-1, "seconds must be between 1.0 and 10.0 for model ltx-2.5-t2v"),
+    ("bad", "seconds must be a number")])
+def test_seconds_out_of_range_or_not_a_number_is_refused_with_the_old_words(seconds: Any, message: str) -> None:
+    refused = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": seconds})
+    assert refused.status_code == 400 and error(refused)["message"] == message
+
+
+def test_an_image_to_video_model_without_a_reference_is_refused_and_a_reference_selects_it() -> None:
+    refused = read({"prompt": "x", "model": "ltx-2.5-i2v"})
+    body = error(refused)
+    assert refused.status_code == 400 and body["param"] == "input_reference"
+    assert body["message"] == "Model ltx-2.5-i2v is image-to-video and requires input_reference"
+    data = "data:image/png;base64," + base64.b64encode(PNG).decode()
+    spool = FakeSpool()
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": data, "image_strength": 5}, spool=spool)
+    assert run_request.workflow_id == "video.generate.ltx-2.5-i2v"
+    assert run_request.inputs["image_strength"] == 1.0                    # clamped to 0..1
+    assert [(name, blob) for name, blob, *_ in spool.staged] == [("input_reference", PNG)]
+    assert set(run_request.media) == {"input_reference"}
+    assert run_request.facts["resolved_model"] == "ltx-2.5-i2v"
+
+
+def test_a_silent_clip_is_recorded_as_a_fact_and_an_option() -> None:
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "extensions": {"com.azizam.video": {"audio": False}}})
+    assert run_request.facts["audio"] is False and run_request.options["audio"] is False
+    assert "audio" not in read({"prompt": "x", "model": "ltx-2.5-t2v"}).facts
+
+
+def test_the_facts_hold_no_prompt_no_person_and_only_the_keys_the_design_names() -> None:
+    run_request = read({"prompt": "a private secret sentence", "model": "ltx-2.5-t2v"})
+    assert "private secret sentence" not in json.dumps(run_request.facts, default=str)
+    assert set(run_request.facts) <= {"model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate",
+                                      "seed", "audio", "metadata_mode", "provenance", "remixed_from_video_id",
+                                      "extended_from_video_id", "source_asset_id", "total_seconds", "warnings"}
+    assert run_request.facts["provenance"]["kind"] == "video"
+    assert "private secret sentence" not in json.dumps(run_request.facts["provenance"], default=str)
+
+
+def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_its_parsed_body() -> None:
+    for body in ({"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]},                   # a storyboard
+                 {"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 20},                   # past the native length: the long variant
+                 {"prompt": "x", "model": "ltx-2.5-long"},                                 # a chain manifest
+                 {"prompt": "x", "model": "ltx-2.5-t2v", "extensions": {"com.azizam.workflow": {"a": 1}}},
+                 {"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
+                 {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
+        handoff = read(body)
+        assert isinstance(handoff, _base.LegacyRoute), body
+        assert handoff.name == "videos.create" and handoff.body["prompt"] == body.get("prompt", handoff.body.get("prompt"))
+
+
+def test_a_manifest_without_a_video_block_is_left_to_the_legacy_handler() -> None:
+    plain = video_contract("bare")
+    del plain["video"]
+    assert isinstance(read({"prompt": "x", "model": "bare"}, snap(plain)), _base.LegacyRoute)
+
+
+def test_a_model_past_its_native_length_with_no_long_variant_is_refused_in_the_old_status_and_code() -> None:
+    lone = snap(video_contract("lone"))
+    refused = read({"prompt": "x", "model": "lone", "seconds": 20}, lone)
+    body = error(refused)
+    assert refused.status_code == 400 and body["code"] == "long_video_not_supported" and body["param"] == "seconds"
+    assert "10 s" in body["message"]
+    shots = error(read({"model": "lone", "shots": [{"prompt": "a"}]}, lone))
+    assert shots["param"] == "shots"
+
+
+def test_the_prompt_is_kept_in_prompt_memory_after_a_new_job_and_not_for_a_replay() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class Hooks(shapes.VideoHooks):
+        def keep_prompt(self, caller, key, prompt):
+            calls.append((key, prompt))
+            return True
+
+    shapes.VIDEO_HOOKS = Hooks()
+    run_request = read({"prompt": "waves", "model": "ltx-2.5-t2v"})
+    shape = frontend_shapes.build_shape(ROWS["videos-create"])
+    new = RunJobView(job_id="mj_a", status="queued", disposition="new", workflow_id="w", record_revision=1, binding_key="b",
+                     created_at_s=1, updated_at_s=1)
+    request = make_request()
+    request.state.video_prompt = "waves"
+    asyncio.run(shape.after_submit(request, new, CALLER))
+    asyncio.run(shape.after_submit(request, RunJobView(**{**new.__dict__, "disposition": "replay"}), CALLER))
+    assert calls == [("video_mj_a", "waves")]
+    assert run_request.facts["model"] == "ltx-2.5-t2v"
+
+
+def test_the_deployment_hooks_resolve_the_model_name_and_can_refuse_the_body() -> None:
+    class Hooks(shapes.VideoHooks):
+        def resolve_model(self, name):
+            return "ltx-2.5-t2v" if name == "sora-2" else name
+
+        def begin_delivery(self, caller, body):
+            return Response("no", status_code=400) if body.get("metadata_bad") else None
+
+    shapes.VIDEO_HOOKS = Hooks()
+    run_request = read({"prompt": "x", "model": "sora-2"})
+    assert run_request.workflow_id == "video.generate.ltx-2.5-t2v" and run_request.facts["model"] == "sora-2"
+    refused = shapes.VIDEO_HOOKS.begin_delivery(CALLER, {"metadata_bad": 1})
+    assert refused.status_code == 400
