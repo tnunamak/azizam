@@ -456,6 +456,15 @@ def _build_stt_capabilities(
     return _build_backend_capabilities(backends, flags, "recognition")
 
 
+def _family_backend(section: Mapping[str, Any], family: str) -> str:
+    backend = section.get("backend", "comfyui")
+    if not isinstance(backend, str) or not backend:
+        raise ValueError(
+            f"{family}.backend must be a non-empty string; got {backend!r}"
+        )
+    return backend
+
+
 def _build_image_capabilities(
     config: Mapping[str, Any],
     backends: Mapping[str, Any],
