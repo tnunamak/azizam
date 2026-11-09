@@ -277,7 +277,7 @@ def test_an_image_to_video_model_without_a_reference_is_refused_and_a_reference_
     refused = read({"prompt": "x", "model": "ltx-2.5-i2v"})
     body = error(refused)
     assert refused.status_code == 400 and body["param"] == "input_reference"
-    assert body["message"] == "Model ltx-2.5-i2v is image-to-video and requires input_reference"
+    assert body["message"] == "Model video-ltx-2.5-i2v is image-to-video and requires input_reference"
     data = "data:image/png;base64," + base64.b64encode(PNG).decode()
     spool = FakeSpool()
     run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": data, "image_strength": 5}, spool=spool)
@@ -605,3 +605,31 @@ def test_a_create_adds_no_run_facts_to_the_history_entry() -> None:
 
     TestClient(app).post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v"})
     assert seen == [None]
+
+
+# ------------------------------------------------ the refusal order (review 5): replay, then body, then service state
+
+
+def test_a_finished_key_still_replays_after_the_service_is_disabled_and_a_new_one_is_refused(db, tmp_path) -> None:
+    snap = core_snapshot()
+    core, port, _ = make_core(db, tmp_path, snap)
+
+    async def go():
+        first = await core.submit_run(core_request(idempotency_key="k1"), Caller(), snapshot=snap)
+        port.problem = "adapter_missing"                          # the backend is disabled from now on
+        replay = await core.submit_run(core_request(idempotency_key="k1"), Caller(), snapshot=snap)
+        fresh = await core.submit_run(core_request(idempotency_key="k2"), Caller(), snapshot=snap)
+        return first, replay, fresh
+
+    first, replay, fresh = run(go())
+    assert replay.disposition == "replay" and replay.job_id == first.job_id
+    assert isinstance(fresh, RunRefused) and fresh.http_status == 503
+
+
+def test_an_invalid_body_is_refused_as_a_body_before_the_service_is_asked() -> None:
+    from starlette.testclient import TestClient
+    calls = _keys()
+    client = TestClient(_submit_app(calls))
+    answer = client.post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v", "seconds": "soon"})
+    assert answer.status_code == 400 and answer.json()["error"]["message"] == "seconds must be a number"
+    assert calls["report"] == [{"status": "failed", "reason": "http_400"}]
