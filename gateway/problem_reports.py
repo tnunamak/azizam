@@ -344,6 +344,8 @@ class ProblemReports:
         return data
 
     def get(self, report_id: str) -> dict[str, Any] | None:
+        if not self.path.exists():  # A read never creates the database.
+            return None
         with closing(self._connect()) as conn:
             row = conn.execute("SELECT * FROM problem_reports WHERE id=?", (report_id,)).fetchone()
         return self._public(row) if row else None
@@ -355,6 +357,8 @@ class ProblemReports:
             params.append(status)
         sql += " ORDER BY last_seen DESC, id LIMIT ?"
         params.append(max(1, min(int(limit), 500)))
+        if not self.path.exists():  # A read never creates the database.
+            return []
         with closing(self._connect()) as conn:
             return [self._public(row) for row in conn.execute(sql, params)]
 
