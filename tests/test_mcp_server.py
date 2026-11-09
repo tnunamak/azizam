@@ -991,7 +991,7 @@ def test_finished_job_whose_delivery_is_refused_says_the_render_finished(env):
     out = result["structuredContent"]
     assert result["isError"]
     assert out["error"].startswith("The render finished, but the gateway refused to deliver it: This prompt is not available to you.")
-    assert "video_7" in out["error"] and "report_problem" in out["report_hint"]
+    assert "call `job` with job_id video_7" in out["error"] and "do not start the render over" in out["error"]
     assert out["stage"] == "delivery" and out["job_status"] == "succeeded" and out["job_id"] == "video_7"
     assert out["code"] == "prompt_not_accessible" and out["http_status"] == 403
     again = call(env, "job", {"job_id": "video_7"})["structuredContent"]
