@@ -117,7 +117,7 @@ OPERATIONS = sorted({
 # Intents: every key of the production intent tables, one name under each metadata family prefix, the fixed list the
 # first golden used, an unfamiliar intent, and every shipped workflow intent.
 INTENTS_FOR_EXAMPLES = sorted({
-    *model_metadata._CAPABILITY_INTENTS, *(f"{prefix}x" for prefix, _ in model_metadata._CAPABILITY_INTENT_FAMILIES),
+    *model_metadata._CAPABILITY_INTENTS, *(f"{prefix}x" for prefix in model_metadata._CAPABILITY_INTENT_FAMILIES),
     *capability_ids.INTENT_CAPABILITIES,
     "chat.completions", "text.completions", "text.embeddings", "image.generate", "image.edit", "speech.synthesis",
     "speech.transcription", "speech.translation", "audio.generate", "video.generate", "video.edit", "text.rerank",
@@ -480,8 +480,8 @@ def capability_intents() -> list[str]:
     from gateway import model_metadata as mm
 
     return sorted({
-        *mm._CAPABILITY_INTENTS, *(f"{prefix}other" for prefix, _ in mm._CAPABILITY_INTENT_FAMILIES),
-        *(prefix.rstrip(".") for prefix, _ in mm._CAPABILITY_INTENT_FAMILIES),
+        *mm._CAPABILITY_INTENTS, *(f"{prefix}other" for prefix in mm._CAPABILITY_INTENT_FAMILIES),
+        *(prefix.rstrip(".") for prefix in mm._CAPABILITY_INTENT_FAMILIES),
         UNFAMILIAR_INTENT, "", " image.generate ", "Chat.completions", "decision.systemone", "responses.create",
         "chat.completions.stream",
     })
@@ -523,7 +523,7 @@ def capture_model_metadata() -> dict[str, Any]:
         # The intent table and the family table themselves (a family answer can equal an exact one, so dropping a row
         # is only visible in the table), then every answer from_capability gives over them.
         "capability_intent_table": {intent: _metadata_view(md) for intent, md in mm._CAPABILITY_INTENTS.items()},
-        "capability_intent_families": [[prefix, _metadata_view(md)] for prefix, md in mm._CAPABILITY_INTENT_FAMILIES],
+        "capability_intent_families": [[prefix, _metadata_view(md)] for prefix, md in mm._CAPABILITY_INTENT_FAMILIES.items()],
         "from_capability": {
             f"{intent}|{case}": _metadata_view(mm.from_capability(intent, ins, outs))
             for intent in capability_intents()
