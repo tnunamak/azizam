@@ -19,6 +19,7 @@ import json
 from gateway import client_errors, image_extensions, image_output
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
+from gateway.frontend_shapes.video_views import VideoViews
 from gateway.workflow_runtime_types import (
     CallerContext,
     JobService,
@@ -472,11 +473,7 @@ class AudioGenerate(Shape):
         return Response(content=self.read(view, refs[0], jobs, caller), media_type=refs[0].media_type)
 
 
-_VIDEO_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "completed", "failed": "failed",
-                 "canceled": "failed"}
-
-
-class OpenAIVideoCreate(Shape):
+class OpenAIVideoCreate(VideoViews, Shape):
     """``POST /v1/videos``: a JSON body with a prompt; the answer is a video object that is queued at once."""
 
     shape_id = "openai.video.create"
@@ -490,74 +487,6 @@ class OpenAIVideoCreate(Shape):
         second part of the shape id. Read from the id so the word is data of the shape, not a literal in the code."""
         return self.shape_id.split(".")[1]
 
-    def render_job(self, view: RunJobView) -> Response:
-        """The create answer: the video object of the job, with the id every lifecycle route accepts. No ``Location``."""
-        return JSONResponse(self.status_body(view))
-
-    # -- the lifecycle routes: status, content, list and delete are views of the job (S7 parity M7) -----------------
-
-    # Facts of the request a job view shows beyond its status, by the name the job's result metadata keeps them under.
-    view_facts: ClassVar[tuple[str, ...]] = ("model", "size", "seconds", "azizam_resolved_model", "remixed_from_video_id",
-                                             "extended_from_video_id", "total_seconds")
-
-    def wire_id(self, job_id: str) -> str:
-        """The id a caller sees for a job: the wire's name, an underscore and the job id."""
-        return f"{self.wire_name}_{job_id}"
-
-    def job_id_of(self, wire_id: str) -> str | None:
-        """The job id a wire id names; None when the id does not have the wire's form (the route answers 400)."""
-        prefix = f"{self.wire_name}_"
-        if not isinstance(wire_id, str) or not wire_id.startswith(prefix) or len(wire_id) == len(prefix):
-            return None
-        return wire_id[len(prefix):]
-
-    def invalid_id(self) -> Response:
-        return _wire.error_response(400, f"invalid {self.wire_name}_id")
-
-    def unknown_id(self) -> Response:
-        return _wire.error_response(404, f"{self.wire_name}_id not found", kind="not_found")
-
-    def status_body(self, view: RunJobView) -> dict[str, Any]:
-        """The video object of one job: the wire's status word beside the job store's own."""
-        status = _VIDEO_STATUS.get(view.status, "queued")
-        own = "failed" if view.status == "canceled" else view.status
-        body: dict[str, Any] = {
-            "id": self.wire_id(view.job_id), "object": self.wire_name, "azizam_object": f"{self.wire_name}.generation",
-            "status": status, "azizam_status": own, "progress": 100 if view.status == "succeeded" else 0,
-            "created_at": view.created_at_s, "completed_at": view.updated_at_s if view.status in TERMINAL else None,
-            "expires_at": None, "prompt": None, "remixed_from_video_id": None, "error": None, "updated_at": view.updated_at_s}
-        for name in self.view_facts:
-            if view.result_metadata.get(name) is not None:
-                body[name] = view.result_metadata[name]
-        if view.failure is not None:
-            body["error"] = {"code": view.failure.code, "message": view.failure.message}
-        return body
-
-    def render_status(self, view: RunJobView) -> Response:
-        return JSONResponse(self.status_body(view))
-
-    def render_listing(self, views: Sequence[RunJobView], has_more: bool) -> Response:
-        data = [self.status_body(view) for view in views]
-        return JSONResponse({"object": "list", "data": data, "first_id": data[0]["id"] if data else None,
-                             "last_id": data[-1]["id"] if data else None, "has_more": has_more})
-
-    def render_deleted(self, job_id: str) -> Response:
-        return JSONResponse({"id": self.wire_id(job_id), "object": self.wire_name, "deleted": True})
-
-    def render_delete_conflict(self) -> Response:
-        return _wire.error_response(409, "cancel request failed: the job did not stop", kind="api_error",
-                                    code=f"{self.wire_name}_cancel_failed")
-
-    def render_bytes(self, view: RunJobView, jobs: JobService, caller: CallerContext) -> Response:
-        """The finished job's one file; a job still running is 404 ``<wire>_not_ready`` with the wire's status word."""
-        if view.status != "succeeded":
-            word = _VIDEO_STATUS.get(view.status, "queued")
-            return _wire.error_response(404, f"{self.wire_name.capitalize()} content is not ready yet (status={word})",
-                                        code=f"{self.wire_name}_not_ready")
-        refs = self.media_refs(view)
-        if len(refs) != 1:
-            return _wire.error_response(500, f"No {self.wire_name} output found in job", kind="api_error")
-        return Response(content=self.read(view, refs[0], jobs, caller), media_type=refs[0].media_type)
 
 
 class OpenAIVideoEdit(OpenAIVideoCreate):

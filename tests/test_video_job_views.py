@@ -11,7 +11,7 @@ import json
 import pytest
 
 from gateway.frontend_shapes import bundled_rows, build_shape
-from gateway.workflow_runtime_types import JobNotFound, ResultRef, RunFailure, RunJobView
+from gateway.workflow_runtime_types import JobNotFound, RequestFacts, ResultRef, RunFailure, RunJobView
 from tests.workflow_runtime_fakes import FakeJobService, FakeRunCore
 
 
@@ -94,8 +94,11 @@ def test_content_of_a_finished_job_is_its_one_file(shape):
     jobs = FakeJobService(core)
     done = view(status="succeeded", results=(ResultRef("video", 0, "video/mp4", asset_id="a"),))
     core.jobs["mj_a"] = done
+    core.facts["mj_a"] = RequestFacts({"metadata_mode": "none"})
     jobs.open_result = lambda job_id, ref, caller: type("C", (), {"body": b"mp4-bytes", "media_type": ref.media_type})()
-    answer = shape.render_bytes(done, jobs, None)
+    answer = shape.render_bytes(done, jobs, None, metadata_mode="full", caller_person_id="p1")
+    assert answer.status_code == 403 and body(answer)["error"]["code"] == "prompt_not_accessible"
+    answer = shape.render_bytes(done, jobs, None)             # the job's own choice (none) stands without a request's
     assert (answer.status_code, answer.body, answer.media_type) == (200, b"mp4-bytes", "video/mp4")
 
 
@@ -108,3 +111,112 @@ def test_the_fake_service_lists_what_the_shape_renders(shape):
     assert [v.job_id for v in views] == ["mj_c", "mj_b"] and more is True
     with pytest.raises(JobNotFound):
         jobs.list(None, intents=("x",), limit=2, after_id="nope")
+
+
+# ------------------------------------------------------------------------------------------------ facts and content (V5b)
+
+
+def finished(core, jobs, *, facts=None, metadata=None, media_type="video/mp4", job_id="mj_a"):
+    done = view(job_id, status="succeeded", results=(ResultRef("video", 0, media_type, asset_id="asset-1"),),
+                result_metadata=metadata or {"filename": "clip.mp4"})
+    core.jobs[job_id] = done
+    core.facts[job_id] = facts if facts is not None else RequestFacts({}, prompt="a prompt", maker_person_id="p1")
+    jobs.open_result = lambda job_id, ref, caller: type("C", (), {"body": b"mp4-bytes", "media_type": ref.media_type})()
+    return done
+
+
+@pytest.fixture
+def served():
+    core = FakeRunCore()
+    return core, FakeJobService(core)
+
+
+def test_status_shows_the_facts_the_request_kept_and_the_prompt_for_the_maker(shape):
+    facts = RequestFacts({"model": "m", "size": "640x480", "seconds": 4, "actual_seconds": 3, "resolved_model": "m-1",
+                          "warnings": ["w"], "extended_from_video_id": "video_x"}, prompt="draw", maker_person_id="p1")
+    answer = body(shape.render_status(view(status="succeeded"), facts))
+    assert (answer["model"], answer["size"], answer["seconds"], answer["actual_seconds"], answer["azizam_resolved_model"]) == (
+        "m", "640x480", 4, 3, "m-1")
+    assert (answer["prompt"], answer["warnings"], answer["extended_from_video_id"]) == ("draw", ["w"], "video_x")
+    assert answer["expires_at"] == 100 + 86400 and "resolved_model" not in answer
+    other = body(shape.render_status(view(), RequestFacts({"model": "m"})))
+    assert other["prompt"] is None
+
+
+def test_status_progress_is_the_views_while_running_and_100_when_done(shape):
+    assert body(shape.render_status(view(status="running", progress=42)))["progress"] == 42
+    assert body(shape.render_status(view(status="succeeded", progress=7)))["progress"] == 100
+
+
+def test_a_listing_renders_ready_bodies_beside_views_in_the_given_order(shape):
+    older = {"id": "video_p9", "object": "video", "status": "queued"}
+    page = body(shape.render_listing([view("mj_b"), older], False, {"mj_b": RequestFacts({"model": "m"})}))
+    assert [item["id"] for item in page["data"]] == ["video_mj_b", "video_p9"] and page["data"][0]["model"] == "m"
+    assert page["last_id"] == "video_p9"
+
+
+def test_the_maker_gets_full_metadata_with_the_files_headers_and_the_library_is_told_once(shape, served):
+    core, jobs = served
+    done = finished(core, jobs)
+    told = []
+    answer = shape.render_bytes(done, jobs, None, caller_person_id="p1", on_delivered=lambda *a: told.append(a))
+    assert (answer.status_code, answer.body, answer.media_type) == (200, b"mp4-bytes", "video/mp4")
+    assert answer.headers["content-disposition"] == 'inline; filename="clip.mp4"'
+    (wire, asset, filename, media_type, facts), = told
+    assert (wire, asset, filename, media_type, facts.maker_person_id) == ("video_mj_a", "asset-1", "clip.mp4", "video/mp4", "p1")
+
+
+@pytest.mark.parametrize(("facts", "person", "never_keep"), [
+    (RequestFacts({}, prompt="a prompt", maker_person_id="p1"), "p2", False),        # someone else
+    (RequestFacts({}, prompt="a prompt", maker_person_id="p1"), None, False),        # no person
+    (RequestFacts({}, prompt=None, maker_person_id="p1"), "p1", False),              # the prompt is no longer kept
+    (RequestFacts({}, prompt="a prompt", maker_person_id="p1"), "p1", True),         # the household keeps no prompts
+    (RequestFacts({}), "p1", False)], ids=["other", "anonymous", "prompt-gone", "never-keep", "no-maker"])
+def test_full_metadata_is_refused_unless_the_maker_and_a_kept_prompt(shape, served, facts, person, never_keep):
+    core, jobs = served
+    done = finished(core, jobs, facts=facts)
+    told = []
+    answer = shape.render_bytes(done, jobs, None, caller_person_id=person, never_keep=never_keep, on_delivered=lambda *a: told.append(a))
+    assert answer.status_code == 403 and body(answer)["error"]["code"] == "prompt_not_accessible" and told == []
+
+
+def test_a_request_for_no_metadata_strips_the_bytes_sent_and_needs_no_maker(shape, served, monkeypatch):
+    from gateway import media_delivery
+    core, jobs = served
+    done = finished(core, jobs, facts=RequestFacts({"metadata_mode": "full"}))
+    seen = []
+    monkeypatch.setattr(media_delivery, "deliver_bytes", lambda content, suffix, mode: seen.append((content, suffix, mode)) or b"clean")
+    answer = shape.render_bytes(done, jobs, None, metadata_mode="none", caller_person_id="p9")
+    assert (answer.status_code, answer.body) == (200, b"clean") and seen == [(b"mp4-bytes", ".mp4", "none")]
+
+
+def test_a_strip_that_fails_is_a_502_and_never_sends_the_full_copy(shape, served, monkeypatch):
+    from gateway import media_delivery, media_metadata
+    core, jobs = served
+    done = finished(core, jobs)
+
+    def broken(*a):
+        raise media_metadata.MediaMetadataError("no")
+
+    monkeypatch.setattr(media_delivery, "deliver_bytes", broken)
+    answer = shape.render_bytes(done, jobs, None, metadata_mode="none")
+    assert answer.status_code == 502 and body(answer)["error"]["message"] == "Could not prepare video for delivery"
+
+
+@pytest.mark.parametrize(("name", "media"), [("a.webm", "video/webm"), ("a.mov", "video/quicktime"), ("a.mkv", "video/x-matroska"),
+                                             ("a.bin", "application/octet-stream")])
+def test_the_media_type_follows_the_file_extension(shape, served, name, media):
+    core, jobs = served
+    done = finished(core, jobs, metadata={"filename": name})
+    assert shape.render_bytes(done, jobs, None, caller_person_id="p1").media_type == media
+
+
+def test_a_finished_job_without_exactly_one_video_is_a_500(shape, served):
+    core, jobs = served
+    done = finished(core, jobs, media_type="image/png")
+    answer = shape.render_bytes(done, jobs, None, caller_person_id="p1")
+    assert answer.status_code == 500 and body(answer)["error"]["message"] == "No video output found in job"
+
+
+def test_not_ready_is_an_invalid_request_error(shape):
+    assert body(shape.render_bytes(view(status="running"), None, None))["error"]["type"] == "invalid_request_error"
