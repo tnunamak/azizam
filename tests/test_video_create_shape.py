@@ -285,7 +285,7 @@ def test_an_image_to_video_model_without_a_reference_is_refused_and_a_reference_
     assert run_request.inputs["image_strength"] == 1.0                    # clamped to 0..1
     assert [(name, blob) for name, blob, *_ in spool.staged] == [("input_reference", PNG)]
     assert set(run_request.media) == {"input_reference"}
-    assert run_request.facts["resolved_model"] == "ltx-2.5-i2v"
+    assert run_request.facts["resolved_model"] == "video-ltx-2.5-i2v"
 
 
 def test_a_silent_clip_is_recorded_as_a_fact_and_an_option() -> None:
