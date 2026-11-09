@@ -387,7 +387,6 @@ export function SlotControl({
   onPendingChange,
   takers,
   chipHost,
-  order,
   buttonRef,
 }: {
   input: MediaInput;
@@ -398,10 +397,8 @@ export function SlotControl({
   disabled?: boolean;
   onPendingChange?: (pending: boolean) => void;
   takers?: PasteTakers;
-  /** Where filled slots draw their chip. */
+  /** This slot's stable destination among hosts in declaration order. */
   chipHost: HTMLElement | null;
-  /** The slot's place among the chips, so they keep declaration order whichever was filled first. */
-  order: number;
   /** The slot's current control (its pill, or its chip's change control), so focus can return to it. */
   buttonRef?: Ref<HTMLButtonElement>;
 }) {
@@ -450,7 +447,7 @@ export function SlotControl({
   const chip =
     file && chipHost
       ? createPortal(
-          <div data-slot="home-picked-file" data-modality={input.modality} style={{ order }} className="px-3 pt-3">
+          <div data-slot="home-picked-file" data-modality={input.modality} className="px-3 pt-3">
             <span className="bg-muted text-meta inline-flex max-w-full items-center rounded-full py-1 pr-1 pl-1 max-sm:flex max-sm:w-full">
               {wrap((props) => (
                 <button
@@ -460,7 +457,7 @@ export function SlotControl({
                   aria-label={`Change ${phrase}`}
                   title={`Change ${phrase}`}
                   {...props}
-                  className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-full text-left disabled:cursor-default", FOCUS_RING)}
+                  className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-full text-left disabled:cursor-default max-sm:min-h-11 max-sm:min-w-11", FOCUS_RING)}
                 >
                   {preview ? (
                     // A local object address of the person's own picture: next/image has nothing to optimise.

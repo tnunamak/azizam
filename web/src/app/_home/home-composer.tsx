@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -236,8 +237,11 @@ export function HomeComposer({
   // Each file input registers its paste taker and focus target by slot, not by media kind.
   const takers = useRef<PasteTakers["current"]>({});
   const attachButtons = useRef<Record<string, HTMLButtonElement | null>>({});
-  // Where filled slots draw their chips: kept in state so a slot re-renders once the place exists.
-  const [chipHost, setChipHost] = useState<HTMLElement | null>(null);
+  // Each slot owns a stable portal destination, in declaration order, including while it is empty.
+  const [chipHosts, setChipHosts] = useState<Record<string, HTMLDivElement | null>>({});
+  const registerChipHost = useCallback((slot: string, node: HTMLDivElement | null) => {
+    setChipHosts((current) => current[slot] === node ? current : { ...current, [slot]: node });
+  }, []);
   const missingInputs = inputs.media.filter((input) => !fileFor(mediaInputKey(input)));
   const missingInput = missingInputs[0] ?? null;
   // A Library pick is still arriving for one of the inputs: Make waits, as it would for a missing file.
@@ -431,8 +435,15 @@ export function HomeComposer({
           </p>
         ) : null}
         {multipleFiles ? (
-          // Filled slots draw their chip here, in slot order (each chip carries its own order).
-          <div ref={setChipHost} className="flex flex-col" />
+          <div className="flex flex-col">
+            {inputs.media.map((input) => (
+              <SlotChipHost
+                key={`${kind}:${mediaInputKey(input)}`}
+                slot={`${kind}:${mediaInputKey(input)}`}
+                onHost={registerChipHost}
+              />
+            ))}
+          </div>
         ) : filesBesideWords
           ? inputs.media.map((input) => {
               const picked = fileFor(mediaInputKey(input));
@@ -510,7 +521,7 @@ export function HomeComposer({
             {/* The attach button and the model chip share a line, so a phone does not give the button a row of its own. */}
             <div className={cn("flex max-w-full min-w-0 items-center gap-2 max-sm:flex-wrap", multipleFiles ? "flex-wrap max-sm:w-full" : "sm:max-w-[60%]")}>
             {multipleFiles
-              ? inputs.media.map((input, index) => (
+              ? inputs.media.map((input) => (
                   <SlotControl
                     key={`${kind}:${mediaInputKey(input)}`}
                     input={input}
@@ -520,8 +531,7 @@ export function HomeComposer({
                     disabled={!runnable}
                     onPendingChange={arrivingFor(input)}
                     takers={takers}
-                    chipHost={chipHost}
-                    order={index}
+                    chipHost={chipHosts[`${kind}:${mediaInputKey(input)}`] ?? null}
                     buttonRef={(node) => {
                       attachButtons.current[mediaInputKey(input)] = node;
                     }}
@@ -593,6 +603,15 @@ export function HomeComposer({
       {chooser ? chips : null}
     </div>
   );
+}
+
+/** Stable host refs avoid detaching a chip on each file or prompt update. */
+function SlotChipHost({ slot, onHost }: {
+  slot: string;
+  onHost: (slot: string, node: HTMLDivElement | null) => void;
+}) {
+  const ref = useCallback((node: HTMLDivElement | null) => onHost(slot, node), [slot, onHost]);
+  return <div ref={ref} />;
 }
 
 /** A pill in the composer's world: the model chip, the chooser's More and (in Segmented) the chooser. */
