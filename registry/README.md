@@ -15,7 +15,10 @@ The managed LiteLLM substrate is the sole exception. Its gateway-derived
 endpoint/protocol fields are locked and it cannot be removed; its name, enabled
 state, and note remain editable.
 
-`capability_words.yml` defines ordered `capabilities` rows (`id`, `label`, and optional `policy_protocol`), followed by protocol words and extra route intents referring to those ids. Row order is display/access-plan order. Home defaults an omitted policy protocol to `openai.chat`, including decide and rerank; embed explicitly keeps `openai.embeddings`. `gateway/capability_ids.py` validates schema version 1 and the rows before the word maps, naming the file and row for malformed rows, duplicate ids, unknown row keys, empty/non-string labels or non-string protocols. It loads read-only ordered tables once at import. Add a row and any word mappings to extend the catalog without a code table edit; this does not add a registered model kind. Restart after editing it.
+`capability_words.yml` defines ordered `capabilities` rows (`id`, `label`, optional `policy_protocol`, and the presentation fields below), followed by protocol words and extra route intents referring to those ids. Row order is display/access-plan order. Home defaults an omitted policy protocol to `openai.chat`, including decide and rerank; embed explicitly keeps `openai.embeddings`. `gateway/capability_ids.py` validates schema version 1 and the rows before the word maps, naming the file and row for malformed rows, duplicate ids, unknown row keys, empty/non-string labels or non-string protocols. It loads read-only ordered tables once at import. Add a row and any word mappings to extend the catalog without a code table edit; this does not add a registered model kind. Restart after editing it.
+- `icon`: optional non-empty capability id, including a later row; defaults to this row’s `id` (audio declares `sfx`).
+- `recommended_alias`: optional non-empty stable caller name; omission adds no recommended alias.
+- `summary`: optional non-empty presentation sentence; omission adds no summary. Presentation maps follow row order and are read-only.
 
 `models_catalog_operations.yml` holds the catalog's operation synonyms, ordered
 intent prefixes, and exact example/path templates. `gateway/models_catalog.py`

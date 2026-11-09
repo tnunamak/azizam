@@ -7,7 +7,10 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from gateway import model_metadata
-from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES, PROTOCOL_CAPABILITIES
+from gateway.capability_ids import (
+    CAPABILITY_DESCRIPTIONS, CAPABILITY_ICON_KEYS, CAPABILITY_LABELS, INTENT_CAPABILITIES,
+    PROTOCOL_CAPABILITIES, RECOMMENDED_ALIASES,
+)
 from gateway.service_registry import LEGACY_RESIDENCY_KEY, is_litellm_service_record, is_remote_provider_config
 
 
@@ -150,31 +153,8 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
     return "unknown"
 
 
-# Generic audio generation has no honest music/speech subtype. Its neutral
-# waveform glyph shares the sound-effects icon without changing its taxonomy.
-CAPABILITY_ICON_KEYS = {key: key for key in CAPABILITY_LABELS if key != "audio"}
-CAPABILITY_ICON_KEYS["audio"] = "sfx"
+# Capability labels, icons, aliases and summaries come from capability_words.yml.
 PRIMARY_CHAT_NAMES = frozenset({"default", "fast", "coder", "code", "chat"})
-# Product defaults are stable caller names, independent of catalog order,
-# engine identity, and current health. Operators still control their targets.
-RECOMMENDED_ALIASES = {
-    "chat": "default", "image": "image", "video": "video", "music": "music",
-    "sfx": "sfx", "speech": "tts", "transcribe": "stt", "decide": "decide",
-    "embed": "embed", "rerank": "rerank",
-}
-CAPABILITY_DESCRIPTIONS = {
-    "image": "Generate or edit images from your prompts.",
-    "video": "Video from a prompt or image.",
-    "mesh": "A 3D model from one picture.",
-    "music": "Songs and instrumentals from a prompt.",
-    "sfx": "Sound effects from a description.",
-    "speech": "Turn text into spoken audio.",
-    "transcribe": "Turn recorded speech into text.",
-    "decide": "Choose an outcome from your options.",
-    "embed": "Create vectors for search and similarity.",
-    "rerank": "Order search results by relevance.",
-    "audio": "Generate audio from your prompts.",
-}
 
 
 def service_capability_labels(service: Mapping[str, Any]) -> list[str]:

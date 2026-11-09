@@ -10,13 +10,14 @@ from types import MappingProxyType
 
 import yaml
 
-# Labels, optional policy protocols and capability spellings are shipped data.
+# Labels, presentation, optional policy protocols and capability spellings are shipped data.
 # Callers share read-only tables loaded once at import, in file order.
 CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "capability_words.yml"
 
 
-def _load_capability_data(path: Path) -> tuple[
-    Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str]
+def _load_capability_tables(path: Path) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
+    Mapping[str, str], Mapping[str, str], Mapping[str, str]
 ]:
     """Validate capability rows before resolving the two word maps."""
     def invalid(word: object, reason: str) -> ValueError:
@@ -42,11 +43,14 @@ def _load_capability_data(path: Path) -> tuple[
         raise invalid_row("capabilities", "must be a non-empty list")
     labels: dict[str, str] = {}
     policy_protocols: dict[str, str] = {}
+    icons: dict[str, str] = {}
+    aliases: dict[str, str] = {}
+    summaries: dict[str, str] = {}
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -62,6 +66,19 @@ def _load_capability_data(path: Path) -> tuple[
             if not isinstance(protocol, str):
                 raise invalid_row(index, "policy_protocol must be a string")
             policy_protocols[capability] = protocol
+        for field in ("icon", "recommended_alias", "summary"):
+            if field in row and (not isinstance(row[field], str) or not row[field].strip()):
+                raise invalid_row(index, f"{field} must be a non-empty string")
+        icons[capability] = row.get("icon", capability)
+        if "recommended_alias" in row:
+            aliases[capability] = row["recommended_alias"]
+        if "summary" in row:
+            summaries[capability] = row["summary"]
+
+    # References may point forward to a capability declared later in the file.
+    for index, icon in enumerate(icons.values(), start=1):
+        if icon not in labels:
+            raise invalid_row(index, f"icon names unknown capability {icon!r}")
 
     tables: list[dict[str, str]] = []
     for section in ("protocol_words", "route_intents"):
@@ -81,7 +98,22 @@ def _load_capability_data(path: Path) -> tuple[
         if word in protocol and protocol[word] != capability:
             raise invalid(word, "has conflicting capabilities in protocol_words and route_intents")
     return (MappingProxyType(labels), MappingProxyType(policy_protocols),
-            MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}))
+            MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
+            MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries))
+
+
+def _load_capability_data(path: Path) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str]
+]:
+    """Preserve the four-map loader shape while validating every row field."""
+    return _load_capability_tables(path)[:4]
+
+
+def load_capability_presentation(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str]
+]:
+    """Read immutable icon, recommended-alias and summary maps from capability rows."""
+    return _load_capability_tables(path)[4:]
 
 
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
@@ -90,7 +122,8 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
     return protocol, intents
 
 
-CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES = _load_capability_data(CAPABILITY_WORDS_PATH)
+(CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
+ CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS) = _load_capability_tables(CAPABILITY_WORDS_PATH)
 
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's
