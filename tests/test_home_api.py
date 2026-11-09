@@ -1123,6 +1123,34 @@ def test_home_single_picture_skips_optional_nonsettable_and_nonasset_inputs(monk
     ]
 
 
+@pytest.mark.parametrize(("spec", "modality"), [
+    ({"accepts": ["image/png", "audio/mpeg"]}, "file"),  # two families: no single picker may claim one of them
+    ({"accepts": ["application/pdf"]}, "file"),  # unmapped type: a client modality, never the internal "asset"
+    ({"accepts": ["image/png", "application/json"]}, "file"),  # a picture or a JSON document is not only a picture
+    ({"accepts": ["video/mp4"]}, "video"),
+])
+def test_home_media_input_modality_is_one_client_family_or_file(spec, modality, monkeypatch):
+    manifest = {"id": "image.edit.mixed", "intent": "image.edit", "inputs": {
+        "clip": {"type": "asset", "label": "A clip", "required": True, **spec},
+    }}
+    home, cap, record = _required_media_case(manifest, monkeypatch)
+    row, = home._capability_rows([cap], {}, workflow_records=(record,))
+    assert row["required_media_inputs"] == [
+        {"name": "clip", "label": "A clip", "modality": modality, "accepts": spec["accepts"]},
+    ]
+    assert TypeAdapter(HomeCapability).dump_python(TypeAdapter(HomeCapability).validate_python(row)) == row
+
+
+def test_home_media_input_without_a_label_is_named_by_its_input(monkeypatch):
+    manifest = {"id": "image.edit.unlabelled", "intent": "image.edit", "inputs": {
+        "source_image": {"type": "asset", "accepts": ["image/png"], "required": True},
+    }}
+    home, cap, record = _required_media_case(manifest, monkeypatch)
+    assert home._required_media_inputs(cap, (record,)) == [
+        {"name": "source_image", "label": "source_image", "modality": "image", "accepts": ["image/png"]},
+    ]
+
+
 def test_home_media_accepts_scalar_uses_the_existing_modality_derivation(monkeypatch):
     home, cap, record = _required_media_case(
         {"id": "video.edit.media", "intent": "video.edit", "inputs": {

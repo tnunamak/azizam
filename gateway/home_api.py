@@ -324,6 +324,9 @@ def _required_input_modalities(cap: Capability, workflow_records) -> list[str]:
     return ["text"] if "text" in declared else declared
 
 
+_MEDIA_FAMILIES = frozenset({"image", "audio", "video"})
+
+
 def _required_media_inputs(cap: Capability, workflow_records) -> list[dict[str, Any]] | None:
     """One entry per required settable asset, in manifest order; no manifest means no field."""
     record = next((item for item in workflow_records if item.id == cap.workflow), None) if cap.workflow else None
@@ -335,9 +338,11 @@ def _required_media_inputs(cap: Capability, workflow_records) -> list[dict[str, 
             continue
         declared = spec.get("accepts")
         accepts = [declared] if isinstance(declared, str) else list(declared or [])
-        modalities = _derive_input_modalities({name: {**spec, "accepts": accepts}}, intent=cap.intent)
-        rows.append({"name": name, "label": spec.get("label", ""), "modality": next(iter(modalities), "file"),
-                     "accepts": accepts})
+        modalities = set(_derive_input_modalities({name: {**spec, "accepts": accepts}}, intent=cap.intent))
+        # One picker per input: a single media family names it; several families, or a type no client family
+        # covers, is a plain file picker that still filters by accepts.
+        modality = modalities.pop() if len(modalities) == 1 and modalities <= _MEDIA_FAMILIES else "file"
+        rows.append({"name": name, "label": spec.get("label") or name, "modality": modality, "accepts": accepts})
     return rows
 
 
