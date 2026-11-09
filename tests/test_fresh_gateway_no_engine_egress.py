@@ -68,8 +68,8 @@ def test_fresh_gateway_has_zero_engine_egress(tmp_path, socket_guard):
 
 
 @pytest.mark.parametrize("record", [
-    {}, {"enabled": True}, {"host": "10.0.0.9"}, {"port": 9999},
-    {"host": "10.0.0.9", "port": 9999, "enabled": False},
+    {}, {"enabled": True}, {"host": "203.0.113.9"}, {"port": 9999},
+    {"host": "203.0.113.9", "port": 9999, "enabled": False},
 ], ids=["empty", "enabled-only", "no-port", "no-host", "disabled"])
 def test_absent_partial_and_disabled_records_never_dial(record):
     derived = proxy._derive_backend_constants({"backends": {
@@ -82,9 +82,9 @@ def test_absent_partial_and_disabled_records_never_dial(record):
 
 
 def test_removed_on_reload_record_is_unconfigured():
-    before = proxy._derive_backend_constants({"backends": {"tts": {"host": "10.0.0.9", "port": 9999}}})
+    before = proxy._derive_backend_constants({"backends": {"tts": {"host": "203.0.113.9", "port": 9999}}})
     after = proxy._derive_backend_constants({"backends": {}})
-    assert before["TTS_ENABLED"] is True and before["TTS_HOST"] == "http://10.0.0.9:9999"
+    assert before["TTS_ENABLED"] is True and before["TTS_HOST"] == "http://203.0.113.9:9999"
     assert after["TTS_ENABLED"] is False and after["TTS_HOST"] == ""
 
 

@@ -13,7 +13,7 @@ import proxy
 import status_endpoint
 from gateway import lifecycle_drivers, service_registry, stt_chunking
 
-NON_DEFAULT = {"host": "10.9.8.7", "port": 9999}
+NON_DEFAULT = {"host": "203.0.113.7", "port": 9999}
 OTHER_HOST_NAMES = ("tts", "stt", "embeddings", "comfyui")
 
 
@@ -59,7 +59,7 @@ def test_derived_constants_use_the_record_as_written():
     derived = proxy._derive_backend_constants(_config(
         tts=NON_DEFAULT, stt=NON_DEFAULT, embeddings=NON_DEFAULT, comfyui=NON_DEFAULT))
     for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
-        assert derived[key] == "http://10.9.8.7:9999", key
+        assert derived[key] == "http://203.0.113.7:9999", key
 
 
 def test_status_probe_dials_the_address_the_record_names(probed):
@@ -67,27 +67,27 @@ def test_status_probe_dials_the_address_the_record_names(probed):
     asyncio.run(status_endpoint._enriched_aux_health(config))
     asyncio.run(status_endpoint._comfy_queue_and_stats(config))
     assert sorted(probed) == sorted([
-        "http://10.9.8.7:9999/health", "http://10.9.8.7:9999/health",
-        "http://10.9.8.7:9999/queue", "http://10.9.8.7:9999/system_stats"])
+        "http://203.0.113.7:9999/health", "http://203.0.113.7:9999/health",
+        "http://203.0.113.7:9999/queue", "http://203.0.113.7:9999/system_stats"])
 
 
 def test_status_probe_of_the_chat_engine_dials_its_record(probed):
     config = _config(chat={**NON_DEFAULT, "capabilities": ["chat"], "lifecycle": {"driver": "systemd"}})
     asyncio.run(status_endpoint._llama_props_and_slots(config))
-    assert probed == ["http://10.9.8.7:9999/props"]
+    assert probed == ["http://203.0.113.7:9999/props"]
 
 
 def test_stt_chunking_uses_the_record_address():
     execution = stt_chunking.SttExecutionConfig.from_service(
         service_id="stt", service_config=dict(NON_DEFAULT), config_directory=proxy.CONFIG_PATH.parent)
-    assert execution.host == "http://10.9.8.7:9999"
+    assert execution.host == "http://203.0.113.7:9999"
 
 
 def test_lifecycle_driver_dials_the_record_address():
     driver = lifecycle_drivers.HttpLoadUnloadDriver
-    assert driver._base_url(dict(NON_DEFAULT)) == "http://10.9.8.7:9999"
+    assert driver._base_url(dict(NON_DEFAULT)) == "http://203.0.113.7:9999"
     request = lifecycle_drivers.engine_read_request(dict(NON_DEFAULT), "/health")
-    assert request is not None and request[0] == "http://10.9.8.7:9999/health"
+    assert request is not None and request[0] == "http://203.0.113.7:9999/health"
 
 
 # --- 3. a record with no address is not configured ---------------------------------------------------------------------
@@ -100,7 +100,7 @@ def test_a_record_with_no_address_is_not_configured():
     assert derived["STT_ENABLED"] is False
     assert derived["COMFY_ENABLED"] is False
     # A host without a port, or a port without a host, names no address either.
-    half = proxy._derive_backend_constants(_config(tts={"host": "10.0.0.1"}, stt={"port": 5092}))
+    half = proxy._derive_backend_constants(_config(tts={"host": "203.0.113.1"}, stt={"port": 5092}))
     assert half["TTS_HOST"] == half["STT_HOST"] == ""
 
 
@@ -152,7 +152,7 @@ async def _ensure_face(backends):
 
 # --- 4. a config that names host and port derives what the old code derived ---------------------------------------------
 
-@pytest.mark.parametrize("host,port", [("10.1.0.3", 8880), ("127.0.0.1", 5092), ("nas.lan", 7890), ("::1", 5061)])
+@pytest.mark.parametrize("host,port", [("203.0.113.3", 8880), ("127.0.0.1", 5092), ("nas.lan", 7890), ("::1", 5061)])
 def test_host_and_port_derive_the_old_address(host, port):
     old = f"http://{host}:{port}" if ":" not in host else f"http://[{host}]:{port}"
     derived = proxy._derive_backend_constants(_config(
