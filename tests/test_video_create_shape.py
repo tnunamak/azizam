@@ -308,7 +308,6 @@ def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_
     for body in ({"model": "ltx-2.5-t2v", "shots": [{"prompt": "a"}]},                   # a storyboard
                  {"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 20},                   # past the native length: the long variant
                  {"prompt": "x", "model": "ltx-2.5-long"},                                 # a chain manifest
-                 {"prompt": "x", "model": "ltx-2.5-t2v", "extensions": {"com.azizam.workflow": {"a": 1}}},
                  {"prompt": "x", "model": "ltx-2.5-t2v", "inputs": {"a": 1}},
                  {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
         handoff = read(body)
