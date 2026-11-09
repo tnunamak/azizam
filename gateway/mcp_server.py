@@ -808,7 +808,16 @@ class Tools:
         if state["progress"] is not None:
             out["progress"] = state["progress"]
         if state["status"] == "succeeded":
-            out["assets"] = await self._job_assets(job_id, out.get("target") or "result")
+            try:
+                out["assets"] = await self._job_assets(job_id, out.get("target") or "result")
+            except CallError as exc:
+                # The work is done and kept; only handing it over failed. Say so, or an
+                # agent reads a refusal at ~90% as a failed render and starts again.
+                raise CallError(
+                    f"The render finished, but the gateway refused to deliver it: {exc} "
+                    f"The result is kept: call `job` with job_id {job_id} to fetch it again; do not start the render over.",
+                    **{**exc.details, "stage": "delivery", "job_status": "succeeded", "job_id": job_id},
+                ) from exc
         elif state["status"] in ("failed", "canceled"):
             out["error"] = state["error"] or state["status"]
             # Who refused: the gateway (an access plan, inputs, capacity) or the upstream work.
