@@ -1,0 +1,207 @@
+# Excerpt A: job content for mesh and run jobs (root module lines 26002-26060 at 7893940b70085f89888086cf088201972e922cdd)
+def _mesh_job_content(job: Mapping[str, Any]) -> Response:
+    """A finished mesh job's content is the model itself (the sync route's answer), not a list of handles."""
+    asset_id = next((a.get("asset_id") for a in job.get("assets") or [] if isinstance(a, Mapping) and a.get("asset_id")), None)
+    path = asset_cache_path(asset_id) if isinstance(asset_id, str) else None
+    if path is None:
+        return JSONResponse({"error": {"message": "media job has no model asset", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
+
+
+def _run_job_content(job_id: str, caller: Any, request: Any = None) -> Response | None:
+    """A finished run's content: the wire of the row that took the job reads it its own way; else, with exactly one file
+    result, that file in its own media type; else None."""
+    service = _workflow_job_service()
+    view = service.get(job_id, caller) if service is not None else None
+    if view is not None and view.status == "succeeded":
+        stored = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        row = {r.id: r for r in frontend_shapes.bundled_rows()}.get(str((stored.get("metadata") or {}).get("frontend") or ""))
+        read = frontend_shapes.build_shape(row).render_content(view, service, caller, request) if row is not None else None
+        if read is not None:
+            return read
+    refs = [ref for ref in (view.results or ()) if ref.asset_id is not None] if view is not None else []
+    if len(refs) != 1:
+        return None
+    try:
+        content = service.open_result(job_id, refs[0], caller)
+    except (JobNotFound, ResultUnavailable):
+        return JSONResponse({"error": {"message": "media job has no result file", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return Response(content=content.body, media_type=content.media_type, headers={"x-asset-id": str(refs[0].asset_id)})
+
+
+async def gateway_media_job_content(job_id: str, request: Request):
+    """Return signed output asset handles for a completed gateway media job."""
+    auth_context = _gateway_auth_context(
+        request,
+        "/gateway/v1/media/jobs/{job_id}/content",
+    )
+    if isinstance(auth_context, Response):
+        return auth_context
+    preflight_response = _media_job_content_preflight_response(auth_context)
+    if preflight_response is not None:
+        return preflight_response
+    job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+    if job is not None and not _gateway_record_authorizer(request, "media_job", job):
+        return JSONResponse({"error": {"code": "media_job_not_found", "message": "Media job not found."}}, status_code=404)
+    # Signed URLs minted below carry the delivery mode: the GET's own query
+    # override, else the choice made when the job was submitted, else the
+    # caller's profile default.
+    delivery = _begin_media_delivery(auth_context)
+    metadata_error = _note_media_metadata_query(request)
+    if metadata_error is not None:
+        return metadata_error
+    if delivery.requested_mode is None and job is not None:
+        submitted = (job.get("metadata") or {}).get("metadata_mode")
+        if submitted in provenance.METADATA_MODES:
+            delivery.requested_mode = submitted
+    if job is None:
+        return Response(
+
+# Excerpt B: row receipt owner, row helpers, row route policy and row serving (root module lines 27101-27245 at 7893940b70085f89888086cf088201972e922cdd)
+def _new_row_spool() -> request_spool.FileRequestSpool:
+    limits = _WORKFLOW_RUN_PORT.result_limits()
+    # The bytes decide a file's type, as for every other upload: the declared type never makes a file something it is not.
+    return request_spool.FileRequestSpool(
+        _workflow_run_spool_root(), max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
+        measure=lambda head, _declared: media_inputs.measure(head).media_type)
+
+
+# Receipts that a row handed off to the run core, by request id, until the core closes them at the job's end.
+_RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
+
+
+class _RunReceiptOwner(ReceiptLifecycleOwner):
+    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
+
+    short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
+
+    def handoff(self) -> "_RunReceiptOwner":
+        super().handoff()
+        _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
+        return self
+
+
+def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
+    """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
+    (``_name_row_receipt``)."""
+    identity = auth.identity
+    # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
+    # activity read their capability from it. A route that declares none records the generic run intent.
+    owner = _RunReceiptOwner(RouteReceipt(
+        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
+        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None))
+    owner.short_names = row.receipt_names == "short"
+    return owner
+
+
+def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
+    for name, kind, reason in notes:
+        _record_image_input(owner.receipt, name, rejected_reason=(reason or kind) if kind == "rejected" else None,
+                            ignored_reason=(reason or kind) if kind == "ignored" else None)
+
+
+def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
+    for name, value, warning in facts:
+        owner.receipt.metadata[name] = value
+        if warning:
+            owner.receipt.add_warning(warning)
+
+
+def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
+                      contract_digest: str | None) -> None:
+    receipt = owner.receipt
+    version = None if record_revision is None else str(record_revision)
+    name = workflow_id
+    if owner.short_names:
+        # The image routes named the workflow by what follows its intent, and its version was the contract's own.
+        name = workflow_id.removeprefix(f"{receipt.intent}.")
+        receipt.requested_workflow = name
+        entry = WORKFLOW_SNAPSHOTS.current().get(workflow_id) if WORKFLOW_SNAPSHOTS is not None else None
+        version = str(entry.contract.get("version")) if entry is not None and entry.contract.get("version") else version
+    receipt.resolved_workflow = name
+    receipt.attach_manifest(manifest_id=workflow_id, manifest_version=version, manifest_hash=contract_digest)
+
+
+def _pinned_of_job(job_id: str) -> Any:
+    """What the job pinned, or None when it holds no definitions."""
+    try:
+        return pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    except definition_store.DefinitionUnavailable:
+        return None
+
+
+def _row_route_policy(path: str) -> dict[str, Any] | None:
+    """The policy a mounted row's route declares for its path (its ``runtime_policy`` data), as policy-request fields.
+    None when the path has none of its own; the registry's route policy then decides."""
+    wanted = inspect.signature(make_policy_request).parameters
+    for row in frontend_shapes.bundled_rows():
+        for route in row.routes:
+            if path == route.canonical or path in route.aliases:
+                fields = {k: v for k, v in route.runtime_policy.items() if k in wanted}
+                return fields if fields else None
+    return None
+
+
+frontend_wire_shapes.ASSET_URLS.update({
+    "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
+    "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
+})
+
+# What the mounted frontend rows read from this module (gateway/row_routes.py).
+_ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
+    authenticate=lambda request, path: authenticate_request(request, path),
+    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=DERIVED._RUNTIME_ROUTE_POLICY.get(path) or _row_route_policy(path)),
+    core=_workflow_run_core,
+    snapshot=lambda: WORKFLOW_SNAPSHOTS.current(),
+    jobs=_workflow_job_service,
+    new_spool=_new_row_spool,
+    scope=lambda request, spool: request_spool.request_scope(request, spool),
+    refused=_workflow_run_response,
+    new_request_id=new_request_id,
+    open_receipt=_open_row_receipt,
+    name_receipt=_name_row_receipt,
+    pinned=_pinned_of_job,
+    record_inputs=_record_row_inputs,
+    record_facts=_record_row_facts,
+)
+
+
+async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthContext, **shape_options: Any) -> Response:
+    """Answer one request on a frontend row (section 8): the row's shape reads the wire into a run request, the core runs
+    it (``submit_run``), and the shape renders the answer in its own vocabulary. Nothing here depends on what the row
+    serves."""
+    row = next((candidate for candidate in frontend_shapes.bundled_rows() if candidate.id == row_id), None)
+    core = _workflow_run_core()
+    if row is None or core is None or WORKFLOW_SNAPSHOTS is None:
+        return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    shape = frontend_shapes.build_shape(row, **shape_options)
+    snapshot = WORKFLOW_SNAPSHOTS.current()
+    result_limits = _WORKFLOW_RUN_PORT.result_limits()
+    spool = request_spool.FileRequestSpool(
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+    with request_spool.request_scope(request, spool):
+        run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
+        if isinstance(run_request, Response):
+            return run_request
+        view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
+    return await shape.to_response(view, row, jobs=_workflow_job_service(), caller=auth_context, request=request)
+
+
+@app.post("/gateway/v1/workflows/{workflow_id}/run")
+async def run_video_manifest_workflow(workflow_id: str, request: Request):
+    """Run a workflow by its full id: JSON or multipart, ``Idempotency-Key``, ``Prefer: wait=N`` (section 7.1)."""
+    auth_context = _gateway_auth_context(request, "/gateway/v1/workflows/{workflow_id}/run")
+    if isinstance(auth_context, Response):
+        return auth_context
+    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
+    if policy_response is not None:
+        return policy_response
+    core = _workflow_run_core()
+    if core is None:
+        return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    limits = workflow_run.run_limits_from_config(runtime().config)
+    wait_s = 0.0
+    prefer = request.headers.get("prefer", "")
