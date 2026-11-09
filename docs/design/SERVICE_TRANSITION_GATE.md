@@ -267,6 +267,20 @@ The private admission evidence gains `service_id`. That ships as its own small c
   declared reset runs, and a reset that fails is judged by `restore.reset.failure_semantics` and `verify`, G1).
   The shipped profiles attest only the checkpoint: no protocol description in the repository promises that a failed
   release, load, restore or reset leaves the engine unchanged.
+- **Recovery keeps the effect's identity (S8c, 2026-11-09).** A reset is recorded under the step `restore` with an effect
+  key ending `:reset`; `StepIntent.effect` and `.profile_block` read that, so a query and a restart judge a reset by
+  `restore.reset.failure_semantics` and a restore by `restore.failure_semantics`, never one by the other. The startup
+  reconcile settles a restore or reset through `RestoreStep.settle`, which is the live path: a restore that failed
+  unchanged serves cold, any other known failure runs the declared reset, and after a reset (live or recovered, a
+  query that says `success` included) only a clean verification serves cold; a dirty target never reopens.
+- **A recorded outcome is judged again, and an unreadable check holds a revalidation (S8c).** If the process stops after a
+  step recorded `no_change` (or a restore recorded `partial`) and before the gate verdict, the restart asks the step:
+  `CheckpointStep.recovered` (best_effort goes on cold, required checks servable), `RestoreStep.recovered` (a recorded
+  cold-start settlement goes on only after the clean evidence is read again; a recorded partial restore still runs
+  its reset), and for release and load the attested servable rule. Only a confirmed false closes the gate. An unreadable
+  check (absent, stale, foreign incarnation or timed out) writes a `<step>:revalidate` intent with an unknown outcome and
+  holds `reconciling`; the settled outcome is never overwritten, and the next restart or the owner's resolve judges it
+  again. `failed_closed` accepts another transition and `reconciling` does not, so the two are not interchangeable.
 - **Compatibility is a map of strings.** Unknown means cold: an empty compatibility map never matches a published
   snapshot. A success is never attested for checkpoint, restore or reset.
 - **The new profile.** `declared-snapshot-ops-v1` declares all nine operations and the reviewed checkpoint, restore
