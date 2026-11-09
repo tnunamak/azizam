@@ -282,7 +282,8 @@ def test_live_wal_backup_refuses_once_the_deadline_passes_without_source_or_temp
         connection.close()
 
 
-def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_path):
+def wal_without_shm_store(tmp_path, *, status="running"):
+    """Return the checkpointed seed and its DB+WAL-only copy for reuse by CLI tests."""
     seed_directory = tmp_path / "seed"
     source_directory = tmp_path / "source"
     seed_directory.mkdir()
@@ -297,7 +298,7 @@ def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_p
             "CREATE TABLE media_jobs "
             "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
         )
-        connection.execute("INSERT INTO media_jobs VALUES ('wal-only', 'w', 'running', '{}')")
+        connection.execute("INSERT INTO media_jobs VALUES ('wal-only', 'w', ?, '{}')", (status,))
         connection.commit()
         seed_wal = Path(str(seed_path) + "-wal")
         assert seed_wal.stat().st_size > 0
@@ -310,6 +311,12 @@ def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_p
     assert sorted(item.name for item in source_directory.iterdir()) == [
         path.name, path.name + "-wal",
     ]
+    return seed_path, path
+
+
+def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_path):
+    seed_path, path = wal_without_shm_store(tmp_path)
+    source_directory = path.parent
     before = directory_state(source_directory)
     # This is the same committed store after its final-close checkpoint.
     expected = run_cli(tmp_path, seed_path, "--json")
