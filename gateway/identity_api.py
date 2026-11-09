@@ -40,6 +40,10 @@ binding_registry.register_role("identity_scene", binding_registry.Entry.EDIT, id
 binding_registry.register_role("face_likeness", binding_registry.Entry.ANALYSIS, likeness.check_likeness)
 
 
+class FaceServiceNotConfigured(RuntimeError):
+    """The face service's record names no address, so there is nowhere to send an image."""
+
+
 class FaceServiceClient:
     """Async client for ``services/face-service`` (POST /v1/faces/analyze)."""
 

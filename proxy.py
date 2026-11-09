@@ -873,11 +873,9 @@ def _backend_host_map(backends: Mapping[str, Any] | None, listed: Callable[[str,
     for bid, bcfg in (backends or {}).items():
         if not isinstance(bcfg, Mapping) or not listed(bid, bcfg):
             continue
-        host = bcfg.get("host", "127.0.0.1")
-        port = bcfg.get("port")
-        if not port:
-            continue
-        result[bid] = f"http://{host}:{port}"
+        origin = service_registry.engine_origin(bcfg)
+        if origin:  # a record that names no address is not listed
+            result[bid] = origin
     return result
 
 
@@ -1446,15 +1444,16 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
     return {
-        "TTS_HOST": f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}",
-        "STT_HOST": f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}",
-        "EMBEDDINGS_HOST": f"http://{emb_c.get('host', '127.0.0.1')}:{emb_c.get('port', 5061)}",
-        "COMFY_HOST": f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}",
-        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True),
-        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True),
+        # A record that names no address gives "" here and the engine is not configured: nothing is dialed.
+        "TTS_HOST": service_registry.engine_origin(tts_c),
+        "STT_HOST": service_registry.engine_origin(stt_c),
+        "EMBEDDINGS_HOST": service_registry.engine_origin(emb_c),
+        "COMFY_HOST": service_registry.engine_origin(cfy_c),
+        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_origin(tts_c)),
+        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_origin(stt_c)),
         "STT_TIMEOUT": int(stt_c.get("timeout", 120)),
-        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)),
-        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True),
+        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_origin(emb_c)),
+        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_origin(cfy_c)),
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
@@ -1933,11 +1932,10 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
 
 
 def _backend_base_url(backend: str) -> str:
-    """The service's own base URL: the registry-derived host, else its record's host and port."""
+    """The service's own base URL: the registry-derived host, else the address its record names ("" when none)."""
     if backend in DERIVED.LLM_BACKEND_HOSTS:
         return DERIVED.LLM_BACKEND_HOSTS[backend]
-    cfg = (config.get("backends") or {}).get(backend) or {}
-    return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
+    return service_registry.engine_origin((config.get("backends") or {}).get(backend) or {})
 
 
 def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
@@ -4392,11 +4390,7 @@ def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
         env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
         base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
         if not base_url:
-            host = str(service_config.get("host") or "127.0.0.1").strip()
-            port = service_config.get("port")
-            if host and port not in (None, ""):
-                scheme = str(service_config.get("scheme") or "http").strip() or "http"
-                base_url = f"{scheme}://{host}:{port}"
+            base_url = service_registry.engine_origin(service_config)
         dialed = runtime_secrets.url(service_config, "health_endpoint", base=base_url, join=_probe_join).strip()
         if not dialed:
             return _probe_join(base_url, "/health") if base_url else ""
@@ -4718,7 +4712,7 @@ async def _reference_transcript(
         )
         _require_egress_lease("stt")
         resp = await _stt_adapter(stt).invoke(
-            AdapterConnection(address=f"http://{stt['host']}:{stt['port']}",
+            AdapterConnection(address=service_registry.engine_origin(stt),
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
             "stt.transcribe", clip,
         )
@@ -16658,10 +16652,10 @@ def _identity_face_client() -> identity_api.FaceServiceClient:
     transition-enabled domain never names it, and the check keeps a future declared domain from reaching it unleased."""
     _require_egress_lease(_IDENTITY_FACE_SERVICE_ID)
     bcfg = _identity_face_cfg()
-    return identity_api.FaceServiceClient(
-        f"http://{bcfg.get('host', '127.0.0.1')}:{bcfg.get('port', 8021)}",
-        timeout=float(bcfg.get("timeout", 120)),
-    )
+    origin = service_registry.engine_origin(bcfg)
+    if not origin:
+        raise identity_api.FaceServiceNotConfigured(f"The face service is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
+    return identity_api.FaceServiceClient(origin, timeout=float(bcfg.get("timeout", 120)))
 
 
 async def _identity_ensure_face_service() -> Response | None:
@@ -16669,9 +16663,10 @@ async def _identity_ensure_face_service() -> Response | None:
     from gateway.lifecycle_drivers import driver_for_service
 
     bcfg = dict(_identity_face_cfg())
-    if not bcfg:
+    if not service_registry.engine_origin(bcfg):
+        reason = "" if not bcfg else f": {service_registry.NOT_CONFIGURED_REASON}"
         return Response(
-            content=json.dumps({"error": {"message": "The face service is not configured.", "type": "service_unavailable"}}),
+            content=json.dumps({"error": {"message": f"The face service is not configured{reason}.", "type": "service_unavailable"}}),
             status_code=503, media_type="application/json",
         )
     driver = driver_for_service("faces", {"faces": bcfg})
@@ -20975,7 +20970,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         return await _deny_realtime(websocket, denied)
 
     service = (config.get("backends") or {}).get(_REALTIME_SERVICE_ID)
-    if not service or not service.get("port"):
+    if not service or not service.get("port") or not service.get("host"):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     admission = _dispatch_admission_response(
         "audio.realtime", auth_context=auth_context, resource_class="audio",
@@ -20995,7 +20990,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         _require_egress_lease(_REALTIME_SERVICE_ID)
     except TransitionUnavailable as refused:
         return await _fail_open_realtime(websocket, "The Realtime service is not admitting sessions.", _transition_error_code(refused))
-    url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
+    url = realtime_proxy.upstream_url(str(service["host"]), int(service["port"]), dict(websocket.query_params))
     try:
         upstream = await ws_connect(
             url, max_size=realtime_proxy.MAX_FRAME_BYTES, compression=None, open_timeout=10, ping_interval=20, ping_timeout=60,
@@ -33947,7 +33942,7 @@ def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> 
     raw_url = str(cfg.get("url") or cfg.get("base_url") or "").strip()
     if raw_url:
         return raw_url.rstrip("/")
-    host = str(cfg.get("host", "127.0.0.1")).strip()
+    host = str(cfg.get("host") or "").strip()  # a record with no host names no address
     port = cfg.get("port")
     if not host or port is None:
         return ""

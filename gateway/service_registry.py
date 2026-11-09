@@ -1905,6 +1905,22 @@ def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
     return origin_of(service_base_url(config))
 
 
+def engine_origin(config: Mapping[str, Any]) -> str:
+    """The ``scheme://host:port`` an engine's record names, or ``""`` when it names no address.
+
+    The one reading of an engine's address: the record's host and port, else the origin of its base URL, else its
+    ``connection.address``. ``""`` means the engine is not configured. No caller supplies a host or port of its own.
+    """
+    origin = lifecycle_dial_url(config)
+    if origin:
+        return origin
+    connection = config.get("connection")
+    return origin_of(str(connection.get("address") or "")) if isinstance(connection, Mapping) else ""
+
+
+NOT_CONFIGURED_REASON = "its service record names no address (host and port)"
+
+
 def _dialed_origins(config: Mapping[str, Any]) -> frozenset[str]:
     """The origins of every address the gateway can dial for this record, however the record spells them.
 
