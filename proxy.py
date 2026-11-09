@@ -20239,7 +20239,7 @@ async def admin_drain_status(request: Request):
     denied = await asyncio.to_thread(_drain_authorize, request, write=False)
     if denied is not None:
         return denied
-    return JSONResponse(DRAIN_STATE.snapshot())
+    return JSONResponse(await asyncio.to_thread(DRAIN_STATE.snapshot))
 
 
 @app.post("/admin/api/drain", include_in_schema=False)
@@ -20273,7 +20273,7 @@ async def admin_drain_set(request: Request):
         + (f" reason={reason[:80]!r}" if draining and reason else ""),
         flush=True,
     )
-    return JSONResponse(DRAIN_STATE.snapshot())
+    return JSONResponse(await asyncio.to_thread(DRAIN_STATE.snapshot))
 
 
 
