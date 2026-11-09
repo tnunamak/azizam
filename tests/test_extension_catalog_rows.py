@@ -88,6 +88,64 @@ def test_invalid_extension_rows_refused(tmp_path, rows, message):
         catalog.load_extension_routes(write_rows(tmp_path, rows))
 
 
+@pytest.mark.parametrize("rows, namespace, route, row_number", [
+    pytest.param(
+        [{"canonical": "/v1/videos/workflows/{workflow_id}",
+          "extensions": ["com.azizam.prompts"], "extension_order": 51}],
+        "com.azizam.prompts", "/v1/videos/workflows/{workflow_id}", 1,
+        id="workflow-residual",
+    ),
+    pytest.param(
+        [{"canonical": "/gateway/v1/media/jobs/image-generations",
+          "extensions": ["com.azizam.prompts"], "extension_order": 91}],
+        "com.azizam.prompts", "/gateway/v1/media/jobs/image-generations", 1,
+        id="media-jobs-residual",
+    ),
+    pytest.param(
+        [{"canonical": "/same", "extensions": ["com.azizam.chat"], "extension_order": 1},
+         {"canonical": "/same", "extensions": ["com.azizam.chat"], "extension_order": 2}],
+        "com.azizam.chat", "/same", 2,
+        id="registered-registered",
+    ),
+])
+def test_duplicate_extension_route_refused(tmp_path, rows, namespace, route, row_number):
+    with pytest.raises(ValueError) as error:
+        catalog.load_extension_routes(write_rows(tmp_path, rows))
+    assert str(error.value) == (
+        f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
+        f"record 1, row {row_number}"
+    )
+
+
+def test_duplicate_extension_route_across_records_refused(tmp_path):
+    path = tmp_path / "rows.yml"
+    path.write_text(yaml.safe_dump({"records": [
+        {"registered_routes": [
+            {"canonical": "/same", "extensions": ["com.azizam.routing"], "extension_order": 1},
+        ]},
+        {"registered_routes": [
+            {"canonical": "/same", "extensions": ["com.azizam.routing"], "extension_order": 2},
+        ]},
+    ]}), encoding="utf-8")
+    with pytest.raises(ValueError) as error:
+        catalog.load_extension_routes(path)
+    assert str(error.value) == (
+        "duplicate extension route: namespace 'com.azizam.routing', route '/same', "
+        "record 2, row 1"
+    )
+
+
+def test_same_route_in_distinct_extension_namespaces_allowed(tmp_path):
+    index = catalog.load_extension_routes(write_rows(tmp_path, [
+        {"canonical": "/shared", "extensions": ["com.azizam.chat"], "extension_order": 1},
+        {"canonical": "/shared", "extensions": ["com.azizam.routing"], "extension_order": 2},
+        {"canonical": "/multi", "extensions": ["com.azizam.chat", "com.azizam.routing"],
+         "extension_order": 3},
+    ]))
+    for namespace in ("com.azizam.chat", "com.azizam.routing"):
+        assert [row.route for row in index[namespace]] == ["/shared", "/multi"]
+
+
 def test_extension_index_is_deeply_read_only():
     index = catalog.load_extension_routes(ROWS)
     with pytest.raises(TypeError):
