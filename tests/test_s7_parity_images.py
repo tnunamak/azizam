@@ -984,7 +984,6 @@ def test_images_J28_cancel_route_answers(tmp_path):
     assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("failures", lambda o: [failure(o, i) for i in range(1, len(o.trace["caller"]))]))
 
 
-@ROW_PENDING
 def test_images_J29_content_states(tmp_path):
     async def before_and_after(rig, job_id):
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/content", label="content")

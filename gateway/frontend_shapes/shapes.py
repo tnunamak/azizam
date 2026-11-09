@@ -18,7 +18,7 @@ import json
 
 from gateway import client_errors, image_extensions, image_output
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import Shape, coerce, job_object
+from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
 from gateway.workflow_runtime_types import (
     CallerContext,
     JobService,
@@ -38,6 +38,8 @@ FIXED_INPUTS: dict[str, Callable[[], Mapping[str, Any]]] = {}
 # The deployment's signed links to a stored picture, by use: "link" is the item's ``url``, "asset" its ``asset_url``. Installed
 # at start by the main module (they sign for the request's host).
 ASSET_URLS: dict[str, Callable[[ResultRef, Any], str]] = {}
+# The deployment's own job document ("job": job id -> mapping or None), which the image jobs wire answers with as its clients saw it.
+JOB_DOCUMENT: dict[str, Callable[[str], Mapping[str, Any] | None]] = {}
 REQUEST_KEY = "request"         # where ``to_response`` hands the request to ``render_success`` in the answer mapping
 MAX_IMAGES = 10                 # the public range of ``n``: one request returns at most this many pictures
 _SIZE = re.compile(r"^(\d{1,5})x(\d{1,5})$")
@@ -434,6 +436,24 @@ class ImageJobs(OpenAIImagesJson):
 
     shape_id = "openai.images.jobs"
     not_object_text = "JSON body must be an object"
+
+    def render_job(self, view: RunJobView) -> Response:
+        document = JOB_DOCUMENT["job"](view.job_id) if "job" in JOB_DOCUMENT else None
+        if document is None:
+            return super().render_job(view)
+        return JSONResponse(document, status_code=200 if view.status in TERMINAL else 202,
+                            headers={"Location": f"/gateway/v1/media/jobs/{view.job_id}"})
+
+    def render_content(self, view: RunJobView, jobs: JobService, caller: CallerContext, request: Any) -> Response | None:
+        """The finished job's pictures as the jobs route lists them: each with its id, type and signed links."""
+        items = []
+        for ref in self.media_refs(view):
+            item: dict[str, Any] = {"asset_id": ref.asset_id, "media_type": ref.media_type}
+            for key, name in (("asset", "asset_url"), ("link", "url")):
+                if request is not None and key in ASSET_URLS:
+                    item[name] = ASSET_URLS[key](ref, request)
+            items.append(item)
+        return JSONResponse({"created": view.updated_at_s, "job_id": view.job_id, "data": items})
 
 
 class AudioGenerate(Shape):

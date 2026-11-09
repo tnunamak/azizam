@@ -25979,10 +25979,17 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
-def _run_job_content(job_id: str, caller: Any) -> Response | None:
-    """A finished run's content, when it has exactly one file result, is that file in its own media type; else None."""
+def _run_job_content(job_id: str, caller: Any, request: Any = None) -> Response | None:
+    """A finished run's content: the wire of the row that took the job reads it its own way; else, with exactly one file
+    result, that file in its own media type; else None."""
     service = _workflow_job_service()
     view = service.get(job_id, caller) if service is not None else None
+    if view is not None and view.status == "succeeded":
+        stored = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        row = {r.id: r for r in frontend_shapes.bundled_rows()}.get(str((stored.get("metadata") or {}).get("frontend") or ""))
+        read = frontend_shapes.build_shape(row).render_content(view, service, caller, request) if row is not None else None
+        if read is not None:
+            return read
     refs = [ref for ref in (view.results or ()) if ref.asset_id is not None] if view is not None else []
     if len(refs) != 1:
         return None
@@ -26064,7 +26071,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
            headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
     if workflow_run.is_run_job(job):  # first: a run's row carries its route's intent, which may be mesh.generate
-        single = await asyncio.to_thread(_run_job_content, job_id, auth_context)
+        single = await asyncio.to_thread(_run_job_content, job_id, auth_context, request)
         if single is not None:
             return single
     if intent == mesh_api.MESH_INTENT:
@@ -26967,6 +26974,8 @@ def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
 
 
 frontend_wire_shapes.MASKING["source_alpha"] = _mask_into_source_alpha
+frontend_wire_shapes.JOB_DOCUMENT["job"] = lambda job_id: (
+    _image_media_job_client_payload(job, None) if (job := media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)) else None)
 # What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
 frontend_wire_shapes.FIXED_INPUTS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = lambda: {
     "prompt": IMAGE_VARIATIONS_PROMPT, "denoise": _image_variations_denoise()}

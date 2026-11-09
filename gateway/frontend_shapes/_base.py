@@ -290,6 +290,10 @@ class Shape:
                              answer: Mapping[str, Any] | None = None) -> Response:
         raise NotImplementedError
 
+    def render_content(self, view: RunJobView, jobs: JobService, caller: CallerContext, request: Any) -> Response | None:
+        """Hook: how a finished job of this wire is read at the jobs route; None: as the file it holds."""
+        return None
+
     @staticmethod
     def read(view: RunJobView, ref: ResultRef, jobs: JobService, caller: CallerContext) -> bytes:
         content = jobs.open_result(view.job_id, ref, caller)
