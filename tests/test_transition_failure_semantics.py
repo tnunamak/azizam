@@ -129,11 +129,15 @@ class Engine(SnapshotEngine):
         self.release_outcome = "success"
         self.query_outcome = "unknown"
         self.servable: Optional[bool] = True
+        self.clean: Optional[bool] = True
 
     async def __call__(self, service_id: str, op: str, body: Mapping[str, Any]) -> Reply:
         if op == "transition.servable":
             self.calls.append((op, dict(body)))
             return Reply(200, {"value": self.servable, "incarnation": "inc-1"})
+        if op == "transition.clean":
+            self.calls.append((op, dict(body)))
+            return Reply(200, {"value": self.clean, "incarnation": "inc-1"})
         if op == "transition.load" and self.load_outcome != "success":
             self.calls.append((op, dict(body)))  # the engine refused the load and changed nothing
             return Reply(200, {"outcome": self.load_outcome, "evidence_ref": "load_refused"})
@@ -147,7 +151,8 @@ class Engine(SnapshotEngine):
         return await super().__call__(service_id, op, body)
 
 
-def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best_effort", **semantics: str):
+def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best_effort", verify: bool = False,
+         **semantics: str):
     """The shipped snapshot profile with ``semantics`` attested and a ``servable`` observation, under the shipped id."""
     shipped = yaml.safe_load((transition_profiles.PROFILE_DIR / f"{SNAPSHOT_PROFILE}.yml").read_text(encoding="utf-8"))
     for op, value in semantics.items():
@@ -155,8 +160,10 @@ def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best
             shipped["restore"]["reset"]["failure_semantics"] = value
         else:
             shipped.setdefault(op, {})["failure_semantics"] = value
-    shipped["observations"] = {"servable": "transition.servable"}
+    shipped["observations"] = {"servable": "transition.servable", "clean": "transition.clean"}
     shipped["servable_check"] = "servable"
+    if verify:
+        shipped["restore"]["reset"]["verify"] = "clean"
     directory = tmp_path / "profiles"
     directory.mkdir()
     (directory / f"{SNAPSHOT_PROFILE}.yml").write_text(yaml.safe_dump(shipped), encoding="utf-8")
