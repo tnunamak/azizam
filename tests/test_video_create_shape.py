@@ -702,7 +702,7 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
     shapes.VIDEO_HOOKS = Hooks()
 
     def edit_request(extra: dict) -> Any:
-        return read({"model": "ltx-2.5-edit", "prompt": "p", "video": {"id": "video_mj_done"}, **extra}, snapshot, row=row)
+        return read({"model": "video.generate.ltx-2.5-edit", "prompt": "p", "video": {"id": "video_mj_done"}, **extra}, snapshot, row=row)
 
     try:
         made = edit_request({})
@@ -711,7 +711,7 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
         too_long = edit_request({"seconds": 6})
         assert too_long.status_code == 400
         assert json.loads(too_long.body)["error"]["message"] == "seconds (6) is longer than the source video (4.20 s)"
-        open_job = read({"model": "ltx-2.5-edit", "prompt": "p", "video": {"id": "video_mj_open"}}, snapshot, row=row)
+        open_job = read({"model": "video.generate.ltx-2.5-edit", "prompt": "p", "video": {"id": "video_mj_open"}}, snapshot, row=row)
         body = json.loads(open_job.body)["error"]
         assert (open_job.status_code, body["message"], body["code"], body["param"]) == (
             400, "Source video is not completed (status=queued)", "video_not_ready", "video")
