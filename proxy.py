@@ -27329,9 +27329,14 @@ def _record_row_refusal(owner: _RunReceiptOwner, caller: AuthContext, refused: R
         _media_job_admission_response(owner.receipt.intent, count_queue=False, receipt=owner.receipt, auth_context=caller)
 
 
+_RECEIPT_FIELD_FACTS = frozenset({"requested_model"})      # facts a shape states that the receipt holds as a field, not in its metadata
+
+
 def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
     for name, value, warning in facts:
-        if name:
+        if name in _RECEIPT_FIELD_FACTS:
+            setattr(owner.receipt, name, value)
+        elif name:
             owner.receipt.metadata[name] = value
         if warning:
             owner.receipt.add_warning(warning)

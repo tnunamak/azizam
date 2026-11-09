@@ -318,6 +318,7 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     now = int(time.time())
     parameters = {**(context.parameters if context else {}), "size": size, "seconds": seconds_text,
                   "actual_seconds": actual_seconds, "length_frames": length}
+    _wire.fact("requested_model", public_model)              # the receipt names the model the caller asked for
     facts: dict[str, Any] = {
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
         "length_frames": length, "frame_rate": frame_rate,

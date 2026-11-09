@@ -264,6 +264,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         # The receipt is a submit receipt: it closes now, as the queued answer goes out, and the job never touches it.
         response = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
         owner.receipt.job_id = outcome.job_id                # the one thing a submit receipt adds: it names the job it queued
+        owner.receipt.metadata["status_code"] = response.status_code
         owner.report(status="succeeded", reason=f"http_{response.status_code}")
         return response
     if answered.mode == "job" and row.run_receipt_path:
