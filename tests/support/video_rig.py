@@ -142,7 +142,10 @@ class World:
     # -- HTTP -----------------------------------------------------------------------------------------------
     async def call(self, method: str, path: str, *, owner=ALICE, **kwargs):
         with authenticated(owner):
-            return await self.rig.call(method, path, **kwargs)
+            out = await self.rig.call(method, path, **kwargs)
+        if out.status_code >= 400:
+            print("DBG", method, path, out.status_code, out.text[:300])
+        return out
 
     async def create(self, *, owner=ALICE, prompt="lifecycle parity", **body) -> str:
         """Create one video and return the id the response carries. The test clock moves one second, so two videos
