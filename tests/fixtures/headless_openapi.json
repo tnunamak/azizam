@@ -26091,8 +26091,7 @@
         "summary": "Videos List"
       },
       "post": {
-        "description": "Sora-shaped video generation submit. Returns {id, status: queued}.",
-        "operationId": "videos_create_openai_v1_videos_post",
+        "operationId": "row_videos_create__openai_v1_videos_openai_v1_videos_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -26557,7 +26556,7 @@
             "AppKeyXApiKey": []
           }
         ],
-        "summary": "Videos Create",
+        "summary": "Row:Videos-Create:/Openai/V1/Videos",
         "x-azizam-async": {
           "content": "GET /v1/videos/{video_id}/content",
           "poll": "GET /v1/videos/{video_id}",
@@ -33652,8 +33651,7 @@
         "summary": "Videos List"
       },
       "post": {
-        "description": "Sora-shaped video generation submit. Returns {id, status: queued}.",
-        "operationId": "videos_create_v1_videos_post",
+        "operationId": "row_videos_create__v1_videos_v1_videos_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -34118,7 +34116,7 @@
             "AppKeyXApiKey": []
           }
         ],
-        "summary": "Videos Create",
+        "summary": "Row:Videos-Create:/V1/Videos",
         "x-azizam-async": {
           "content": "GET /v1/videos/{video_id}/content",
           "poll": "GET /v1/videos/{video_id}",
