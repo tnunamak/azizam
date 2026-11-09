@@ -80,7 +80,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "f908493915328a2dd0f924af11ecce30b7939f0430a9b464d5ed727f550d3214",
+      "source_sha256": "964f8500e5ef0cd303a6fcd57f7c6a035b24b1253d14decc07f59d7c15af76bf",
       "call": "append_event",
       "event": "'completed'",
       "access": "content:job:read"
@@ -216,7 +216,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "f908493915328a2dd0f924af11ecce30b7939f0430a9b464d5ed727f550d3214",
+      "source_sha256": "964f8500e5ef0cd303a6fcd57f7c6a035b24b1253d14decc07f59d7c15af76bf",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
