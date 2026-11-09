@@ -19,6 +19,7 @@ import yaml
 from gateway import transition_adapter, transition_profiles
 from gateway.swap_drain import SwapDrain
 from gateway.transition_gate import GateStore
+from gateway.transition_ops import EffectResult, StepIntent
 from gateway.transition_profiles import ProfileError, parse_profile
 from gateway.transition_runtime import TransitionRuntime
 from gateway.transition_snapshot_steps import snapshot_steps
@@ -146,7 +147,7 @@ class Engine(SnapshotEngine):
         return await super().__call__(service_id, op, body)
 
 
-def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **semantics: str):
+def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best_effort", **semantics: str):
     """The shipped snapshot profile with ``semantics`` attested and a ``servable`` observation, under the shipped id."""
     shipped = yaml.safe_load((transition_profiles.PROFILE_DIR / f"{SNAPSHOT_PROFILE}.yml").read_text(encoding="utf-8"))
     for op, value in semantics.items():
@@ -168,7 +169,14 @@ def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **semantics: str):
     drain = SwapDrain(wall_clock=time.time)
     locks: dict[str, asyncio.Lock] = {}
     engine = Engine()
-    runtime = TransitionRuntime(gates=lambda: gates, services=snapshot_services,
+    def services() -> dict[str, Any]:
+        found = snapshot_services()
+        for record in found.values():
+            if record:
+                record["residency"]["transition"]["checkpoint_policy"] = policy
+        return found
+
+    runtime = TransitionRuntime(gates=lambda: gates, services=services,
                                 lock_for=lambda d: locks.setdefault(d, asyncio.Lock()),
                                 drain=lambda: drain, protocol_invoke=engine,
                                 extra_steps=snapshot_steps(lazy), snapshots=lazy)
@@ -352,3 +360,83 @@ def test_startup_reconcile_settles_an_attested_failed_query_by_the_servable_rule
         assert done.state == "aborted" and gates.state("dom") == "open"
 
     run(scenario())
+
+
+# -- restart recovery of a refused checkpoint (S8b review of train 35b) ------------------------------------------------
+
+
+def _crashed_checkpoint(runtime: Any, *, recorded: bool) -> str:
+    """A park that stopped at its checkpoint. ``recorded=False``: the engine refused the save and the process died before
+    the refusal was written (an intent and no outcome). ``recorded=True``: the refusal was recorded and the process died
+    before the next step."""
+    executor = runtime.executor()
+    begun = executor.store.begin(domain="dom", kind="park", idempotency_key="park-crash", target=None,
+                                 incarnation="inc-1", config_revision=1)
+    op_id = begun.operation.op_id
+    step = StepIntent(step="checkpoint", effect_key=f"{op_id}:checkpoint", expected_incarnation="inc-1")
+    executor.store.write_intent(op_id, step)
+    if recorded:
+        executor.store.write_outcome(op_id, "checkpoint", EffectResult(
+            outcome="no_change", evidence_ref="checkpoint:engine_declined:cold_next_start"))
+    return op_id
+
+
+def _restart(runtime: Any, op_id: str) -> Any:
+    async def go() -> Any:
+        executor = runtime.executor()
+        await executor.reconcile_startup()
+        for _ in range(200):
+            done = await asyncio.to_thread(executor.store.get, op_id)
+            if done.state != "running":
+                return done
+            await asyncio.sleep(0.05)
+        return done
+
+    return run(go())
+
+
+@pytest.mark.parametrize("recorded", [False, True])
+def test_a_best_effort_checkpoint_refused_before_a_crash_goes_on_cold_after_the_restart(tmp_path, monkeypatch, recorded) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, checkpoint="no_change")
+    engine.query_outcome = "failed"  # what the engine says about the refused save
+    op_id = _crashed_checkpoint(runtime, recorded=recorded)
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.step_outcome)
+    assert store.pointer("dom") is None and engine.resident is None, "the park went on cold and released"
+
+
+@pytest.mark.parametrize("recorded", [False, True])
+@pytest.mark.parametrize(("servable", "state"), [(True, "aborted"), (False, "failed_closed")])
+def test_a_required_checkpoint_refused_before_a_crash_reopens_only_on_fresh_servable_evidence(
+        tmp_path, monkeypatch, recorded, servable, state) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, policy="required", checkpoint="no_change")
+    engine.query_outcome, engine.servable = "failed", servable
+    op_id = _crashed_checkpoint(runtime, recorded=recorded)
+    done = _restart(runtime, op_id)
+    assert done.state == state and gates.state("dom") == ("open" if servable else "failed_closed")
+    assert not any(op == "transition.release" for op, _ in engine.calls), "the source was not released"
+
+
+def test_a_required_checkpoint_refused_before_a_crash_reconciles_when_servable_is_unknown(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, policy="required", checkpoint="no_change")
+    engine.query_outcome, engine.servable = "failed", None
+    op_id = _crashed_checkpoint(runtime, recorded=False)
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("reconciling", "reconciling")
+
+
+@pytest.mark.parametrize("policy", ["best_effort", "required"])
+def test_a_refused_checkpoint_the_profile_does_not_attest_stays_held_after_the_restart(tmp_path, monkeypatch, policy) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, policy=policy, checkpoint="unknown")
+    engine.query_outcome, engine.servable = "failed", True
+    op_id = _crashed_checkpoint(runtime, recorded=False)
+    done = _restart(runtime, op_id)
+    assert done.state in ("reconciling", "failed_closed") and gates.state("dom") != "open"
+    assert not any(op == "transition.release" for op, _ in engine.calls)
+
+
+def test_an_unattested_recorded_no_change_stays_held_after_the_restart(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, checkpoint="unknown")
+    op_id = _crashed_checkpoint(runtime, recorded=True)
+    done = _restart(runtime, op_id)
+    assert done.state == "failed_closed" and gates.state("dom") == "failed_closed"
