@@ -546,7 +546,9 @@ class RestoreStep:
     def revalidation_owed(row: Operation) -> Optional[EffectResult]:
         """What a held recovery still owes. A reset that ran but whose clean check could not be read owes only that check,
         judged as a recorded cold settlement: the reset must not run again. Anything else keeps the recorded outcome."""
-        if row.step_outcome == "unknown" and row.evidence_ref == "reset:target_not_verified_clean":
+        # The second evidence is what a hold of the earlier format kept after its reset had already run.
+        if row.step_outcome == "unknown" and row.evidence_ref in ("reset:target_not_verified_clean",
+                                                                  "restore:failed:state_not_known_clean"):
             return EffectResult(outcome="no_change", evidence_ref="restore:reset:clean:serving_cold")
         return None
 

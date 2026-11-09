@@ -810,6 +810,10 @@ class Executor:
             now = await asyncio.to_thread(self.store.get, operation.op_id)
             owed = getattr(self._steps.get(operation.step), "revalidation_owed", None)  # type: ignore[arg-type]
             judged = owed(now) if owed is not None and now is not None else None
+            if judged is None and now is not None and now.step_outcome == "unknown":
+                # The step's recovery dispatched an effect and its outcome is unknown: the row already holds exactly that.
+                # The next restart queries that intent; a revalidation hold built from the old outcome would run it again.
+                return verdict
             await self._hold_revalidation(operation, judged)
         return verdict
 
@@ -833,7 +837,11 @@ class Executor:
         unreadable check keeps the hold."""
         held_outcome, _, recorded = (operation.evidence_ref or "").removeprefix(REVALIDATE).partition(":")
         if held_outcome not in ("no_change", "partial"):
-            held_outcome, recorded = "no_change", (operation.evidence_ref or "").removeprefix(REVALIDATE)
+            # A hold from the format before the outcome was recorded in it: the recorded pair is the evidence alone.
+            recorded = (operation.evidence_ref or "").removeprefix(REVALIDATE)
+            owed = getattr(self._steps.get(operation.step), "revalidation_owed", None)  # type: ignore[arg-type]
+            legacy = owed(dataclasses.replace(operation, step_outcome="unknown", evidence_ref=recorded)) if owed else None
+            held_outcome, recorded = (legacy.outcome, legacy.evidence_ref or "") if legacy is not None else ("no_change", recorded)
         kept = dataclasses.replace(operation, step_outcome=held_outcome, evidence_ref=recorded)
         verdict = await self._settled_verdict(kept, adapter, policy)
         if verdict == "reconcile":
