@@ -24,6 +24,7 @@ from gateway import workflow_schema_migration as migration  # noqa: E402
 from gateway.workflow_convert import POLICY_KEYS, convert_1_to_2  # noqa: E402
 from scripts import workflow_schema_2_report  # noqa: E402
 from tests.registry_test_helpers import write_legacy_registry_for_test  # noqa: E402
+from tests.support.section_edits import without_section_additions  # noqa: E402
 
 SENTINEL = "sentinel-value-must-never-print"
 TRUSTED_ID = "image.generate.anima-turbo"  # has a top-level ``requires``
@@ -825,7 +826,8 @@ def test_every_frozen_release_document_converts_to_the_bundled_schema_2_file():
     for record_id, record in frozen.items():
         plan = _plan({record_id: _owner_record(record_id, record["manifest"])})
         assert _rows(plan)[record_id].action == migration.CONVERT_WHOLE, record_id
-        assert plan.stored["workflows"][record_id]["manifest"] == bundled[record_id], record_id
+        stored = plan.stored["workflows"][record_id]["manifest"]
+        assert stored == without_section_additions(bundled[record_id], stored), record_id
 
 
 def test_the_ace_fix_is_data_and_removes_only_a_value_the_record_still_holds_from_the_release():

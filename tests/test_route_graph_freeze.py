@@ -231,7 +231,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # POST /v1/3d/generations/glb arrived (see REMOVED_PATHS and ADDED_PATHS); the mesh workflow's documented sync and
         # async paths moved to /v1/3d/generations/glb (tests/fixtures/headless_openapi.json shows the same changes).
         # Before it the digest was 501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8.
-        assert route_graph.openapi_digest(proxy.app) == "8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5"
+        # Re-captured 2026-11-08 for S7 (V5a): the video workflows declare their width, height and length (and, for H3, its
+        # frame rate) as inputs, so their input schemas and the route inputs the catalog lists for them moved; nothing else
+        # did (tests/fixtures/headless_openapi.json shows the same changes). Before it the digest was
+        # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5.
+        assert route_graph.openapi_digest(proxy.app) == "33821a54e784de1c8076b989415d3670e85a0acbe8246a4c9d3569da5932d97f"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -270,4 +274,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # POST /v1/3d/generations/glb arrived with the same App key security; the mesh workflow's documented paths moved.
     # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the frozen digest was
     # b62d42d37489df105cda9f0d730000d9ea8dba85e958df91ecfa7b21d629e6ad.
+    # Re-captured 2026-11-08 for S7 (V5a): the same video workflow input changes. Before it the frozen digest was
+    # 31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

@@ -14,6 +14,18 @@ prompt_hint: Describe the clip you want
 description: Make a video with sound from a description or picture.
 technical_description: 'LTX-2.5 22B distilled two-stage text-to-video with synchronized audio (int8_convrot). Default video model. Request via POST /v1/videos: size is floored to multiples of 64 (max 1280x704; default 960x512), seconds 1-10 at 24 fps (frames are 8k+1). About 45 s warm for 5 s at 960x512; 1280x704 about 140 s. License: LTX-2.x Community License.'
 typical_seconds: 49
+video:
+  roles:
+    width: width
+    height: height
+    length: length
+    frame_rate: frame_rate
+  size: {default: 960x512, max: 1280x704, multiple: 64}
+  length: {min_seconds: 1, max_seconds: 10}
+  grid: {fps: 24, step: 8, offset: 1}
+  variants:
+    image: video.generate.ltx-2.5-i2v
+    long: video.generate.ltx-2.5-long
 inputs:
   prompt:
     label: What to make
@@ -40,6 +52,26 @@ inputs:
       generator: random_integer
       minimum: 0
       maximum: 4294967295
+  width:
+    label: Width
+    help: Video width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 1280
+  height:
+    label: Height
+    help: Video height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 704
+  length:
+    label: Length in frames
+    help: Frame count on the 8N+1 grid.
+    type: integer
+    step: 8
+    offset: 1
+    minimum: 9
+    maximum: 241
 outputs:
   video:
     media_type: video/mp4
@@ -65,6 +97,15 @@ bindings:
           input: noise_seed
         - node: '31'
           input: noise_seed
+      width:
+        - node: '20'
+          input: value
+      height:
+        - node: '21'
+          input: value
+      length:
+        - node: '22'
+          input: value
     requires:
       models:
         - role: diffusion_model

@@ -172,11 +172,11 @@
     "WorkflowInputs_image_generate_sdxl_seamless_tile": "547473c099a9247d0ad92262cbed2f92f82c90079fe1f80c4d9cf5f64faa18de",
     "WorkflowInputs_video_edit_rife_interpolate": "a1a71400a4c913fe81db1894d059a33fdc312baa8b11ea3b3c151b1a1cb969a4",
     "WorkflowInputs_video_edit_scail_2_replace": "e9084909efe623cb96e59dc07ba22d768ccabc2e10ce1024cdd7425e99ae2a63",
-    "WorkflowInputs_video_generate_ltx_2_5_i2v": "db47d5efd1eda8e696a7e6f6d93b3982133af528a32c74bcfc4b2a44a3a82798",
+    "WorkflowInputs_video_generate_ltx_2_5_i2v": "8008b493d2252c5d3dba35401a1bffb134aca6b8c1891d0052e2fcb8052bd518",
     "WorkflowInputs_video_generate_ltx_2_5_long": "5136f4a0311deefc7197cb0450fc0c684feb7a529778163092aaa8592a7c8c41",
-    "WorkflowInputs_video_generate_ltx_2_5_t2v": "3efc9f022d153b7ae742a631a99238d7a6dec5427bb3b359875a1a789339dd2e",
-    "WorkflowInputs_video_generate_minimax_h3_i2v": "6cdfe9d49db9227ea140574675f47bb69c080e4a766bd25a5f6f3a38603284ec",
+    "WorkflowInputs_video_generate_ltx_2_5_t2v": "c5319efbc9ab8bf555e5281e29920ecc1400064115f3147449fb9cab101ff468",
+    "WorkflowInputs_video_generate_minimax_h3_i2v": "c34d9a3202b90ae5729f06c49818e804827c6e88cb270873b18fb6d34504ece6",
     "WorkflowInputs_video_generate_minimax_h3_long": "95a620bd9b36f5b356fb07f79d053fb3ed9ecc0b3e43a760cdc9fbc28d008b46",
-    "WorkflowInputs_video_generate_minimax_h3_t2v": "4427815800a95b5de444b720dfbea474778041fbbe6964e20aa8bed587744c51"
+    "WorkflowInputs_video_generate_minimax_h3_t2v": "faf62286e74dcf9d197865ca3d93e6c1f94e430bc48549b17a09100bc4bbfa71"
   }
 }
