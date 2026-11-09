@@ -27360,7 +27360,6 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
     def check_reference(self, caller: Any, data: bytes, contract: Mapping[str, Any], input_name: str) -> Any:
         """The refusals the removed route gave a reference picture, with its 400 body, before the file is staged anywhere."""
         try:
-            import sys; print("DBG", input_name, contract["inputs"]["image"], file=sys.stderr)
             accepts = _input_accepts({"inputs": contract.get("inputs")}, input_name)
             _media_input_resolver().check_upload(
                 caller, data, destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts)

@@ -47,6 +47,10 @@ def edited_workflows(edit: Callable[[Any], Any]):
                     entry = snap.get(workflow_id)
                     return None if entry is None else edit(entry)
 
+                @property
+                def workflows(self):
+                    return {key: edit(entry) for key, entry in snap.workflows.items()}
+
                 def __getattr__(self, name):
                     return getattr(snap, name)
             return Snap()
