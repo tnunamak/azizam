@@ -23,8 +23,9 @@ def test_probe(tmp_path):
 
     async def exercise(w):
         post = lambda body, **k: w.call("POST", "/v1/videos", json_body=body, **k)
-        vid = await w.create()
-        await drive(w, vid, "completed")
+        r0 = await w.call("POST", "/v1/videos", json_body={"prompt": "x", "model": MODEL})
+        vid = r0.json()["id"]
+        w.engine.states[vid.removeprefix("video_")] = "completed"
         configure_remix(w, None)
         await rec("remix_unconfigured", w.call("POST", f"/v1/videos/{vid}/remix", json_body={"prompt": "new dusk"}))
         await rec("edit_unconfigured", w.call("POST", "/v1/videos/edits", json_body={"prompt": "new dusk", "video": {"id": vid}}))
