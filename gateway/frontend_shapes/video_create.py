@@ -174,7 +174,7 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     if ((manifest.requires - {kind, "extensions"}) or manifest.select_subject or body.get("inputs")
             or ("extensions" in manifest.requires and not block)
             or (reference is not None and _reference_bytes(reference) is None)
-            or any(_wire.declared(chosen, key) and _is_asset(chosen, key) for key in block)):
+            or any(not _wire.declared(chosen, key) or _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
     for missing in _wire.asset_input_names(chosen):      # a required picture the body leaves out, before any other problem
         if missing != kind and _wire.entry_required(chosen, missing) is True and missing not in block:

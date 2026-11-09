@@ -527,7 +527,7 @@ def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_rec
 
 def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     """An input the manifest declares is never refused as an extension, even when it fills a role: ``frames`` is the keyframes
-    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is ignored."""
+    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is left to the old pipeline, which refuses it."""
     key = video_contract("ltx-2.5-keyframes", requires=["extensions"], image=False)
     key["inputs"]["frames"] = {"type": "integer", "minimum": 9, "maximum": 241}
     key["video"]["roles"]["length"] = "frames"
@@ -537,9 +537,10 @@ def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     run_request = read({"model": "ltx-2.5-keyframes", "prompt": "p", "seconds": 5, "extensions": block}, snapshot)
     assert isinstance(run_request, RunRequest), run_request
     assert run_request.inputs["frames"] == 49
-    # A name the manifest does not declare is ignored, as the old route ignored it: accepted, and it never reaches the engine.
-    ignored = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"frames": 49, "bogus": 1}}}, snapshot)
-    assert isinstance(ignored, RunRequest) and "bogus" not in ignored.inputs and ignored.inputs["frames"] == 49
+    # A name the manifest does not declare in the workflow block was refused (400 invalid_workflow_extension) by the old
+    # pipeline's manifest check (tests/test_video_keyframes.py pins it): the shape hands it back and does not run it.
+    undeclared = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"frames": 49, "bogus": 1}}}, snapshot)
+    assert isinstance(undeclared, _base.LegacyRoute) and undeclared.name == "videos.create"
 
 
 def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
