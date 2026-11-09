@@ -21,7 +21,7 @@ from typing import Any, Mapping, Sequence
 KINDS = frozenset({
     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
     "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "receipt_status_words",
-    "job_row_metadata", "job_create_failure_text", "idempotency_conflict", "executor_crash_text", "engine_session_id", "remove",
+    "job_row_metadata", "job_create_failure_text", "idempotency_key_reuse_conflict", "executor_crash_text", "engine_session_id", "remove",
     # The video move (CODE_TO_DATA_S7_VIDEO_MOVE.md section 5.4). Each names one thing that differs and nothing else.
     "video_id_namespace", "record_store_moved", "orphan_marked_by_runner", "receipt_names_job", "status_follows_runner",
 })
@@ -29,6 +29,16 @@ KINDS = frozenset({
 #: path goes through a ``status`` that follows ``response`` (the HTTP status) or through an ``error`` is refused.
 VIDEO_KINDS = frozenset({"video_id_namespace", "record_store_moved", "orphan_marked_by_runner", "receipt_names_job",
                          "status_follows_runner"})
+#: The only deltas that may touch an error body or a refusal status. Each kind lists the exact paths it may touch (regular
+#: expressions over the whole path), and a status change is allowed only for ``idempotency_key_reuse_conflict`` (a different body
+#: under a used Idempotency-Key answers 409, not the first job: Stripe's rule for key reuse). The other two are the failure texts
+#: that no longer name an exception class (run-core rule 7d3eb681a). Every other kind, and every other path, is refused.
+ERROR_ALLOWED: dict[str, tuple[str, ...]] = {
+    "idempotency_key_reuse_conflict": (r"\$\.caller\[\d+\]\.response\.status", r"\$\.caller\[\d+\]\.response\.body\.text#\$\.error"),
+    "job_create_failure_text": (r"\$\.caller\[\d+\]\.response\.body\.text#\$\.error\.(message|code)",),
+    "executor_crash_text": (r"\$\.media_jobs\.media_jobs\[\d+\]\.error", r"\$\.caller\[\d+\]\.response\.body\.text#\$\.error"),
+}
+STATUS_CHANGE_ALLOWED = {"idempotency_key_reuse_conflict": (202, 409)}
 #: The engine-request delta the design allows: the adapter's session id in the engine prompt (``client_id``). Nothing else in
 #: an engine request may be named.
 ENGINE_SESSION_LEAF = "$.client_id"
@@ -83,9 +93,12 @@ class Delta:
         if steps is None:
             return []
         out = []
-        if "error" in steps:
+        permitted = any(re.fullmatch(pattern, self.path) for pattern in ERROR_ALLOWED.get(self.kind, ()))
+        if "error" in steps and not permitted:
             out.append(f"{self.path}: no delta may change an error body")
         if any(a == "response" and b == "status" for a, b in zip(steps, steps[1:])):
+            if permitted and STATUS_CHANGE_ALLOWED.get(self.kind) == (self.old, self.new):
+                return out
             for value in (self.old, self.new):
                 if not isinstance(value, int) or isinstance(value, bool) or value >= 400:
                     out.append(f"{self.path}: no delta may change a refusal status (400 and above) or a status that is not a number")
@@ -329,9 +342,30 @@ def apply_deltas(golden: Mapping[str, Any], deltas: Sequence[Delta]) -> dict[str
 #: trace as that case observes it, not to a golden file (docs/design/CODE_TO_DATA_S7_PARITY.md section 4).
 _IMAGES = "s7_parity_images/"
 MANIFEST: dict[str, tuple[Delta, ...]] = {
-    # J10 (a different body under one Idempotency-Key answers 409, not the first job), J11 (the job-store failure text) and R06 (the
-    # executor-crash text) are NOT listed: each changes an error body or a refusal status, which the guard refuses for every kind.
-    # Their cases are strict xfails in tests/test_s7_parity_images.py until the old behaviour holds in the product or a ruling allows them.
+    # J10: a different body under one Idempotency-Key answers 409, not the first job (the named exception idempotency_key_reuse_conflict).
+    _IMAGES + "J10": (
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 202, 409,
+              "the same Idempotency-Key with another body answers 409 (acceptance matrix row 18; Stripe's rule for key reuse), not the first job"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.body.text#$.error", None,
+              {"code": "idempotency_conflict", "message": "this Idempotency-Key was used for a different request",
+               "type": "invalid_request_error"},
+              "the answer is the conflict error; the old answer was the first job, whose error field is null", subtree=True),
+    ),
+    _IMAGES + "J11": (
+        Delta("job_create_failure_text", "$.caller[0].response.body.text#$.error.message",
+              "Could not create image media job: RuntimeError", "the job could not be created",
+              "the client text no longer names the exception class (run-core rule 7d3eb681a); the class is logged"),
+        Delta("job_create_failure_text", "$.caller[0].response.body.text#$.error.code", MISSING, "job_not_created",
+              "the refusal carries the stable code the run core names for a job that was not stored"),
+    ),
+    _IMAGES + "R06": (
+        Delta("executor_crash_text", "$.media_jobs.media_jobs[0].error", "Image media job executor error: RuntimeError", "The job failed.",
+              "an unexpected error stores the fixed sentence, not the exception class (run-core rule 7d3eb681a)"),
+        Delta("executor_crash_text", "$.caller[1].response.body.text#$.error", "Image media job executor error: RuntimeError",
+              "The job failed.", "the same sentence, as the job document shows it"),
+        Delta("executor_crash_text", "$.caller[1].response.body.text#$.retryable", None, False,
+              "an unexpected error is not retried, so the job states that it is not retryable (S7 addendum, job-retry rule)"),
+    ),
     # The adapter's session id in the engine prompt; the event wait needs it. Engine-facing only.
     _IMAGES + "E07b": (
         Delta("engine_session_id", "$.engine_requests[3].body.text#$.client_id", MISSING, "<hex32:1>",

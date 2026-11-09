@@ -165,3 +165,35 @@ def test_no_golden_origin_block_holds_prompt_text():
             origin = (asset.get("json") or {}).get("origin")
             if origin is not None:
                 assert set(origin) <= listed.ORIGIN_KEYS, (path.name, sorted(origin))
+
+
+def test_the_named_exception_allows_exactly_the_key_reuse_conflict_and_the_two_failure_texts():
+    ok = [
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 202, 409, "a used key with another body answers 409"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.body.text#$.error", None, {"code": "idempotency_conflict"},
+              "the conflict error", subtree=True),
+        Delta("job_create_failure_text", "$.caller[0].response.body.text#$.error.message", "a: RuntimeError", "the job could not be created",
+              "no exception class in client text"),
+        Delta("executor_crash_text", "$.media_jobs.media_jobs[0].error", "a: RuntimeError", "The job failed.", "fixed sentence"),
+    ]
+    assert [problem for entry in ok for problem in entry.problems()] == []
+    for name in ("J10", "J11", "R06"):
+        assert listed.MANIFEST[f"s7_parity_images/{name}"], name
+
+
+def test_the_guard_still_refuses_every_other_status_or_error_delta():
+    refused = [
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 202, 500, "a different status"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 200, 409, "a different old status"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.body.text#$.error.message", "a", "b", "a path it may not touch"),
+        Delta("job_create_failure_text", "$.caller[0].response.status", 500, 200, "a status change under a text kind"),
+        Delta("envelope_v2", "$.caller[0].response.status", 202, 409, "another kind with the same status change"),
+        Delta("envelope_v2", "$.caller[0].response.body.text#$.error", None, {"code": "x"}, "another kind, an error body", subtree=True),
+        Delta("executor_crash_text", "$.caller[0].response.status", 200, 500, "a refusal status"),
+    ]
+    for entry in refused:
+        assert entry.problems(), entry
+
+
+def test_a_listed_exception_kind_exists():
+    assert set(listed.ERROR_ALLOWED) <= listed.KINDS and "idempotency_conflict" not in listed.KINDS

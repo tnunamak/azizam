@@ -312,7 +312,7 @@ def test_video_75_missing_output_is_a_video_asset_error(tmp_path):
         # named the engine and its HTTP status ("ComfyUI /view error: 404"); the run core says what the run recorded.
         # Reported as a difference: engine names stay out of core code (ENGINE_KNOWLEDGE_BOUNDARY).
         assert response.status_code == 502
-        assert response.json() == {"error": {"message": "No images generated", "type": "api_error"}}
+        assert response.json() == {"error": {"message": "No videos generated", "type": "api_error"}}
         assert w.video_files() == {}
         assert w.asset_id(vid) is None
         refused = w.engine.calls("GET", "/view")

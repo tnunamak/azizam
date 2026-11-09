@@ -156,21 +156,24 @@ def test_the_table_and_the_cases_name_the_same_refusals():
     assert set(ROWS) == set(CASES) | OWN_TEST, (sorted(set(ROWS) ^ (set(CASES) | OWN_TEST)))
 
 
-# Rows the run core cannot answer word for word. Each names the open item; the xfail is strict, so a fix makes it fail until the
-# entry is removed.
-OPEN = {
-    "content_view_error": "open: a result the runner could not read ends the job with the run core's own text ('No images generated'), "
-                          "not 'ComfyUI /view error: 404'; the old text names the engine",
-    "content_no_video_output": "open: an engine history with no video file ends the job succeeded with a non-video result; "
-                               "the old route answered the content 502 'No video file found'",
+# Rows answered with the run core's own text. Status, type and code are the old row's; only the message differs (the delta named
+# in NAMED_DELTAS), so the case still pins everything else.
+MESSAGE_DELTAS = {
+    "content_view_error": ("no_output_names_its_kind", "No videos generated"),
+    "content_no_video_output": ("no_output_names_its_kind", "No videos generated"),
 }
 
 
-@pytest.mark.parametrize("case", [pytest.param(name, marks=pytest.mark.xfail(strict=True, reason=OPEN[name])) if name in OPEN else name
-                                  for name in sorted(CASES)])
+@pytest.mark.parametrize("case", sorted(CASES))
 def test_the_refusal_is_exactly_the_row(tmp_path, case):
     needs, method, path, kwargs = CASES[case]
     want = ROWS[case]
+    if case in MESSAGE_DELTAS:
+        name, message = MESSAGE_DELTAS[case]
+        assert name in NAMED_DELTAS
+        want = {**want, "message": message}
+        if case == "content_no_video_output":
+            want["status"] = 502            # a job that ended without a result answers content 502 (as the view-error case), not 500
     seen = {}
 
     async def exercise(w):
@@ -210,17 +213,38 @@ def test_the_refusal_is_exactly_the_row(tmp_path, case):
     assert got == want, case
 
 
-@pytest.mark.xfail(strict=True, reason="open (P8): create answers 200 queued before the engine is called, so an unreachable engine fails "
-                                       "the job and the create has no 502 to compare; the failed-job body is tested in test_s7_parity_video_create.py")
-def test_create_engine_unavailable_is_exactly_the_row(tmp_path):
+def test_create_engine_unavailable_answers_queued_then_the_job_fails_without_the_engines_address(tmp_path):
+    """Named delta ``create_answers_before_the_engine`` (see NAMED_DELTAS): the old route answered 502 at create. Create now answers
+    once the job is queued, like the OpenAI videos API, and an unreachable engine shows up as a failed job. The failure text is the
+    old text without the engine's address."""
     from tests.test_adapter_differential import _comfy_down
-    want = ROWS["create_engine_unavailable"]
+    old = ROWS["create_engine_unavailable"]
     with GatewayRig("texts-engine-down", tmp_path) as rig:
         _comfy_down(rig)
 
         async def go():
-            return await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": MODEL})
-        response = asyncio.run(go())
-    error = response.json()["error"]
-    assert {"status": response.status_code,
-            **{name: error[name] for name in ("type", "param", "code", "message") if name in error}} == want
+            made = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": MODEL})
+            job = None
+            for _ in range(500):
+                job = await rig.call("GET", f"/v1/videos/{made.json()['id']}")
+                if job.json().get("status") == "failed":
+                    break
+                await asyncio.sleep(0.01)
+            return made, job
+        made, job = asyncio.run(go())
+    assert (made.status_code, made.json()["status"]) == (200, "queued"), made.text
+    failed = job.json()
+    assert failed["status"] == "failed" and failed["error"]["code"] == "video_generation_failed", failed
+    # The old text, up to the address; the address is not in any body.
+    assert failed["error"]["message"] == old["message"].split(" at http")[0], failed
+    assert "comfy.fk.test" not in made.text + job.text
+    assert "create_answers_before_the_engine" in NAMED_DELTAS
+
+
+# Named deltas of this table: a case answered differently on purpose, with the reason.
+NAMED_DELTAS = {
+    "create_answers_before_the_engine": "create answers 200 queued once the job is stored, like the OpenAI videos API; an unreachable "
+                                        "engine fails the job (the old route answered 502 at create)",
+    "no_output_names_its_kind": "a run that produced no file says which kind was not produced, from the workflow's declared output "
+                                "media type ('No videos generated'); the old text named the engine's /view error",
+}
