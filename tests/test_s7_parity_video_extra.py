@@ -84,6 +84,14 @@ def _engine_paths(rig: GatewayRig) -> list[str]:
     return [f"{entry['method']} {entry['path']}" for entry in rig.recorder.engine]
 
 
+async def _await_submit(rig: GatewayRig) -> None:
+    """The job's runner submits the prompt after the create answered: wait (real time, bounded) until it has."""
+    for _ in range(500):
+        if "POST /prompt" in _engine_paths(rig):
+            return
+        await asyncio.sleep(0.01)
+
+
 # --------------------------------------------------------------------------- R16: ids, access, storage
 
 def test_video_16_121_wire_id_is_prefixed_and_stable_on_lookup(tmp_path):
@@ -680,10 +688,7 @@ def test_video_10_85_deleting_a_queued_video_cancels_it_on_the_engine(tmp_path):
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
-        for _ in range(500):                        # the job's runner submits the prompt after the answer
-            if "POST /prompt" in _engine_paths(rig):
-                break
-            await asyncio.sleep(0)
+        await _await_submit(rig)
         await rig.call("DELETE", f"/v1/videos/{created.json()['id']}")
         seen["engine"] = _engine_paths(rig)
 
@@ -858,10 +863,7 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
         video_id = created.json()["id"]
-        for _ in range(500):                        # the job's runner submits the prompt after the answer
-            if "POST /prompt" in _engine_paths(rig):
-                break
-            await asyncio.sleep(0)
+        await _await_submit(rig)
         failed = await rig.call("DELETE", f"/v1/videos/{video_id}", label="delete with a failing cancel")
         seen["failed_status"] = failed.status_code
         seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code

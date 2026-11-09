@@ -139,6 +139,8 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     data path does not serve yet (a chain, workflow extensions, a reference it cannot read). Reads nothing but the body and the
     registry, so the row can ask it before it opens a receipt."""
     named = body.get("model") or shape.default_target()
+    if named is not None and not isinstance(named, str):
+        return refuse(400, "model must be a string", param="model")
     public_model = str(named) if named is not None else ""
     resolved = hooks.resolve_model(public_model)
     if isinstance(resolved, Response):
