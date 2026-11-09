@@ -24,7 +24,7 @@ EDIT_WITH_MASK = {"id": "image.edit.masked", "version": "1", "intent": "image.ed
                   "inputs": {"prompt": {"type": "string", "required": True},
                              "source_image": {"type": "asset", "accepts": ["image/png"], "required": True},
                              "mask": {"type": "asset", "accepts": ["image/png"]}},
-                  "outputs": {"image": {"media_type": "image/png"}}, "bindings": {"fake": {}}}
+                  "outputs": {"image": {"media_type": "image/png"}}, "bindings": {"comfyui": {}}}
 
 
 def ok(run):

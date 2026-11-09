@@ -50,7 +50,7 @@ def snapshot(*names: str) -> FakeSnapshot:
 VIDEO_EDIT = {"id": "video.edit.demo", "version": "1", "intent": "video.edit", "schema_version": 2,
               "inputs": {"prompt": {"type": "string", "required": True},
                          "video": {"type": "asset", "accepts": ["video/mp4"], "required": True}},
-              "outputs": {"video": {"media_type": "video/mp4"}}, "bindings": {"fake": {}}}
+              "outputs": {"video": {"media_type": "video/mp4"}}, "bindings": {"comfyui": {}}}
 ROWS = {row.id: row for row in bundled_rows()}
 
 
