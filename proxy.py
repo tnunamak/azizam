@@ -23820,25 +23820,30 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
     )
 
 
+_RECOVERY_FENCE_MS: int | None = None
+
+
 def _recover_workflow_runs() -> None:
     """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
     runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
     # No task of a stopped gateway is left to close the receipt of a run it was serving. That covers a receipt whose job
-    # does not exist yet (the body was still arriving) and one whose job ended before the receipt closed.
-    receipt_store.close_orphans_on_paths(row_routes.row_paths(_MOUNTED_ROW_IDS))
+    # does not exist yet (the body was still arriving) and one whose job ended before the receipt closed. Only a receipt
+    # accepted before recovery began is closed: a request this process opens after that point keeps its own.
+    global _RECOVERY_FENCE_MS
+    _RECOVERY_FENCE_MS = int(time.time() * 1000)
+    core = _workflow_run_core()
+    if core is not None:         # first: a run settled from its committed result closes its receipt as succeeded
+        try:
+            report = core.recover_runs(int(time.time()))
+        except Exception as exc:  # noqa: BLE001 - a failed recovery must not stop startup; the next start decides again
+            _MEDIA_JOB_LOG.warning("workflow run recovery failed: %s", log_scrub.describe_error(exc))
+        else:
+            if report.counts:
+                _MEDIA_JOB_LOG.info("workflow runs recovered: %s", dict(report.counts))
+    receipt_store.close_orphans_on_paths(row_routes.row_paths(_MOUNTED_ROW_IDS), opened_before_ms=_RECOVERY_FENCE_MS)
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
         if workflow_run.is_run_job(job):
-            receipt_store.close_orphan(str(job.get("request_id") or ""))
-    core = _workflow_run_core()
-    if core is None:
-        return
-    try:
-        report = core.recover_runs(int(time.time()))
-    except Exception as exc:  # noqa: BLE001 - a failed recovery must not stop startup; the next start decides again
-        _MEDIA_JOB_LOG.warning("workflow run recovery failed: %s", log_scrub.describe_error(exc))
-        return
-    if report.counts:
-        _MEDIA_JOB_LOG.info("workflow runs recovered: %s", dict(report.counts))
+            receipt_store.close_orphan(str(job.get("request_id") or ""), opened_before_ms=_RECOVERY_FENCE_MS)
 
 
 def _recover_media_jobs() -> None:
@@ -26794,6 +26799,11 @@ class _WorkflowRunPort:
             return None
         return path.read_bytes()
 
+
+    def close_recovered_receipt(self, request_id: str, status: str, reason: str) -> None:
+        """Startup recovery settled a run from its committed result: close the receipt a stopped gateway left open, unless
+        this process opened it after recovery began."""
+        receipt_store.close_recovered(request_id, status, reason, opened_before_ms=_RECOVERY_FENCE_MS)
 
     async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
         """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
