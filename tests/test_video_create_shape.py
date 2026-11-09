@@ -158,7 +158,7 @@ def test_a_plain_create_fills_size_frames_rate_and_seed_from_the_manifest_grid()
     assert run_request.inputs["length"] == 73 and run_request.inputs["frame_rate"] == 24      # the documented 3 s at 24 fps
     assert run_request.options == {"size": "1280x704", "seconds_frames": 73, "frame_rate": 24}
     facts = run_request.facts
-    assert (facts["model"], facts["resolved_model"], facts["size"], facts["seconds"]) == ("ltx-2.5-t2v", "ltx-2.5-t2v", "1280x704", "3")
+    assert (facts["model"], facts["resolved_model"], facts["size"], facts["seconds"]) == ("ltx-2.5-t2v", "video-ltx-2.5-t2v", "1280x704", "3")
     assert (facts["length_frames"], facts["frame_rate"], facts["seed"]) == (73, 24, 7)
     assert facts["actual_seconds"] == round(73 / 24, 4)
 
@@ -194,7 +194,7 @@ def test_the_answer_to_a_create_is_the_old_video_object_with_the_names_the_calle
     assert answer.status_code == 200 and "location" not in answer.headers
     assert (body["id"], body["object"], body["status"], body["progress"]) == ("video_mj_a", "video", "queued", 0)
     assert (body["model"], body["azizam_resolved_model"], body["size"], body["seconds"]) == (
-        "ltx-2.5-t2v", "ltx-2.5-t2v", "640x384", "3")
+        "ltx-2.5-t2v", "video-ltx-2.5-t2v", "640x384", "3")
     assert (body["created_at"], body["expires_at"], body["completed_at"], body["error"]) == (1000, 1000 + 86400, None, None)
     assert "azizam_status" not in body and "updated_at" not in body                  # the create answer never had them
 
@@ -265,8 +265,8 @@ def test_an_unknown_model_is_a_404_with_the_old_text_and_code() -> None:
 
 
 @pytest.mark.parametrize(("seconds", "message"), [
-    (0, "seconds must be between 1.0 and 10.0 for model ltx-2.5-t2v"),
-    (-1, "seconds must be between 1.0 and 10.0 for model ltx-2.5-t2v"),
+    (0, "seconds must be between 1.0 and 10.0 for model video-ltx-2.5-t2v"),
+    (-1, "seconds must be between 1.0 and 10.0 for model video-ltx-2.5-t2v"),
     ("bad", "seconds must be a number")])
 def test_seconds_out_of_range_or_not_a_number_is_refused_with_the_old_words(seconds: Any, message: str) -> None:
     refused = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": seconds})
