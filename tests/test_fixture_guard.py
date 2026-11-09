@@ -228,7 +228,7 @@ def test_anonymous_media_stamp_and_probe_use_the_real_guard(tmp_path, monkeypatc
     monkeypatch.setattr(subprocess, "run", guarded_run)
     stamped = media_metadata.embed_media_tags(audio.getvalue(), ".wav", {"title": "fixture"})
     assert "fixture" in str(media_metadata.read_media_tags(stamped, ".wav"))
-    assert commands == ["ffmpeg", "ffprobe"]
+    assert commands == ["ffprobe", "ffmpeg", "ffprobe"]
 
 
 def test_anonymous_media_guard_rejects_other_inputs_and_commands(tmp_path):
