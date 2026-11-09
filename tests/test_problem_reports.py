@@ -75,11 +75,12 @@ def test_a_report_without_a_failure_still_records_and_says_so(tmp_path):
 
 
 def test_same_failure_from_two_agents_is_one_report_with_a_count(tmp_path):
-    clock = iter([1000, 2000, 3000])
-    svc = ProblemReports(tmp_path / "p.db", destinations=lambda: [], post=FakePoster(), now=lambda: next(clock))
+    t = [1000]
+    svc = ProblemReports(tmp_path / "p.db", destinations=lambda: [], post=FakePoster(), now=lambda: t[0])
     svc.note_failure(A1, FAILURE)
     svc.note_failure(A2, {**FAILURE, "error": "metadata dropped at 87% (job 9120)"})  # other numbers, same failure
     first = run(svc.submit(A1, {"category": "failure", "summary": "one"}))
+    t[0] = 2000
     second = run(svc.submit(A2, {"category": "failure", "summary": "two, in my own words"}))
     assert second["duplicate"] is True and second["report_id"] == first["report_id"] and second["count"] == 2
     rows = svc.list()
@@ -145,10 +146,10 @@ def test_bad_input_is_refused(tmp_path):
 
 def test_rate_limit_is_per_app(tmp_path):
     svc, _ = make(tmp_path, destinations=(), limit=2)
-    for n in range(2):
-        run(svc.submit(A1, {"category": "failure", "summary": f"s{n}"}))
+    for word in ("alpha", "beta"):
+        run(svc.submit(A1, {"category": "failure", "summary": f"{word} is broken"}))
     with pytest.raises(ProblemReportError) as err:
-        run(svc.submit(A1, {"category": "failure", "summary": "s3"}))
+        run(svc.submit(A1, {"category": "failure", "summary": "gamma is broken"}))
     assert err.value.code == "rate_limited"
     assert len(svc.list()) == 2
     run(svc.submit(A2, {"category": "failure", "summary": "other app is fine"}))
@@ -356,7 +357,7 @@ def test_owner_lists_reads_and_edits_reports(admin):
     assert patched.status_code == 200 and patched.json()["operator_workaround"] == "use video"
     assert admin.client.get("/admin/api/problem-reports", params={"status": "open"}).json()["reports"] == []
     assert admin.client.get("/admin/api/problem-reports/pr_missing").status_code == 404
-    assert admin.client.patch(f"/admin/api/problem-reports/{rid}", json={"status": "weird"}).status_code == 422
+    assert admin.client.patch(f"/admin/api/problem-reports/{rid}", json={"status": "weird"}).status_code == 400
 
 
 def test_only_the_owner_may_use_the_routes(admin):
@@ -390,4 +391,4 @@ def test_destinations_are_owner_data_with_the_url_hidden_on_read(admin):
 ])
 def test_bad_destinations_are_refused(admin, bad):
     resp = admin.client.put("/admin/api/problem-reports/destinations", json={"destinations": [bad]})
-    assert resp.status_code == 422
+    assert resp.status_code == 400

@@ -192,6 +192,7 @@ from gateway.admin_api import (
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway import config_api
 from gateway.activity_api import create_activity_router
+from gateway import problem_reports
 from gateway import category_presets
 from gateway.category_api import create_category_router
 from gateway.setup_api import build_setup_api_router
@@ -16260,6 +16261,28 @@ def _mcp_retention_ledger(request: Request, auth: Any, request_id: str | None) -
     return _retention_ledger_view(request, request_id)
 
 
+PROBLEM_REPORTS = problem_reports.ProblemReports(
+    Path(ADMIN_DB_PATH).with_name("problem_reports.db"),
+    destinations=lambda: problem_reports.destinations_from_settings(ADMIN_DB_PATH),
+    job_lookup=lambda job_id: media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH),
+)
+
+
+def _mcp_problem_caller(auth: Any) -> problem_reports.Caller:
+    identity = getattr(auth, "identity", None)
+    return problem_reports.Caller(
+        app_id=getattr(identity, "app_id", None), app_name=getattr(identity, "name", None),
+        person_id=getattr(identity, "person_id", None) or getattr(identity, "accountable_person_id", None))
+
+
+async def _mcp_problem_report(request: Request, auth: Any, args: Mapping[str, Any]) -> dict[str, Any]:
+    from gateway.workflow_call import CallError
+    try:
+        return await PROBLEM_REPORTS.submit(_mcp_problem_caller(auth), args)
+    except problem_reports.ProblemReportError as exc:
+        raise CallError(str(exc), code=exc.code) from None
+
+
 def _mount_mcp(app: FastAPI) -> None:
     if MCP_OAUTH_ENABLED:
         MCP_OAUTH.register(app)
@@ -16286,6 +16309,8 @@ def _mount_mcp(app: FastAPI) -> None:
             rename=_mcp_rename,
             retention_ledger=_mcp_retention_ledger,
             retention_visible=lambda _request, auth: isinstance(auth, AuthContext) and _retention_ledger_allowed(auth),
+            problem_report=_mcp_problem_report,
+            note_failure=lambda _request, auth, info: PROBLEM_REPORTS.note_failure(_mcp_problem_caller(auth), info),
         ),
         path=MCP_PATH,
     )
@@ -17581,6 +17606,8 @@ app.include_router(config_api.create_config_router(
     registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
+app.include_router(problem_reports.create_problem_reports_router(
+    auth=ADMIN_AUTH, service=PROBLEM_REPORTS, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
 # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
 def _category_service_catalog() -> list[dict[str, Any]]:

@@ -53,6 +53,8 @@ UNMANAGED_ADMIN_MODULES: dict[str, str] = {
     "gateway.accounts_api": "accounts: no service record content (phase 2)",
     "gateway.home_api": "the home page data: no service record content (phase 2)",
     "gateway.activity_api": "activity: no service record content (phase 2)",
+    "gateway.problem_reports": "agent problem reports and their webhook destinations: plain text written by agents, "
+                               "scrubbed on write, destination urls shown as an origin only; no service record content",
     "gateway.config_api": "config sections: release defaults and owner overrides, a secret only as a reference; no service "
                           "record content (C4 adds the registry and moves it to ManagementRoute)",
 }

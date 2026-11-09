@@ -4,6 +4,31 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "owner_only": true
   },
+  "GET /admin/api/problem-reports": {
+    "tag": "usage and receipts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "GET /admin/api/problem-reports/destinations": {
+    "tag": "usage and receipts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "PUT /admin/api/problem-reports/destinations": {
+    "tag": "usage and receipts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "GET /admin/api/problem-reports/{report_id}": {
+    "tag": "usage and receipts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "PATCH /admin/api/problem-reports/{report_id}": {
+    "tag": "usage and receipts",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
   "POST /admin/api/admin-keys": {
     "tag": "apps and keys",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; an owner key needs the owner role; a caller mints only a role it holds; a key works only while the person who minted it still holds a role that permits it",
