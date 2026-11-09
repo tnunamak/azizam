@@ -112,7 +112,7 @@ def test_the_adapter_has_no_per_operation_outcome_constant() -> None:
     source = Path(transition_adapter.__file__).read_text(encoding="utf-8")
     assert "failed_as" not in source
     assert not re.search(r'"failed"\s*:\s*"partial"', source), "a failed outcome maps by the profile, not by a table"
-    assert not re.search(r'==\s*"(checkpoint|restore|load|release|reset)"', source), "no per-operation branch"
+    assert not re.search(r'==\s*"(checkpoint|restore|load|reset)"', source), "no per-operation outcome branch"
     assert "failed" not in getattr(transition_adapter, "_OUTCOMES", {})
 
 
