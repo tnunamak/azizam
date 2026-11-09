@@ -1,6 +1,6 @@
 """Fresh-interpreter oracle: a gateway with an empty registry contacts no engine (S8 acceptance).
 
-Run as ``python tests/support/fresh_gateway_oracle.py <scratch-dir> [--inject KIND]``. The DNS and outbound-socket
+Run as ``python tests/support/fresh_gateway_oracle.py <scratch-dir> [--inject KIND]``. The DNS, outbound-socket and process-launch
 guards are installed before anything from the application is imported, so an import-time connection attempt is seen
 even when the code under test swallows the error. The last stdout line is a JSON report.
 """
@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -18,24 +20,50 @@ ATTEMPTS: list[dict] = []
 
 
 def _install_guards() -> None:
-    def forbid(name, target=None):
+    def forbid(name):
         def guard(*args, **kwargs):
             where = ""
             if name in {"connect", "connect_ex", "sendto"}:
                 where = repr(args[-1] if args else "")
-            elif name in {"getaddrinfo", "gethostbyname", "gethostbyname_ex", "getnameinfo"}:
+            elif name in {"getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo"}:
                 where = repr(args[:2])
             elif name == "sendmsg":
                 addr = args[3] if len(args) > 3 else kwargs.get("address")
                 where = repr(addr)
+            elif name == "subprocess.Popen":
+                where = repr(args[0] if args else kwargs.get("args"))
+            elif name.startswith("os."):
+                index = 1 if name.startswith("os.spawn") else 0
+                where = repr(args[index] if len(args) > index else kwargs.get("path", kwargs.get("file")))
             ATTEMPTS.append({"call": name, "to": where})
             raise OSError(f"network use is forbidden here: {name}")
         return guard
 
     for method in ("connect", "connect_ex", "sendto", "sendmsg"):
         setattr(socket.socket, method, forbid(method))
-    for function in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "getnameinfo"):
+    for function in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo"):
         setattr(socket, function, forbid(function))
+
+    # A child would not inherit these Python guards. Reject launches before the
+    # application can import an alias; media subprocess seams are replaced below.
+    refuse_launch = forbid("subprocess.Popen")
+
+    def guarded_popen(*args, **kwargs):
+        # The status module reads its own git revision at import and swallows a failure. That is a local read
+        # with no network reach, so refuse it without counting it; any other launch is an attempt.
+        argv = args[0] if args else kwargs.get("args")
+        if isinstance(argv, (list, tuple)) and argv[:1] == ["git"] and "rev-parse" in argv:
+            raise OSError("child launch refused: local revision read")
+        return refuse_launch(*args, **kwargs)
+
+    subprocess.Popen = guarded_popen
+    for function in (
+        "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe",
+        "posix_spawn", "posix_spawnp",
+        "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
+    ):
+        if hasattr(os, function):
+            setattr(os, function, forbid(f"os.{function}"))
 
 
 def _inject(kind: str) -> None:
@@ -44,6 +72,8 @@ def _inject(kind: str) -> None:
         "connect": lambda: socket.socket().connect(("203.0.113.1", 80)),
         "dns": lambda: socket.getaddrinfo("engine.invalid", 80),
         "gethostbyname": lambda: socket.gethostbyname("engine.invalid"),
+        "gethostbyaddr": lambda: socket.gethostbyaddr("203.0.113.1"),
+        "subprocess": lambda: subprocess.run([sys.executable, "-c", "pass"], check=True),
         "connect_ex": lambda: socket.socket().connect_ex(("203.0.113.1", 80)),
         "gethostbyname_ex": lambda: socket.gethostbyname_ex("engine.invalid"),
         "sendmsg": lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendmsg([b"x"], [], 0, ("203.0.113.1", 53)),
@@ -68,7 +98,7 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
     from unittest.mock import patch
 
     import httpx
-    from gateway import metrics_writer, stt_chunking as stt
+    from gateway import custom_voices, metrics_writer, stt_chunking as stt
     import status_endpoint as status
     from tests.support.fake_upstream.app import FakeUpstream
     from tests.support.fake_upstream.protocols import PROTOCOLS, Protocol
@@ -130,7 +160,8 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
         kwargs.pop("verify", None)
         return httpx.AsyncClient(transport=OnlyFake(), trust_env=False, **kwargs)
 
-    record = {"host": "127.0.0.1", "port": 18991, "enabled": state != "disabled",
+    enabled = {"disabled": False, "disabled-false": "false", "disabled-zero": "0"}.get(state, True)
+    record = {"host": "127.0.0.1", "port": 18991, "enabled": enabled,
               "health_endpoint": "/health", "capabilities": ["audio.transcriptions"]}
     if state == "partial":
         record.pop("port")  # No alternative address is supplied.
@@ -221,6 +252,18 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
                                   text=(outcome.merged_payload or {}).get("text"))
             except stt.SttNotConfigured as error:
                 report.update(refused_at=stage, refusal=str(error))
+                if state in {"disabled", "disabled-false", "disabled-zero"}:
+                    # The adapter has no HTTP status. Check the real reference
+                    # helper's refusal as well, using the same literal row.
+                    source = scratch / "reference.wav"
+                    source.write_bytes(b"fixture audio")
+                    reference_service = {**record, "default_model": "test"}
+                    with patch.dict(proxy.config, {"backends": {"stt": reference_service}}), \
+                         patch.object(proxy, "_voice_store"):
+                        try:
+                            await proxy._reference_transcript(None, {"id": "test"}, source)
+                        except custom_voices.VoiceError as refusal:
+                            report["reference_status"] = refusal.status
         else:
             with patch.object(status.engine_egress, "async_client", client), \
                  patch.object(status, "_shared_probe_ssl_context", plain_http), \
