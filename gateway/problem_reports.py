@@ -482,7 +482,7 @@ def _discard(refs: list[str], path: Path) -> None:
     """Delete stored secrets that nothing references. No sign-in is passed: this clean-up runs even when it has ended."""
     for ref in refs:
         try:
-            secret_store.delete_provider_secret(ref, db_path=path)
+            secret_refs.delete(ref, db_path=path)
         except KeyError:
             pass
 
