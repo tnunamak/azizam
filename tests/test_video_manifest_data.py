@@ -535,3 +535,69 @@ def test_a_non_finite_number_in_the_section_is_refused(old: str, new: str, path:
 
 def test_a_finite_section_raises_no_finiteness_error() -> None:
     assert not [c for _, c in codes(load(T2V)) if c == "number_not_finite"]
+
+
+# ------------------------------------------------------------------------------------ a section that holds itself
+
+
+def _with_extra(value) -> dict:
+    doc = load(T2V)
+    doc["video"]["unexpected"] = value
+    return doc
+
+
+def _dict_cycle() -> dict:
+    doc = load(T2V)
+    doc["video"]["unexpected"] = doc["video"]
+    return doc
+
+
+def _list_cycle() -> dict:
+    loop: list = []
+    loop.append(loop)
+    return _with_extra(loop)
+
+
+def _cycle_with_nan() -> dict:
+    doc = _dict_cycle()
+    doc["video"]["grid"]["fps"] = float("nan")
+    return doc
+
+
+def _deep(levels: int):
+    value: object = 1.0
+    for _ in range(levels):
+        value = {"k": value}
+    return value
+
+
+def _deep_with_nan(levels: int):
+    value: object = float("nan")
+    for _ in range(levels):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize("build", [_dict_cycle, _list_cycle, _cycle_with_nan, lambda: _with_extra(_deep(2000)),
+                                    lambda: _with_extra(_deep_with_nan(2000))],
+                         ids=["dict-self-alias", "list-self-alias", "cycle-with-nan", "deep-2000", "deep-2000-nan"])
+def test_a_section_that_holds_itself_or_nests_deeply_gets_a_refused_report_not_an_exception(build) -> None:
+    report = check_contract(build())
+    assert not report.ok
+
+
+def test_a_yaml_alias_to_the_section_is_refused() -> None:
+    text = T2V.read_text(encoding="utf-8")
+    assert "\nvideo:" in text
+    doc = yaml.safe_load(text.replace("\nvideo:", "\nvideo: &v", 1) + "\n")
+    doc["video"]["unexpected"] = doc["video"]
+    assert not check_contract(doc).ok
+
+
+def test_a_nan_inside_a_cycle_is_still_named() -> None:
+    assert (("video", "grid", "fps"), "number_not_finite") in codes(_cycle_with_nan())
+
+
+def test_a_nan_at_the_bottom_of_a_deep_nest_is_still_named() -> None:
+    found = codes(_with_extra(_deep_with_nan(2000)))
+    assert any(code == "number_not_finite" for _, code in found)
