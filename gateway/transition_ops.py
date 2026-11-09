@@ -80,6 +80,18 @@ class StepIntent:
     """Stable per operation and step, so a recovery query can find the effect."""
     expected_incarnation: Optional[str]
 
+    @property
+    def effect(self) -> str:
+        """The effect this intent stands for. A reset is recorded under the step ``restore`` with an effect key ending in
+        ``:reset``; its identity decides which profile block speaks for it, so a query and a restart never read a reset
+        by the restore's failure semantics."""
+        return "reset" if self.step == "restore" and self.effect_key.endswith(":reset") else self.step
+
+    @property
+    def profile_block(self) -> str:
+        """The reviewed profile block that speaks for this effect's failure semantics."""
+        return "restore.reset" if self.effect == "reset" else self.step
+
 
 @dataclass(frozen=True)
 class Operation:
@@ -144,7 +156,10 @@ class OperationStore(Protocol):
     def begin(self, *, domain: str, kind: TransitionKind, idempotency_key: str, target: Optional[str],
               incarnation: Optional[str], config_revision: int, compensates: Optional[str] = None) -> BeginResult: ...
 
-    def write_intent(self, op_id: str, intent: StepIntent) -> Operation: ...
+    def write_intent(self, op_id: str, intent: StepIntent, held: Optional[EffectResult] = None) -> Operation:
+        """Record the intent. ``held`` (an ``unknown`` result) is recorded with it in the same transaction, so a record
+        that carries a hold never exists without it."""
+        ...
 
     def write_outcome(self, op_id: str, step: StepName, result: EffectResult) -> Operation: ...
 

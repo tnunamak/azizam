@@ -57,6 +57,8 @@ _T = TypeVar("_T")
 DEFAULT_FRESH_WITHIN_S = 2.0
 DEFAULT_DEADLINE_S = 60.0
 _SEMANTICS = ("no_change", "unknown")
+_COLD_SETTLEMENTS = frozenset({"restore:declined:serving_cold", "restore:reset:clean:serving_cold"})
+"""Evidence a restore step records when the target serves cold: the settlement a crash must not lose."""
 
 
 class SnapshotAdapter(TransitionAdapter, Protocol):
@@ -323,10 +325,42 @@ class CheckpointStep:
             await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
                             EffectResult(outcome="unknown", evidence_ref=f"checkpoint:{reason}"))
             return "reconcile"
+        if not sp.required:
+            await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
+                            EffectResult(outcome="no_change", evidence_ref=f"checkpoint:{reason}:cold_next_start"))
+            _log(f"checkpoint skipped for {domain} ({reason}); the next start is cold")
+            return "continue"
+        servable = await self._servable(ctx, sp)
+        if servable is None:  # only an unknown outcome may hold reconciling
+            await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
+                            EffectResult(outcome="unknown", evidence_ref=f"checkpoint:{reason}:servable_unknown"))
+            return "reconcile"
         await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
                         EffectResult(outcome="no_change", evidence_ref=f"checkpoint:{reason}:cold_next_start"))
+        return "reopen" if servable else "fail_closed"
+
+    async def settle(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> StepVerdict:
+        """Settle a checkpoint outcome the executor learned outside ``run`` (the startup reconcile asked ``query``). It is
+        the live path's own settlement: a profile-attested ``no_change`` is a refused save (cleanup, then cold or the
+        servable re-check by ``checkpoint_policy``); anything else is an effect of unknown outcome. A success is recorded
+        and the operation goes on; no snapshot is published late."""
+        sp = parse_policy(ctx.policy)
+        if result.outcome == "success":
+            await _blocking(ctx.store.write_outcome, ctx.operation.op_id, "checkpoint", result)
+            return "continue"
+        if result.outcome == "no_change" and sp.checkpoint_no_change:
+            return await self._not_taken(ctx, sp, "engine_declined")
+        return await self._not_taken(ctx, sp, result.evidence_ref or result.outcome, unknown=True)
+
+    async def recovered(self, ctx: StepContext) -> StepVerdict:
+        """The verdict for a checkpoint whose ``no_change`` was recorded and whose operation stopped before the next step
+        (the gate write was lost). The record was made after the cleanup. An attested refusal goes on cold under
+        ``best_effort`` and is judged by fresh servable evidence under ``required`` (confirmed false closes the gate; an
+        unreadable check reconciles); an unattested one stays held."""
+        sp = parse_policy(ctx.policy)
+        if ctx.operation.step_outcome != "no_change" or not sp.checkpoint_no_change:
+            return "fail_closed"
         if not sp.required:
-            _log(f"checkpoint skipped for {domain} ({reason}); the next start is cold")
             return "continue"
         servable = await self._servable(ctx, sp)
         return "reopen" if servable is True else "fail_closed" if servable is False else "reconcile"
@@ -438,6 +472,12 @@ class RestoreStep:
         result = await _effect(adapter.reset(domain, intent), sp.deadline("reset"), "reset")
         if result.outcome == "unknown" and sp.reset_query:
             result = await _effect(adapter.query(domain, intent), sp.deadline("query"), "query")
+        return await self._after_reset(ctx, sp, adapter, result)
+
+    async def _after_reset(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter,
+                           result: EffectResult) -> StepVerdict:
+        """Judge a reset's outcome: the live path and the startup reconcile share it. Only a clean verification serves cold."""
+        operation, domain = ctx.operation, ctx.operation.domain
         if result.outcome == "unknown":
             await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
                             EffectResult(outcome="unknown", evidence_ref="reset:unknown"))
@@ -462,6 +502,55 @@ class RestoreStep:
         await _blocking(ctx.store.write_outcome, operation.op_id, "restore", EffectResult(
             outcome="unknown" if clean is None else "partial", evidence_ref="reset:target_not_verified_clean"))
         return "reconcile" if clean is None else "fail_closed"
+
+    async def settle(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> StepVerdict:
+        """Settle a restore or reset outcome the executor learned outside ``run`` (the startup reconcile asked ``query``).
+        It is the live path's own settlement, keyed by the effect's identity: a reset is judged by the reset block and its
+        clean verification (a dirty or unreachable target never reopens); a restore by the restore block."""
+        sp = parse_policy(ctx.policy)
+        adapter: SnapshotAdapter = ctx.adapter  # type: ignore[assignment]
+        if intent.effect == "reset":
+            return await self._after_reset(ctx, sp, adapter, result)
+        operation, domain = ctx.operation, ctx.operation.domain
+        if result.outcome == "success":
+            await _blocking(ctx.store.write_outcome, operation.op_id, "restore", EffectResult(
+                outcome="success", evidence_ref=f"restore:{result.evidence_ref or 'recovered'}",
+                correlation_id=result.correlation_id))
+            return "continue"
+        await _blocking(self._snapshots.retire_published, domain)  # a failed restore: the snapshot is not offered again
+        if result.outcome == "no_change" and sp.restore_no_change:
+            await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
+                            EffectResult(outcome="no_change", evidence_ref="restore:declined:serving_cold"))
+            return "continue"
+        await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
+                        EffectResult(outcome="partial", evidence_ref="restore:failed:state_not_known_clean"))
+        return await self._reset(ctx, sp, adapter)
+
+    async def recovered(self, ctx: StepContext) -> StepVerdict:
+        """The verdict for a restore step whose outcome was recorded before the gate write (a crash before open).
+
+        A recorded cold-start settlement (a declined restore, or a reset that verified clean) goes on only after the clean
+        and load evidence is read again now: confirmed not clean closes the gate, an unreadable check reconciles. A restore
+        recorded ``partial`` still owes its declared reset, which runs now. Anything else stays held."""
+        sp = parse_policy(ctx.policy)
+        adapter: SnapshotAdapter = ctx.adapter  # type: ignore[assignment]
+        recorded = ctx.operation.evidence_ref or ""
+        if ctx.operation.step_outcome == "partial" and recorded == "restore:failed:state_not_known_clean":
+            return await self._reset(ctx, sp, adapter)
+        if ctx.operation.step_outcome == "no_change" and recorded in _COLD_SETTLEMENTS:
+            clean = await self._clean(ctx, sp, adapter)
+            return "continue" if clean is True else "fail_closed" if clean is False else "reconcile"
+        return "fail_closed"
+
+    @staticmethod
+    def revalidation_owed(row: Operation) -> Optional[EffectResult]:
+        """What a held recovery still owes. A reset that ran but whose clean check could not be read owes only that check,
+        judged as a recorded cold settlement: the reset must not run again. Anything else keeps the recorded outcome."""
+        # The second evidence is what a hold of the earlier format kept after its reset had already run.
+        if row.step_outcome == "unknown" and row.evidence_ref in ("reset:target_not_verified_clean",
+                                                                  "restore:failed:state_not_known_clean"):
+            return EffectResult(outcome="no_change", evidence_ref="restore:reset:clean:serving_cold")
+        return None
 
     async def _clean(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter) -> Optional[bool]:
         """Is the target clean and serving? The profile's reset ``verify`` observation, else (only

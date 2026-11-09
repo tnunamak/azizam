@@ -20,9 +20,21 @@ import yaml
 PROFILE_DIR = Path(__file__).resolve().parent.parent / "registry" / "transition_profiles"
 OPERATION_KEYS: frozenset[str] = frozenset({"idle", "resident", "release", "load", "query", "checkpoint", "restore", "reset", "compatibility"})
 REQUIRED_OPERATIONS: frozenset[str] = frozenset({"resident", "release", "load", "query"})
-REVIEWED_POLICY_KEYS: frozenset[str] = frozenset({"checkpoint", "restore", "servable_check", "placement_keys", "fresh_within_s"})
-"""Reviewed profile blocks the snapshot steps (T1.3) read through ``StepContext.policy["profile"]``. They pass through
+REVIEWED_POLICY_KEYS: frozenset[str] = frozenset({"release", "load", "checkpoint", "restore", "servable_check", "placement_keys", "fresh_within_s"})
+"""Reviewed profile blocks the executor and the snapshot steps read through ``StepContext.policy["profile"]``. They pass through
 unchanged: this module does not interpret them."""
+FAILURE_SEMANTICS: frozenset[str] = frozenset({"no_change", "unknown"})
+"""What a declared ``failed`` outcome of an effect operation means. ``no_change``: the engine is as it was before the
+call. ``unknown`` (the default when absent): the call may have changed it."""
+
+
+def attests_no_change(profile: Mapping[str, Any], block: str) -> bool:
+    """True when ``profile`` (a ``Profile.declared`` or ``as_policy()`` mapping) declares ``failure_semantics:
+    no_change`` for ``block``. ``restore.reset`` is the reset block inside ``restore``."""
+    node: Any = profile
+    for part in block.split("."):
+        node = node.get(part) if isinstance(node, Mapping) else None
+    return isinstance(node, Mapping) and node.get("failure_semantics") == "no_change"
 
 
 class ProfileError(ValueError):
@@ -40,6 +52,11 @@ class Profile:
     """The ``REVIEWED_POLICY_KEYS`` blocks the file declares, as written."""
     observations: Mapping[str, str] = field(default_factory=dict)
     """Observation name -> the operation name in the engine's protocol description."""
+
+    def attests_no_change(self, block: str) -> bool:
+        """Does the profile declare ``failure_semantics: no_change`` for ``block`` (release, load, checkpoint, restore
+        or restore.reset)? Absent means unknown."""
+        return attests_no_change(self.declared, block)
 
     def as_policy(self) -> Mapping[str, Any]:
         """The reviewed profile as ``StepContext.policy["profile"]``: the only place attested fields are read from."""
@@ -88,7 +105,7 @@ def parse_profile(raw: Any, *, source: str) -> Profile:
         raise ProfileError(f"{source}: operation 'reset' needs 'restore'")
     if "checkpoint" in names and "compatibility" not in names:
         raise ProfileError(f"{source}: operation 'compatibility' is required when 'checkpoint' is declared")
-    for key in ("checkpoint", "restore"):
+    for key in ("release", "load", "checkpoint", "restore"):
         if key in declared and not isinstance(declared[key], Mapping):
             raise ProfileError(f"{source}: {key} is a mapping")
     if "checkpoint" in declared and "checkpoint" not in names:
@@ -102,6 +119,12 @@ def parse_profile(raw: Any, *, source: str) -> Profile:
             raise ProfileError(f"{source}: restore.reset is a mapping")
         if "reset" not in names:
             raise ProfileError(f"{source}: restore.reset needs the 'reset' operation")
+    for where, block in (("release", declared.get("release")), ("load", declared.get("load")),
+                         ("checkpoint", declared.get("checkpoint")), ("restore", restore_block),
+                         ("restore.reset", reset_block)):
+        value = block.get("failure_semantics", "unknown") if isinstance(block, Mapping) else "unknown"
+        if not isinstance(value, str) or value not in FAILURE_SEMANTICS:  # a string first: a list or dict is unhashable
+            raise ProfileError(f"{source}: {where}.failure_semantics is one of {', '.join(sorted(FAILURE_SEMANTICS))}")
     named = {}
     if "servable_check" in raw:
         named["servable_check"] = raw["servable_check"]
