@@ -976,8 +976,9 @@ def test_the_audio_runner_fails_a_job_whose_stored_values_are_gone_without_calli
         asyncio.run(proxy._run_audio_media_job(job_id))
     job = media_jobs.get(job_id, audience="internal", path=jobs_db)
     assert job["status"] == media_jobs.STATUS_FAILED
-    # An unreadable envelope is first met where the audio runner reads the job's stored values; it fails closed there.
-    assert ("erased" if state == "erased" else "cannot be read") in job["error"]
+    # An erased value is first met where the audio runner reads the job's stored values. An unreadable envelope is met
+    # earlier, where the runner loads the job's pin: it fails closed there as definition_unavailable.
+    assert ("erased" if state == "erased" else "no longer available") in job["error"]
     assert calls == []
 
 

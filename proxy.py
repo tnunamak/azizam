@@ -24704,15 +24704,17 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
-        # An audio job runs from what it pinned at accept, or it fails: never from the live file.
+        # An audio job with a pin runs from what it pinned at accept, or it fails: never from the live file. A job for a
+        # workflow whose binding has no pin (not a graph) recorded no envelope and runs as it was accepted.
         pinned_args: dict[str, Any] = {}
-        try:
-            pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
-            pinned_args["pinned_workflow"] = job.get("workflow")
-        except definition_store.DefinitionUnavailable as exc:
-            _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
-            _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
-            return
+        if await asyncio.to_thread(_audio_job_runs_from_pin, job_id, job):
+            try:
+                pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
+                pinned_args["pinned_workflow"] = job.get("workflow")
+            except definition_store.DefinitionUnavailable as exc:
+                _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
+                _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
+                return
 
         try:
             media_jobs.update_status(
@@ -27459,6 +27461,18 @@ def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any
     if errors:
         raise definition_store.DefinitionUnavailable(f"the pinned graph is invalid: {'; '.join(errors)}")
     return workflow
+
+
+def _audio_job_runs_from_pin(job_id: str, job: Mapping[str, Any]) -> bool:
+    """Whether an audio job must run from its pin: it recorded an envelope at accept (readable or not), or its workflow
+    has a graph binding, so a job of it that recorded none was accepted before pins and fails as definition_unavailable.
+    A workflow with another binding has no pin to run from."""
+    if definition_store.DefinitionStore(media_jobs.DB_PATH).has_envelope(job_id):
+        return True
+    recorded, intent = str(job.get("workflow") or ""), str(job.get("intent") or "audio.generate")
+    name = recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded
+    manifest = _load_audio_workflow_manifest(name) if name else None
+    return manifest is None or _manifest_has_pin(manifest)  # no workflow to judge by: fail closed at the pin
 
 
 def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:

@@ -145,6 +145,11 @@ def record_envelope_in(
     _add_refs(conn, job_id, "job", shas)
 
 
+def has_envelope_in(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Whether ``job_id`` recorded an envelope row at accept, readable or not."""
+    return conn.execute("SELECT 1 FROM job_envelope WHERE job_id = ?", (job_id,)).fetchone() is not None
+
+
 def envelope_in(conn: sqlite3.Connection, job_id: str, generators: Mapping[str, str] | None = None) -> Envelope | None:
     """The job's envelope, or None. ``generators`` is the reviewed map that ``parse_envelope`` needs while the envelope
     holds generated values; with none given, the reviewed generators' own map is used. An envelope that no longer parses (the map changed, or the row is damaged) raises
@@ -313,6 +318,10 @@ class DefinitionStore:
     ) -> None:
         with self._write() as conn:
             record_envelope_in(conn, job_id, envelope, generators=generators, now=self._clock(), blobs=blobs)
+
+    def has_envelope(self, job_id: str) -> bool:
+        with media_jobs.connection(self._path) as conn:
+            return has_envelope_in(conn, job_id)
 
     def envelope(self, job_id: str, generators: Mapping[str, str] | None = None) -> Envelope | None:
         with media_jobs.connection(self._path) as conn:

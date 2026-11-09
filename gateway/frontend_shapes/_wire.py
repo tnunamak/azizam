@@ -206,8 +206,12 @@ async def split_form(request: Request, limits: FormLimits, unreadable: Callable[
     bounded = _bounded(request, limits.body_budget)
     parser = _TextBoundedParser(bounded.headers, bounded.stream(), max_files=limits.max_files,
                                 max_fields=limits.max_fields, max_part_size=FORM_PART_BYTES)
+    # Only a multipart body goes through the text-bounded parser. Any other body reads as Starlette's form reads it (a
+    # urlencoded form, or no fields), so the request still reaches the route's policy and contract checks.
+    multipart = request.headers.get("content-type", "").split(";")[0].strip().lower() == "multipart/form-data"
     try:
-        form = await parser.parse()
+        form = await parser.parse() if multipart else await bounded.form(
+            max_files=limits.max_files, max_fields=limits.max_fields, max_part_size=FORM_PART_BYTES)
     except _FormTooLarge:
         _close_spills(parser)
         return error_response(413, "The request body is larger than this route accepts", code="payload_too_large")
