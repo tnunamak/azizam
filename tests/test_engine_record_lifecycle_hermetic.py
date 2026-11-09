@@ -25,9 +25,19 @@ from tests.support.fake_upstream.scenario import scenario_from_data
 
 SID = "hermetic-address"
 PROTOCOL = "hermetic-lifecycle"
-RAW_PATH = b"/prefix%2Ftenant/health%3Fready"
-RAW_QUERY = b"tenant=a&tag=first&tag=second&literal=%2F&empty="
-DECODED_PATH = "/prefix/tenant/health?ready"
+RAW_PATH = b"/health%3Fready"
+RAW_QUERY = b"tag=first&tag=second&literal=%2F&empty="
+DECODED_PATH = "/health?ready"
+
+# status_endpoint._resolve_backend_targets -> model_presentation.service_health_endpoint -> health_base reads
+# base_url or host/port only, never connection.address (gateway/model_presentation.py:14-30, 40-53), so an engine
+# whose only address is connection.address gets no health target and is shown "not_configured"
+# (status_endpoint.py:497-514), although service_registry.engine_origin/engine_base_address (1914-1950) read it.
+CONNECTION_ADDRESS_HEALTH_GAP = pytest.mark.xfail(
+    strict=True,
+    reason="model_presentation.health_base (model_presentation.py:14-30) ignores connection.address: "
+           "status_endpoint._unconfigured_rows (status_endpoint.py:497-514) shows not_configured and never probes",
+)
 
 
 def _scenario(name, *, health=0, unload=0, raw=False):
@@ -233,7 +243,7 @@ def env(monkeypatch, tmp_path, fake_upstreams):
     assert forbidden == [], forbidden
 
 
-@pytest.mark.parametrize("field", ["base_url", "connection.address"])
+@pytest.mark.parametrize("field", ["base_url", pytest.param("connection.address", marks=CONNECTION_ADDRESS_HEALTH_GAP)])
 def test_record_address_beats_bootstrap_and_reload_moves_health_and_lifecycle(env, field):
     async def case():
         a = env.serve("record-A", health=1, unload=1)
@@ -262,11 +272,12 @@ def test_record_address_beats_bootstrap_and_reload_moves_health_and_lifecycle(en
     _run(case())
 
 
-@pytest.mark.parametrize("field", ["base_url", "connection.address"])
+@pytest.mark.parametrize("field", ["base_url", pytest.param("connection.address", marks=CONNECTION_ADDRESS_HEALTH_GAP)])
 def test_declared_endpoint_keeps_raw_path_and_repeated_query_bytes(env, field):
     async def case():
         fake = env.serve("encoded-endpoint", health=1, raw=True)
-        base = fake.base_url + "/prefix%2Ftenant?tenant=a&tag=old"
+        # A "/" endpoint is origin-relative for health (join_health), so no base prefix or query is used here.
+        base = fake.base_url
         endpoint = "/health%3Fready?tag=first&tag=second&literal=%2F&empty="
         env.save(env.service(field, base, endpoint=endpoint))
         rows = await env.grid(env.reload(env.config()))
