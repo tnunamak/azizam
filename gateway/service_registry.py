@@ -1923,6 +1923,28 @@ def engine_origin(config: Mapping[str, Any]) -> str:
     return origin_of(str(connection.get("address") or "")) if isinstance(connection, Mapping) else ""
 
 
+def engine_base_address(config: Mapping[str, Any]) -> str:
+    """The full base URL an engine's record names, keeping the scheme, the port and any path prefix; ``""`` when none.
+
+    For dispatch and for probes written relative to that base. Host and port name a bare ``scheme://host:port``. A
+    base URL or a ``connection.address`` is kept whole (no trailing slash), so ``https://h:8443/prefix`` posts to
+    ``/prefix/...``. ``engine_origin`` is the origin only: use it for credential-origin comparisons and for endpoints
+    defined against the origin.
+    """
+    bare = host_port_origin(config)
+    if bare:
+        return bare
+    connection = config.get("connection")
+    candidates = [config.get(key) for key in ("base_url", "api_base", "default_base_url")]
+    if isinstance(connection, Mapping):
+        candidates.append(connection.get("address"))
+    for candidate in candidates:
+        raw = str(candidate or "").strip().rstrip("/")
+        if raw and origin_of(raw):
+            return raw
+    return ""
+
+
 NOT_CONFIGURED_REASON = "its service record names no address (host and port)"
 
 

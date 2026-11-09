@@ -1450,15 +1450,15 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
 
     return {
         # A record that names no address gives "" here and the engine is not configured: nothing is dialed.
-        "TTS_HOST": service_registry.engine_origin(tts_c),
-        "STT_HOST": service_registry.engine_origin(stt_c),
-        "EMBEDDINGS_HOST": service_registry.engine_origin(emb_c),
-        "COMFY_HOST": service_registry.engine_origin(cfy_c),
-        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_origin(tts_c)),
-        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_origin(stt_c)),
+        "TTS_HOST": service_registry.engine_base_address(tts_c),
+        "STT_HOST": service_registry.engine_base_address(stt_c),
+        "EMBEDDINGS_HOST": service_registry.engine_base_address(emb_c),
+        "COMFY_HOST": service_registry.engine_base_address(cfy_c),
+        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
+        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
         "STT_TIMEOUT": int(_record_default("stt", stt_c, "timeout")),
-        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_origin(emb_c)),
-        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_origin(cfy_c)),
+        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
+        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_base_address(cfy_c)),
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
@@ -4717,7 +4717,7 @@ async def _reference_transcript(
         )
         _require_egress_lease("stt")
         resp = await _stt_adapter(stt).invoke(
-            AdapterConnection(address=service_registry.engine_origin(stt),
+            AdapterConnection(address=service_registry.engine_base_address(stt),
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
             "stt.transcribe", clip,
         )
@@ -16667,7 +16667,7 @@ def _identity_face_client() -> identity_api.FaceServiceClient:
     transition-enabled domain never names it, and the check keeps a future declared domain from reaching it unleased."""
     _require_egress_lease(_IDENTITY_FACE_SERVICE_ID)
     bcfg = _identity_face_cfg()
-    origin = service_registry.engine_origin(bcfg)
+    origin = service_registry.engine_base_address(bcfg)
     if not origin:
         raise identity_api.FaceServiceNotConfigured(f"The face service is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
     return identity_api.FaceServiceClient(origin, timeout=float(bcfg.get("timeout", 120)))
@@ -16678,7 +16678,7 @@ async def _identity_ensure_face_service() -> Response | None:
     from gateway.lifecycle_drivers import driver_for_service
 
     bcfg = dict(_identity_face_cfg())
-    if not service_registry.engine_origin(bcfg):
+    if not service_registry.engine_base_address(bcfg):
         reason = "" if not bcfg else f": {service_registry.NOT_CONFIGURED_REASON}"
         return Response(
             content=json.dumps({"error": {"message": f"The face service is not configured{reason}.", "type": "service_unavailable"}}),

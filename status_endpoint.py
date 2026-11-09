@@ -497,16 +497,17 @@ def _http_target_row(target: Mapping[str, Any], status: str, error: Optional[str
 def _unconfigured_rows(config: Mapping[str, Any]) -> list[dict[str, Any]]:
     """One row per service that declares a relative health path but whose record names no address.
 
-    Such an engine is not configured: it is shown as down with the reason and is never probed at a guessed address.
+    Such an engine is not configured: shown as "not_configured" (never as measured down), with the reason, and never probed.
     """
     rows: list[dict[str, Any]] = []
     for key, cfg in ((config or {}).get("backends") or {}).items():
-        if not isinstance(cfg, Mapping) or not cfg.get("health_endpoint") or service_health_endpoint(cfg):
+        if (not isinstance(cfg, Mapping) or not _is_enabled(cfg) or not cfg.get("health_endpoint")
+                or service_health_endpoint(cfg)):
             continue
         rows.append({
             "key": key, "service_id": key, "name": cfg.get("name") or key, "url": "",
             "role": cfg.get("role") if cfg.get("role") in _VALID_ROLES else "required", "note": cfg.get("note"),
-            "status": "down", "live_status": "down", "latency_ms": None,
+            "status": "not_configured", "live_status": "not_configured", "latency_ms": None,
             "last_error": f"not configured: {service_registry.NOT_CONFIGURED_REASON}",
             "kind": "not_configured", "observed_at_s": int(time.time()),
         })
@@ -579,6 +580,11 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
 
 # --- llama.cpp /props + /slots -------------------------------------------
 
+def _is_enabled(record: Mapping[str, Any]) -> bool:
+    """The record's ``enabled`` through the one parser the gateway uses; a disabled record is neither probed nor listed."""
+    return service_registry.bool_from_config(record.get("enabled"), True)
+
+
 def _managed_chat_origin(config: Mapping[str, Any]) -> str:
     """The address of the chat engine the gateway runs on this computer, from its service record ("" when none).
 
@@ -591,8 +597,10 @@ def _managed_chat_origin(config: Mapping[str, Any]) -> str:
         lifecycle = cfg.get("lifecycle")
         driver = str(lifecycle.get("driver") or "external").strip().lower() if isinstance(lifecycle, Mapping) else "external"
         capabilities = {str(c).lower() for c in (cfg.get("capabilities") or []) if isinstance(c, str)}
+        if not _is_enabled(cfg):
+            continue
         if driver not in {"external", "none"} and capabilities & {"chat", "completions"}:
-            origin = service_registry.engine_origin(cfg)
+            origin = service_registry.engine_base_address(cfg)
             if origin:
                 return origin
     return ""
@@ -984,7 +992,8 @@ async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[di
         except Exception:
             return None
 
-    origin = service_registry.engine_origin(((config or {}).get("backends") or {}).get(_GRAPH_SERVICE_ID) or {})
+    graph = ((config or {}).get("backends") or {}).get(_GRAPH_SERVICE_ID) or {}
+    origin = service_registry.engine_base_address(graph) if _is_enabled(graph) else ""
     if not origin:  # the record names no address: the graph engine is not configured
         return None, None
     try:
@@ -2770,7 +2779,8 @@ async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
     backends = (config or {}).get("backends") or {}
 
     async def _health(client, service_id: str):
-        origin = service_registry.engine_origin(backends.get(service_id) or {})
+        record = backends.get(service_id) or {}
+        origin = service_registry.engine_base_address(record) if _is_enabled(record) else ""
         return await _get(client, f"{origin}/health") if origin else None  # no address: not configured, not probed
 
     try:

@@ -6,65 +6,52 @@ tests/test_engine_address_from_record.py; this file drives the real app with the
 
 from __future__ import annotations
 
-import asyncio
-import socket
+import json
+import subprocess
+import sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
 
 import proxy
-from gateway import service_registry
-from tests.support.adapter_differential_rig import GatewayRig
 
-REQUESTS = [
-    ("POST", "/v1/audio/speech", {"model": "tts-1", "input": "hi", "voice": "alloy"}),
-    ("POST", "/v1/audio/generate", {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}),
-    ("POST", "/v1/images/generations", {"prompt": "a cat", "model": "image-fast"}),
-    ("POST", "/v1/embeddings", {"model": "nomic-embed-text-v1.5", "input": "hi"}),
-]
+ORACLE = Path(__file__).parent / "support" / "fresh_gateway_oracle.py"
 
 
-@pytest.fixture
-def socket_guard(monkeypatch):
-    attempts: list[object] = []
-
-    def record(name):
-        def guard(*args, **kwargs):
-            attempts.append((name, args[1:] if args else args))
-            raise OSError(f"network use is forbidden here: {name}")
-        return guard
-
-    monkeypatch.setattr(socket.socket, "connect", record("connect"))
-    monkeypatch.setattr(socket.socket, "connect_ex", record("connect_ex"))
-    monkeypatch.setattr(socket.socket, "sendto", record("sendto"))
-    monkeypatch.setattr(socket, "getaddrinfo", record("getaddrinfo"))
-    return attempts
+def run_oracle(tmp_path, inject=None):
+    """Run the oracle in a fresh interpreter whose network guards precede every application import."""
+    command = [sys.executable, str(ORACLE), str(tmp_path)] + (["--inject", inject] if inject else [])
+    done = subprocess.run(command, capture_output=True, text=True, cwd=ORACLE.parents[2], timeout=300, check=False)
+    assert done.returncode == 0, done.stderr[-2000:]
+    return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-def test_fresh_gateway_has_zero_engine_egress(tmp_path, socket_guard):
-    empty = proxy._derive_backend_constants({"backends": {}})
-    with GatewayRig("fresh-no-egress", tmp_path) as rig:
-        for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
-            assert empty[key] == "", key
-        for key in ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "COMFY_ENABLED"):
-            rig.monkeypatch.setitem(proxy.runtime().derived, key, empty[key])
-            assert empty[key] is False, key
-        for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
-            rig.monkeypatch.setitem(proxy.runtime().derived, key, empty[key])
-        statuses = []
-        for method, path, body in REQUESTS:
-            response = asyncio.run(rig.call(method, path, label=f"fresh {path}", json_body=body))
-            statuses.append((path, response.status_code))
-        assert all(status >= 400 for _, status in statuses), statuses
-        # The one address a fresh gateway may dial is the release record of its LiteLLM substrate (data in
-        # registry/services.yml). An engine is never dialed: every other destination would be a guess.
-        released = service_registry.origin_of(
-            service_registry.release_registry()["services"]["litellm"]["config"]["default_base_url"])
-        sent = {urlsplit(f"//{call['to']}").netloc for call in rig.recorder.engine}
-        assert sent <= {urlsplit(released).netloc}, sent
-    attempted = {f"{a[1][0][0]}:{a[1][0][1]}" for a in socket_guard if a[0] == "connect"}
-    assert attempted <= {urlsplit(released).netloc}, attempted
-    assert not [a for a in socket_guard if a[0] != "connect"]
+def _forbidden(report):
+    """Every guarded call except a connection to the release LiteLLM address (registry/services.yml data)."""
+    allowed = urlsplit(report["released"]).netloc
+    return [a for a in report["attempts"]
+            if not (a["call"] == "connect" and a["to"].strip("()").replace("'", "").replace(", ", ":") == allowed)]
+
+
+def test_fresh_gateway_has_zero_engine_egress(tmp_path):
+    report = run_oracle(tmp_path)
+    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
+        assert report["derived"][key] == "", key
+    for key in ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "COMFY_ENABLED"):
+        assert report["derived"][key] is False, key
+    assert all(status >= 400 for _, status in report["statuses"]), report["statuses"]
+    allowed = urlsplit(report["released"]).netloc
+    assert {urlsplit(f"//{to}").netloc for to in report["sent"]} <= {allowed}, report["sent"]
+    assert not _forbidden(report), report["attempts"]
+
+
+@pytest.mark.parametrize("kind,call", [
+    ("connect", "connect"), ("dns", "getaddrinfo"), ("gethostbyname", "gethostbyname"), ("udp", "sendto"),
+])
+def test_an_import_time_attempt_that_swallows_its_error_still_fails(tmp_path, kind, call):
+    report = run_oracle(tmp_path, inject=kind)
+    assert [a for a in _forbidden(report) if a["call"] == call], report["attempts"]
 
 
 @pytest.mark.parametrize("record", [

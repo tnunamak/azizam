@@ -416,7 +416,7 @@ class ProcessDriver:
 
         connection = svc.get("connection") or (svc.get("config") or {}).get("connection")
         if not connection:
-            connection = {"address": service_registry.engine_origin(svc)}
+            connection = {"address": service_registry.engine_base_address(svc)}
         return {**svc, "connection": connection, "observations": observations_config(svc)}
 
     def _state_path(self, ident: str) -> Path:
