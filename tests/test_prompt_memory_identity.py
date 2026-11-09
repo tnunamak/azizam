@@ -307,3 +307,39 @@ def test_home_identity_uses_session_person_or_personal_app_owner_key(tmp_path):
     assert unknown_creator.person_id is None
     own_key = _identity(app, {"created_by": person["id"], "hash": "sha256:mine"}, path, person_id=person["id"])
     assert own_key.person_id == person["id"]
+
+
+def test_full_download_whose_prompt_cannot_be_written_answers_a_clear_error(tmp_path, monkeypatch):
+    """A stored prompt the media file cannot hold (a NUL, say) is a refused delivery that names the way out, never a 500."""
+    path, jobs_db, cache = tmp_path / "admin.db", tmp_path / "jobs.db", tmp_path / "cache"
+    admin_store.init_db(path)
+    media_jobs.init_db(jobs_db)
+    member = admin_store.upsert_oidc_user("test", "member", path=path)
+    app = admin_store.create_app("Try", kind="personal", owner_user_id=member["id"], access_plan="person", path=path)
+    member_auth = _auth(app["id"], member["id"], "sha256:member")
+    monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
+    monkeypatch.setattr(media_jobs, "DB_PATH", jobs_db)
+    monkeypatch.setattr(prompt_memory, "DB_PATH", jobs_db)
+    monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
+    monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-signing-secret")
+    proxy._begin_media_delivery(member_auth)
+    try:
+        proxy._note_media_metadata_body({"prompt": "unwritable-prompt-text"})
+        asset_id = proxy.store_asset_bytes(_png("unwritable-prompt-text"), kind="img", suffix=".png",
+                                          owner_key_hash=proxy._asset_owner_key(member_auth))
+    finally:
+        proxy.media_delivery._CONTEXT.set(None)
+
+    def refuse(*_a, **_kw):
+        raise proxy.media_metadata.MediaMetadataError("metadata value holds a NUL byte")
+
+    monkeypatch.setattr(prompt_memory, "restore_metadata", refuse)
+    monkeypatch.setattr(proxy, "authenticate_request", lambda *_a, **_kw: member_auth)
+    expires = int(time.time()) + 60
+    client = TestClient(proxy.app, raise_server_exceptions=False)
+    full = client.get(f"/v1/assets/{asset_id}/content?expires={expires}&md=full&sig={proxy._sign_asset_token(asset_id, expires, 'full')}")
+
+    assert full.status_code == 502
+    error = full.json()["error"]
+    assert "md=provenance" in error["message"] and "md=none" in error["message"]
+    assert b"unwritable-prompt-text" not in full.content and b"NUL" not in full.content
