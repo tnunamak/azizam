@@ -127,7 +127,9 @@ def test_loaded_maps_equal_literal_base_tables_including_order(tmp_path):
 
 def test_shipped_file_has_only_extra_intents_and_no_duplicate_transcription():
     document = yaml.safe_load(DATA.read_text(encoding="utf-8"))
-    assert list(document) == ["schema_version", "capabilities", "protocol_words", "route_intents"]
+    assert list(document) == [
+        "schema_version", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule",
+    ]
     assert document["schema_version"] == 1
     assert list(document["protocol_words"].items()) == list(PROTOCOL.items())
     assert list(document["route_intents"].items()) == list(EXTRA_INTENTS.items())

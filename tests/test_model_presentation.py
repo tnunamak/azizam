@@ -165,7 +165,9 @@ def test_catalog_preserves_keyed_substrate_identity_without_claiming_local_cost(
 @pytest.mark.parametrize("connection, expected", [
     ({"host": "127.0.0.1", "port": 18001, "base_path": "/v1", "health_endpoint": "/health"}, "http://127.0.0.1:18001/health"),
     ({"host": "::1", "port": 18001, "base_path": "/v1", "health_endpoint": "health"}, "http://[::1]:18001/v1/health"),
-    ({"host": "example.test", "scheme": "https", "health_endpoint": "/health"}, "https://example.test/health"),
+    ({"host": "example.test", "port": 443, "scheme": "https", "health_endpoint": "/health"}, "https://example.test:443/health"),
+    # A host without a port names no address (docs/design/CODE_TO_DATA.md S8), so no health path resolves.
+    ({"host": "example.test", "scheme": "https", "health_endpoint": "/health"}, None),
     ({"base_url": "http://example.test/v1", "health_endpoint": "health"}, "http://example.test/v1/health"),
     ({"health_endpoint": "http://example.test/health"}, "http://example.test/health"),
     ({"host": "example.test"}, None),
