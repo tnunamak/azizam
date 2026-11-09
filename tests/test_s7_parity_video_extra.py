@@ -420,10 +420,19 @@ def test_video_1_05_same_idempotency_key_twice_submits_once(tmp_path):
     assert seen["prompts"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason="open item P8: a create answers 200 queued before the engine is asked, and the body must not name "
-                   "the engine address (see test_video_11b in test_s7_parity_video_create.py)")
-def test_video_1_11_engine_unreachable_is_502_with_the_engine_url(tmp_path):
-    """video-11: an unreachable engine answers 502 `api_error` and names the engine URL (golden video_create_unreachable)."""
+async def _settled_video(rig, video_id):
+    """Poll the video read until the job leaves queued/in_progress."""
+    for _ in range(200):
+        body = (await rig.call("GET", f"/v1/videos/{video_id}")).json()
+        if body.get("status") not in ("queued", "in_progress"):
+            return body
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"video {video_id} never settled")
+
+
+def test_video_1_11_engine_unreachable_fails_the_job_and_names_no_engine_address(tmp_path):
+    """video-11 (P8, new contract): the create answers 200 queued before the engine is asked; the job read then answers failed with the
+    engine-unavailable code, and no body names the engine address (golden video_create_unreachable is re-recorded)."""
     seen = {}
 
     def setup(rig):
@@ -432,11 +441,13 @@ def test_video_1_11_engine_unreachable_is_502_with_the_engine_url(tmp_path):
 
     async def drive(rig):
         response = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
-        seen["status"], seen["body"] = response.status_code, response.text
+        seen["status"], seen["body"] = response.status_code, response.json()
+        seen["job"] = await _settled_video(rig, seen["body"]["id"])
 
     _run(tmp_path, "r1-11", setup, drive)
-    assert seen["status"] == 502
-    assert "ComfyUI unavailable at" in seen["body"]
+    assert seen["status"] == 200 and seen["body"]["status"] == "queued"
+    assert seen["job"]["status"] == "failed" and seen["job"]["error"]["message"] == "ComfyUI unavailable"
+    assert "ComfyUI unavailable at" not in json.dumps(seen["job"]) and "http" not in json.dumps(seen["job"]["error"])
 
 
 def test_video_1_14_create_answer_is_queued_with_no_location_and_the_model(tmp_path):
@@ -1062,11 +1073,9 @@ def test_openai_alias_create_answers_as_the_canonical_route(tmp_path):
     assert seen["alias"] == seen["canonical"]
 
 
-@pytest.mark.xfail(strict=True, reason="open item P8: the engine is asked after the create has answered, so a refused or id-less prompt fails the "
-                   "job; it no longer answers 502 at create and stores no video")
 @pytest.mark.parametrize("failure", ["refused", "no_prompt_id"])
-def test_video_engine_submit_failures_are_502_and_store_nothing(tmp_path, failure):
-    """Engine prompt refusals and a prompt answer without an id: 502, and no video is stored."""
+def test_video_engine_submit_failures_fail_the_job_after_a_queued_create(tmp_path, failure):
+    """P8 (new contract): a refused prompt, or an answer without an id, still creates the video (200 queued); the job then fails."""
     from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
     from tests.test_adapter_differential import _comfy
     from tests.media_test_bytes import mp4_bytes
@@ -1082,12 +1091,13 @@ def test_video_engine_submit_failures_are_502_and_store_nothing(tmp_path, failur
 
     async def drive(rig):
         response = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v"})
-        seen["status"], seen["message"] = response.status_code, response.json()["error"]["message"]
-        seen["listed"] = (await rig.call("GET", "/v1/videos")).json()["data"]
+        seen["status"], seen["created"] = response.status_code, response.json()
+        seen["job"] = await _settled_video(rig, seen["created"]["id"])
+        seen["message"] = seen["job"]["error"]["message"]
 
     _run(tmp_path, f"av-submit-{failure}", setup, drive)
-    assert seen["status"] == 502
-    assert seen["listed"] == []
+    assert seen["status"] == 200 and seen["created"]["status"] == "queued"
+    assert seen["job"]["status"] == "failed"
     if failure == "refused":
         assert seen["message"] == "ComfyUI: The engine refused this request."
     else:

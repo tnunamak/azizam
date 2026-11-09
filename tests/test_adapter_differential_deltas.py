@@ -145,7 +145,7 @@ def test_an_engine_request_delta_names_the_prompt_session_id_and_nothing_else():
 
 
 def test_the_image_case_entries_name_only_the_approved_kinds():
-    approved = {"engine_session_id", "job_row_metadata"}      # J10, J11 and R06 are not listed: the guard refuses their kinds
+    approved = {"engine_session_id", "job_row_metadata", "idempotency_key_reuse_conflict", "job_create_failure_text", "executor_crash_text"}
     seen = {delta.kind for name, entries in listed.MANIFEST.items() if name.startswith("s7_parity_images/") for delta in entries}
     assert seen == approved
     assert not {"job_submit_refuses_unknown_field", "receipt_closes_with_job_outcome", "job_one_receipt", "masked_edit_source"} & listed.KINDS
