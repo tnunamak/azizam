@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "2c63428501d78648d12449003431d89f68dc58341751d76db03fcb8642f6305f",
+ "openapi_sha256": "bd20a2a3dd2afeabc2f116e766ffb005683302ed176c2bb41cce40c14f6fabfe",
  "policy": {
   "aliases": [
    {
@@ -4073,6 +4073,20 @@
     "intent": "models.list",
     "protocol": "typesafe.models"
    },
+   "/v1/3d/generations": {
+    "capability_exposure": "default",
+    "capability_resource_tier": "batch",
+    "capability_trust_tier": "stable",
+    "intent": "mesh.generate",
+    "protocol": "openai.mesh"
+   },
+   "/v1/3d/generations/glb": {
+    "capability_exposure": "default",
+    "capability_resource_tier": "batch",
+    "capability_trust_tier": "stable",
+    "intent": "mesh.generate",
+    "protocol": "openai.mesh"
+   },
    "/v1/assets/{asset_id}/content": {
     "backend": "comfyui",
     "capability_exposure": "default",
@@ -4136,13 +4150,6 @@
     "capability_trust_tier": "stable",
     "intent": "image.generate",
     "protocol": "openai.images"
-   },
-   "/v1/meshes/generate": {
-    "capability_exposure": "default",
-    "capability_resource_tier": "batch",
-    "capability_trust_tier": "stable",
-    "intent": "mesh.generate",
-    "protocol": "openai.mesh"
    },
    "/v1/models": {
     "intent": "models.list",

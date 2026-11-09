@@ -2,16 +2,27 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "azizam://registry/defaults/workflow_execution",
   "title": "workflow_execution",
-  "description": "How workflow jobs run (docs/design/CONFIG_HOMES.md, C10): which routes compile from the definitions a job pinned at accept, and the limits on what a job's result may hold.",
+  "description": "How workflow jobs run (docs/design/CONFIG_HOMES.md, C10; docs/design/CODE_TO_DATA_S4_S8.md, I7): the longest a run request may hold its answer, how much history a workflow keeps, the bounds a saved workflow template must meet, and the limits on what a job's result may hold. The code holds the ceiling of each key; a value above it is cut to it.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "compile_from_pin": {
-      "description": "Routes whose jobs compile from the definitions they pinned at accept, not from the live workflow file (docs/design/CODE_TO_DATA_S2.md, D2). Keyed by the route's capability, for example audio.generate. Only a literal true turns a route on.",
-      "x-azizam-entry": "collection",
+    "max_wait_s": {
+      "description": "Longest `Prefer: wait=N` a run request may ask for, in seconds (gateway/workflow_run.py, RUN_CEILINGS).",
+      "type": "integer", "minimum": 1
+    },
+    "history_depth": {
+      "description": "How many saved revisions of one workflow the registry keeps and lists (gateway/workflow_run.py, RUN_CEILINGS).",
+      "type": "integer", "minimum": 1
+    },
+    "bounds": {
+      "description": "What a saved workflow's template may hold (gateway/workflow_run.py, RUN_CEILINGS). A key left out keeps the code's ceiling.",
       "type": "object",
-      "propertyNames": {"type": "string", "minLength": 1},
-      "additionalProperties": {"type": "boolean"}
+      "additionalProperties": false,
+      "properties": {
+        "max_template_bytes": {"type": "integer", "minimum": 1},
+        "max_nodes": {"type": "integer", "minimum": 1},
+        "max_depth": {"type": "integer", "minimum": 1}
+      }
     },
     "legacy_output_collection": {
       "description": "Whether a route that declares no output selector may still collect its outputs the old way (docs/design/CODE_TO_DATA_S2.md, D5). Only a literal false turns it off.",

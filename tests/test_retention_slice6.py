@@ -17,6 +17,7 @@ from gateway import admin_store, egress, mcp_server, media_jobs, receipt_store, 
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.discovery import WorkflowRegistry
 from gateway.retention_facts import ledger, revision
+from tests.support.registry_provider import provider_of
 
 
 def _registry() -> dict:
@@ -153,7 +154,7 @@ def test_gateway_ledger_rest_requires_admin_and_returns_saved_request_view():
             raise PermissionError("admin required")
         return {"request_id": request_id, "destinations": []} if request_id != "missing" else None
 
-    app.include_router(create_gateway_router(WorkflowRegistry()))
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry())))
     app.include_router(create_request_retention_router(ledger_provider=provider))
     client = TestClient(app)
     assert client.get("/admin/api/me/retention/ledger").status_code == 403

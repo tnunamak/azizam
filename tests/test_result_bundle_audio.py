@@ -38,7 +38,7 @@ def rig(tmp_path: Path):
 
 def settings(rig: GatewayRig, **limits: int) -> None:
     publish_section(rig.monkeypatch, "workflow_execution",
-                    {"compile_from_pin": {CAPABILITY: True}, **({"result_limits": limits} if limits else {})})
+                    ({"result_limits": limits} if limits else {}))
 
 
 async def accept(rig: GatewayRig, prompt: str = "a door creaks") -> str:

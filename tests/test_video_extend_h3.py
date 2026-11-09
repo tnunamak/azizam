@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from _fake_comfy_video import succeeded_history  # noqa: E402
-from gateway import media_jobs, video_extend as ve, video_extend_h3 as h3, video_inputs  # noqa: E402
+from gateway import media_jobs, video_extend as ve, video_inputs  # noqa: E402
 from test_video_remix_replace import (  # noqa: E402
     NEW_ID,
     NEW_PROMPT_ID,
@@ -33,7 +33,12 @@ from test_video_remix_replace import (  # noqa: E402
 )
 
 FPS = 24.0
-H3_MODELS = {h3.UNET, h3.TURBO_LORA, h3.VIDEO_VAE, h3.AUDIO_VAE, h3.TEXT_ENCODER}
+H3 = ve.engine_for("h3_chain")
+H3_MODELS = {
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+    "minimax_h3_video_vae_int8_convrot.safetensors", "minimax_h3_audio_vae_fp32.safetensors",
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+}
 
 
 def _spec(segments, *, source=None, context=22, **kw):
@@ -42,7 +47,7 @@ def _spec(segments, *, source=None, context=22, **kw):
 
 
 def _plan(shots, *, has_source=False, max_seconds=10.0, ledger=None):
-    return h3.plan_segments(shots, fps=FPS, has_source=has_source, max_segment_seconds=max_seconds,
+    return H3.plan_segments(shots, fps=FPS, has_source=has_source, max_segment_seconds=max_seconds,
                             state_ledger=ledger)
 
 
@@ -53,13 +58,13 @@ def _sampled_length(graph: dict, j: int) -> int:
 class ContextWindowTests(unittest.TestCase):
     def test_window_is_a_whole_number_of_latent_steps(self) -> None:
         for seconds, frames in ((0.34, 5), (0.5, 5), (1.0, 22), (1.5, 22), (2.0, 39), (3.0, 56), (4.0, 56)):
-            self.assertEqual(h3.context_window(seconds), frames, seconds)
-        for frames in h3.CONTEXT_WINDOWS:
+            self.assertEqual(H3.tail_frames(seconds, FPS), frames, seconds)
+        for frames in H3.binding.context_windows:
             self.assertEqual((frames - 5) % 17, 0)
 
     def test_engine_reports_the_window_the_route_checks_the_source_against(self) -> None:
         engine = ve.engine_for("h3_chain")
-        self.assertIsInstance(engine, h3.H3ChainEngine)
+        self.assertIs(engine, H3)
         self.assertEqual(engine.tail_frames(1.0, FPS), 22)
         self.assertEqual(ve.engine_for("ltx25_chain").tail_frames(1.0, FPS), 25)
 
@@ -77,14 +82,13 @@ class ConfigTests(unittest.TestCase):
 
     def test_manifest_reference_graph_matches_the_builder(self) -> None:
         """workflows/videos/video-minimax-h3-long.json is the one-segment graph the
-        manifest binds. It must not drift from gateway/video_extend_h3.py."""
+        manifest binds. It must not drift from workflows/videos/chains/h3_chain.json."""
         import json
         stored = json.loads((ROOT / "workflows/videos/video-minimax-h3-long.json").read_text())
-        stored.pop("_meta")
         spec = ve.ChainSpec(
             [ve.Segment("A cinematic shot of a serene scene with natural motion.", 243, 0)],
-            960, 544, 24.0, 42, context_frames=22)
-        self.assertEqual(stored, h3.build_chain_graph(spec).graph)
+            960, 544, 24.0, 42, context_frames=22, negative="")
+        self.assertEqual(stored, H3.build(spec).graph)
 
     def test_segment_length_cap_is_a_workflow_key(self) -> None:
         self.assertEqual(proxy.config["videos"]["workflows"]["video-minimax-h3-long"]["chain_segment_seconds"], 10)
@@ -93,14 +97,14 @@ class ConfigTests(unittest.TestCase):
 class PlanTests(unittest.TestCase):
     def test_first_segment_is_17a_plus_5(self) -> None:
         for seconds in (2, 5, 8, 10):
-            frames = h3.first_segment_frames(seconds)
+            frames = H3.first_segment_frames(seconds, FPS)
             self.assertEqual((frames - 5) % 17, 0, seconds)
             self.assertAlmostEqual(frames / FPS, seconds, delta=0.45)
-        self.assertEqual(h3.first_segment_frames(5), 124)
+        self.assertEqual(H3.first_segment_frames(5, FPS), 124)
 
     def test_added_segments_grow_in_steps_of_17_within_the_cap(self) -> None:
         segs = _plan([("a", 10), ("b", 25)])
-        self.assertEqual(segs[0].frames, h3.first_segment_frames(10))
+        self.assertEqual(segs[0].frames, H3.first_segment_frames(10, FPS))
         for seg in segs[1:]:
             self.assertEqual(seg.frames % 17, 0, seg)
             self.assertLessEqual(seg.frames, 10 * FPS)
@@ -144,7 +148,7 @@ def _refs_resolve(test: unittest.TestCase, graph: dict) -> None:
 
 class GraphTests(unittest.TestCase):
     def _chain(self, shots, **kw):
-        return h3.build_chain_graph(_spec(_plan(shots), **kw))
+        return H3.build(_spec(_plan(shots), **kw))
 
     def test_refs_resolve_and_only_h3_models_are_loaded(self) -> None:
         built = self._chain([("a", 10), ("b", 6)])
@@ -185,7 +189,7 @@ class GraphTests(unittest.TestCase):
 
     def test_sampled_length_is_context_plus_new_frames(self) -> None:
         segs = _plan([("a", 5), ("b", 5)])
-        g = h3.build_chain_graph(_spec(segs)).graph
+        g = H3.build(_spec(segs)).graph
         self.assertEqual(_sampled_length(g, 0), segs[0].frames)
         self.assertEqual(_sampled_length(g, 1), 22 + segs[1].frames)
 
@@ -196,7 +200,7 @@ class GraphTests(unittest.TestCase):
 
     def test_total_frames_and_audio_match(self) -> None:
         segs = _plan([("a", 5), ("b", 5), ("c", 5)])
-        built = h3.build_chain_graph(_spec(segs))
+        built = H3.build(_spec(segs))
         self.assertEqual(built.total_frames, sum(s.frames for s in segs))
         g = built.graph
         # one audio part per segment, joined in order; each part is cut to its frames by the Trim node
@@ -208,11 +212,11 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(g["s1_cat"]["inputs"]["image1"], ["s0_trim", 0])
 
     def test_context_length_follows_the_context_window(self) -> None:
-        g = h3.build_chain_graph(_spec(_plan([("a", 5), ("b", 5)]), context=39)).graph
+        g = H3.build(_spec(_plan([("a", 5), ("b", 5)]), context=39)).graph
         self.assertEqual(g["s1_ctx"]["inputs"]["context_length"], "39")
         self.assertEqual(_sampled_length(g, 1), 39 + _plan([("a", 5), ("b", 5)])[1].frames)
         with self.assertRaises(ve.PlanError):
-            h3.build_chain_graph(_spec(_plan([("a", 5), ("b", 5)]), context=25))
+            H3.build(_spec(_plan([("a", 5), ("b", 5)]), context=25))
 
     def test_first_frame_image_pins_the_first_segment_only(self) -> None:
         g = self._chain([("a", 10), ("b", 5)], first_frame_image="x.png").graph
@@ -224,8 +228,8 @@ class GraphTests(unittest.TestCase):
     def test_segment_of_node_maps_progress_nodes(self) -> None:
         built = self._chain([("a", 5), ("b", 5), ("c", 5)])
         self.assertEqual(ve.segment_of_node(built.units, "s1_sample"), 1)
-        self.assertEqual(ve.segment_of_node(built.units, "s2_ctx"), 2)
-        self.assertEqual(ve.segment_of_node(built.units, "s2_trim"), 2)
+        self.assertEqual(ve.segment_of_node(built.units, "s2_ctx", node_prefix="s{index}_"), 2)
+        self.assertEqual(ve.segment_of_node(built.units, "s2_trim", node_prefix="s{index}_"), 2)
         self.assertIsNone(ve.segment_of_node(built.units, "unet"))
 
 
@@ -234,9 +238,9 @@ class ProgressOrderTests(unittest.IsolatedAsyncioTestCase):
     sampler. Progress and the finished-segment count must not jump for it."""
 
     async def test_a_later_segments_encode_does_not_move_progress(self) -> None:
-        built = h3.build_chain_graph(_spec(_plan([("a", 5), ("b", 5)])))
-        self.assertIsNone(ve.segment_of_node(built.units, "s1_cond", progress_only=True))
-        self.assertEqual(ve.segment_of_node(built.units, "s1_cond"), 1)  # errors still name the segment
+        built = H3.build(_spec(_plan([("a", 5), ("b", 5)])))
+        self.assertIsNone(ve.segment_of_node(built.units, "s1_cond", node_prefix="s{index}_", progress_only=True))
+        self.assertEqual(ve.segment_of_node(built.units, "s1_cond", node_prefix="s{index}_"), 1)  # errors still name the segment
         pid = "pppppppp-0000-0000-0000-000000000001"
         graph = built.graph
         with patch.dict(proxy._video_chain_units, {pid: built.units}), \
@@ -263,7 +267,7 @@ class ExtensionGraphTests(unittest.TestCase):
     SOURCE = ve.SourceVideo("s.mp4", 244, FPS, 960, 544, True)
 
     def _graph(self, shots, source=SOURCE):
-        return h3.build_chain_graph(_spec(_plan(shots, has_source=True), source=source))
+        return H3.build(_spec(_plan(shots, has_source=True), source=source))
 
     def test_first_added_segment_pins_decoded_tail_and_audio_of_the_source(self) -> None:
         built = self._graph([("more", 10)])

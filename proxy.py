@@ -17,6 +17,10 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
+from gateway.frontend_shapes import media_job as media_job_shape
+from gateway import registry_snapshot
+from gateway import workflow_projections, workflow_registry_store
+from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
@@ -24,6 +28,7 @@ from gateway.public_failure import PublicFailure
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
 
+import inspect
 import asyncio
 import shutil
 import base64
@@ -52,6 +57,7 @@ from decimal import Decimal
 from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
+import dataclasses
 import contextvars
 import io
 from contextlib import asynccontextmanager
@@ -113,10 +119,17 @@ from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
+from gateway import pinned_runtime, request_spool, workflow_run
+from gateway.engine_protocol import graph_round
+from gateway import frontend_shapes
+from gateway.frontend_shapes import shapes as frontend_wire_shapes
+from gateway.engine_protocol.types import ResultContext
+from gateway.workflow_runtime_types import (
+    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
-from gateway import exclusive_pool, mesh_api, mesh_manifest
+from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, node_graph_runner, row_routes, workflow_adapters
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
@@ -373,6 +386,7 @@ from gateway.image_output import (
     background_format_conflict,
     encode_image_bytes,
     parse_output_compression,
+    parse_image_background,
     parse_output_format,
     parse_quality,
     quality_steps_from_manifest,
@@ -1573,6 +1587,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     updates = _derive_backend_constants(new_cfg, registry=registry)
     # The workflow registry is built whole here too, so a failure leaves the old one serving; ``adopt`` below swaps it in.
     workflow_registry = _load_gateway_workflow_registry(strict=True)
+    # The registry snapshot is built whole here too (strict), so a revision that does not build leaves the old one serving.
+    next_registry_snapshot = _build_registry_snapshot(new_cfg.get("model_aliases"), strict=True)
     # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
     egress = _project_egress(new_cfg.get("backends"))
     # The snapshot is built here too, before anything is published, so a failure leaves the old one serving.
@@ -1614,6 +1630,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
         _g[name] = updates[name]
     # Swapped in place, not assigned: a router and a bound method hold the registry from import (8.4).
     GATEWAY_WORKFLOW_REGISTRY.adopt(workflow_registry)
+    GATEWAY_REGISTRY_PROVIDER.swap(next_registry_snapshot)
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
 
     print(
@@ -3489,6 +3506,11 @@ def is_openai_model_alias(model_name: str) -> bool:
     return infer_openai_model_category(model_name) is not None
 
 
+def _image_default_model() -> str:
+    """The workflow a generation request runs when it names none: the deployment's configured default."""
+    return DERIVED.COMFY_DEFAULT_MODEL
+
+
 def default_model_for_operation(operation: str, requested_model: str = "") -> str:
     configured_default = model_compat_defaults().get(operation)
     if configured_default:
@@ -3503,7 +3525,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "translations":
         return stt_backend_model()
     if operation == "images":
-        return DERIVED.COMFY_DEFAULT_MODEL
+        return _image_default_model()
     if operation == "image_edits":
         return image_edit_default_model()
     if operation == "videos":
@@ -6502,12 +6524,6 @@ def _video_job_envelope(workflow_name: str) -> job_envelope.JobEnvelope | None:
 _PINNED_MANIFEST_FIELDS = pinned_definitions.PINNED_MANIFEST_FIELDS
 
 
-def _compile_from_pin(capability: str) -> bool:
-    """Whether jobs of the route ``capability`` compile from their pinned definitions (CODE_TO_DATA_S2 D2 "Use"),
-    read from the published config on each call."""
-    return pinned_definitions.compile_from_pin_enabled(runtime().config, capability)
-
-
 _DEFINITION_UNAVAILABLE = "A definition this job was accepted with is no longer available; please submit it again."
 _DEFINITION_UNAVAILABLE_INFO = {"error_code": "definition_unavailable", "error_category": "internal", "retryable": False}
 
@@ -7303,21 +7319,6 @@ def _background_removal_fallback(source: str, error: str = "") -> ImageBackgroun
         source=source,
         error=str(error or "")[:200],
     )
-
-
-def parse_image_background(value: Any) -> tuple[Optional[str], Optional[str]]:
-    """Parse OpenAI's image `background` option.
-
-    Returns (value, error). None and empty string mean OpenAI's default: auto.
-    """
-    if value is None or value == "":
-        return "auto", None
-    if not isinstance(value, str):
-        return None, "background must be one of 'transparent', 'opaque', or 'auto'"
-    normalized = value.strip().lower()
-    if normalized in ("transparent", "opaque", "auto"):
-        return normalized, None
-    return None, "background must be one of 'transparent', 'opaque', or 'auto'"
 
 
 def _parse_image_output_shape(
@@ -8159,13 +8160,7 @@ def has_vision_content(messages) -> bool:
     return False
 
 
-def _says_out_of_memory(text: str, *, plain: bool = False) -> bool:
-    """Whether an engine's error text reports that it ran out of memory (the text decides a retry; it is never passed on).
-
-    ``plain`` leaves out the bare ``oom`` marker (it is in "boom"): the retry accepts it, the sentence to the caller does not.
-    """
-    lowered = str(text or "").lower()
-    return any(marker in lowered for marker in ("cuda out of memory", "cuda oom", "out of memory", *(() if plain else ("oom",))))
+_says_out_of_memory = graph_round.says_out_of_memory
 
 
 def _graph_error_message(job: Mapping[str, Any] | None, graph: Mapping[str, Any] | None = None) -> str | None:
@@ -8182,7 +8177,8 @@ def _video_job_warnings(record: Mapping[str, Any] | None, job: Mapping[str, Any]
     subject = (record or {}).get("subject") if isinstance(record, Mapping) else None
     if not isinstance(subject, Mapping):
         return []
-    count = video_subject.tracked_count((job or {}).get("outputs") if isinstance(job, Mapping) else None)
+    count = video_subject.tracked_count(
+        (job or {}).get("outputs") if isinstance(job, Mapping) else None, str(subject.get("probe_node") or ""))
     return video_subject.warnings_for(
         count, explicit=bool(subject.get("explicit")), subject=str(subject.get("subject") or "person"))
 
@@ -8195,7 +8191,8 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     chain = (record or {}).get("chain") if isinstance(record, Mapping) else None
     if not isinstance(chain, Mapping):
         return error
-    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "")
+    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "",
+                                         node_prefix=video_extend.record_node_prefix(chain))
     if index is None:
         return error
     total = int(chain.get("segments") or 0)
@@ -8391,6 +8388,7 @@ async def _graph_run_round(
     max_wait_s: int | None = None,
     binding: Mapping[str, Any] | None = None,
     contract_outputs: Mapping[str, Any] | None = None,
+    intent: str | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single prompt to the graph engine and harvest the resulting image bytes.
 
@@ -8419,113 +8417,58 @@ async def _graph_run_round(
     adapter = _graph_adapter()
     graph = _graph(client)
     engine = adapter.label
-    prompt_id: Optional[str] = None
     try:
-        try:
-            ref = await adapter.submit(
-                graph.conn, "graph.submit",
-                AdapterRequest(op="graph.submit", body=_build_graph_submit_payload(workflow), headers=headers,
-                               params={"session": graph}),
-            )
-        except TransportFailure as e:
-            if e.kind == "timeout":
-                return Response(
-                    content=json.dumps({"error": {"message": f"{engine} request timeout", "type": "api_error"}}),
-                    status_code=504,
-                    media_type="application/json",
-                ), []
-            if e.kind == "unreachable":
-                return Response(
-                    content=json.dumps({"error": {"message": adapter.unavailable_message(graph.conn), "type": "api_error"}}),
-                    status_code=502,
-                    media_type="application/json",
-                ), []
-            # The peer dropped the connection mid-exchange (e.g. RemoteProtocolError).
-            return Response(
-                content=json.dumps({"error": {"message": "Image backend connection dropped", "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json",
-            ), []
-        except ProtocolUpstreamError as e:
-            # What the engine said decides whether to free its memory and retry; it is never passed on (decision D44).
-            if _says_out_of_memory(e.excerpt, plain=True):
-                refused = client_errors.client_error(502, "upstream_out_of_memory", error_type="api_error", subject=engine)
-            else:
-                refused = client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=engine)
-            refused.out_of_memory = _says_out_of_memory(e.excerpt)  # type: ignore[attr-defined]
-            return refused, []
-        except ProtocolMalformedResponse:
-            return Response(
-                content=json.dumps({"error": {"message": "No prompt_id returned", "type": "api_error"}}),
-                status_code=502,
-                media_type="application/json",
-            ), []
-
-        prompt_id = ref.id
-        print(f"[proxy] {engine} {label} submitted: {prompt_id}", flush=True)
-
-        # Keep the original total sleep budget; history request time was never
-        # charged against it. Check immediately, then back off to the old cadence.
-        remaining_wait_s = float(max_wait_s or DERIVED.COMFY_TIMEOUT)
-        poll_delay_s = 0.0
-        finished = None
-        while remaining_wait_s > 0:
-            if await _request_is_disconnected(request):
-                await _graph_cancel(client, prompt_id, headers, reason="client disconnect")
-                return _image_client_disconnected_response(prompt_id), []
-            if poll_delay_s:
-                await asyncio.sleep(poll_delay_s)
-                remaining_wait_s -= poll_delay_s
-            poll_delay_s = min(
-                poll_delay_s * 2 if poll_delay_s else 0.05,
-                0.5,
-                remaining_wait_s,
-            )
-            try:
-                status = await adapter.poll(graph.conn, ref, headers=headers, session=graph, graph=workflow)
-            except (TransportFailure, ProtocolUpstreamError):
-                continue
-            if status.state is JobState.failed:
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": status.detail,
-                            "type": "api_error",
-                        }
-                    }),
-                    status_code=502,
-                    media_type="application/json",
-                ), []
-            if status.state is JobState.succeeded:
-                finished = status
-                break
-
-        if finished is None:
-            queue_position = await _graph_queue_position(client, prompt_id, headers)
-            await _graph_cancel(client, prompt_id, headers, reason="image timeout")
-            return _image_generation_timeout_response(queue_position), []
-
-        # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6
-        # limits. A run with no file for the selector answers as an empty round always has; any other refusal says so.
-        try:
-            picked = await adapter.fetch_selected(
-                graph.conn, finished, binding or {}, contract_outputs or {result_bundle.DEFAULT_NAME: {}},
-                limits=result_bundle.limits_from_config(runtime().config),
-                headers=headers, session=graph,
-            )
-        except node_graph.SelectionRefused as refusal:
-            if refusal.code != "result_missing":
-                return _result_refusal_response(refusal.code, _refused_result_status(refusal.code)), []
-            picked = {}
-        images = _SelectedImages(raw for files in picked.values() for raw in files)
-        images.result_name = next(iter(picked)) if len(picked) == 1 else None
-        return None, images
-    except asyncio.CancelledError:
-        if prompt_id:
-            await _graph_cancel(client, prompt_id, headers, reason="request cancellation")
-        raise
+        result = await graph_round.run_round(
+            adapter, graph, _build_graph_submit_payload(workflow), headers,
+            graph=workflow, label=label, max_wait_s=float(max_wait_s or DERIVED.COMFY_TIMEOUT),
+            control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=_graph_connection,
+            is_disconnected=lambda: _request_is_disconnected(request),
+            binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
+            limits=result_bundle.limits_from_config(runtime().config),
+            cadence=adapter.poll_for(intent or IMAGE_GENERATE_INTENT),
+            say=lambda text: print(f"[proxy] {text}", flush=True))
+    except graph_round.RoundFailure as failed:
+        return _round_failure_response(failed, adapter, graph), []
     finally:
         await _finalize_probe()
+    # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6 limits.
+    images = _SelectedImages(raw for files in result.files.values() for raw in files)
+    images.result_name = next(iter(result.files)) if len(result.files) == 1 else None
+    return None, images
+
+
+def _round_failure_response(failed: "graph_round.RoundFailure", adapter: Any, graph: Any) -> Response:
+    """The answer a caller of an old route gets for a round that produced no files."""
+    engine = adapter.label
+
+    def plain(message: str, status: int) -> Response:
+        return Response(content=json.dumps({"error": {"message": message, "type": "api_error"}}), status_code=status,
+                        media_type="application/json")
+
+    kind = failed.kind
+    if kind == graph_round.SUBMIT_TIMEOUT:
+        return plain(f"{engine} request timeout", 504)
+    if kind == graph_round.UNREACHABLE:
+        return plain(adapter.unavailable_message(graph.conn), 502)
+    if kind == graph_round.DROPPED:
+        return plain("Image backend connection dropped", 502)
+    if kind == graph_round.REFUSED:
+        # What the engine said decides whether to free its memory and retry; it is never passed on (decision D44).
+        if graph_round.says_out_of_memory(failed.excerpt, plain=True):
+            refused = client_errors.client_error(502, "upstream_out_of_memory", error_type="api_error", subject=engine)
+        else:
+            refused = client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=engine)
+        refused.out_of_memory = failed.out_of_memory  # type: ignore[attr-defined]
+        return refused
+    if kind == graph_round.NO_PROMPT_ID:
+        return plain("No prompt_id returned", 502)
+    if kind == graph_round.EXECUTION_FAILED:
+        return plain(failed.detail, 502)
+    if kind == graph_round.WAIT_EXCEEDED:
+        return _image_generation_timeout_response(failed.queue_position)
+    if kind == graph_round.DISCONNECTED:
+        return _image_client_disconnected_response(failed.prompt_id or "")
+    return _result_refusal_response(failed.code, _refused_result_status(failed.code))
 
 
 def _build_image_response_payload(
@@ -8672,6 +8615,48 @@ def _workflow_display_name(manifest: Mapping[str, Any] | None) -> str | None:
     """The name a person knows a workflow by (its manifest's ``display_name``), or None for a route with no manifest."""
     name = (manifest or {}).get("display_name") if isinstance(manifest, Mapping) else None
     return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optional["_VramProbe"], free_before: Optional[int],
+                                    batch_target: int, workflow_name: str, width: int, height: int) -> Optional[int]:
+    """Record what one image of this workflow at this size costs, from the first round's probe (or, failing that, the
+    free-memory difference), and return the estimate the batcher may plan with (None when it is untrusted)."""
+    per_image_cost = 0
+    measurement_trusted = False
+    source = "probe"
+    model_state = "unknown"
+    comfy_baseline = 0
+    samples_count = probe.samples if probe is not None else 0
+    free_after, _ = await graph_vram_snapshot(client)
+    if probe is not None and probe.trustworthy():
+        marginal, model_state = probe.marginal_and_state()
+        if isinstance(marginal, int) and marginal > 0:
+            # marginal is the per-batch-round delta; divide by batch_target to get the per-image cost.
+            per_image_cost = marginal // max(1, batch_target)
+            measurement_trusted = True
+            source = "probe"
+        comfy_baseline = probe.comfy_baseline_min if isinstance(probe.comfy_baseline_min, int) else 0
+    elif probe is not None and probe.error:
+        print(f"[proxy] VRAM probe error for {workflow_name} {width}x{height}: {probe.error}", flush=True)
+    if per_image_cost <= 0:
+        # The probe gave nothing useful: persist the endpoint difference, marked untrusted.
+        if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
+            per_image_cost = (free_before - free_after) // max(1, batch_target)
+        if per_image_cost <= 0:
+            per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
+        measurement_trusted = False
+        source = "endpoint_diff"
+    record_vram_estimate(
+        workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
+        comfy_baseline_bytes=comfy_baseline, samples_count=samples_count)
+    sys_peak = probe.system_peak_used_bytes() if probe is not None else None
+    gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
+    print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
+          f"(trusted={measurement_trusted}, source={source}, model_state={model_state}, probe_samples={samples_count}, "
+          f"comfy_before={gib(probe.comfy_before if probe is not None else None)}, "
+          f"comfy_peak={gib(probe.comfy_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
+    # Re-read; None when the measurement was untrusted (no scheduling decision is made from it).
+    return get_vram_estimate(workflow_name, width, height)
 
 
 async def _generate_images_with_adaptive_batching(
@@ -8944,86 +8929,9 @@ async def _generate_images_with_adaptive_batching(
         # Fallback: endpoint diff `free_before - free_after`, tagged as
         # untrusted so the batcher doesn't plan against it.
         if estimate is None and rounds_run == 1:
-            per_image_cost = 0
-            measurement_trusted = False
-            source = "probe"
-            model_state = "unknown"
-            comfy_baseline = 0
-            samples_count = probe.samples if probe is not None else 0
-            free_after, _ = await graph_vram_snapshot(client)
-
-            if probe is not None and probe.trustworthy():
-                marginal, model_state = probe.marginal_and_state()
-                if isinstance(marginal, int) and marginal > 0:
-                    # marginal is the per-batch-round delta; divide by
-                    # batch_target to get per-image cost (cache key is
-                    # per-image).
-                    divisor = max(1, batch_target)
-                    per_image_cost = marginal // divisor
-                    measurement_trusted = True
-                    source = "probe"
-                comfy_baseline = (
-                    probe.comfy_baseline_min
-                    if isinstance(probe.comfy_baseline_min, int)
-                    else 0
-                )
-            elif probe is not None and probe.error:
-                print(
-                    f"[proxy] VRAM probe error for {workflow_name} "
-                    f"{width}x{height}: {probe.error}",
-                    flush=True,
-                )
-
-            if per_image_cost <= 0:
-                # Probe failed or returned nothing useful. Fall back to the
-                # legacy endpoint diff so we at least persist *something*,
-                # but mark it untrusted.
-                if isinstance(free_after, int) and isinstance(free_before, int) and free_after < free_before:
-                    per_image_cost = (free_before - free_after) // max(1, batch_target)
-                if per_image_cost <= 0:
-                    per_image_cost = 4 * 1024 * 1024  # synthetic floor: 4 MiB
-                measurement_trusted = False
-                source = "endpoint_diff"
-                if model_state == "unknown":
-                    model_state = "unknown"
-
-            record_vram_estimate(
-                workflow_name,
-                width,
-                height,
-                per_image_cost,
-                trusted=measurement_trusted,
-                source=source,
-                model_state=model_state,
-                comfy_baseline_bytes=comfy_baseline,
-                samples_count=samples_count,
-            )
-            # Re-read; will be None if measurement was untrusted (so we
-            # don't make scheduling decisions off it).
-            estimate = get_vram_estimate(workflow_name, width, height)
-            sys_peak = probe.system_peak_used_bytes() if probe is not None else None
-            sys_peak_str = (
-                f"{sys_peak / (1024**3):.2f} GiB" if isinstance(sys_peak, int) else "n/a"
-            )
-            before_str = (
-                f"{probe.comfy_before / (1024**3):.2f} GiB"
-                if probe is not None and isinstance(probe.comfy_before, int)
-                else "n/a"
-            )
-            peak_str = (
-                f"{probe.comfy_peak / (1024**3):.2f} GiB"
-                if probe is not None and isinstance(probe.comfy_peak, int)
-                else "n/a"
-            )
-            print(
-                f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: "
-                f"{per_image_cost / (1024**2):.1f} MiB/image marginal "
-                f"(trusted={measurement_trusted}, source={source}, "
-                f"model_state={model_state}, probe_samples={samples_count}, "
-                f"comfy_before={before_str}, comfy_peak={peak_str}, "
-                f"system_peak={sys_peak_str})",
-                flush=True,
-            )
+            estimate = await _measure_first_round_vram(
+                client, probe=probe, free_before=free_before, batch_target=batch_target,
+                workflow_name=workflow_name, width=width, height=height)
 
     images_collected = images_collected[:images_total]
     if not images_collected:
@@ -9148,7 +9056,7 @@ async def proxy_graph_image_request(
         return metadata_error
 
     prompt = body.get("prompt", "")
-    requested_model = body.get("model", DERIVED.COMFY_DEFAULT_MODEL)
+    requested_model = body.get("model", _image_default_model())
     model = requested_model
     requested_size = body.get("size")
     size = requested_size or "1024x1024"
@@ -9395,7 +9303,7 @@ async def proxy_graph_image_request(
 # a defensive allow-listed alias (not an OpenAI SDK field) so a non-SDK
 # client using the plural, unbracketed name still works instead of being
 # silently ignored.
-_EDIT_IMAGE_FIELD_NAMES = ("image[]", "image", "images")
+_EDIT_IMAGE_FIELD_NAMES = frontend_wire_shapes.IMAGE_PARTS
 
 
 def _collect_edit_image_uploads(form: Any) -> list[Any]:
@@ -10957,6 +10865,23 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
             flush=True,
         )
         return None
+    # A role that names no node of the file is a template problem, found here and not when a request fills the graph.
+    roles = workflow_cfg.get("node_roles") or {}
+    dangling = sorted(
+        str(key) for key, value in roles.items()
+        if key.endswith(("_node", "_nodes"))
+        and any(str(node) not in workflow for node in (value if isinstance(value, list) else [value]))
+        and not (workflow_cfg.get("subject_select") and key in ("point_detect_node", "fit_canvas_node"))
+    )
+    if not roles or dangling:
+        print(f"[proxy] invalid video workflow {p}: node roles {dangling or 'missing'}", flush=True)
+        return None
+    if workflow_cfg.get("subject_select"):
+        try:
+            video_subject.check_roles(roles, workflow)
+        except video_subject.SubjectRoleError as exc:
+            print(f"[proxy] invalid video workflow {p}: {exc}", flush=True)
+            return None
     ui = _load_ui_workflow(p)
     if ui is not None:
         workflow["__ui_workflow__"] = ui
@@ -11779,6 +11704,7 @@ async def _submit_video_graph(
                     media_type="application/json"
                 )
 
+            now = int(time.time())  # the one reading: the seed's updated_at and the job's created_at share it
             # Seed progress state so /v1/videos/{id} can phase-classify nodes
             # by class type before any ws events arrive.
             try:
@@ -11795,8 +11721,10 @@ async def _submit_video_graph(
                         "node_class": None,
                         "phase": "encoding",
                         "error": None,
-                        "updated_at": time.time(),
+                        "updated_at": now,
                     })
+                    # A resubmit that reuses an id is a new job: its progress clock cannot predate its created_at.
+                    _video_progress[prompt_id]["updated_at"] = max(_video_progress[prompt_id].get("updated_at") or 0, now)
             except Exception:
                 pass
 
@@ -11836,7 +11764,6 @@ async def _submit_video_graph(
             except Exception:
                 pass
 
-            now = int(time.time())
             response_headers = {}
             if duration_adjustment_reason is not None:
                 response_headers["X-Duration-Adjusted"] = (
@@ -12354,7 +12281,9 @@ async def _proxy_graph_video_create(
 
     # Inject parameters into a deep copy of the workflow.
     workflow = copy.deepcopy(workflow_template)
-    meta = workflow.pop("_meta", {})
+    # The node roles are the workflow's binding (`node_roles` in its videos entry), checked against the graph when the
+    # file loads (`_load_video_workflow_file`); the graph file carries no roles of its own.
+    meta = workflow_cfg.get("node_roles") or {}
 
     prompt_node = meta.get("prompt_node")
     neg_node = meta.get("negative_prompt_node")
@@ -12378,7 +12307,7 @@ async def _proxy_graph_video_create(
     if negative_prompt and neg_node and neg_node in workflow:
         workflow[neg_node]["inputs"]["text"] = negative_prompt
 
-    # Helpers to accept either a single node id or a list of node ids in _meta.
+    # Helpers to accept either a single node id or a list of node ids in the node roles.
     # Some workflows have a single source-of-truth Primitive node feeding many
     # consumers; others spread the field across consumer nodes directly. Accept
     # both so workflow JSONs can stay close to ComfyUI's native format.
@@ -12401,7 +12330,7 @@ async def _proxy_graph_video_create(
     #   "7"                   -> single node with both width/height keys (e.g. EmptyLatentImage)
     #   ["W_NID", "H_NID"]    -> two separate INTConstant/PrimitiveInt source nodes; index 0 is
     #                            width, index 1 is height. Each takes a single `value` key.
-    #   width_node/height_node in _meta override the list/single behavior.
+    #   width_node/height_node in the node roles override the list/single behavior.
     width_node = meta.get("width_node")
     height_node = meta.get("height_node")
     size_list = _as_list(size_node)
@@ -12420,7 +12349,7 @@ async def _proxy_graph_video_create(
 
     # length_node: also accept "value" (PrimitiveInt source-of-truth pattern)
     # and "frames_number" (LTXVEmptyLatentAudio variant). length_nodes (plural)
-    # in _meta is honored too for fan-out when multiple consumers need the same
+    # in the node roles is honored too for fan-out when multiple consumers need the same
     # length without a Primitive node.
     length_targets = _as_list(meta.get("length_nodes")) or _as_list(length_node)
     for nid in length_targets:
@@ -12452,7 +12381,7 @@ async def _proxy_graph_video_create(
         _set_field(nid, ["noise_seed", "seed", "value"], seed_val)
 
     # I2V: when input_reference is supplied, resolve to bytes, upload to ComfyUI,
-    # and wire it into the workflow via the keys exposed in _meta.
+    # and wire it into the workflow via the workflow's node roles.
     #
     # Workflow contract (uniform across aliases — Option A: one workflow per alias
     # handles both T2V and I2V):
@@ -12478,8 +12407,7 @@ async def _proxy_graph_video_create(
                 content=json.dumps({
                     "error": {
                         "message": (
-                            f"Workflow {workflow_name} does not support I2V "
-                            "(missing _meta.image_node)."
+                            f"Workflow {workflow_name} does not support I2V."
                         ),
                         "type": "invalid_request_error",
                     }
@@ -12619,14 +12547,14 @@ async def _proxy_graph_video_create(
         # was validated before the uploads; this rewires the bound graph.
         block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
         try:
-            video_subject.apply_point(workflow, block, width, height)
+            video_subject.apply_point(workflow, block, width, height, meta)
             if block.get("reference_fit", True) not in (False, "false", "False", 0):
-                video_subject.add_reference_fit(workflow)
+                video_subject.add_reference_fit(workflow, meta)
         except video_subject.SubjectError as exc:
             return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
                                code="invalid_workflow_extension")
         subject_record = {
-            "probe_node": video_subject.PROBE_NODE,
+            "probe_node": meta["probe_node"],
             "explicit": video_subject.explicit_selection(block),
             "subject": str(block.get("source_subject") or "person"),
         }
@@ -12969,6 +12897,7 @@ async def _submit_video_chain(
         "segment_frames": [s.frames for s in segments],
         "shots": len(shots),
         "units": built.units,
+        "node_prefix": engine.binding.node_prefix,
         "total_frames": built.total_frames,
         "fps": fps,
         "context_seconds": context_seconds,
@@ -14452,6 +14381,35 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
 GATEWAY_WORKFLOW_REGISTRY = _load_gateway_workflow_registry()
 
 
+def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict: bool = False) -> registry_snapshot.Snapshot:
+    """The registry snapshot of the stored document. A boot keeps the bundled release when the stored one does not build;
+    a reload (``strict``) raises instead, so the snapshot that is serving stays."""
+    try:
+        snapshot = registry_snapshot.load_current(ADMIN_DB_PATH, model_aliases=model_aliases)
+    except Exception as e:  # noqa: BLE001
+        if strict:
+            raise
+        print(f"[proxy] Registry snapshot unavailable; the bundled release is kept: {e}", flush=True)
+        return registry_snapshot.build({}, registry_snapshot.bundled_release(), generation=0, model_aliases=model_aliases)
+    for workflow_id, problems in snapshot.held_out.items():
+        print(f"[proxy] Stored workflow {workflow_id!r} does not serve: {'; '.join(p.message for p in problems)}", flush=True)
+    return snapshot
+
+
+def _boot_registry_snapshot() -> registry_snapshot.Snapshot:
+    return _build_registry_snapshot(config.get("model_aliases"))
+
+
+GATEWAY_REGISTRY_PROVIDER = registry_snapshot.Provider(_boot_registry_snapshot())
+
+
+@app.middleware("http")
+async def _registry_snapshot_scope(request: Request, call_next):
+    """One registry revision for the life of a request: the first read is taken here, before any handler runs."""
+    registry_snapshot.snapshot_of(request, GATEWAY_REGISTRY_PROVIDER)
+    return await call_next(request)
+
+
 def _auth_context_from_scope(request: Request) -> AuthContext:
     auth_context = request.scope.get("auth_context")
     if isinstance(auth_context, AuthContext):
@@ -15519,18 +15477,7 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
 def _gateway_result_reader(request: Request) -> result_bundle.Reader | None:
     """Who is reading a job result: the App's owner scope and the person, credential or MCP connection the request ran
     as. A request that resolved no identity reads nothing."""
-    from gateway.ownership import stored_owner_key
-    identity = _auth_context_from_scope(request).identity
-    if identity is None:
-        return None
-    scope = stored_owner_key(getattr(identity, "key_hash", None), app_id=getattr(identity, "app_id", None),
-                             path=ADMIN_STORE.path)
-    if not scope:
-        return None
-    return result_bundle.Reader(
-        owner_scope=scope, person_id=getattr(identity, "person_id", None) or None,
-        credential_id=getattr(identity, "credential_id", None) or None,
-        connection_id=getattr(identity, "connection_id", None) or None)
+    return _result_reader_for(_auth_context_from_scope(request))
 
 
 async def _gateway_media_job_submitter(
@@ -15729,7 +15676,7 @@ def _stable_alias_model_entries() -> list[dict[str, Any]]:
 
 app.include_router(
     create_gateway_router(
-        GATEWAY_WORKFLOW_REGISTRY,
+        GATEWAY_REGISTRY_PROVIDER,
         aliases_provider=_gateway_aliases_provider,
         entry_visible=_gateway_discovery_visible,
         alias_resolver=_gateway_alias_resolver,
@@ -16171,7 +16118,8 @@ def _mcp_rename(request: Request, auth: Any, tool: str, args: Mapping[str, Any])
 
 
 def _mcp_catalog() -> list[dict[str, Any]]:
-    records = GATEWAY_WORKFLOW_REGISTRY.records()
+    # The tools list published workflows only (5.9), from the one snapshot this call takes.
+    records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
     by_id = {record.id: record for record in records}
     entries = workflow_catalog(records, _gateway_aliases_provider())
     return [{**entry, "inputs": advertised_inputs_schema(by_id[entry["id"]])} for entry in entries]
@@ -16547,7 +16495,7 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
     ),
 ))
 
-# --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
+# --- Image to 3D: the 3D rows over the run core (gateway/row_routes.py, gateway/multipart_adapter.py) ---
 # The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
 _MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
 # The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
@@ -16586,36 +16534,6 @@ def _live_service_registry() -> dict | None:
         return None
 
 
-def _mesh_open_receipt(
-    auth: AuthContext, request_id: str, path: str, manifest: mesh_api.MeshWorkflow,
-) -> ReceiptLifecycleOwner:
-    """The receipt of one mesh request, naming the record that request read (not a newer one adopted since)."""
-    identity = auth.identity
-    receipt = RouteReceipt(
-        protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
-        app_profile=plan_ref(identity),
-        app_id=identity.app_id if identity else None,
-        api_key_name=identity.name if identity else None,
-        backend=manifest.service_id, resolved_workflow=manifest.id,
-        manifest_id=manifest.id, manifest_version=manifest.version,
-        manifest_hash=manifest.manifest_hash,
-    )
-    return ReceiptLifecycleOwner(receipt)
-
-
-def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any], manifest: mesh_api.MeshWorkflow) -> PolicyDecision:
-    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers and the record the
-    request read. Reads no receipt."""
-    tiers = row["runtime_policy"]
-    return evaluate_and_apply(auth.identity, make_policy_request(
-        protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=manifest.id,
-        backend=manifest.service_id,
-        capability_exposure=tiers["capability_exposure"],
-        capability_trust_tier=tiers["capability_trust_tier"],
-        capability_resource_tier=tiers["capability_resource_tier"],
-    ))
-
-
 def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
     """Store a file a workflow made, and the files it was given, with what made it (``origin`` in its sidecar).
 
@@ -16645,13 +16563,6 @@ def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
         origin={key: value for key, value in origin.items() if value or key == "takes_text"})
 
 
-def _mesh_job_owner(auth: Any) -> dict[str, Any]:
-    """The caller fields of a mesh media job, from the authenticated App (as the identity job stamps its own)."""
-    identity = auth.identity if isinstance(auth, AuthContext) else None
-    return {"app_profile": plan_ref(identity), "api_key_name": identity.name if identity else None,
-            "app_id": identity.app_id if identity else None, "owner_key_hash": identity.key_hash if identity else None}
-
-
 def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput:
     """A file a caller uploaded to a workflow, as the store keeps it: its name and the media type it was sent with,
     else the one its suffix gives, else a picture (what an image route is given)."""
@@ -16667,26 +16578,34 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 MESH_DEPS = mesh_api.MeshApiDeps(
     current_manifest=current_mesh_workflow,
     workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
-    authenticate=lambda request, path: authenticate_request(request, path),
     frontend_records=lambda: route_registry.protocol_frontend_records(
         registry=_live_service_registry(), proxy_config=runtime().config),
     services=lambda: (_live_service_registry() or {}).get("services") or {},
-    open_receipt=_mesh_open_receipt,
-    leases=MESH_LEASES,
-    egress_refusal=_egress_refusal_response,
     client_factory=lambda: engine_egress.async_client(follow_redirects=False),
-    new_request_id=new_request_id,
-    route_policy=_mesh_route_policy,
-    store_output=lambda auth, output: store_workflow_output(auth, output),
-    jobs=mesh_api.MeshJobDeps(
-        path=lambda: media_jobs.DB_PATH,
-        owner=lambda auth: _mesh_job_owner(auth),
-        response=lambda job, request: _image_media_job_response(job, request, status_code=202),
-    ),
-    register_job_counter=lambda name, counter: DRAIN_STATE.register_job_counter(name, counter),
-    discard_output=lambda asset_id: _LIBRARY_ASSET_DELETER(asset_id),
 )
-FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_routes(app, MESH_DEPS))
+# The multipart runner: the pool lease, the observer and the service call behind the binding the protocol description names.
+MULTIPART_HOST = multipart_adapter.MultipartHost(
+    services=lambda: MESH_DEPS.services(),
+    leases=MESH_LEASES,
+    client_factory=lambda: MESH_DEPS.client_factory(),
+    require_egress=_require_egress_lease,
+    store_output=lambda auth, output: store_workflow_output(auth, output),
+    read_asset=lambda asset_id, caller: _WORKFLOW_RUN_PORT.read_asset(asset_id, caller),
+    jobs_path=lambda: media_jobs.DB_PATH,
+    limits=lambda: result_bundle.limits_from_config(runtime().config),
+)
+workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
+
+
+_MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts
+
+
+def _mount_3d_rows(app: FastAPI) -> None:
+    """The routes of the 3D frontend rows, over the run core."""
+    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, _MOUNTED_ROW_IDS)
+
+
+FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
 
 
 def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
@@ -16776,7 +16695,7 @@ def _identity_template() -> tuple[dict[str, Any], dict[str, Any]]:
         artifact = binding.get("workflow")
         if not isinstance(artifact, str):
             raise RuntimeError("identity workflow manifest is missing")
-        graph = json.loads((Path(__file__).parent / artifact).read_text(encoding="utf-8"))
+        graph = json.loads(_resolve_workflow_artifact_path(record, artifact).read_text(encoding="utf-8"))
         _identity_template_cache = (graph, dict(binding))
     return _identity_template_cache
 
@@ -17599,6 +17518,28 @@ STT_MEASUREMENTS = stt_measurement.Measurements(ADMIN_STORE, _operator_stt_trans
                                                 preflight=_operator_stt_preflight, active=_operator_stt_owner_active)
 
 
+service_registry.set_dynamic_model_aliases_source(lambda: config.get("model_aliases"))
+
+
+def _workflow_store_snapshot(document, _release, *, generation):
+    """The store's prospective snapshot, built by the same builder and bundled release the provider uses."""
+    return registry_snapshot.build(document, registry_snapshot.bundled_release(), generation=generation,
+                                   model_aliases=config.get("model_aliases"))
+
+
+# The owner's workflow store (CODE_TO_DATA_S4_S8 I2). Its writes reload through reload_runtime_config, the one reload
+# path, which swaps GATEWAY_REGISTRY_PROVIDER.
+WORKFLOW_REGISTRY_STORE = workflow_registry_store.WorkflowRegistryStore(
+    path=lambda: ADMIN_DB_PATH, definitions=definition_store.DefinitionStore(media_jobs.DB_PATH),
+    build_snapshot=_workflow_store_snapshot, config=lambda: config, on_changed=lambda: reload_runtime_config(),
+)
+
+
+def _workflow_owner_entry_problems(entry) -> list[dict[str, Any]]:
+    available = workflow_run.BindingAvailability(_workflow_binding_problem)
+    return [{"code": code} for code in workflow_projections.PROJECTIONS.entry_problems(entry, available)]
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
@@ -17618,6 +17559,9 @@ app.include_router(
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
         transitions=lambda: TRANSITION_RUNTIME,
+        workflow_registry=WORKFLOW_REGISTRY_STORE,
+        workflow_entry_problems=_workflow_owner_entry_problems,
+        workflow_listing_scope=lambda: _one_operator_override_read(),
     )
 )
 
@@ -18272,13 +18216,15 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     evidence = await _capabilities_availability_evidence(capabilities, service_records)
 
     def build_catalog() -> dict[str, Any]:
+        # The member catalog lists published workflows only (5.9), read from the one snapshot this build takes.
+        published_records = SnapshotRegistry(GATEWAY_REGISTRY_PROVIDER.current(), published_only=True).records()
         projected = project_capabilities(
             capabilities, service_records=service_records,
             evidence=evidence,
-            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            workflow_records=published_records,
         )
         return build_workflows_catalog(
-            records=GATEWAY_WORKFLOW_REGISTRY.records(),
+            records=published_records,
             capabilities=projected,
             aliases=_gateway_aliases_provider(),
             recent_receipts=activity.get("receipts") or (),
@@ -18828,7 +18774,25 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
     }
 
 
+# Set while a listing checks many entries at once: the operator overrides read once for the whole list.
+_OPERATOR_OVERRIDE_SNAPSHOT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "operator_override_snapshot", default=None)
+
+
+@contextlib.contextmanager
+def _one_operator_override_read():
+    """Inside this block, ``_operator_override_docs`` answers from one read taken when the block starts."""
+    token = _OPERATOR_OVERRIDE_SNAPSHOT.set(_operator_override_docs())
+    try:
+        yield
+    finally:
+        _OPERATOR_OVERRIDE_SNAPSHOT.reset(token)
+
+
 def _operator_override_docs() -> dict[str, Any]:
+    held = _OPERATOR_OVERRIDE_SNAPSHOT.get()
+    if held is not None:
+        return held
     try:
         overrides = ADMIN_STORE.operator_overrides()
     except Exception as exc:  # noqa: BLE001
@@ -23474,7 +23438,7 @@ def _safe_image_media_job_metadata(
         "mode": "async_image_generation",
         "request_hash": request_hash,
         "idempotency": idempotency,
-        "requested_model": str(body.get("model", DERIVED.COMFY_DEFAULT_MODEL))[:160],
+        "requested_model": str(body.get("model", _image_default_model()))[:160],
         "size": str(body.get("size", "1024x1024"))[:32],
         "n": max(1, min(n_value, 10)),
         "response_format": "url",
@@ -23541,13 +23505,6 @@ def _image_response_error(response: Response) -> tuple[str, str | None]:
     return f"image generation failed with HTTP {response.status_code}", None
 
 
-_JOB_FAILURE_COPY = {
-    "authorization": ("not_in_access_plan", "This workflow isn't in your access plan."),
-    "invalid_input": ("invalid_input", "The gateway did not accept this job's inputs."),
-    "capacity": ("capacity", "The gateway is too busy to run this job now. Try again later."),
-    "timeout": ("timeout", "The backend did not finish this job in time."),
-    "safety": ("content_policy_violation", "The backend refused this job's content."),
-}
 # Error codes a job may copy from a refusal: the gateway's own and the standard
 # OpenAI ones. Any other code, even a plain token, may carry words from a prompt
 # a backend echoed, so it becomes the category's default code.
@@ -23606,7 +23563,7 @@ def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
             "error_code": code or "upstream_error", "error_category": "upstream",
             "retryable": status >= 500, "upstream_http_status": status,
         }
-    default_code, message = _JOB_FAILURE_COPY[category]
+    default_code, message = media_job_shape.JOB_FAILURE_COPY[category]
     if category == "capacity" and getattr(response, "gateway_refusal", None):
         message = _admission_refusal_message(response)
     elif category == "invalid_input" and getattr(response, "gateway_refusal", None):
@@ -23886,6 +23843,36 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
     )
 
 
+# The request ids of the receipts that were open when startup recovery began: the stopped gateway's. A receipt opened
+# after that is a live request's and is never closed by recovery, whatever its timestamp says.
+_RECOVERY_OPEN_RECEIPTS: frozenset[str] | None = None
+
+
+def _recover_workflow_runs() -> None:
+    """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
+    runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
+    # No task of a stopped gateway is left to close the receipt of a run it was serving. That covers a receipt whose job
+    # does not exist yet (the body was still arriving), one whose job ended before the receipt closed, and one whose run
+    # recovery itself ends. The receipts open now are the stopped gateway's, so the snapshot of them is taken first and
+    # only those are closed; the unfinished runs are listed before recovery settles any of them.
+    global _RECOVERY_OPEN_RECEIPTS
+    _RECOVERY_OPEN_RECEIPTS = receipt_store.open_request_ids()
+    run_request_ids = [str(job.get("request_id") or "") for job in media_jobs.unfinished(path=media_jobs.DB_PATH)
+                       if workflow_run.is_run_job(job)]
+    core = _workflow_run_core()
+    if core is not None:         # first: a run settled from its committed result closes its receipt as succeeded
+        try:
+            report = core.recover_runs(int(time.time()))
+        except Exception as exc:  # noqa: BLE001 - a failed recovery must not stop startup; the next start decides again
+            _MEDIA_JOB_LOG.warning("workflow run recovery failed: %s", log_scrub.describe_error(exc))
+        else:
+            if report.counts:
+                _MEDIA_JOB_LOG.info("workflow runs recovered: %s", dict(report.counts))
+    receipt_store.close_orphans_on_paths(row_routes.row_paths(_MOUNTED_ROW_IDS), among=_RECOVERY_OPEN_RECEIPTS)
+    for request_id in run_request_ids:     # a receipt already closed (a replayed success) stays as it closed
+        receipt_store.close_orphan(request_id, among=_RECOVERY_OPEN_RECEIPTS)
+
+
 def _recover_media_jobs() -> None:
     """Run on every startup, even when the operator disables resuming."""
     # Before any job resumes: no run is staging results yet, so every unpublished stage is a dead attempt's.
@@ -23896,9 +23883,11 @@ def _recover_media_jobs() -> None:
     _resume_pending_image_media_jobs()
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
+    _recover_workflow_runs()
     me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH,
                         enabled=_image_media_job_resume_on_start())
-    supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE}
+    supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE,
+                 workflow_run.RUN_INTENT}
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
         mode = (job.get("metadata") or {}).get("mode")
         if mode not in supported:
@@ -24308,6 +24297,9 @@ _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = {
     "sfx.generate": "audio",
     INTENT_VIDEO_GENERATE: "video",
 }
+# Every intent that counts toward the queue depth and an App's concurrency: the modality jobs above, and workflow runs
+# (whose resource class is the workflow's own fact, so it is not in the table).
+_QUEUED_MEDIA_JOB_INTENTS = frozenset(_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT) | {workflow_run.RUN_INTENT}
 
 
 def _optional_int_config(mapping: Mapping[str, Any], key: str) -> int | None:
@@ -24360,7 +24352,7 @@ def _media_job_queue_depth(
         depth += sum(
             1
             for row in rows
-            if str(row.get("intent") or "") in _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT
+            if str(row.get("intent") or "") in _QUEUED_MEDIA_JOB_INTENTS
         )
     return depth
 
@@ -24370,7 +24362,7 @@ def _media_job_app_load(app_id: str | None, limits: Mapping[str, int] | None) ->
         return {}
     try:
         return {app_id: media_jobs.active_count(
-            app_id=app_id, intents=_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT, path=media_jobs.DB_PATH,
+            app_id=app_id, intents=_QUEUED_MEDIA_JOB_INTENTS, path=media_jobs.DB_PATH,
         )}
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] media app admission load read failed: {type(exc).__name__}", flush=True)
@@ -24478,23 +24470,29 @@ def _model_dispatch_admission_response(
 def _media_job_admission_response(
     intent: str, *, count_queue: bool = True, receipt: RouteReceipt | None = None,
     auth_context: AuthContext | None = None, path: str = "/gateway/v1/media/jobs",
+    resource_class: str | None = None,
 ) -> Response | None:
     """Return the operator's refusal for new media work, or None to admit it.
 
     ``count_queue=False`` skips the queue-depth limit, for a job that was
-    already admitted and would otherwise count itself.
+    already admitted and would otherwise count itself. ``resource_class`` is given by a caller whose class is data (a
+    workflow run: the workflow's own fact); the intent table answers for the modality jobs.
     """
     admission_cfg = _effective_media_job_admission_cfg()
     app_id = (auth_context.identity.app_id if auth_context and auth_context.identity
               else receipt.app_id if receipt else None)
     app_limits = admission_cfg.get("max_app_concurrency") if count_queue else None
-    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
+    # A workflow run names its own adapter, so the graph service's switch and operator state do not gate it; the run's
+    # binding is checked by the core (``entry_problems``) before admission.
+    graph_gated = intent != workflow_run.RUN_INTENT
+    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {}) if graph_gated else {}
     override_state = str(service_override.get("state") or "available")
     service_blocked = override_state in {"disabled", "maintenance", "draining"}
     service_degraded = override_state == "degraded"
-    resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
+    resource_class = resource_class or _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
     service_reasons_list: list[str] = []
-    if not DERIVED.COMFY_ENABLED:
+    graph_enabled = DERIVED.COMFY_ENABLED or not graph_gated
+    if not graph_enabled:
         service_reasons_list.append(f"{_graph_adapter().label} media backend disabled")
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
@@ -24509,10 +24507,10 @@ def _media_job_admission_response(
         intent=intent,
         observed_at=time.time(),
         load_quality="measured",
-        service_available=DERIVED.COMFY_ENABLED and not service_blocked,
+        service_available=graph_enabled and not service_blocked,
         service_degraded=service_degraded,
         service_retry_after=service_retry_after
-        or (30 if (not DERIVED.COMFY_ENABLED or service_blocked) else None),
+        or (30 if (not graph_enabled or service_blocked) else None),
         service_reasons=tuple(service_reasons_list),
         resource_class=resource_class,
         app_id=app_id, active_by_app=_media_job_app_load(app_id, app_limits),
@@ -24731,9 +24729,10 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
-        # The route compiles from what the job pinned at accept, or the job fails: never from the live file.
+        # An audio job with a pin runs from what it pinned at accept, or it fails: never from the live file. A job for a
+        # workflow whose binding has no pin (not a graph) recorded no envelope and runs as it was accepted.
         pinned_args: dict[str, Any] = {}
-        if _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
+        if await asyncio.to_thread(_audio_job_runs_from_pin, job_id, job):
             try:
                 pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
                 pinned_args["pinned_workflow"] = job.get("workflow")
@@ -24998,13 +24997,10 @@ async def _submit_audio_media_job(
         except ManifestError as exc:  # the manifest and the deployment's limits disagree, or a generator cannot serve its input
             return _generated_value_fault_response(exc)
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
-    compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
-    # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
-    # the envelope is required for it whether or not the route compiles from its pin. A workflow whose binding has no
-    # pin (no graph binding) has no envelope to build; it keeps the old behaviour and draws at run, as before S3.6.
-    needs_envelope = compiles_from_pin or (bool(generated) and _manifest_has_pin(manifest))
+    # The worker runs the job from its pin, so a manifest that has a pin needs its envelope at accept: a job that pinned
+    # nothing could never run. A workflow whose binding has no pin (no graph binding) has no envelope to build.
+    needs_envelope = _manifest_has_pin(manifest)
     if envelope is None and needs_envelope:
-        # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
         return _pin_not_recorded_response()
 
     try:
@@ -25858,7 +25854,7 @@ async def gateway_image_generations_media_job(request: Request):
         return response
     if protocol_target is not None:
         receipt.backend = protocol_target.engine_id
-    model = str(body.get("model", DERIVED.COMFY_DEFAULT_MODEL))
+    model = str(body.get("model", _image_default_model()))
     manifest = _find_image_manifest("image.generate", model)
     if receipt is not None:
         receipt.requested_workflow = model
@@ -26015,6 +26011,28 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
+def _run_job_content(job_id: str, caller: Any, request: Any = None) -> Response | None:
+    """A finished run's content: the wire of the row that took the job reads it its own way; else, with exactly one file
+    result, that file in its own media type; else None."""
+    service = _workflow_job_service()
+    view = service.get(job_id, caller) if service is not None else None
+    if view is not None and view.status == "succeeded":
+        stored = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+        row = {r.id: r for r in frontend_shapes.bundled_rows()}.get(str((stored.get("metadata") or {}).get("frontend") or ""))
+        read = frontend_shapes.build_shape(row).render_content(view, service, caller, request) if row is not None else None
+        if read is not None:
+            return read
+    refs = [ref for ref in (view.results or ()) if ref.asset_id is not None] if view is not None else []
+    if len(refs) != 1:
+        return None
+    try:
+        content = service.open_result(job_id, refs[0], caller)
+    except (JobNotFound, ResultUnavailable):
+        return JSONResponse({"error": {"message": "media job has no result file", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return Response(content=content.body, media_type=content.media_type, headers={"x-asset-id": str(refs[0].asset_id)})
+
+
 async def gateway_media_job_content(job_id: str, request: Request):
     """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
@@ -26084,6 +26102,10 @@ async def gateway_media_job_content(job_id: str, request: Request):
         }, status_code=503 if retryable else 410,
            headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
+    if workflow_run.is_run_job(job):  # first: a run's row carries its route's intent, which may be mesh.generate
+        single = await asyncio.to_thread(_run_job_content, job_id, auth_context, request)
+        if single is not None:
+            return single
     if intent == mesh_api.MESH_INTENT:
         return _mesh_job_content(job)  # the plan was checked above, with the other kinds
     if intent == "image.generate":
@@ -26488,264 +26510,817 @@ def _signed_asset_content_response(
     return response
 
 
-async def _execute_video_manifest_workflow(request: Request, workflow_id: str, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
-    """Run an upload-driven video-edit manifest and return its rendered asset."""
-    if receipt is None:
-        from gateway import media_ingestion
-        receipt = await media_ingestion.start_receipt(
-            request, auth_context, intent="video.edit", protocol="openai.video",
-            route_path=str(getattr(getattr(request, "url", None), "path", f"/gateway/v1/workflows/{workflow_id}/run")),
-        )
-        try:
-            response = await _execute_video_manifest_workflow(request, workflow_id, auth_context, receipt=receipt)
-        except BaseException as error:
-            await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
-            raise
-        return await run_receipt_write(media_ingestion.finish_response, receipt, response)
+# ------------------------------------------------------------------------------------------ generic workflow run
+# CODE_TO_DATA_S4_S8 sections 5 and 7. The run core (gateway/workflow_run.py) decides; this block is the main module's
+# side of it: who the caller is, plan policy, admission, the execution payload, scheduling, and the engine adapter.
 
-    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
-    if record is None or record.intent != "video.edit":
-        record = next(
-            (item for item in GATEWAY_WORKFLOW_REGISTRY.records()
-             if item.intent == "video.edit" and item.id.rsplit(".", 1)[-1] == workflow_id),
-            None,
-        )
-    if record is None:
-        return Response(
-            content=json.dumps({"error": {"message": "Unknown video-edit workflow", "type": "invalid_request_error"}}),
-            status_code=404, media_type="application/json",
-        )
-    admission = _dispatch_admission_response(
-        "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
-    )
-    if admission is not None:
-        return admission
-    adapter = _graph_adapter("videos")
-    binding = (record.manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING)
-    artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
-    if not isinstance(artifact, str):
-        return Response(
-            content=json.dumps({"error": {"message": f"Workflow has no {adapter.label} binding", "type": "api_error"}}),
-            status_code=501, media_type="application/json",
-        )
-    workflow_path = Path(__file__).parent / artifact
+# The snapshot provider (S5) and the projections (S5). A test may set either to None: the route then answers 503.
+WORKFLOW_SNAPSHOTS: Any = GATEWAY_REGISTRY_PROVIDER
+WORKFLOW_PROJECTIONS: Any = workflow_projections.PROJECTIONS
+# Built at first use, not at import, so no setting is read at import (config homes 1.2). A test may set any of them.
+_WORKFLOW_RUN_SPOOL_ROOT: Path | None = None
+_WORKFLOW_JOB_SPOOL: request_spool.JobSpool | None = None
+_workflow_run_tasks: set[asyncio.Task] = set()
+_workflow_run_scheduled: set[str] = set()
+_workflow_run_semaphore: asyncio.Semaphore | None = None
+
+
+def _workflow_run_spool_root() -> Path:
+    return _WORKFLOW_RUN_SPOOL_ROOT or IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
+
+
+def _workflow_job_spool() -> request_spool.JobSpool:
+    global _WORKFLOW_JOB_SPOOL
+    if _WORKFLOW_JOB_SPOOL is None:
+        _WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_workflow_run_spool_root())
+    return _WORKFLOW_JOB_SPOOL
+
+
+def _workflow_run_slots() -> asyncio.Semaphore:
+    global _workflow_run_semaphore
+    if _workflow_run_semaphore is None:
+        _workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+    return _workflow_run_semaphore
+_workflow_core_cache: tuple[Any, Any, Any] | None = None
+
+
+def _caller_owner_scope(auth_context: AuthContext) -> str:
+    from gateway.ownership import stored_owner_key
+    identity = auth_context.identity
+    if identity is None:
+        return ""
+    return stored_owner_key(getattr(identity, "key_hash", None), app_id=getattr(identity, "app_id", None),
+                            path=ADMIN_STORE.path) or ""
+
+
+def _result_reader_for(auth_context: AuthContext) -> result_bundle.Reader | None:
+    identity = auth_context.identity
+    scope = _caller_owner_scope(auth_context)
+    if identity is None or not scope:
+        return None
+    return result_bundle.Reader(
+        owner_scope=scope, person_id=getattr(identity, "person_id", None) or None,
+        credential_id=getattr(identity, "credential_id", None) or None,
+        connection_id=getattr(identity, "connection_id", None) or None)
+
+
+def _backend_address(record: Mapping[str, Any]) -> str | None:
+    host, port = record.get("host"), record.get("port")
+    return f"http://{host}:{port}" if host and port else None
+
+
+def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+    """The configured service whose reviewed protocol holds the bindings under ``binding_key``: (service id, record,
+    protocol, adapter). Found by data (the protocol description's ``binding`` key and the record's protocol), never by
+    an engine name."""
+    from gateway.engine_protocol import description as protocol_description
+    from gateway.engine_protocol import reviewed
+    from gateway.engine_protocol.errors import ProtocolError
+    for doc in protocol_description.load_registry().values():
+        if not binding_key or doc.binding != binding_key:
+            continue
+        # A record is the engine for this binding when it names the protocol itself, or when its service id is the
+        # binding key. A record that merely could serve a capability is not: that would pick any service with an address.
+        candidates = []
+        for service_id, record in (config.get("backends") or {}).items():
+            if not isinstance(record, Mapping) or _backend_address(record) is None:
+                continue
+            connection = record.get("connection")
+            named = next((str(source["protocol"]).strip() for source in (connection if isinstance(connection, Mapping) else {}, record)
+                          if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
+            if named == doc.id or service_id == binding_key:
+                candidates.append((named != doc.id, service_id, record))
+        for _, service_id, record in sorted(candidates, key=lambda item: item[0]):
+            for capability in (*doc.serves, ""):
+                try:
+                    if reviewed.protocol_for_backend(record, capability).id != doc.id:
+                        continue
+                    return service_id, record, doc, reviewed.adapter_for_backend(record, capability)
+                except ProtocolError:
+                    continue
+    return None
+
+
+def _workflow_binding_problem(binding: Any) -> str | None:
+    """Whether this deployment can run ``binding`` (I3): its adapter is registered for a configured service."""
+    runner = workflow_adapters.for_binding(binding.adapter_id)
+    if runner is not None:
+        return runner.binding_problem(binding)
+    return None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE
+
+
+def _refused_from_response(response: Response) -> RunRefused:
     try:
-        form = await request_forms.read_form(request)
-        input_specs = record.manifest.get("inputs") or {}
-        _begin_media_delivery(auth_context, receipt)
-        metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
-        form_fields = set(form.keys())
-        prompt_mode_field = f"extensions[{prompt_memory.NAMESPACE}][mode]"
-        controls = multipart_extensions(form.get("extensions"))
-        if form.get(metadata_field) is not None:
-            controls[WORKFLOW_EXTENSION_NAMESPACE] = {provenance.METADATA_CONTROL: form.get(metadata_field)}
-        if form.get(prompt_mode_field) is not None:
-            controls[prompt_memory.NAMESPACE] = {"mode": form.get(prompt_mode_field)}
-        unknown_fields = form_fields - set(input_specs) - {"extensions", metadata_field, prompt_mode_field}
-        if unknown_fields:
-            raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
-        supplied: dict[str, Any] = {}
-        asset_uploads: dict[str, tuple[str, bytes, str]] = {}
-        for name, spec in input_specs.items():
-            raw = form.get(name)
-            if spec.get("type") == "asset":
-                if raw is None or not hasattr(raw, "read"):
-                    continue
-                raw_bytes = await raw.read()
-                if not raw_bytes:
-                    raise ValueError(f"{name} file is empty")
-                asset_uploads[name] = (
-                    Path(getattr(raw, "filename", name) or name).name,
-                    raw_bytes,
-                    getattr(raw, "content_type", None) or "application/octet-stream",
-                )
-                supplied[name] = "upload"
-                continue
-            if raw is None:
-                continue
-            try:
-                input_type = spec.get("type", "string")
-                if input_type == "integer":
-                    supplied[name] = int(raw)
-                elif input_type == "number":
-                    supplied[name] = float(raw)
-                elif input_type == "boolean":
-                    lowered = str(raw).lower()
-                    if lowered not in {"true", "false"}:
-                        raise ValueError(f"{name} must be true or false")
-                    supplied[name] = lowered == "true"
-                else:
-                    supplied[name] = str(raw)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"invalid value for {name}") from exc
-        memory_error = _note_media_metadata_body({**supplied, "extensions": controls})
-        if memory_error is not None:
-            return memory_error
-        validation = validate_inputs(record.manifest, supplied)
-        if validation.rejected:
-            raise ValueError(next(iter(validation.rejected.values())))
-        workflow_template = json.loads(workflow_path.read_text(encoding="utf-8"))
-        workflow_template.pop("_meta", None)
-    except ValueError as exc:
-        return Response(
-            content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error"}}),
-            status_code=400, media_type="application/json",
-        )
-    except (OSError, json.JSONDecodeError, ManifestError) as exc:
-        return Response(
-            content=json.dumps({"error": {"message": f"Could not load workflow: {type(exc).__name__}", "type": "api_error"}}),
-            status_code=500, media_type="application/json",
-        )
+        error = (json.loads(response.body) or {}).get("error") or {}
+    except (TypeError, ValueError):
+        error = {}
+    retry = response.headers.get("retry-after")
+    return RunRefused(
+        response.status_code, str(error.get("code") or error.get("type") or "refused"),
+        str(error.get("message") or "The gateway cannot take this run now."),
+        retry_after_s=int(retry) if retry and retry.isdigit() else None)
 
-    if receipt is not None:
-        receipt.backend = _GRAPH_BACKEND_ID
-        _capture_retention_facts(receipt)
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
-        graph = _graph(client, "videos")
-        for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
-            upload = await graph.upload({"image": (filename, raw_bytes, content_type)}, headers=headers)
-            uploaded_name = upload.json().get("name") if upload.status == 200 else None
-            if not uploaded_name:
-                return Response(
-                    content=json.dumps({"error": {"message": f"{adapter.label} upload failed for {input_name}", "type": "api_error"}}),
-                    status_code=502, media_type="application/json",
-                )
-            validation.accepted[input_name] = uploaded_name
-        workflow = bind_backend_request(
-            record.manifest, DERIVED._GRAPH_BINDING, workflow_template, validation.accepted
-        ).request
 
-        refusal = {"out_of_memory": False}
+def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDecision | None:
+    """Plan and exposure for one workflow, from the facts of its record. None: allowed. No facts is not asked here."""
+    facts = entry.facts
+    if facts is None:
+        return None
+    decision = evaluate_and_apply(
+        auth_context.identity,
+        make_policy_request(
+            protocol=_protocol_for_intent(entry.intent), intent=entry.intent, workflow=entry.id,
+            capability_exposure=facts.exposure, capability_trust_tier=facts.trust_tier,
+            capability_resource_tier=facts.resource_tier, capability_tags=facts.tags))
+    if decision.denied:
+        return decision
+    runnable = any(_workflow_binding_problem(b) is None for b in entry.bindings.values())
+    return _target_activation_policy_decision(
+        auth_context, requested_target=entry.id, available_ids=(entry.id,) if runnable else (),
+        available_label="available workflow ids", empty_label="no available workflow was reported")
 
-        async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
-            admission = _dispatch_admission_response(
-                "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
-            )
-            if admission is not None:
-                return None, admission
-            submitted = await graph.submit(_build_graph_submit_payload(workflow), headers=headers)
-            if submitted.status != 200:
-                # What the engine said decides whether to retry; it is never passed on (decision D44).
-                refusal["out_of_memory"] = any(marker in submitted.text.lower() for marker in ("cuda out of memory", "out of memory", "cuda oom"))
-                return None, client_errors.client_error(502, "upstream_refused", error_type="api_error", subject=adapter.label)
-            prompt_id = submitted.json().get("prompt_id")
-            if not prompt_id:
-                return None, Response(
-                    content=json.dumps({"error": {"message": f"{adapter.label} returned no prompt_id", "type": "api_error"}}),
-                    status_code=502, media_type="application/json",
-                )
-            for _ in range(DERIVED.COMFY_TIMEOUT * 2):
-                await asyncio.sleep(0.5)
-                history = await graph.history(prompt_id, headers=headers)
-                job = history.json().get(prompt_id) if history.status == 200 else None
-                if not isinstance(job, Mapping):
-                    continue
-                error_message = _graph_error_message(job, workflow)
-                if error_message:
-                    return dict(job), Response(
-                        content=json.dumps({"error": {"message": error_message, "type": "api_error"}}),
-                        status_code=502, media_type="application/json",
-                    )
-                if job.get("status", {}).get("completed"):
-                    return dict(job), None
-            return None, Response(
-                content=json.dumps({"error": {"message": "Video workflow timed out", "type": "api_error"}}),
-                status_code=504, media_type="application/json",
-            )
 
-        job, error = await submit_and_collect()
-        if error is not None and _image_free_vram_on_exhaustion():
-            if refusal["out_of_memory"]:
-                if await _free_graph_models_if_idle(client):
-                    refusal["out_of_memory"] = False
-                    job, error = await submit_and_collect()
-        if error is not None:
-            return error
-        _, file_info, refusal = _select_video_file(job or {}, record.manifest)
-        if refusal is not None:
-            return refusal
-        if not file_info:
-            return Response(
-                content=json.dumps({"error": {"message": "Workflow returned no video output", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
-            )
+def _graph_wait_s() -> float:
+    """The longest a run waits on the graph engine: queue time included."""
+    return float(DERIVED.COMFY_TIMEOUT)
+
+
+def _graph_service_connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+    """The connection to one graph service's address, with the run's wait as its read bound. A request is about to
+    go to ``service_id``, so this needs its serving lease."""
+    _require_egress_lease(service_id)
+    return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
+        connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
+
+
+class _WorkflowRunPort:
+    """``workflow_run.RunPort`` over this module's helpers."""
+
+    def __init__(self) -> None:
+        self.available = workflow_run.BindingAvailability(_workflow_binding_problem)
+
+    # who is asking
+    def owner_scope(self, caller: AuthContext) -> str:
+        return _caller_owner_scope(caller)
+
+    def maker(self, caller: AuthContext) -> str:
+        identity = caller.identity
+        return _auth_person_id(caller) or (getattr(identity, "name", None) or "")
+
+    def is_owner(self, caller: AuthContext) -> bool:
+        person_id = _auth_person_id(caller)
+        if not person_id:
+            return False
         try:
-            rendered_bytes = await adapter.fetch_file(
-                graph.conn, file_info, limits=result_bundle.limits_from_config(runtime().config), headers=headers, session=graph)
-        except node_graph.SelectionRefused as refused:
-            return _result_refusal_response(refused.code, _refused_result_status(refused.code))
-        except ProtocolUpstreamError:
-            return Response(
-                content=json.dumps({"error": {"message": f"{adapter.label} could not read the rendered video", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
-            )
-        suffix = Path(file_info["filename"]).suffix.lower()
-        media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
-        try:
-            if media_delivery.current_mode() == provenance.METADATA_NONE:
-                rendered_bytes = await asyncio.to_thread(
-                    media_delivery.deliver_bytes, rendered_bytes, suffix, provenance.METADATA_NONE
-                )
+            return "owner" in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path)
+        except Exception:  # noqa: BLE001 - fails closed
+            return False
+
+    def reader(self, caller: AuthContext) -> result_bundle.Reader | None:
+        return _result_reader_for(caller)
+
+    def audience(self, caller: AuthContext) -> str:
+        return discovery_audience_for_access(_access_for_auth_context(caller))
+
+    def can_read(self, job: Mapping[str, Any], caller: AuthContext) -> bool:
+        from gateway import content_makers
+        from gateway.content_access import viewer_from_auth
+        from gateway.record_ownership import owns_record
+        return owns_record("media_job", job, viewer=viewer_from_auth(caller, owner_keys=()),
+                           apps=content_makers.Apps(ADMIN_STORE.path))
+
+    def can_cancel(self, job: Mapping[str, Any], caller: AuthContext) -> bool:
+        return self.can_read(job, caller) or self.is_owner(caller)
+
+    def job_owner(self, caller: AuthContext) -> tuple[str | None, str | None, str | None]:
+        identity = caller.identity
+        return (getattr(identity, "key_hash", None), getattr(identity, "app_id", None), getattr(identity, "name", None))
+
+    # policy and admission
+    def target_refusal(self, entry: Any, caller: AuthContext) -> RunRefused | None:
+        decision = _workflow_policy_denial(entry, caller)
+        if decision is None:
+            return None
+        reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+        return RunRefused(403, decision.code or "policy_denied", reason)
+
+    def dispatch_target_problem(self, entry: Any, caller: AuthContext) -> str | None:
+        decision = _workflow_policy_denial(entry, caller)
+        return None if decision is None else (decision.code or "policy_denied")
+
+    def admission_refusal(self, resource_class: str, caller: AuthContext, *, count_queue: bool) -> RunRefused | None:
+        response = _media_job_admission_response(
+            workflow_run.RUN_INTENT, count_queue=count_queue, auth_context=caller, resource_class=resource_class)
+        return None if response is None else _refused_from_response(response)
+
+    def result_limits(self) -> result_bundle.ResultLimits:
+        return result_bundle.limits_from_config(runtime().config)
+
+    # what the job pins
+    def adapter_identity(self, entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+        runner = workflow_adapters.for_binding(binding_key)
+        if runner is not None:
+            return runner.identity(entry, binding_key, binding)
+        engine = _workflow_engine(binding.adapter_id)
+        if engine is None:
+            raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+        service_id, record, protocol, adapter = engine
+        return workflow_run.AdapterIdentity(
+            protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+            interface_version=adapter.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+
+    def template_bytes(self, binding: Any) -> bytes | None:
+        ref = binding.template
+        if ref is None:
+            return None
+        if ref.inline is not None:
+            return job_envelope.canonical_bytes(workflow_run.plain(ref.inline))
+        return _resolve_workflow_artifact_path(None, ref.path).read_bytes() if ref.path else None
+
+    # the execution payload
+    def caller_payload(self, caller: AuthContext) -> Mapping[str, Any]:
+        identity = caller.identity
+        return {"name": identity.name if identity else None, "key_hash": identity.key_hash if identity else None,
+                "app_id": getattr(identity, "app_id", None), "person_id": _auth_person_id(caller),
+                "connection_id": getattr(identity, "connection_id", None),
+                "trusted_address": getattr(identity, "trusted_address", None)}
+
+    def save_payload(self, job_id: str, payload: Mapping[str, Any], caller: AuthContext) -> None:
+        _spool_media_job_payload(job_id, {**copy.deepcopy(dict(payload)), "created_at": int(time.time())})
+
+    def load_payload(self, job_id: str) -> Mapping[str, Any] | None:
+        return _load_image_media_job_payload(job_id)
+
+    def drop_payload(self, job_id: str) -> None:
+        _delete_image_media_job_payload(job_id)
+
+    def caller_from_payload(self, payload: Mapping[str, Any]) -> AuthContext | None:
+        return _auth_context_from_image_job_payload(payload)
+
+    def resume_on_start(self) -> bool:
+        return _image_media_job_resume_on_start()
+
+    # running
+    def schedule(self, job_id: str) -> None:
+        _schedule_workflow_run(job_id)
+
+    async def run_adapter(self, ctx: workflow_run.RunContext) -> None:
+        """Run or poll the job through the adapter it pinned. The pinned contract, binding and template are what the
+        adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
+        result bundle is committed by ``engine_protocol.jobs.run`` itself."""
+        from gateway.engine_protocol import jobs as protocol_jobs
+        runner = workflow_adapters.for_binding(ctx.pin.envelope.binding_key)
+        if runner is not None:
+            return await runner.run(ctx)
+        from gateway.engine_protocol.media import GatewayAssetStore
+        engine = _workflow_engine(ctx.pin.envelope.binding_key)
+        if engine is None:
+            raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
+        service_id, record, protocol, _ = engine
+        # The result files are kept for the person who asked, so the adapter is built over that person's asset store.
+        owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+        adapter = reviewed_adapters.adapter_for_backend(
+            record, next(iter(protocol.serves), ""),
+            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
+                                     origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
+
+        def connection() -> AdapterConnection:
+            return _graph_service_connection(service_id, record)
+
+        runtime_ = pinned_runtime.PinnedRuntime(
+            job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
+            timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
+            context=ResultContext(self.result_limits()))
+        # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
+        # it. No operation of the protocol is picked by position.
+        op = str(ctx.pin.contract["intent"])
+        # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
+        body = {**dict(ctx.inputs), **dict(ctx.generated)}
+        if ctx.media:
+            body.update(await self._stage_media(ctx, adapter, connection))
+        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+
+    async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
+        """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with
+        the job (staged in its spool, or named from the Library); an adapter that cannot take one refuses the run."""
+        stage = getattr(adapter, "stage_input", None)
+        if stage is None:
+            raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
+        staged: dict[str, str] = {}
+        for name, refs in ctx.media.items():
+            if len(refs) != 1:
+                raise ProtocolError("The adapter for this job takes one file for an input.", code="media_input_unsupported")
+            ref = refs[0]
+            if ref.spool_key is not None:
+                data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
             else:
-                identity = manifest_identity(record.manifest)
-                rendered_bytes = await asyncio.to_thread(
-                    media_delivery.attach_provenance,
-                    rendered_bytes,
-                    suffix,
-                    provenance.build_provenance_record(
-                        kind="video",
-                        requested_model=workflow_id,
-                        resolved_model=record.id,
-                        workflow_id=identity.id,
-                        workflow_version=identity.version,
-                        workflow_hash=identity.manifest_hash,
-                        backend=_GRAPH_BACKEND_ID,
-                        parameters=validation.accepted,
-                    ),
-                )
-        except media_metadata.MediaMetadataError as exc:
-            print(f"[proxy] workflow run metadata rewrite failed: {log_scrub.describe_error(exc)}", flush=True)
-            return Response(
-                content=json.dumps({"error": {"message": "Could not prepare video for delivery", "type": "api_error"}}),
-                status_code=502, media_type="application/json",
-            )
-        return Response(
-            content=rendered_bytes, status_code=200, media_type=media_type,
-            headers={"Content-Disposition": f'inline; filename="{Path(file_info["filename"]).name}"', "X-Workflow-ID": record.id},
-        )
+                data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
+                if data is None:
+                    raise ProtocolError("An input file is no longer available.", code="input_unavailable")
+            suffix = asset_types.suffix_for_media_type(ref.media_type)
+            try:
+                staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                                           media_type=ref.wire_media_type or ref.media_type)
+            except (TransportFailure, ProtocolUpstreamError) as exc:
+                # An engine that answered 200 without a name for the file is told apart from one that refused it.
+                reason = "upload_no_name" if getattr(exc, "status", None) == 200 else "upload_failed"
+                raise node_graph_runner.RunFailed(reason, "upstream", client_errors.REASONS[reason], upstream_status=502) from exc
+        return staged
+
+    def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
+        path = asset_cache_path(asset_id)
+        if path is None or not path.exists():
+            return None
+        owners = {str(o) for o in _read_asset_metadata(asset_id).get("owner_key_hashes") or [] if isinstance(o, str)}
+        from gateway.content_access import decide_own
+        if not owners or not decide_own(_asset_content_viewer(caller), owners):
+            return None
+        return path.read_bytes()
+
+
+    def close_recovered_receipt(self, request_id: str, status: str, reason: str) -> None:
+        """Startup recovery settled a run from its committed result: close the receipt a stopped gateway left open, unless
+        it was opened after recovery began."""
+        receipt_store.close_recovered(request_id, status, reason, among=_RECOVERY_OPEN_RECEIPTS)
+
+    async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
+        """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
+        handed off (a sync request closes its own) is not held here, and nothing is done."""
+        owner = _RUN_RECEIPT_OWNERS.pop(request_id, None)
+        if owner is not None:
+            owner.report(status=status, reason=reason)
+            await owner.settle()
+
+
+_WORKFLOW_RUN_PORT = _WorkflowRunPort()
+
+
+class _AdaptiveBatching:
+    """The sizing of image rounds from the engine's free memory, over the module's capacity reads (S7 parity M6). It holds
+    the same state the old batching loop held: the estimate for the workflow at this size, the free memory before the run,
+    and whether idle models were already freed."""
+
+    @dataclass
+    class _State:
+        key: tuple[str, int, int]
+        estimate: Optional[int]
+        free_before: Optional[int]
+        batch_limit: Any
+        counts: bool = True            # the workflow takes a batch size: a round can ask for several pictures at once
+        models_freed: bool = False
+
+    async def plan(self, session, ctx, inputs, options):
+        contract = ctx.pin.contract
+        spec = (contract.get("inputs") or {})
+        width = int(inputs.get("width") or (spec.get("width") or {}).get("default") or 1024)
+        height = int(inputs.get("height") or (spec.get("height") or {}).get("default") or 1024)
+        per_prompt = inputs.get("batch_size") or (spec.get("batch_size") or {}).get("default") or 1
+        per_prompt = per_prompt if isinstance(per_prompt, int) and not isinstance(per_prompt, bool) and per_prompt >= 1 else 1
+        n = options.get("n", 1)
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 1 else 1
+        total = n * per_prompt
+        warnings: list[str] = []
+        if total > MAX_IMAGES_PER_REQUEST:
+            total = MAX_IMAGES_PER_REQUEST
+            warnings.append(f"n={n} x batch_size={per_prompt} exceeds the {MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}")
+        name = str(contract.get("id") or "")
+        state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
+                            free_before=await graph_free_vram_bytes(session.client),
+                            batch_limit=(spec.get("batch_size") or {}).get("maximum"), counts="batch_size" in spec)
+        return node_graph_runner.Plan(total=total, max_rounds=max(1, total + 2), warnings=warnings, state=state)
+
+    async def target(self, plan, session, round_no, remaining):
+        state, client = plan.state, session.client
+        free_now = await graph_free_vram_bytes(client)
+        if round_no == 1 and state.estimate is None:
+            target = 1
+        elif state.estimate is not None:
+            cap = compute_max_batch(free_now, state.estimate)
+            if cap == 0 and _image_free_vram_on_exhaustion() and not state.models_freed:
+                state.models_freed = await _free_graph_models_if_idle(client)
+                if state.models_freed:
+                    free_now = await graph_free_vram_bytes(client)
+                    cap = compute_max_batch(free_now, state.estimate)
+            target = min(max(cap, 1), remaining)
+        else:
+            target = min(_image_max_batch_size(), remaining)
+        limit = state.batch_limit
+        if isinstance(limit, int) and not isinstance(limit, bool):
+            target = min(target, max(1, limit))
+        return target
+
+    def round_inputs(self, plan, target):
+        return {"batch_size": max(1, int(target))} if plan.state.counts else {}
+
+    def probe(self, plan, session, round_no):
+        return _VramProbe(session.client) if plan.state.estimate is None else None
+
+    async def free_after_refusal(self, plan, session):
+        state = plan.state
+        if state.models_freed or not _image_free_vram_on_exhaustion():
+            return False
+        state.models_freed = await _free_graph_models_if_idle(session.client)
+        return state.models_freed
+
+    async def measured(self, plan, session, round_no, target, probe):
+        state = plan.state
+        if state.estimate is None:
+            name, width, height = state.key
+            state.estimate = await _measure_first_round_vram(
+                session.client, probe=probe, free_before=state.free_before, batch_target=target,
+                workflow_name=name, width=width, height=height)
+
+
+def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):
+    """Rounds are sized from free memory for a workflow that takes a count of pictures or answers with pictures; any other run
+    is one round."""
+    spec = ctx.pin.contract.get("inputs") or {}
+    pictures = any(str((out or {}).get("media_type") or "").startswith("image/") for out in (ctx.pin.contract.get("outputs") or {}).values())
+    return _AdaptiveBatching() if "batch_size" in spec or pictures else None
+
+
+def _graph_binding_problem(binding: Any) -> str | None:
+    """Why the graph service behind ``binding`` cannot take a run: not configured, switched off, or held out by the operator."""
+    found = _workflow_engine(binding.adapter_id)
+    if found is None:
+        return workflow_run.BINDING_UNAVAILABLE
+    service_id, record, _, _ = found
+    held = str(_operator_service_availability_overrides().get(service_id, {}).get("state") or "").strip().lower()
+    if record.get("enabled", True) is False or held == "disabled":
+        return SERVICE_DISABLED
+    if held in {"maintenance", "draining"}:
+        return SERVICE_NOT_ADMITTING
+    return None
+
+
+def _graph_runner_host() -> node_graph_runner.GraphHost:
+    def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext) -> Any:
+        from gateway.engine_protocol.media import GatewayAssetStore
+        owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+        return reviewed_adapters.adapter_for_backend(
+            record, next(iter(protocol.serves), ""),
+            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
+                                     origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
+
+    def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+        return _graph_service_connection(service_id, record)
+
+    def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+        found = _workflow_engine(binding.adapter_id)
+        if found is None:
+            raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+        service_id, record, protocol, adapter_ = found
+        return workflow_run.AdapterIdentity(
+            protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+            interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+
+    return node_graph_runner.GraphHost(
+        engine=_workflow_engine, identity=identity,
+        problem=_graph_binding_problem,
+        adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
+        max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+        headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
+        batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True),
+        stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect))
+
+
+def _register_graph_runner() -> None:
+    """One runner for the bindings of each protocol description the node-graph adapter serves."""
+    from gateway.engine_protocol import description as protocol_description
+    for doc in protocol_description.load_registry().values():
+        if doc.executor == f"adapter:{node_graph.ADAPTER_ID}":
+            workflow_adapters.register(node_graph_runner.NodeGraphRunner(
+                doc.binding, pinned_runtime.adapter_identity(doc), _graph_runner_host()))
+
+
+_register_graph_runner()
+
+# The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.ImageJobs.shape_id] = _image_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipart.shape_id] = image_edit_default_model
+frontend_wire_shapes.DEFAULT_WORKFLOWS[
+    frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
+    """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
+    context, error = _prepare_image_edit_mask_context(source_image_content=image, mask_content=mask)
+    if error is not None:
+        return error
+    return _apply_edit_mask_as_source_alpha(context), context.mask_mode
+
+
+frontend_wire_shapes.MASKING["source_alpha"] = _mask_into_source_alpha
+frontend_wire_shapes.JOB_DOCUMENT["job"] = lambda job_id: (
+    _image_media_job_client_payload(job, None) if (job := media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)) else None)
+# What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
+frontend_wire_shapes.FIXED_INPUTS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = lambda: {
+    "prompt": IMAGE_VARIATIONS_PROMPT, "denoise": _image_variations_denoise()}
+
+
+def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
+    """The production run core over the injected snapshot provider and projections, or None until both are set."""
+    global _workflow_core_cache
+    if WORKFLOW_SNAPSHOTS is None or WORKFLOW_PROJECTIONS is None:
+        return None
+    cached = _workflow_core_cache
+    if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
+        core = workflow_run.WorkflowRunCore(
+            snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
+            spool=_workflow_job_spool(), path=media_jobs.DB_PATH)
+        cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
+    return cached[2]
+
+
+def _workflow_job_service() -> workflow_run.WorkflowJobService:
+    return workflow_run.WorkflowJobService(port=_WORKFLOW_RUN_PORT, path=media_jobs.DB_PATH)
+
+
+async def _run_workflow_job(job_id: str) -> None:
+    core = _workflow_run_core()
+    if core is None:
+        raise RuntimeError("the workflow run core is not configured")
+    async with _workflow_run_slots():
+        await core.execute_run(job_id)
+
+
+def _schedule_workflow_run(job_id: str) -> bool:
+    if job_id in _workflow_run_scheduled:
+        return False
+    _workflow_run_scheduled.add(job_id)
+    try:
+        task = asyncio.create_task(_run_workflow_job(job_id))
+    except BaseException:
+        _workflow_run_scheduled.discard(job_id)
+        raise
+    _workflow_run_tasks.add(task)
+
+    def _done(done_task: asyncio.Task) -> None:
+        _workflow_run_tasks.discard(done_task)
+        _workflow_run_scheduled.discard(job_id)
+        try:
+            exc = done_task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            _log_media_job_crash(job_id, exc)
+            with contextlib.suppress(Exception):
+                media_jobs.update_status(job_id, media_jobs.STATUS_FAILED, error=_MEDIA_JOB_CRASHED,
+                                         error_info=_MEDIA_JOB_CRASHED_INFO, path=media_jobs.DB_PATH)
+
+    task.add_done_callback(_done)
+    return True
+
+
+def _workflow_library_ref(asset_id: str, auth_context: AuthContext) -> MediaRef | None:
+    """A library asset as a media input, if this caller may read it (the asset ownership rule)."""
+    parsed = _parse_asset_id(asset_id)
+    path = asset_cache_path(asset_id)
+    if parsed is None or path is None or not path.exists():
+        return None
+    owners = {str(o) for o in _read_asset_metadata(asset_id).get("owner_key_hashes") or [] if isinstance(o, str)}
+    from gateway.content_access import decide_own
+    if not owners or not decide_own(_asset_content_viewer(auth_context), owners):
+        return None
+    return MediaRef(digest=f"sha256:{parsed[1]}", media_type=asset_media_type(asset_id, path),
+                    size=path.stat().st_size, asset_id=asset_id)
+
+
+def _workflow_run_response(result: Any, *, status_code: int | None = None) -> Response:
+    if isinstance(result, RunRefused):
+        seconds = client_errors.retry_after(str(result.retry_after_s))  # None when the core names no time
+        headers = {"Retry-After": seconds} if seconds else {}
+        return Response(content=json.dumps(workflow_run.refusal_body(result)), status_code=result.http_status,
+                        media_type="application/json", headers=headers)
+    created = result.disposition == "new" and result.status in ("queued", "running")
+    return Response(
+        content=json.dumps(workflow_run.view_body(result)),
+        status_code=status_code or (202 if created or result.status in ("queued", "running") else 200),
+        media_type="application/json",
+        headers={"Location": f"/gateway/v1/media/jobs/{result.job_id}"})
+
+
+def _new_row_spool() -> request_spool.FileRequestSpool:
+    limits = _WORKFLOW_RUN_PORT.result_limits()
+    # The bytes decide a file's type, as for every other upload: the declared type never makes a file something it is not.
+    return request_spool.FileRequestSpool(
+        _workflow_run_spool_root(), max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
+        measure=lambda head, _declared: media_inputs.measure(head).media_type)
+
+
+# Receipts that a row handed off to the run core, by request id, until the core closes them at the job's end.
+_RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
+
+
+class _RunReceiptOwner(ReceiptLifecycleOwner):
+    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
+
+    short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
+
+    def handoff(self) -> "_RunReceiptOwner":
+        super().handoff()
+        _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
+        return self
+
+
+def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
+    """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
+    (``_name_row_receipt``)."""
+    identity = auth.identity
+    # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
+    # activity read their capability from it. A route that declares none records the generic run intent.
+    owner = _RunReceiptOwner(RouteReceipt(
+        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
+        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None))
+    owner.short_names = row.receipt_names == "short"
+    return owner
+
+
+def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
+    for name, kind, reason in notes:
+        _record_image_input(owner.receipt, name, rejected_reason=(reason or kind) if kind == "rejected" else None,
+                            ignored_reason=(reason or kind) if kind == "ignored" else None)
+
+
+def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
+    for name, value, warning in facts:
+        owner.receipt.metadata[name] = value
+        if warning:
+            owner.receipt.add_warning(warning)
+
+
+def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
+                      contract_digest: str | None) -> None:
+    receipt = owner.receipt
+    version = None if record_revision is None else str(record_revision)
+    name = workflow_id
+    if owner.short_names:
+        # The image routes named the workflow by what follows its intent, and its version was the contract's own.
+        name = workflow_id.removeprefix(f"{receipt.intent}.")
+        receipt.requested_workflow = name
+        entry = WORKFLOW_SNAPSHOTS.current().get(workflow_id) if WORKFLOW_SNAPSHOTS is not None else None
+        version = str(entry.contract.get("version")) if entry is not None and entry.contract.get("version") else version
+    receipt.resolved_workflow = name
+    receipt.attach_manifest(manifest_id=workflow_id, manifest_version=version, manifest_hash=contract_digest)
+
+
+def _pinned_of_job(job_id: str) -> Any:
+    """What the job pinned, or None when it holds no definitions."""
+    try:
+        return pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    except definition_store.DefinitionUnavailable:
+        return None
+
+
+def _row_route_policy(path: str) -> dict[str, Any] | None:
+    """The policy a mounted row's route declares for its path (its ``runtime_policy`` data), as policy-request fields.
+    None when the path has none of its own; the registry's route policy then decides."""
+    wanted = inspect.signature(make_policy_request).parameters
+    for row in frontend_shapes.bundled_rows():
+        for route in row.routes:
+            if path == route.canonical or path in route.aliases:
+                fields = {k: v for k, v in route.runtime_policy.items() if k in wanted}
+                return fields if fields else None
+    return None
+
+
+frontend_wire_shapes.ASSET_URLS.update({
+    "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
+    "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
+})
+
+# What the mounted frontend rows read from this module (gateway/row_routes.py).
+_ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
+    authenticate=lambda request, path: authenticate_request(request, path),
+    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=DERIVED._RUNTIME_ROUTE_POLICY.get(path) or _row_route_policy(path)),
+    core=_workflow_run_core,
+    snapshot=lambda: WORKFLOW_SNAPSHOTS.current(),
+    jobs=_workflow_job_service,
+    new_spool=_new_row_spool,
+    scope=lambda request, spool: request_spool.request_scope(request, spool),
+    refused=_workflow_run_response,
+    new_request_id=new_request_id,
+    open_receipt=_open_row_receipt,
+    name_receipt=_name_row_receipt,
+    pinned=_pinned_of_job,
+    record_inputs=_record_row_inputs,
+    record_facts=_record_row_facts,
+)
+
+
+async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthContext, **shape_options: Any) -> Response:
+    """Answer one request on a frontend row (section 8): the row's shape reads the wire into a run request, the core runs
+    it (``submit_run``), and the shape renders the answer in its own vocabulary. Nothing here depends on what the row
+    serves."""
+    row = next((candidate for candidate in frontend_shapes.bundled_rows() if candidate.id == row_id), None)
+    core = _workflow_run_core()
+    if row is None or core is None or WORKFLOW_SNAPSHOTS is None:
+        return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    shape = frontend_shapes.build_shape(row, **shape_options)
+    snapshot = WORKFLOW_SNAPSHOTS.current()
+    result_limits = _WORKFLOW_RUN_PORT.result_limits()
+    spool = request_spool.FileRequestSpool(
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+    with request_spool.request_scope(request, spool):
+        run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
+        if isinstance(run_request, Response):
+            return run_request
+        view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
+    return await shape.to_response(view, row, jobs=_workflow_job_service(), caller=auth_context, request=request)
 
 
 @app.post("/gateway/v1/workflows/{workflow_id}/run")
 async def run_video_manifest_workflow(workflow_id: str, request: Request):
+    """Run a workflow by its full id: JSON or multipart, ``Idempotency-Key``, ``Prefer: wait=N`` (section 7.1)."""
     auth_context = _gateway_auth_context(request, "/gateway/v1/workflows/{workflow_id}/run")
     if isinstance(auth_context, Response):
         return auth_context
-    if not DERIVED.COMFY_ENABLED:
-        return Response(status_code=503, content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
         return policy_response
-    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow_id)
-    if record is None:
-        record = next(
-            (item for item in GATEWAY_WORKFLOW_REGISTRY.records()
-             if item.intent == "video.edit" and item.id.rsplit(".", 1)[-1] == workflow_id),
-            None,
-        )
-    if record is not None:
-        target_decision = _workflow_target_policy_decision(
-            auth_context,
-            requested=workflow_id,
-            resolved=record.id,
-            manifest=record.manifest,
-            extra_ids=(record.id,),
-        )
-        if target_decision is not None and target_decision.denied:
-            return _policy_denied_response(target_decision)
-    return await _execute_video_manifest_workflow(request, workflow_id, auth_context)
+    core = _workflow_run_core()
+    if core is None:
+        return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    limits = workflow_run.run_limits_from_config(runtime().config)
+    wait_s = 0.0
+    prefer = request.headers.get("prefer", "")
+    for token in prefer.split(","):
+        name, _, value = token.strip().partition("=")
+        if name.strip().lower() == "wait":
+            try:
+                wait_s = min(max(0.0, float(value)), float(limits.max_wait_s))
+            except ValueError:
+                return _workflow_run_response(RunRefused(400, "invalid_prefer", "Prefer: wait takes a number of seconds."))
+    snapshot = WORKFLOW_SNAPSHOTS.current()
+    refused = await asyncio.to_thread(core.target_gate, workflow_id, auth_context, snapshot=snapshot)
+    if refused is not None:                     # policy before the body is read or any upload is staged
+        return _workflow_run_response(refused)
+    request_id = new_request_id()
+    identity = auth_context.identity
+    # The request receipt opens before the body is read, as a row's does, so a refusal and a forget are both on record.
+    async with _RunReceiptOwner(RouteReceipt(
+            protocol="gateway", intent=workflow_run.RUN_INTENT, path=str(request.url.path), request_id=request_id,
+            app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+            api_key_name=identity.name if identity else None)) as owner:
+        response = await _run_workflow_open(workflow_id, request, auth_context, core, snapshot, owner, request_id, wait_s)
+    response.headers[row_routes.REQUEST_ID_HEADER] = request_id
+    return response
+
+
+def _workflow_run_prompt_retention(auth_context: AuthContext, extensions: Mapping[str, Any]) -> str:
+    """The effective prompt-retention decision of a run request, "keep" or "forget": the header, the body's control and
+    the member and household policy combined, as the payload spool combines them. It is part of the run's identity, so
+    a changed decision on one Idempotency-Key is a conflict and never a replay of a remembered run."""
+    memory = prompt_memory.decide_for_person(
+        _auth_person_id(auth_context), {"extensions": dict(extensions)}, admin_path=ADMIN_STORE.path,
+        request_forget=request_history_slot.prompts_forget())
+    return "forget" if not memory.keep and memory.reason != "no_person" else "keep"
+
+
+async def _run_workflow_open(workflow_id: str, request: Request, auth_context: AuthContext, core: Any, snapshot: Any,
+                             owner: "_RunReceiptOwner", request_id: str, wait_s: float) -> Response:
+    """The steps of the generic run route after its receipt opens. Each exit reports the outcome, or hands the receipt to
+    the run core, which closes it when the job ends."""
+    result_limits = _WORKFLOW_RUN_PORT.result_limits()
+    spool = request_spool.FileRequestSpool(
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+    with request_spool.request_scope(request, spool):
+        declared = getattr(snapshot.get(workflow_id), "contract", None) or {}
+        run_request = await request_spool.read_run_request(
+            request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),
+            idempotency_key=request.headers.get("idempotency-key"), wait_s=wait_s,
+            declared_inputs=declared.get("inputs") if isinstance(declared, Mapping) else None)
+        if isinstance(run_request, RunRefused):
+            owner.report(status="failed", reason=run_request.code)
+            return _workflow_run_response(run_request)
+        if run_request.extensions:
+            # The controls are noted as the other job routes note them: a bad prompt or metadata mode is a 400, and the
+            # prompt-memory control reaches the job's payload through the request (``_spool_media_job_payload``).
+            _begin_media_delivery(auth_context)
+            bad_control = _note_media_metadata_body({"extensions": dict(run_request.extensions)})
+            if bad_control is not None:
+                owner.report(status="failed", reason="invalid_extensions")
+                return bad_control
+        entry = snapshot.get(workflow_id)
+        if entry is not None:
+            _name_row_receipt(owner, entry.id, entry.record_revision, entry.contract_digest)
+        run_request = dataclasses.replace(run_request, request_id=request_id,
+                                          prompt_retention=_workflow_run_prompt_retention(auth_context, run_request.extensions))
+        view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
+    if isinstance(view, RunRefused):
+        owner.report(status="failed", reason=view.code)
+        return _workflow_run_response(view)
+    if wait_s <= 0 and view.disposition == "new":
+        owner.handoff()                         # nothing may await between this call and leaving the receipt
+        return _workflow_run_response(view)
+    if wait_s > 0 and view.status in ("queued", "running"):
+        with contextlib.suppress(JobNotFound):
+            view = dataclasses.replace(await _workflow_job_service().wait(view.job_id, auth_context, wait_s),
+                                       disposition=view.disposition)
+    status, reason = row_routes._outcome(view, waited=wait_s > 0)
+    owner.report(status=status, reason=reason)
+    return _workflow_run_response(view)
 
 
 async def videos_create(request: Request):
@@ -26926,6 +27501,31 @@ def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any
     return workflow
 
 
+def _audio_job_runs_from_pin(job_id: str, job: Mapping[str, Any]) -> bool:
+    """Whether an audio job must run from its pin: it recorded an envelope at accept (readable or not), or its workflow
+    has a graph binding, so a job of it that recorded none was accepted before pins and fails as definition_unavailable.
+    A workflow with another binding has no pin to run from."""
+    if definition_store.DefinitionStore(media_jobs.DB_PATH).has_envelope(job_id):
+        return True
+    recorded, intent = str(job.get("workflow") or ""), str(job.get("intent") or "")
+    manifest = _audio_job_manifest(recorded, intent) if recorded else None
+    return manifest is None or _manifest_has_pin(manifest)  # no workflow to judge by: fail closed at the pin
+
+
+def _audio_job_manifest(recorded: str, intent: str) -> dict[str, Any] | None:
+    """The manifest an audio job's recorded workflow names. A job records the bare name or ``<intent>.<name>``. A job
+    that kept no intent is read against each workflow's own intent; two different answers count as none."""
+    if intent:
+        return _load_audio_workflow_manifest(recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded)
+    found = _load_audio_workflow_manifest(recorded)
+    if found is not None:
+        return found
+    matches = {str(record.manifest.get("id") or ""): record.manifest for record in _audio_workflow_records()
+               if recorded.startswith(f"{record.intent}.")
+               and _manifest_names_audio_workflow(record.manifest, recorded[len(record.intent) + 1:])}
+    return copy.deepcopy(dict(next(iter(matches.values())))) if len(matches) == 1 else None
+
+
 def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
     """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
     before it starts. Raises ``DefinitionUnavailable``."""
@@ -27001,10 +27601,13 @@ def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: s
     return isinstance(artifact, str) and Path(artifact).stem == workflow_name
 
 
+def _audio_workflow_records() -> Iterator[Any]:
+    """The registry's records of the audio family (speech-free generation: audio, music, effects)."""
+    return (record for record in GATEWAY_WORKFLOW_REGISTRY.records() if record.intent.startswith(("audio.", "music.", "sfx.")))
+
+
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
-    for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        if not record.intent.startswith(("audio.", "music.", "sfx.")):
-            continue
+    for record in _audio_workflow_records():
         if _manifest_names_audio_workflow(record.manifest, workflow_name):
             return copy.deepcopy(dict(record.manifest))
     return None
@@ -34319,14 +34922,15 @@ def _gateway_openapi() -> dict[str, Any]:
     """
     aliases = _gateway_aliases_provider()
     limits = video_limits(config.get("videos"))
-    inputs = json.dumps([aliases, limits], sort_keys=True, default=str)
+    registry_view = GATEWAY_REGISTRY_PROVIDER.current()
+    inputs = json.dumps([aliases, limits, registry_view.digest], sort_keys=True, default=str)
     if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
     app.openapi_schema = None
     schema = _fastapi_openapi()
     _augment_workflow_openapi(
         schema,
-        GATEWAY_WORKFLOW_REGISTRY.records(),
+        SnapshotRegistry(registry_view, published_only=True).records(),
         aliases=aliases,
         video_limits=limits,
     )

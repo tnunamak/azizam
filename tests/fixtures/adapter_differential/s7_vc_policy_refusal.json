@@ -1,0 +1,52 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "caller whose plan grants no media",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\":\"waves at dusk\",\"model\":\"ltx-2.5-t2v\"}"
+        },
+        "headers": {
+          "content-length": "48",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/videos",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"error\": {\"message\": \"Video isn't in your access plan.\", \"type\": \"access_error\", \"code\": \"not_in_access_plan\", \"details\": {\"side\": \"person\", \"plans\": [\"plan_test\"]}}}"
+        },
+        "headers": {
+          "content-length": "167",
+          "content-type": "application/json"
+        },
+        "status": 403
+      }
+    }
+  ],
+  "description": "S7 golden: POST /v1/videos, outcome policy_refusal, recorded on the unchanged route",
+  "engine_requests": [],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 6
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "s7_vc_policy_refusal",
+  "schema": 1
+}

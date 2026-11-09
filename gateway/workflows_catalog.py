@@ -293,7 +293,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         # keep what it really is, so a page can tell a picture input from a text one.
         if declared.get("type") == "asset" or spec.get("x-azizam-asset"):
             row["asset"] = True
-            media_type = asset_media_type(record.intent, declared)
+            media_type = asset_media_type(declared)
             if media_type:
                 row["media_type"] = media_type
         if isinstance(declared.get("label"), str) and declared["label"].strip():
@@ -322,7 +322,7 @@ def _example_request(
     route: Mapping[str, Any] | None,
     base_url: str,
 ) -> dict[str, Any]:
-    path = _route_path(route) or f"/gateway/v1/workflows/{short_id(record)}/run"
+    path = _route_path(route) or f"/gateway/v1/workflows/{record.id}/run"
     # The wire of the request: a route that names its ``submit`` is sent as that submit says.
     wire = {**(route or {}), **((route or {}).get("submit") or {})}
     method = str(wire.get("method") or "POST")

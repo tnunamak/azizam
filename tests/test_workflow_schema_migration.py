@@ -69,6 +69,11 @@ def _rows(plan: migration.Plan) -> dict:
 # -- the plan, one rule at a time -------------------------------------------------------------------------------------
 
 
+def with_class(facts):
+    """The facts a load states for a record of this file's image intent: the fifth fact is completed from the intent."""
+    return {**facts, "resource_class": "image"}
+
+
 def test_a_whole_owner_record_is_converted_and_states_what_the_old_readers_served():
     document = _v1(trusted=True, exposure="hidden", tags=["a", "b", "a"])
     plan = _plan({"owner.flux": _owner_record("owner.flux", document)})
@@ -77,7 +82,7 @@ def test_a_whole_owner_record_is_converted_and_states_what_the_old_readers_serve
     stored = plan.stored["workflows"]["owner.flux"]
     assert stored["manifest"]["schema_version"] == 2
     assert not {"trusted", "source", *POLICY_KEYS} & set(stored["manifest"])
-    assert stored["policy"] == {"exposure": "hidden", "trust_tier": "stable", "resource_tier": "batch", "tags": ["a", "b"]}
+    assert stored["policy"] == with_class({"exposure": "hidden", "trust_tier": "stable", "resource_tier": "batch", "tags": ["a", "b"]})
     assert {"schema_version", "trusted", "policy", "exposure", "tags"} <= set(row.fields)
     assert stored["enabled"] is True and stored["editable"] is True and stored["source"] == "ui"
     # the record is one a load accepts
@@ -87,8 +92,8 @@ def test_a_whole_owner_record_is_converted_and_states_what_the_old_readers_serve
 
 def test_an_untrusted_record_without_facts_keeps_the_experimental_default_it_served():
     plan = _plan({"owner.flux": _owner_record("owner.flux", _v1(trusted=False))})
-    assert plan.stored["workflows"]["owner.flux"]["policy"] == {
-        "exposure": "default", "trust_tier": "experimental", "resource_tier": "batch", "tags": []}
+    assert plan.stored["workflows"]["owner.flux"]["policy"] == with_class({
+        "exposure": "default", "trust_tier": "experimental", "resource_tier": "batch", "tags": []})
 
 
 def test_an_inline_record_is_stored_in_the_nested_form():
@@ -181,7 +186,7 @@ def test_a_patch_converts_to_the_same_effective_record_as_converting_the_whole_p
     expected_manifest, _ = convert_1_to_2(document)
     effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
     assert effective["manifest"] == expected_manifest
-    assert effective["policy"] == facts
+    assert effective["policy"] == with_class(facts)
     assert effective["enabled"] == patched.get("enabled", True)
     # a load reads it back as it is stored (the derived identity and summary agree; the facts are read apart)
     reread = service_registry.normalize_workflow_record(TRUSTED_ID, {
@@ -979,20 +984,20 @@ def test_policy_facts_that_differ_from_the_defaults_survive_ensure_a_readback_an
     patch = {"manifest": {"exposure": "hidden", "resource_tier": "heavy", "tags": ["mine"], "trust_tier": "stable"}}
     db = _db_with(tmp_path, {"owner.flux": owner})
     migrated = migration.ensure(path=db, actor="test", release={"workflows": {}})
-    assert migrated["workflows"]["owner.flux"]["policy"] == facts
+    assert migrated["workflows"]["owner.flux"]["policy"] == with_class(facts)
     stored = json.loads(_row(db)[0])["workflows"]["owner.flux"]
-    assert stored["policy"] == facts
+    assert stored["policy"] == with_class(facts)
     reread = service_registry.normalize_workflow_record("owner.flux", stored)
-    assert reread["policy"] == facts
+    assert reread["policy"] == with_class(facts)
     rewritten = service_registry.normalize_workflow_record("owner.flux", {k: v for k, v in reread.items() if k not in ("identity", "summary")})
-    assert rewritten["policy"] == facts
+    assert rewritten["policy"] == with_class(facts)
     # a patch over a release record whose stated facts differ from the release's
     v1_release = {TRUSTED_ID: migration.frozen_release_records()[TRUSTED_ID]}
     plan = _plan({TRUSTED_ID: patch}, release, v1_release=v1_release)
     effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
-    assert effective["policy"] == facts
+    assert effective["policy"] == with_class(facts)
     again = service_registry.normalize_workflow_record(TRUSTED_ID, {k: v for k, v in effective.items() if k not in ("identity", "summary")})
-    assert again["policy"] == facts
+    assert again["policy"] == with_class(facts)
 
 
 # -- the quarantine text trusts no stored value -------------------------------------------------------------------------
@@ -1073,20 +1078,20 @@ RECORD_FACTS = {"exposure": "hidden", "trust_tier": "stable", "resource_tier": "
 
 def test_a_whole_record_stating_policy_beside_a_manifest_without_it_keeps_the_record_facts():
     plan = _plan({"owner.flux": _owner_record("owner.flux", _v1(), policy=dict(RECORD_FACTS))})
-    assert plan.stored["workflows"]["owner.flux"]["policy"] == RECORD_FACTS
+    assert plan.stored["workflows"]["owner.flux"]["policy"] == with_class(RECORD_FACTS)
 
 
 def test_record_facts_win_over_manifest_facts_which_win_over_the_defaults():
     manifest_facts = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ["m"]}
     both = _plan({"owner.a": _owner_record("owner.a", _v1(**manifest_facts), policy=dict(RECORD_FACTS))})
-    assert both.stored["workflows"]["owner.a"]["policy"] == RECORD_FACTS
+    assert both.stored["workflows"]["owner.a"]["policy"] == with_class(RECORD_FACTS)
     manifest_only = _plan({"owner.b": _owner_record("owner.b", _v1(**manifest_facts))})
-    assert manifest_only.stored["workflows"]["owner.b"]["policy"] == manifest_facts
+    assert manifest_only.stored["workflows"]["owner.b"]["policy"] == with_class(manifest_facts)
     neither = _plan({"owner.c": _owner_record("owner.c", _v1(trusted=False))})
-    assert neither.stored["workflows"]["owner.c"]["policy"] == {
-        "exposure": "default", "trust_tier": "experimental", "resource_tier": "batch", "tags": []}
+    assert neither.stored["workflows"]["owner.c"]["policy"] == with_class({
+        "exposure": "default", "trust_tier": "experimental", "resource_tier": "batch", "tags": []})
     partial = _plan({"owner.d": _owner_record("owner.d", _v1(**manifest_facts), policy={"exposure": "hidden"})})
-    assert partial.stored["workflows"]["owner.d"]["policy"] == manifest_facts  # a record that states some facts states none
+    assert partial.stored["workflows"]["owner.d"]["policy"] == with_class(manifest_facts)  # a record that states some facts states none
 
 
 def test_a_patch_over_a_release_record_stating_policy_keeps_the_stated_facts():
@@ -1096,7 +1101,7 @@ def test_a_patch_over_a_release_record_stating_policy_keeps_the_stated_facts():
     plan = _plan({TRUSTED_ID: patch}, release, v1_release=v1_release)
     assert _rows(plan)[TRUSTED_ID].action == migration.CONVERT_PATCH
     effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
-    assert effective["policy"] == RECORD_FACTS
+    assert effective["policy"] == with_class(RECORD_FACTS)
 
 
 # -- the exclusion text: scrub the whole text, then cap it ----------------------------------------------------------------

@@ -27,6 +27,7 @@ from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.manifests import Provenance  # noqa: E402
 from tests.support.workflow_docs import STANDARD_FACTS  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
+from tests.support.registry_provider import provider_of
 
 
 CONTROLNET_MANIFEST_YAML = textwrap.dedent(
@@ -114,7 +115,7 @@ def _make_client(audience: str | None = None) -> TestClient:
     if audience is not None:
         resolver = lambda _request, _a=audience: _a  # noqa: E731
     app = FastAPI()
-    app.include_router(create_gateway_router(registry, audience_resolver=resolver))
+    app.include_router(create_gateway_router(provider_of(registry), audience_resolver=resolver))
     return TestClient(app)
 
 
@@ -228,7 +229,7 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         registry = _build_registry()
         app = FastAPI()
         app.include_router(
-            create_gateway_router(registry, prefix="/custom/v1")
+            create_gateway_router(provider_of(registry), prefix="/custom/v1")
         )
         client = TestClient(app)
         response = client.get("/custom/v1/workflows")
@@ -245,7 +246,7 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         registry = _build_registry()
         app = FastAPI()
         app.include_router(
-            create_gateway_router(registry, audience_resolver=resolver)
+            create_gateway_router(provider_of(registry), audience_resolver=resolver)
         )
         client = TestClient(app)
         response = client.get(
@@ -262,7 +263,7 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         registry = _build_registry()
         app = FastAPI()
         app.include_router(
-            create_gateway_router(registry, audience_resolver=resolver)
+            create_gateway_router(provider_of(registry), audience_resolver=resolver)
         )
         client = TestClient(app)
         response = client.get("/gateway/v1/workflows")
@@ -308,7 +309,7 @@ def _make_capabilities_client(
     app = FastAPI()
     app.include_router(
         create_gateway_router(
-            registry,
+            provider_of(registry),
             audience_resolver=resolver,
             capabilities_provider=provider,
         )
@@ -493,7 +494,7 @@ def _make_receipts_client(
     app = FastAPI()
     app.include_router(
         create_gateway_router(
-            registry,
+            provider_of(registry),
             audience_resolver=resolver,
             receipt_store_path=receipt_store_path,
             receipt_getter=receipt_getter,
@@ -708,7 +709,7 @@ def _make_resources_client(
     app = FastAPI()
     app.include_router(
         create_gateway_router(
-            registry,
+            provider_of(registry),
             audience_resolver=resolver,
             resource_lister=resource_lister,
         )
@@ -809,7 +810,7 @@ def _make_media_jobs_client(
     app = FastAPI()
     app.include_router(
         create_gateway_router(
-            registry,
+            provider_of(registry),
             audience_resolver=resolver,
             media_job_getter=media_job_getter,
             media_job_lister=media_job_lister,

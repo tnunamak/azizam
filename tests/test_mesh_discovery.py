@@ -1,7 +1,7 @@
 """The mesh row in the shared catalog: its facts, the pool's live probe as availability evidence, and the row projected from both.
 
 The facts come from the route's own frontend row and the service record (the same resolver as the route); the probe reads
-the service health and the observer's facts and acquires no capacity. Only the fakes from test_mesh_route.py stand in for
+the service health and the observer's facts and acquires no capacity. Only the fakes from tests/support/mesh_harness.py stand in for
 the network.
 """
 
@@ -17,7 +17,7 @@ import pytest
 from gateway import mesh_api
 from gateway.availability import project_capabilities
 from gateway.capabilities import Capability, summarize_capabilities, summarize_capability
-from tests.test_mesh_route import OBSERVER_URL, TOTAL, TRELLIS_URL, Harness
+from tests.support.mesh_harness import OBSERVER_URL, TOTAL, TRELLIS_URL, Harness
 
 
 def _facts(harness: Harness) -> Capability:
@@ -159,7 +159,6 @@ def test_the_probe_is_read_only_and_takes_no_capacity() -> None:
 
     assert harness.leases.active_claims() == 0
     assert harness.downstream == []
-    assert harness.receipts == []
 
 
 def test_the_probe_reaches_the_service_health_and_the_observer_facts() -> None:

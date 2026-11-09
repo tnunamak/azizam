@@ -26,17 +26,13 @@ UNPINNED = {
     "store_creator": "the raw media-jobs API: an outside adapter reports the work, the gateway runs no workflow",
     "_submit": "the Make route picks its workflow at dispatch, after the job row exists",
     "_create_indexed": "indexes a response that is already finished; nothing runs",
-    # The mesh job's create runs in ``admitted``, nested in ``_run_job`` in ``register_mesh_routes``; each enclosing
-    # function is a site to the scan.
-    "register_mesh_routes": "the 3D engine route: its manifest names an engine service, no graph template to pin; engine offerings are pinned in S2.5",
-    "_run_job": "the 3D engine route: its manifest names an engine service, no graph template to pin; engine offerings are pinned in S2.5",
-    "admitted": "the 3D engine route: its manifest names an engine service, no graph template to pin; engine offerings are pinned in S2.5",
 }
-PINNED = {"_identity_submit_job", "_submit_audio_media_job", "_submit_video_media_job", "gateway_image_generations_media_job"}
+PINNED = {"_create", "_identity_submit_job", "_submit_audio_media_job", "_submit_video_media_job", "gateway_image_generations_media_job"}
 
 
 def create_sites() -> dict[str, bool]:
-    """function name -> whether its ``media_jobs.create`` call passes ``envelope``."""
+    """function name -> whether its ``media_jobs.create`` call passes ``envelope`` (or ``prepare``, which builds it
+    inside the job's own transaction: the generic run core)."""
     found: dict[str, bool] = {}
     for path in SCANNED:
         for function in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -45,7 +41,7 @@ def create_sites() -> dict[str, bool]:
             for node in ast.walk(function):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "create"
                         and "media_jobs" in getattr(node.func.value, "id", getattr(node.func.value, "attr", ""))):
-                    found[function.name] = found.get(function.name, False) or any(k.arg == "envelope" for k in node.keywords)
+                    found[function.name] = found.get(function.name, False) or any(k.arg in ("envelope", "prepare") for k in node.keywords)
     return found
 
 

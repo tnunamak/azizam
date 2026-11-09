@@ -221,12 +221,12 @@
       {
         "body": {
           "kind": "binary",
-          "len": 251,
+          "len": 425,
           "magic": "7b22776f726b666c",
-          "sha256": "c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9"
+          "sha256": "3e4b838457abfe892390659efd4c8f0352f34243d426a26037b4750b31bcb4f9"
         },
         "created": "<time>",
-        "sha": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9"
+        "sha": "sha256:3e4b838457abfe892390659efd4c8f0352f34243d426a26037b4750b31bcb4f9"
       },
       {
         "body": {
@@ -241,27 +241,27 @@
       {
         "body": {
           "kind": "binary",
-          "len": 6634,
-          "magic": "7b0a20225f6d6574",
-          "sha256": "bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+          "len": 5624,
+          "magic": "7b0a202231223a20",
+          "sha256": "4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
         },
         "created": "<time>",
-        "sha": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+        "sha": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
       }
     ],
     "definition_ref": [
+      {
+        "blob_sha": "sha256:3e4b838457abfe892390659efd4c8f0352f34243d426a26037b4750b31bcb4f9",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
       {
         "blob_sha": "sha256:4d9d5205117826bfc0210336160ed00090314ea332d1ef8d9e5b88576ee1b701",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
       {
-        "blob_sha": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855",
-        "holder_kind": "job",
-        "job_id": "<job:1>"
-      },
-      {
-        "blob_sha": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
+        "blob_sha": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f",
         "holder_kind": "job",
         "job_id": "<job:1>"
       }
@@ -272,14 +272,14 @@
         "envelope_json": {
           "definitions": {
             "binding": "sha256:4d9d5205117826bfc0210336160ed00090314ea332d1ef8d9e5b88576ee1b701",
-            "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
+            "contract": "sha256:3e4b838457abfe892390659efd4c8f0352f34243d426a26037b4750b31bcb4f9",
             "protocol": {
               "id": "node-graph",
-              "revision": "sha256:2a669d6c8e1316c563a268586fc47317daebe5dc73763bef4c3ae413718f3c16"
+              "revision": "sha256:098f1399ff170d1599e1de1ad80be9cbbab883233627c7d94583ecdf57dad79f"
             },
-            "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+            "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
           },
-          "envelope_version": 1,
+          "envelope_version": 2,
           "executor": {
             "adapter_id": "node-graph",
             "interface_version": 2
@@ -289,9 +289,12 @@
             "bundle": "bundle:<job:1>:1"
           },
           "source": {
+            "binding_key": "untracked",
             "id": "video-ltx-2.5-t2v",
+            "incarnation": "untracked",
             "kind": "workflow",
-            "revision": "sha256:4a14c83e0f7d152b61a2b5b7fb102c20b2695345dce69655110994cbb60d5f48"
+            "record_revision": null,
+            "revision": "sha256:f64499c0c0b8701068df56a17be4fb0b358f763010df851f0ae4b1a0a1b21fef"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
@@ -467,12 +470,12 @@
           "envelope": {
             "adapter_id": "node-graph",
             "binding": "sha256:4d9d5205117826bfc0210336160ed00090314ea332d1ef8d9e5b88576ee1b701",
-            "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
+            "contract": "sha256:3e4b838457abfe892390659efd4c8f0352f34243d426a26037b4750b31bcb4f9",
             "interface_version": 2,
             "source_id": "video-ltx-2.5-t2v",
             "source_kind": "workflow",
-            "source_revision": "sha256:4a14c83e0f7d152b61a2b5b7fb102c20b2695345dce69655110994cbb60d5f48",
-            "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+            "source_revision": "sha256:f64499c0c0b8701068df56a17be4fb0b358f763010df851f0ae4b1a0a1b21fef",
+            "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
           },
           "results": [
             {
@@ -822,12 +825,12 @@
               "envelope": {
                 "adapter_id": "node-graph",
                 "binding": "sha256:4d9d5205117826bfc0210336160ed00090314ea332d1ef8d9e5b88576ee1b701",
-                "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
+                "contract": "sha256:3e4b838457abfe892390659efd4c8f0352f34243d426a26037b4750b31bcb4f9",
                 "interface_version": 2,
                 "source_id": "video-ltx-2.5-t2v",
                 "source_kind": "workflow",
-                "source_revision": "sha256:4a14c83e0f7d152b61a2b5b7fb102c20b2695345dce69655110994cbb60d5f48",
-                "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+                "source_revision": "sha256:f64499c0c0b8701068df56a17be4fb0b358f763010df851f0ae4b1a0a1b21fef",
+                "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
               },
               "results": [
                 {

@@ -39,6 +39,7 @@ REASONS: dict[str, str] = {
     "upstream_out_of_memory": "The engine ran out of memory. Try a smaller request.",
     "upstream_invalid_reply": "The engine's reply could not be read.",
     "upload_failed": "Image upload failed: the engine refused the file.",
+    "upload_no_name": "No filename returned from upload",
     "mask_upload_failed": "Mask upload failed: the engine refused the file.",
     "asset_upload_failed": "Asset upload failed: the engine refused the file.",
     "proxy_error": "The gateway could not complete this request. Try again.",
@@ -163,6 +164,8 @@ GATEWAY_CODES = frozenset({
     "video_generation_failed", "video_not_ready", "video_remix_not_configured", "video_too_short", "video_total_length_exceeded",
     "vision_unsupported", "voice_not_available", "workflow_manifest_missing",
     "engine_transitioning", "transition_unsupported", "unknown_engine", "unknown_operation",
+    # A run's input files, staged on the engine before its prompt (proxy._WorkflowRunPort).
+    "asset_upload_failed", "input_unavailable", "media_input_unsupported",
 })
 
 ERROR_CODES = frozenset(CODE_REASONS) | GATEWAY_CODES

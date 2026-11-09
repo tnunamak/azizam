@@ -408,3 +408,57 @@ class OpenApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EngineGraphGoldenTests(unittest.TestCase):
+    """The graph the engine receives for a fixed request, from the bundled manifest's template and declared roles."""
+
+    @staticmethod
+    def _digest(graph: dict) -> str:
+        import hashlib
+
+        return hashlib.sha256(json.dumps(graph, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def test_bundled_manifest_declares_the_roles_and_the_graph_has_no_meta(self) -> None:
+        import yaml
+
+        manifest = yaml.safe_load((ROOT / "manifests/workflows/image-identity.yml").read_text())
+        binding = manifest["bindings"]["gateway"]
+        template = json.loads((ROOT / binding["workflow"]).read_text())
+        self.assertNotIn("_meta", template)
+        self.assertIn(binding["prompt_node"], template)
+        self.assertIn(binding["seed_node"], template)
+        for node_id in binding["image_nodes"]:
+            self.assertIn(node_id, template)
+
+    def test_engine_graph_for_a_fixed_request_is_stable(self) -> None:
+        import yaml
+
+        manifest = yaml.safe_load((ROOT / "manifests/workflows/image-identity.yml").read_text())
+        binding = manifest["bindings"]["gateway"]
+        template = json.loads((ROOT / binding["workflow"]).read_text())
+        calls: list[dict] = []
+
+        async def ensure():
+            return None
+
+        async def run_workflow(auth, graph, uploads):
+            calls.append({"graph": graph, "uploads": sorted(uploads)})
+            return GOOD
+
+        app = FastAPI()
+        identity_api.register_identity_routes(app, identity_api.IdentityApiDeps(
+            authenticate=lambda request, path: "auth", enforce_policy=lambda auth, path: None,
+            ensure_face_service=ensure, face_client=lambda: FakeClient(), run_workflow=run_workflow,
+            template=lambda: (template, dict(binding)),
+            store_image=lambda *a: {"asset_id": "i", "asset_url": "u", "media_type": "image/png", "b64_json": "A"},
+            models=("buffalo_l",),
+        ))
+        r = TestClient(app).post(
+            identity_api.IDENTITY_PATH, files=[("image", ("p.png", PHOTO, "image/png"))],
+            data={"prompt": "They look into each other's eyes.", "attempts": "1", "seed": "7", "steps": "20", "cfg": "1.5"},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["uploads"], ["L1", "L2", "L3"])
+        self.assertEqual(self._digest(calls[0]["graph"]), "6f7bf37bf2a73b4929c8267123441d7484b3257a19c91e2913a623e29acad625")

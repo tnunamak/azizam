@@ -265,7 +265,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
             payload = {**self.payload_for(context), "body": {"model": "m", "prompt": "x"},
                        "headers": {}, "url": {}}
             # This job is built by hand, with no pin; the test is about who runs it, not what it compiles.
-            with patch.object(proxy, fake_name, fake), patch.object(proxy, "_compile_from_pin", lambda _capability: False), \
+            with patch.object(proxy, fake_name, fake), patch.object(proxy, "_load_audio_pin", lambda _job_id: None), \
                     patch.object(proxy, "_load_audio_media_job_payload", lambda _job_id: payload), \
                     patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload):
                 await worker(job.job_id)

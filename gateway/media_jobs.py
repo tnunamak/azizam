@@ -493,6 +493,8 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     conn.executescript(media_input_leases.DDL)  # leases and ingest markers (gateway/media_input_leases.py)
+    conn.executescript(RUN_CLAIM_DDL)
+    conn.executescript(TOMBSTONE_DDL)
     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
     previous_version = int(row[0]) if row is not None else None
     if row is None:
@@ -761,6 +763,163 @@ def _receipt_link_candidate(data: Mapping[str, Any]) -> str | None:
     return None
 
 
+RUN_CLAIM_DDL = """CREATE TABLE IF NOT EXISTS workflow_run_claim (
+  owner_scope TEXT NOT NULL,
+  maker TEXT NOT NULL,
+  idem_key TEXT NOT NULL,
+  identity TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  job_id TEXT,
+  claimed_at REAL NOT NULL,
+  PRIMARY KEY (owner_scope, maker, idem_key)
+);
+CREATE INDEX IF NOT EXISTS workflow_run_claim_job ON workflow_run_claim(job_id)"""
+
+
+@dataclass(frozen=True)
+class RunClaimFence:
+    """The claim a fenced ``create`` must still hold: it is checked, and then set to name the job, inside the write
+    transaction that inserts the job (CODE_TO_DATA_S4_S8 section 7.2)."""
+
+    owner_scope: str
+    maker: str
+    key: str
+    holder: str
+
+
+@dataclass(frozen=True)
+class RunClaim:
+    """What ``claim_run_key`` found. ``held``: this holder owns an undecided claim. ``replay``: the key names ``job_id``.
+    ``conflict``: another identity owns the key. ``busy``: the same identity is held by a live holder."""
+
+    outcome: Literal["held", "replay", "conflict", "busy"]
+    job_id: str | None = None
+
+
+class ClaimLost(RuntimeError):
+    """The fenced ``create`` found the claim taken over or decided. Nothing was drawn, adopted or stored."""
+
+
+def claim_run_key(
+    *, owner_scope: str, maker: str, key: str, identity: str, holder: str, lease_s: float,
+    now: float | None = None, path: Path = DB_PATH,
+) -> RunClaim:
+    """Claim an idempotency key in one write transaction (section 7.2, step 1). A claim that names a job that is gone
+    or past the replay window is stale and is replaced. An undecided claim older than ``lease_s`` is taken over by
+    rewriting its ``holder``; the old holder's fence then matches nothing."""
+    stamp = time.time() if now is None else now
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT identity, holder, job_id, claimed_at FROM workflow_run_claim "
+                "WHERE owner_scope=? AND maker=? AND idem_key=?", (owner_scope, maker, key)).fetchone()
+            if row is None:
+                conn.execute("INSERT INTO workflow_run_claim VALUES (?,?,?,?,?,NULL,?)",
+                             (owner_scope, maker, key, identity, holder, stamp))
+                conn.commit()
+                return RunClaim("held")
+            known_identity, old_holder, job_id, claimed_at = row
+            take_over = False
+            if job_id is not None:
+                job = conn.execute("SELECT status, updated_at FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
+                if job is None or not _replays(job[0], job[1]):
+                    take_over = True  # the job is gone or past the replay window: the key is free again
+                elif known_identity != identity:
+                    conn.rollback()
+                    return RunClaim("conflict")
+                else:
+                    conn.rollback()
+                    return RunClaim("replay", job_id)
+            else:
+                expired = stamp - claimed_at > lease_s
+                if known_identity != identity and not expired:
+                    conn.rollback()
+                    return RunClaim("conflict")
+                if not expired:
+                    conn.rollback()
+                    return RunClaim("busy")
+                take_over = True
+            if take_over:
+                moved = conn.execute(
+                    "UPDATE workflow_run_claim SET identity=?, holder=?, job_id=NULL, claimed_at=? "
+                    "WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? AND job_id IS ?",
+                    (identity, holder, stamp, owner_scope, maker, key, old_holder, job_id)).rowcount
+                if moved != 1:
+                    conn.rollback()
+                    return RunClaim("busy")
+            conn.commit()
+            return RunClaim("held")
+        except BaseException:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
+
+
+def get_run_claim(*, owner_scope: str, maker: str, key: str, path: Path = DB_PATH) -> tuple[str, str | None, str] | None:
+    """The (holder, job_id, identity) of a claim, read in one statement, or None when it is gone."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT holder, job_id, identity FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=?",
+            (owner_scope, maker, key)).fetchone()
+    return (row[0], row[1], row[2]) if row else None
+
+
+def release_run_claim(fence: RunClaimFence, *, path: Path = DB_PATH) -> bool:
+    """Drop this holder's undecided claim (step 7). A claim another holder took over, or one that names a job, stays."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        gone = conn.execute(
+            "DELETE FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? AND job_id IS NULL",
+            (fence.owner_scope, fence.maker, fence.key, fence.holder)).rowcount
+        conn.commit()
+    return gone == 1
+
+
+TOMBSTONE_DDL = """CREATE TABLE IF NOT EXISTS workflow_job_tombstone (
+  job_id TEXT PRIMARY KEY,
+  deleted_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workflow_job_tombstone_at ON workflow_job_tombstone(deleted_at)"""
+
+
+def tombstone_job(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> None:
+    """Mark a job deleted. Readers that honour tombstones (``tombstoned``, ``recent``) stop showing it at once, and
+    ``reap_tombstones`` removes it after the retention window. Marking twice keeps the first time."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("INSERT OR IGNORE INTO workflow_job_tombstone(job_id, deleted_at) VALUES (?, ?)",
+                     (job_id, _now() if now is None else int(now)))
+        conn.commit()
+
+
+def tombstoned(job_id: str, *, path: Path = DB_PATH) -> bool:
+    with _conn(path) as conn:
+        return conn.execute("SELECT 1 FROM workflow_job_tombstone WHERE job_id=?", (job_id,)).fetchone() is not None
+
+
+def reap_tombstones(*, before: int, path: Path = DB_PATH) -> int:
+    """Remove every job tombstoned at or before ``before`` (a unix time), with its events, envelope, results and claim.
+    Returns how many jobs went."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ids = [row[0] for row in conn.execute(
+                "SELECT job_id FROM workflow_job_tombstone WHERE deleted_at <= ?", (int(before),))]
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" for _ in chunk)
+                conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", chunk)
+                conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", chunk)
+                _release_envelopes_in(conn, chunk)
+                conn.execute(f"DELETE FROM workflow_job_tombstone WHERE job_id IN ({marks})", chunk)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return len(ids)
+
+
 def create(
     job: MediaJob | Mapping[str, Any],
     *,
@@ -770,6 +929,8 @@ def create(
     maker_from_request: bool = True,
     envelope: JobEnvelope | None = None,
     require_envelope: bool = False,
+    claim: RunClaimFence | None = None,
+    prepare: Callable[[MediaJob], JobEnvelope | None] | None = None,
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
 
@@ -797,6 +958,12 @@ def create(
     route whose jobs run from their pin passes ``require_envelope=True``: a missing envelope or a failed write raises
     ``EnvelopeNotRecorded`` (the cause is chained), the whole transaction rolls back and no job row is left. A replay
     of an existing job records nothing.
+
+    ``claim`` fences the create (section 7.2): in the write transaction, before anything else, the claim row must
+    still hold this holder and name no job, else ``ClaimLost`` is raised and nothing is stored. ``prepare(record)``
+    runs after that check, in the same transaction, and returns the envelope: it draws generated values and adopts
+    staged files, so a holder that lost its claim draws and adopts nothing. When the job row is written the claim is set
+    to name it; the claim and the job commit together.
     """
     record = _coerce_to_job(job)
     # Auth-disabled submissions still record an explicit scope. Missing scope
@@ -810,6 +977,20 @@ def create(
             request_source.job_maker(record.app_id))
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if claim is not None:
+            held = conn.execute(
+                "SELECT 1 FROM workflow_run_claim WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? "
+                "AND job_id IS NULL", (claim.owner_scope, claim.maker, claim.key, claim.holder)).fetchone()
+            if held is None:
+                conn.rollback()
+                raise ClaimLost("the idempotency claim is no longer held by this request")
+        if prepare is not None:
+            try:
+                envelope = prepare(record)
+            except BaseException:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
         if record.request_id:
             existing = conn.execute(
                 "SELECT job_json, status, updated_at, job_id FROM media_jobs WHERE request_id = ?",
@@ -873,6 +1054,13 @@ def create(
                 if conn.in_transaction:
                     conn.rollback()
                 raise
+        if claim is not None:
+            named = conn.execute(
+                "UPDATE workflow_run_claim SET job_id=? WHERE owner_scope=? AND maker=? AND idem_key=? AND holder=? "
+                "AND job_id IS NULL", (record.job_id, claim.owner_scope, claim.maker, claim.key, claim.holder)).rowcount
+            if named != 1:
+                conn.rollback()
+                raise ClaimLost("the idempotency claim could not name the job")
         conn.commit()
     return record
 
@@ -1033,6 +1221,7 @@ def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> N
 
     for job_id in job_ids:
         media_input_leases.release_job_in(conn, job_id)  # a job row deleted: its input leases end with it
+        conn.execute("DELETE FROM workflow_run_claim WHERE job_id=?", (job_id,))  # and so does its idempotency claim
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
         return
     for job_id in job_ids:
@@ -1370,7 +1559,7 @@ def recent(
     if app_ids is not None or owner_key_hashes is not None:
         if not app_ids and not owner_key_hashes:
             return []
-    clauses: list[str] = []
+    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"]
     params: list[Any] = []
     if app_ids is not None or owner_key_hashes is not None:
         ownership = []
@@ -1438,6 +1627,11 @@ def list_jobs(*args, **kwargs):
     return recent(*args, **kwargs)
 
 
+def is_error_code(code: str) -> bool:
+    """Whether ``code`` is a short lowercase token the job store keeps as a failure code."""
+    return _ERROR_CODE_RE.fullmatch(code) is not None
+
+
 def validate_error_info(info: Mapping[str, Any]) -> dict[str, Any]:
     """Return the typed failure facts, or raise ValueError.
 
@@ -1476,6 +1670,7 @@ def update_status(
     expected_status: str | None = None,
     now: int | None = None,
     before_commit: Callable[[sqlite3.Connection, dict[str, Any]], object] | None = None,
+    committed_bundle: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Apply a status transition. Returns the updated internal job dict.
@@ -1487,6 +1682,9 @@ def update_status(
 
     ``error_info`` holds the typed failure facts (``ERROR_FIELDS``) that go
     with ``error``; ``validate_error_info`` checks them.
+
+    ``committed_bundle`` is for ``settle_committed`` alone: the result is already published, so a pending cancel no
+    longer holds the success back (S7 addendum 6.1: a committed bundle wins).
 
     Rejects illegal transitions (e.g. succeeded -> running). Same-state writes
     are accepted so progress updates during ``running`` are idempotent. With
@@ -1530,7 +1728,7 @@ def update_status(
             raise ValueError(
                 f"illegal status transition {prev_status!r} -> {status!r} for job {job_id!r}"
             )
-        if (status == STATUS_SUCCEEDED
+        if (status == STATUS_SUCCEEDED and not committed_bundle
                 and (current.get("metadata") or {}).get("cancel_requested_at")):
             raise CancellationPending("Cancel requested; waiting for resources to be released")
         current["status"] = status
@@ -1570,6 +1768,17 @@ def update_status(
 
 class CancellationPending(ValueError):
     """Output finished after cancellation; the worker must release before settling."""
+
+
+def settle_committed(job_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Recovery: the job's result bundle is committed, so it succeeds from the bundle, even when a cancel was asked
+    (the ordinary pre-publication cancel guard does not apply to a published result). A terminal job is left alone."""
+    job = get(job_id, audience="internal", path=path)
+    if job is None or is_terminal(str(job["status"])):
+        return job
+    if job["status"] == STATUS_QUEUED:
+        update_status(job_id, STATUS_RUNNING, expected_status=STATUS_QUEUED, path=path)
+    return update_status(job_id, STATUS_SUCCEEDED, progress=100, committed_bundle=True, path=path)
 
 
 def request_cancel(job_id: str, *, reason: str | None = None, path: Path = DB_PATH) -> dict[str, Any] | None:
@@ -1621,6 +1830,8 @@ def begin_attempt(job_id: str, *, now: int | None = None, path: Path = DB_PATH) 
         job = _coerce_to_job(json.loads(row[0]))
         if job.status != STATUS_RUNNING:
             raise ValueError("only a running job can begin another attempt")
+        if (job.metadata or {}).get("cancel_requested_at"):
+            raise CancellationPending("Cancel requested; no further attempt may start")
         if job.attempt_number is None:
             return job.to_dict()
         job.previous_attempts.append({"attempt_number": job.attempt_number,
@@ -2020,6 +2231,13 @@ __all__ = [
     "is_terminal",
     "holds_resources",
     "IdempotencyConflict",
+    "RunClaim",
+    "RunClaimFence",
+    "ClaimLost",
+    "claim_run_key",
+    "get_run_claim",
+    "settle_committed",
+    "release_run_claim",
     "CLIENT_VISIBLE_FIELDS",
     "ADMIN_ONLY_FIELDS",
     "INTERNAL_ONLY_FIELDS",

@@ -41,7 +41,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Collection, Iterable, Mapping
 
 from gateway.receipts import PHASE_FIELDS, RouteReceipt, serialize_receipt_for_audience, validate_retention
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
@@ -318,17 +318,58 @@ def update_phases(receipt: RouteReceipt, *, path: Path = DB_PATH) -> None:
 GATEWAY_RESTARTED = "gateway_restarted"
 
 
-def close_orphan(request_id: str) -> bool:
-    """Close the receipt of a job that a stopped gateway left running: failed, with the reason. A receipt that is already
-    closed stays as it is, and one that was never begun, or a store that is down, is no fault at startup."""
-    if not request_id:
+def open_request_ids(*, path: Path = DB_PATH) -> frozenset[str]:
+    """The request ids of every receipt in progress now. Startup recovery takes this snapshot before the gateway accepts
+    a request: those receipts belong to the stopped gateway, and a receipt opened after the snapshot is a live request's,
+    whatever its timestamp says. Ownership is by identity, so a clock that steps cannot move a receipt to the other side.
+    A store that is down is no fault at startup: the snapshot is empty and nothing is closed."""
+    try:
+        with _conn(path) as conn:
+            return frozenset(row[0] for row in conn.execute("SELECT request_id FROM receipts WHERE status='in_progress'"))
+    except Exception:  # noqa: BLE001
+        logging.getLogger("azizam.receipts").warning("open receipts were not listed", exc_info=True)
+        return frozenset()
+
+
+def close_recovered(request_id: str, status: str, reason: str, *, among: Collection[str] | None = None,
+                    path: Path = DB_PATH) -> bool:
+    """At startup, close the receipt of a job a stopped gateway left open: with the job's outcome when recovery finished
+    it (``succeeded`` from a committed result), else failed. A receipt that is already closed stays as it is, and one
+    that was never begun, or a store that is down, is no fault at startup.
+
+    ``among`` is the snapshot from ``open_request_ids`` taken when recovery began: only a receipt named in it is closed,
+    so a request opened after that point keeps its receipt and finalizes it itself."""
+    if not request_id or (among is not None and request_id not in among):
         return False
     try:
-        return finalize({"request_id": request_id, "status": "failed", "updated_at_ms": int(time.time() * 1000),
-                         "metadata": {"terminal_reason": GATEWAY_RESTARTED}})
+        return finalize({"request_id": request_id, "status": status, "updated_at_ms": int(time.time() * 1000),
+                         "metadata": {"terminal_reason": reason}}, path=path)
     except Exception:  # noqa: BLE001
-        logging.getLogger("azizam.receipts").warning("orphaned job receipt was not closed", exc_info=True)
+        logging.getLogger("azizam.receipts").warning("recovered job receipt was not closed", exc_info=True)
         return False
+
+
+def close_orphan(request_id: str, *, among: Collection[str] | None = None, path: Path = DB_PATH) -> bool:
+    """Close the receipt of a job that a stopped gateway left running: failed, with the reason."""
+    return close_recovered(request_id, "failed", GATEWAY_RESTARTED, among=among, path=path)
+
+
+def close_orphans_on_paths(paths: Iterable[str], *, among: Collection[str] | None = None, path: Path = DB_PATH) -> int:
+    """At startup, close every receipt still in progress on the given request paths as failed, with the reason: the
+    request that held it is gone with the stopped gateway, whether or not a job exists or still runs. Only a receipt
+    named in ``among`` is closed (see ``close_recovered``). Returns how many."""
+    wanted = tuple(paths)
+    if not wanted:
+        return 0
+    try:
+        with _conn(path) as conn:
+            marks = ",".join("?" * len(wanted))
+            ids = [row[0] for row in conn.execute(
+                f"SELECT request_id FROM receipts WHERE status='in_progress' AND path IN ({marks})", wanted)]
+    except Exception:  # noqa: BLE001 - a store that is down is no fault at startup
+        logging.getLogger("azizam.receipts").warning("open receipts were not listed", exc_info=True)
+        return 0
+    return sum(1 for request_id in ids if close_orphan(request_id, among=among, path=path))
 
 
 def touch(receipt: RouteReceipt | Mapping[str, Any], *, now_ms: int | None = None, path: Path = DB_PATH) -> bool:

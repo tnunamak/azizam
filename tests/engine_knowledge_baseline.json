@@ -14,14 +14,12 @@
     "gateway/service_registry.py": 1,
     "gateway/toolcall_detection.py": 6,
     "gateway/transforms.py": 5,
-    "gateway/video_extend.py": 21,
-    "gateway/video_extend_h3.py": 11,
     "gateway/video_extensions.py": 2,
     "gateway/video_media_jobs.py": 1,
     "gateway/video_subject.py": 1,
     "gateway/workflows_catalog.py": 2,
     "metrics_sampler.py": 8,
-    "proxy.py": 231,
+    "proxy.py": 220,
     "status_endpoint.py": 134
   }
 }

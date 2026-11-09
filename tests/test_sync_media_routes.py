@@ -26,6 +26,7 @@ from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
 from tests.support.graph_selectors import video_manifest
+from tests.support.registry_provider import provider_of
 
 
 def _png_bytes() -> bytes:
@@ -548,7 +549,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             return await call_next(request)
 
         app.include_router(create_gateway_router(
-            WorkflowRegistry(), media_job_store_path=self.media_db, receipt_store_path=self.receipt_db,
+            provider_of(WorkflowRegistry()), media_job_store_path=self.media_db, receipt_store_path=self.receipt_db,
             record_scope_provider=proxy._gateway_record_scope, record_authorizer=proxy._gateway_record_authorizer,
         ))
         client = TestClient(app)

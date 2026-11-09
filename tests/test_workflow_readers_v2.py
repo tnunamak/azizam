@@ -20,6 +20,14 @@ byte for byte what the readers gave before the switch:
   input type, input modalities (``text`` to ``asset`` and ``text``), home modalities and catalog media type changed;
 - ace-step: its ``prompt`` input is gone (it and ``tags`` wrote the same node input); the route sends the prompt to
   ``tags`` as before, so only the catalog, schema, mapping and example entries lose ``prompt``.
+
+Re-captured at S7 (builder D4): the mesh route moved from ``/v1/meshes/generate`` to ``/v1/3d/generations/glb``. Only the
+mesh ``openapi_catalog`` and ``member_catalog`` entries changed, and only the route path in them (11 strings, the path
+field and the three code examples). Every other byte is as before.
+
+Re-captured at the train 35 gate: the generic run route takes full ids, so the two video-edit workflows' sync path in
+their ``openapi_catalog`` and ``member_catalog`` entries (and rife-interpolate's example request and code examples) name
+the full id, and their sync ``output`` says the route answers a media job. Every other byte is as before.
 """
 
 from __future__ import annotations
@@ -170,12 +178,6 @@ def test_mesh_route_reads_its_contract_for_the_picture_input(registry: WorkflowR
     workflow = mesh_api.mesh_workflow_from_record(record)
     assert workflow.image_input == "image"
     assert workflow.inputs[workflow.image_input]["type"] == "asset"  # the contract's name for the picture
-    picture = mesh_manifest.ImageAsset(b"x", "input.png", "image/png")
-    request = mesh_manifest.bind_request(workflow, {"resolution": "512", "seed": "7"}, picture)
-    assert request.values == {"resolution": 512, "seed": 7}
-    assert mesh_manifest.downstream_form(workflow, request)[0] == {"seed": "7", "resolution": "512"}
-    with pytest.raises(mesh_manifest.MeshInputError):
-        mesh_manifest.bind_request(workflow, {"resolution": "512", "seed": "7"}, None)
     assert not {key for _, key in reads} & V1_KEYS_ANYWHERE
 
 

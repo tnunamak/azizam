@@ -1,10 +1,4 @@
 {
-    "_meta": {
-        "name": "qwen-image-2.1-identity",
-        "description": "Gateway-composed identity scene: Qwen-Image 2.1 multi-reference edit with up to ten tagged reference images (image 1 is the canvas/style photo, the rest are per-person head references). Reference images use the dotted Autogrow keys images.image_N; unused slots are pruned by the composer. Node 7 prompt, node 8 seed.",
-        "prompt_node": "7",
-        "seed_node": "8"
-    },
     "1": {
         "class_type": "UNETLoader",
         "inputs": {

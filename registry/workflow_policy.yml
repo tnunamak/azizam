@@ -7,42 +7,42 @@
 # package alone, and a package that declares the same workflow id gets nothing from it (release_facts).
 schema_version: 1
 workflows:
-  audio.generate.ace-step-1.5-xl-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  audio.generate.sa3-small-sfx: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  audio.generate.tangoflux: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  audio.generate.yue2-song: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.analyze.face-likeness: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.fibo-2-edit-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.flux2-klein: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.flux2-klein-4b: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.flux2-klein-4b-inpaint: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.image-identity: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.qwen-image-2.1-edit: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.qwen-image-2.1-edit-multiref: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.qwen-image-2.1-inpaint: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.edit.seedvr2-upscale: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.anima-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.flux2-klein: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.flux2-klein-4b: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.flux2-klein-4b-seamless-tile: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.flux2-klein-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.krea2-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.krea2-turbo-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.moss-image: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.moss-image-fast: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.moss-image-quality: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.sdxl-seamless-tile: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  mesh.generate.trellis-2: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.edit.rife-interpolate: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.edit.scail-2-replace: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.ltx-2.5-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.ltx-2.5-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.ltx-2.5-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.ltx-2.5-long: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.ltx-2.5-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.minimax-h3-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.minimax-h3-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.minimax-h3-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.minimax-h3-long: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  video.generate.minimax-h3-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.test-demo-package: {exposure: opt_in, trust_tier: experimental, resource_tier: batch, tags: [test, demo], package: test-demo-image-extension-package}
+  audio.generate.ace-step-1.5-xl-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  audio.generate.sa3-small-sfx: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  audio.generate.tangoflux: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  audio.generate.yue2-song: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: audio, tags: []}
+  image.analyze.face-likeness: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  image.edit.fibo-2-edit-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.flux2-klein: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.flux2-klein-4b: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.flux2-klein-4b-inpaint: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.image-identity: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.qwen-image-2.1-edit: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.qwen-image-2.1-edit-multiref: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.qwen-image-2.1-inpaint: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.edit.seedvr2-upscale: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.anima-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.flux2-klein: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.flux2-klein-4b: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.flux2-klein-4b-seamless-tile: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.flux2-klein-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.krea2-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.krea2-turbo-snofs: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.moss-image: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.moss-image-fast: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.moss-image-quality: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  image.generate.sdxl-seamless-tile: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
+  mesh.generate.trellis-2: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  video.edit.rife-interpolate: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  video.edit.scail-2-replace: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  video.generate.ltx-2.5-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.ltx-2.5-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.ltx-2.5-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.ltx-2.5-long: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.ltx-2.5-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.minimax-h3-i2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.minimax-h3-keyframes: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.minimax-h3-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.minimax-h3-long: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  video.generate.minimax-h3-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: video, tags: []}
+  image.generate.test-demo-package: {exposure: opt_in, trust_tier: experimental, resource_tier: batch, resource_class: image, tags: [test, demo], package: test-demo-image-extension-package}

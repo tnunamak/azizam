@@ -150,6 +150,44 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     _GUARD.restore()
 
 
+_ASYNCIO_GLOBALS = ("sleep", "wait_for", "to_thread", "create_task")
+
+
+@pytest.fixture(autouse=True)
+def _log_scrub_registry_is_restored() -> Iterator[None]:
+    """A test leaves the log scrubber's registered values as it found them. The registry is process-wide and a
+    monkeypatched environment variable that holds a credential (``env_secret``) outlives the monkeypatch; a short
+    word such as ``test`` left behind then removes that word from every later failure message in the worker."""
+    import copy
+
+    from gateway import log_scrub
+
+    with log_scrub._LOCK:
+        before = copy.deepcopy(log_scrub._SOURCES)
+    yield
+    with log_scrub._LOCK:
+        log_scrub._SOURCES.clear()
+        log_scrub._SOURCES.update(before)
+        log_scrub._SNAPSHOT = None
+
+
+@pytest.fixture(autouse=True)
+def _asyncio_globals_are_restored() -> Iterator[None]:
+    """A test leaves the global asyncio functions as it found them. Defined before every other autouse fixture, so it
+    is set up first and torn down last, after each MonkeyPatch has been undone. Two patch owners undone out of order
+    (a test's monkeypatch over a rig's own patch of asyncio.sleep) leave a fake in place for every later test in the
+    worker; this names the test that leaked it and puts the real function back."""
+    import asyncio
+
+    before = {name: getattr(asyncio, name) for name in _ASYNCIO_GLOBALS}
+    yield
+    leaked = [name for name, value in before.items() if getattr(asyncio, name) is not value]
+    for name in leaked:
+        setattr(asyncio, name, before[name])
+    if leaked:
+        pytest.fail(f"this test left asyncio.{', asyncio.'.join(leaked)} patched after teardown", pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def _no_comfy_object_info(monkeypatch: pytest.MonkeyPatch) -> None:
     """Submitting a ComfyUI prompt derives the embedded UI workflow from
@@ -260,7 +298,13 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
     saved_aliases = {name: getattr(module, name) for name in ("VIDEO_ALIASES", "AUDIO_ALIASES")} if module is not None else {}
     egress = sys.modules.get("gateway.engine_egress")
     saved_egress = egress._live if egress is not None else None
+    # A reload also swaps the registry snapshot (proxy.py `_publish_runtime_config`); the next test on this worker starts
+    # from the snapshot it found.
+    provider = getattr(module, "GATEWAY_REGISTRY_PROVIDER", None) if module is not None else None
+    saved_snapshot = provider.current() if provider is not None else None
     yield
+    if provider is not None and saved_snapshot is not None and provider.current() is not saved_snapshot:
+        provider.swap(saved_snapshot)
     if holder is not None and saved is not None:
         holder.publish(saved)
     if module is not None:

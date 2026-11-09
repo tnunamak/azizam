@@ -852,27 +852,30 @@ records:
         canonical: /native/{engine_id}/{native_path:path}
         translator: native
         intent: engine.native
-  # Image to 3D (gateway/mesh_api.py). The handler is source-defined and owned by this frontend
-  # (FRONTEND_TRANSLATORS.register_owned). This record alone owns method, path, protocol, intent, the
-  # workflow reference, the required capability, exposure and tiers, and public discovery. The row has
-  # no translator, so the frontend mount does not mount it: the handler checks this record before it
-  # reads the body. The bundled manifest is manifests/workflows/mesh.generate.trellis-2.yml.
+  # Image to 3D. The handlers are the rows `mesh-generations` and `mesh-glb` below, mounted by gateway/row_routes.py
+  # (FRONTEND_TRANSLATORS.register_owned). This record owns method, path, protocol, intent, the required capability,
+  # exposure and tiers, and public discovery of those two routes. The record has no translator, so the frontend mount does
+  # not mount it. Which workflows the rows serve is each row's selector, not this record.
   - id: mesh
     receipt_protocols: [openai.mesh]
-    name: Mesh generation (image to GLB)
+    name: 3D generation
     protocol: openai
     source: builtin
     editable: false
     enabled: true
     strictness: exact
     canonical: true
-    routes: [/v1/meshes]
+    routes: [/v1/3d]
     intents: [mesh.generate]
     registered_routes:
       - methods: [POST]
-        canonical: /v1/meshes/generate
+        canonical: /v1/3d/generations
         intent: mesh.generate
-        workflow: mesh.generate.trellis-2
+        capability: mesh
+        runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+      - methods: [POST]
+        canonical: /v1/3d/generations/glb
+        intent: mesh.generate
         capability: mesh
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
     # A finished model is stored under the generic ``ast`` prefix; the job's content route and the asset content route
@@ -880,8 +883,132 @@ records:
     asset_content_policies:
       ast: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
     public_discovery:
-      canonical_base_path: /v1/meshes
-      compatibility: "Image in, one textured GLB out (model/gltf-binary). TRELLIS.2 via trellis.cpp."
+      canonical_base_path: /v1/3d
+      compatibility: "One picture in, one textured GLB out (model/gltf-binary)."
       streaming: false
-      base_url_recipe: "Set the base URL to the gateway root; the route is POST /v1/meshes/generate."
-      endpoints: [/v1/meshes/generate]
+      base_url_recipe: "Set the base URL to the gateway root; the routes are POST /v1/3d/generations and POST /v1/3d/generations/glb."
+      endpoints: [/v1/3d/generations, /v1/3d/generations/glb]
+
+# Frontend rows (CODE_TO_DATA_S4_S8 I5, section 8): one row per modality route. A row names the reviewed wire shape
+# that speaks the route (gateway/frontend_shapes), the routes it owns, a selector in the kernel's closed schema that says
+# which workflows it serves (an `ids` list, or a `match` on inputs and outputs; never an intent word), and `mode`
+# (`sync` answers in one call, `job` answers with a job). `lists_as_model: true` lists the row's workflows as models.
+# Each row is validated with `selector_problems` when it is loaded (gateway/frontend_shapes.parse_rows).
+# The `registered_routes` above still carry the routes the main module serves today; a route moves onto its row, and
+# leaves `registered_routes`, in the same change.
+frontends:
+  - id: images-generations
+    shape: openai.images.json
+    mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    receipt_protocol: openai.images
+    receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
+    strictness: exact
+    lists_as_model: true
+    selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/images/generations
+        aliases: [/openai/v1/images/generations]
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+  - id: images-edits
+    shape: openai.images.multipart
+    mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    receipt_protocol: openai.images
+    receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source, image_mask: X-Image-Mask, image_mask_source: X-Image-Mask-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
+    strictness: exact
+    lists_as_model: true
+    selects: {match: {inputs: {prompt: {type: string}, source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/images/edits
+        aliases: [/openai/v1/images/edits]
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+  - id: images-variations
+    shape: openai.images.variations
+    mode: sync
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    receipt_protocol: openai.images
+    receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
+    strictness: exact
+    selects: {match: {inputs: {source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/images/variations
+        aliases: [/openai/v1/images/variations]
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+  - id: image-jobs
+    shape: openai.images.jobs
+    mode: job
+    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    receipt_protocol: openai.images
+    receipt_opens: before_policy
+    strictness: exact
+    selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /gateway/v1/media/jobs/image-generations
+        runtime_policy: {receipt_names: short, default_answer: b64_json, job_failure_text: category_copy, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+  - id: audio-generate
+    shape: openai.audio.json
+    mode: sync
+    receipt_protocol: openai.audio
+    strictness: exact
+    lists_as_model: true
+    selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "audio/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/audio/generate
+        aliases: [/openai/v1/audio/generate]
+        runtime_policy: {protocol: openai.audio, intent: audio.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+  - id: videos-create
+    shape: openai.video.create
+    mode: job
+    receipt_protocol: openai.video
+    strictness: exact
+    lists_as_model: true
+    selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "video/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/videos
+        aliases: [/openai/v1/videos]
+        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+  - id: videos-edit
+    shape: openai.video.json_source
+    mode: job
+    receipt_protocol: openai.video
+    strictness: exact
+    selects: {match: {inputs: {prompt: {type: string}, video: {media_type: "video/*"}}, outputs: {media_type: "video/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/videos/edits
+        aliases: [/openai/v1/videos/edits]
+        runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+  - id: mesh-generations
+    shape: localai.3d.generations
+    mode: sync
+    receipt_protocol: openai.mesh
+    strictness: exact
+    lists_as_model: true
+    selects: {match: {outputs: {media_type: "model/gltf-binary"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/3d/generations
+        runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+  - id: mesh-glb
+    shape: multipart.glb
+    mode: sync
+    receipt_protocol: openai.mesh
+    strictness: exact
+    selects: {match: {outputs: {media_type: "model/gltf-binary"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/3d/generations/glb
+        runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}

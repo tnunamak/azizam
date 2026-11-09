@@ -25,7 +25,7 @@ import json
 import re
 import time
 from datetime import datetime
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -40,7 +40,7 @@ from gateway.capabilities import Capability, ResourceEstimate, summarize_capabil
 from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
 from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summarize_workflow
 from gateway.manifests import Provenance, enforce_contract, manifest_identity
-from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, facts_from_mapping, release_facts
+from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, release_facts, stored_facts
 from gateway.transition_gate import ServicePaths, domain_violations
 from gateway import frontend_profiles, transition_profiles
 
@@ -146,7 +146,9 @@ def _with_workflow_schema_2(stored: dict[str, Any], path: Path, actor: str, rele
     from gateway import workflow_schema_migration
 
     migrated = workflow_schema_migration.ensure(path=path, actor=actor, release=release)
-    return stored if migrated is None else migrated
+    stored = stored if migrated is None else migrated
+    stepped = ensure_workflow_record_step(path=path, actor=actor)
+    return stored if stepped is None else stepped
 
 
 def _parses_as_object(document: str) -> bool:
@@ -2498,7 +2500,17 @@ def normalize_protocol_frontend(frontend_id: str, raw: Mapping[str, Any]) -> dic
     return out
 
 
+def is_run_control_patch(raw: Any) -> bool:
+    """Whether a stored workflow record is a run-control patch of a bundled workflow: no contract, only state,
+    publication and revision, under ``patch_of: <id>``."""
+    return isinstance(raw, Mapping) and bool(raw.get(registry_layers.RUN_CONTROL_PATCH_KEY))
+
+
 def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
+    if is_run_control_patch(raw):
+        if raw[registry_layers.RUN_CONTROL_PATCH_KEY] != workflow_id:
+            raise ValueError(f"workflow {workflow_id!r} is a run-control patch of a different id")
+        return {"id": workflow_id, registry_layers.RUN_CONTROL_PATCH_KEY: workflow_id, "enabled": True, **run_control_of(raw)}
     manifest = raw.get("manifest")
     if not isinstance(manifest, Mapping):
         manifest = {
@@ -2509,13 +2521,17 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
                 "editable",
                 "enabled",
                 "identity",
+                "incarnation",
                 "manifest_hash",
                 "migration",
                 "overrides",
                 "policy",
                 "provenance",
+                "published",
+                "record_revision",
                 "registry_source",
                 "source_path",
+                "state",
                 "summary",
             }
         }
@@ -2530,7 +2546,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
-    facts = facts_from_mapping(policy) or _release_facts_of(identity.id, source, provenance)
+    facts = stored_facts(policy, manifest_dict.get("intent")) or _release_facts_of(identity.id, source, provenance)
     source_path = str(raw.get("source_path") or "")
     manifest_path = str(raw.get("manifest_path") or "")
     record = WorkflowRecord(
@@ -2556,10 +2572,15 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         "manifest_path": manifest_path,
         "provenance": copy.deepcopy(dict(provenance)),
     }
-    stated = facts_from_mapping(policy)
+    stated = stored_facts(policy, manifest_dict.get("intent"))
     if stated is not None:
         # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
         normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
+        if isinstance(policy.get(RESOURCE_CLASS_KEY), str) and policy[RESOURCE_CLASS_KEY]:
+            normalized["policy"][RESOURCE_CLASS_KEY] = policy[RESOURCE_CLASS_KEY]
+    normalized.update(run_control_of(raw))
+    if isinstance(raw.get("overrides"), str) and raw["overrides"]:
+        normalized["overrides"] = raw["overrides"]
     return normalized
 
 
@@ -2643,7 +2664,7 @@ def workflow_records_from_registry(registry: Mapping[str, Any]) -> list[Workflow
                 manifest=manifest_dict,
                 identity=identity,
                 source_path=Path(source_path) if source_path else Path("admin.db"),
-                facts=facts_from_mapping(record.get("policy")) or _release_facts_of(
+                facts=stored_facts(record.get("policy"), manifest_dict.get("intent")) or _release_facts_of(
                     identity.id, str(record.get("source") or "ui"), record.get("provenance")),
             )
         )
@@ -2689,7 +2710,8 @@ def _claims_override(payload: Mapping[str, Any], workflow_id: str) -> bool:
             continue
         manifest = raw.get("manifest")
         if workflow_id in (key, raw.get("id"), manifest.get("id") if isinstance(manifest, Mapping) else None):
-            return raw.get("overrides") == workflow_id
+            # A run-control patch names the bundled id it changes; it holds no contract to claim the id with.
+            return raw.get("overrides") == workflow_id or raw.get(registry_layers.RUN_CONTROL_PATCH_KEY) == workflow_id
     return False
 
 
@@ -2710,6 +2732,210 @@ def workflow_overrides(registry: Mapping[str, Any]) -> dict[str, dict[str, Any]]
                 "fields": sorted(key for key in {*base, *manifest} if base.get(key) != manifest.get(key)),
             }
     return view
+
+
+# -- run control of a stored workflow record (CODE_TO_DATA_S4_S8, I2 and 5.2) ---------------------------------------------
+# ``state`` and ``published`` are the owner's run control; ``incarnation`` is set when the id is created and never changes
+# until it is deleted; ``record_revision`` counts the accepted changes of this one workflow. All four sit beside the
+# manifest on the stored record, so a build that does not know them ignores them (5.5).
+
+RESOURCE_CLASS_KEY = "resource_class"
+WORKFLOW_STATES = ("active", "disabled")
+WORKFLOW_RECORD_STEP = "workflow-record-1"
+RUN_CONTROL_KEYS = ("state", "published", "incarnation", "record_revision")
+# What a stored record that predates the step means: nothing visible changes (5.5). The incarnation is the one thing
+# that cannot be invented; the step writes a fresh one, and a reader that meets none uses this label.
+UNSTEPPED_INCARNATION = "unstepped"
+
+
+def run_control_of(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The run-control keys a stored record states, valid ones only. Nothing is filled in here: a record the step has not
+    reached keeps looking as it did."""
+    found: dict[str, Any] = {}
+    if raw.get("state") in WORKFLOW_STATES:
+        found["state"] = raw["state"]
+    if isinstance(raw.get("published"), bool):
+        found["published"] = raw["published"]
+    if isinstance(raw.get("incarnation"), str) and raw["incarnation"]:
+        found["incarnation"] = raw["incarnation"]
+    revision = raw.get("record_revision")
+    if isinstance(revision, int) and not isinstance(revision, bool) and revision >= 1:
+        found["record_revision"] = revision
+    return found
+
+
+def with_run_control_defaults(record: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored record with the run control a pre-step record means: active, published, revision 1."""
+    out = dict(record)
+    out.setdefault("state", "active")
+    out.setdefault("published", True)
+    out.setdefault("incarnation", UNSTEPPED_INCARNATION)
+    out.setdefault("record_revision", 1)
+    return out
+
+
+def plan_workflow_record_step(stored: Mapping[str, Any], *, new_incarnation: Any) -> dict[str, Any]:
+    """The owner-data document after the ``workflow-record-1`` step: every stored workflow record states ``state: active``,
+    ``published: true``, a fresh ``incarnation`` and ``record_revision: 1`` where it states none. A key a record already
+    holds is kept. Pure: ``new_incarnation()`` supplies the fresh values."""
+    out = copy.deepcopy(dict(stored))
+    owned = out.get("workflows")
+    if not isinstance(owned, Mapping):
+        return out
+    stepped: dict[str, Any] = {}
+    for record_id, entry in owned.items():
+        body = entry.get(registry_layers.REPLACE_KEY) if isinstance(entry, Mapping) and set(entry) == {registry_layers.REPLACE_KEY} else entry
+        if not isinstance(body, Mapping):
+            stepped[record_id] = copy.deepcopy(entry)
+            continue
+        fresh = {**with_run_control_defaults(body), **run_control_of(body)}
+        if "incarnation" not in run_control_of(body):
+            fresh["incarnation"] = new_incarnation()
+        stepped[record_id] = {registry_layers.REPLACE_KEY: fresh} if body is not entry else fresh
+    out["workflows"] = stepped
+    return out
+
+
+def ensure_workflow_record_step(*, path: Path, actor: str = "system") -> dict[str, Any] | None:
+    """Run the step once: the stored registry after it, or None when there is no stored registry. The step is recorded in
+    the same transaction as the registry revision it writes. Bounded retry on a concurrent write, as the other steps."""
+    import secrets
+
+    for _attempt in range(3):
+        done = admin_store.migration_step_recorded(WORKFLOW_RECORD_STEP, path=path)
+        record = admin_store.get_service_registry_json_with_generation(path=path)
+        if record is None or not _parses_as_object(record["value_json"]):
+            return None
+        stored = _stored_document(record["value_json"])
+        if done:
+            return stored
+        if admin_store.migration_step_recorded(WORKFLOW_RECORD_STEP, path=path):
+            continue
+        generation = int(record["operator_settings_generation"])
+        planned = plan_workflow_record_step(stored, new_incarnation=lambda: secrets.token_hex(8))
+        if planned == stored:
+            try:
+                admin_store.record_migration_step_at_registry_generation(
+                    WORKFLOW_RECORD_STEP, expected_generation=generation, path=path)
+            except admin_store.OperatorSettingsGenerationConflict:
+                continue
+            return stored
+        try:
+            admin_store.write_service_registry_with_audit(
+                planned,
+                expected_generation=generation,
+                updated_by=actor,
+                audit_action="operator.service_registry.workflow_record_1",
+                audit_actor_kind="admin",
+                audit_actor_id=actor,
+                audit_actor_label="System",
+                audit_target_kind="operator_setting",
+                audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
+                audit_metadata={"migration_step": WORKFLOW_RECORD_STEP, "workflow_count": len(planned.get("workflows") or {})},
+                session=None,  # the gateway migrating its own registry at start: no browser sign-in asked
+                path=path,
+                migration_step=WORKFLOW_RECORD_STEP,
+                stored_form=True,
+            )
+        except admin_store.OperatorSettingsGenerationConflict:
+            continue
+        return planned
+    raise RuntimeError("service registry changed during bounded startup retry")
+
+
+# -- names (CODE_TO_DATA_S4_S8, 3.0 and 5.6) --------------------------------------------------------------------------
+
+
+class NameClash(ValueError):
+    """A write of the registry document would give one name to two owners (``id_clash``). ``problems`` names each clash."""
+
+    code = "id_clash"
+
+    def __init__(self, problems: Iterable[Any]) -> None:
+        self.problems = tuple(problems)
+        super().__init__("; ".join(problem.message for problem in self.problems))
+
+
+def workflow_name_pairs(workflow_id: str) -> list[tuple[str, Any]]:
+    """The names one workflow holds: its id and the operation and component names its id generates."""
+    from gateway import workflow_kernel
+    from gateway.workflow_runtime_types import NameOwner
+
+    return [(workflow_id, NameOwner("workflow", workflow_id)),
+            *((name, NameOwner(kind, workflow_id)) for kind, name in workflow_kernel.generated_names(workflow_id).items())]
+
+
+_dynamic_model_aliases: Callable[[], Mapping[str, Any] | None] = lambda: None
+
+
+def set_dynamic_model_aliases_source(source: Callable[[], Mapping[str, Any] | None]) -> None:
+    """Where the write-time name check reads the ``model_aliases`` config section (the snapshot builder reads the same one)."""
+    global _dynamic_model_aliases
+    _dynamic_model_aliases = source
+
+
+def dynamic_model_aliases() -> Mapping[str, Any] | None:
+    return _dynamic_model_aliases()
+
+
+def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | None = None) -> list[tuple[str, Any]]:
+    """Every (name, owner) pair a registry document holds: the workflows it stores and the bundled ones, model ids and
+    model aliases of its services, its frontend ids and the routes they register. ``document`` is the effective document."""
+    from gateway import workflow_kernel
+    from gateway.workflow_runtime_types import NameOwner
+
+    pairs: list[tuple[str, Any]] = []
+    stored = document.get("workflows") if isinstance(document.get("workflows"), Mapping) else {}
+    shipped = bundled_workflow_manifests() if bundled is None else bundled
+    ids = {str(workflow_id) for workflow_id in shipped}
+    shipped_ids = frozenset(ids)
+    # A run-control patch of an id the release no longer ships is inert (the snapshot omits it) and owns no name.
+    ids.update(str(workflow_id) for workflow_id, record in stored.items()
+               if not (is_run_control_patch(record) and str(workflow_id) not in shipped_ids))
+    for workflow_id in sorted(ids):
+        pairs.extend(workflow_name_pairs(workflow_id))
+        record = stored.get(workflow_id)
+        contract = record.get("manifest", record) if isinstance(record, Mapping) and not is_run_control_patch(record) else None
+        if not isinstance(contract, Mapping):   # a bundled id the document does not store: the release's own contract
+            contract = shipped.get(workflow_id) if isinstance(shipped, Mapping) else None
+        aliases = contract.get("aliases") if isinstance(contract, Mapping) else None
+        pairs.extend((str(alias), NameOwner("workflow_alias", workflow_id)) for alias in aliases or () if isinstance(alias, str))
+    # Model ids, model aliases and the dynamic aliases come from the snapshot builder's own functions: one name source.
+    from gateway import registry_snapshot
+    services = document.get("services") if isinstance(document.get("services"), Mapping) else {}
+    pairs.extend(registry_snapshot.service_model_names(services))
+    pairs.extend(registry_snapshot.dynamic_alias_names(dynamic_model_aliases(), services))
+    frontends = document.get("protocol_frontends") if isinstance(document.get("protocol_frontends"), Mapping) else {}
+    for key, frontend in frontends.items():
+        if not isinstance(frontend, Mapping):
+            continue
+        frontend_id = str(frontend.get("id") or key)
+        pairs.append((frontend_id, NameOwner("frontend", frontend_id)))
+        for row in frontend.get("registered_routes") or ():
+            if not isinstance(row, Mapping):
+                continue
+            for path in (row.get("canonical"), row.get("alias")):
+                if isinstance(path, str) and path:
+                    pairs.extend((workflow_kernel.route_key(method, path), NameOwner("route", frontend_id))
+                                 for method in row.get("methods") or () if isinstance(method, str))
+    return pairs
+
+
+def new_name_clashes(before: list[tuple[str, Any]], after: list[tuple[str, Any]]) -> tuple[Any, ...]:
+    """The clashes ``after`` has and ``before`` did not. A clash the registry already held does not stop an unrelated
+    write (it would lock every edit); a write may not add one."""
+    from gateway import workflow_kernel
+
+    held = {(problem.code, problem.message) for problem in workflow_kernel.name_clashes(before)}
+    return tuple(problem for problem in workflow_kernel.name_clashes(after) if (problem.code, problem.message) not in held)
+
+
+def refuse_new_name_clashes(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
+    """Raise ``NameClash`` when the effective registry ``after`` holds a name clash that ``before`` did not. The one name
+    check every write of the registry document runs (``admin_store.write_service_registry_in_transaction``)."""
+    problems = new_name_clashes(registry_name_pairs(before), registry_name_pairs(after))
+    if problems:
+        raise NameClash(problems)
 
 
 def capability_from_registry_record(record: Mapping[str, Any]) -> Capability:

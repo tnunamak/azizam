@@ -1,0 +1,52 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "malformed request",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"video\":{\"id\":\"video_p1\"}}"
+        },
+        "headers": {
+          "content-length": "27",
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/videos/edits",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"error\": {\"message\": \"prompt is required\", \"type\": \"invalid_request_error\", \"param\": \"prompt\"}}"
+        },
+        "headers": {
+          "content-length": "96",
+          "content-type": "application/json"
+        },
+        "status": 400
+      }
+    }
+  ],
+  "description": "S7 golden: POST /v1/videos/edits, outcome validation_refusal, recorded on the unchanged route",
+  "engine_requests": [],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 6
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "s7_ve_validation_refusal",
+  "schema": 1
+}

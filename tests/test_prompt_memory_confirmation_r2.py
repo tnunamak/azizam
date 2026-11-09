@@ -9,9 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, identity_api, media_jobs, prompt_memory, receipt_store
+from gateway import admin_store, identity_api, media_delivery, media_jobs, media_metadata, prompt_memory, receipt_store
 from tests.test_identity_api import BINDING, GOOD, PHOTO, TEMPLATE, FakeClient
+from tests.support.gateway import gateway_client
 from tests.test_prompt_memory_final_cleanup import household
+from tests.test_request_history_e2e_matrix import MP4_HEAD, SHAPES, fake_upstreams, world  # noqa: F401
 from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
 from tests.test_identity_api import build
@@ -32,13 +34,99 @@ def test_identity_rejects_malformed_extensions_clearly(route, extensions):
     assert "JSON object" in result.json()["error"]["message"]
 
 
-def test_video_edit_accepts_json_extensions_field(household):
-    from tests.test_media_provenance import NativeWorkflowRunTests
-    response, _raw = asyncio.run(NativeWorkflowRunTests()._run({"extensions": json.dumps(FORGET)}))
-    assert response.status_code == 200, response.body
-    assert response.media_type == "video/mp4"
-    tags = proxy.media_metadata.read_media_tags(response.body, ".mp4")
-    assert not {"prompt", "workflow", "azizam_provenance"}.intersection(tags)
+# The real metadata functions, kept before the world fixture replaces them with identity functions.
+REAL_DELIVER_BYTES = media_delivery.deliver_bytes
+REAL_ATTACH_PROVENANCE = media_delivery.attach_provenance
+REAL_STRIP_METADATA = media_metadata.strip_metadata
+RESULT_PROMPT_TAG = "result-private-prompt-5d2e"
+RESULT_WORKFLOW_TAG = "result-workflow-graph-5d2e"
+RESULT_PROVENANCE_TAG = "result-provenance-5d2e"
+
+
+def _tagged_video() -> bytes:
+    """A small valid MP4 that carries a prompt, a workflow and a provenance tag, as an engine's file can."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as work:
+        out = Path(work) / "tagged.mp4"
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=d=0.4:s=64x64:r=5", "-c:v", "libx264",
+             "-pix_fmt", "yuv420p", "-metadata", f"prompt={RESULT_PROMPT_TAG}", "-metadata", f"workflow={RESULT_WORKFLOW_TAG}",
+             "-metadata", f"azizam_provenance={RESULT_PROVENANCE_TAG}", "-movflags", "+use_metadata_tags", str(out)],
+            check=True)
+        return out.read_bytes()
+
+
+def _run_video_edit(world, extensions: dict | None) -> dict:
+    world.shape = next(shape for shape in SHAPES if shape.name == "workflow_upload")   # the fake engine renders a video
+    world.view_bytes = _tagged_video()
+    parts = {"inputs": (None, json.dumps({"multiplier": 2})),
+             "source_video": ("sample.mp4", MP4_HEAD + b"input-video-bytes", "video/mp4")}
+    if extensions is not None:
+        parts["extensions"] = (None, json.dumps(extensions))
+
+    async def run():
+        async with gateway_client() as client:
+            return await client.post("/gateway/v1/workflows/video.edit.rife-interpolate/run", files=parts,
+                                     headers={"authorization": "Bearer " + world.key, "prefer": "wait=30"})
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "succeeded"
+    return response.json()
+
+
+def _real_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(proxy.media_delivery, "deliver_bytes", REAL_DELIVER_BYTES)
+    monkeypatch.setattr(proxy.media_delivery, "attach_provenance", REAL_ATTACH_PROVENANCE)
+    monkeypatch.setattr(proxy.media_metadata, "strip_metadata", REAL_STRIP_METADATA)
+
+
+def _prompt_rows(world) -> list[tuple]:
+    with sqlite3.connect(world.media) as conn:
+        return conn.execute("SELECT asset_id, metadata_json FROM asset_prompts").fetchall()
+
+
+def test_video_edit_accepts_json_extensions_field(world, monkeypatch):
+    """The run route takes ``extensions`` as a JSON string part and reads the forget in it. With the REAL metadata
+    functions and an engine file that carries a prompt, a workflow and a provenance tag, the stored result file carries
+    none of them and no prompt record is kept."""
+    _real_metadata(monkeypatch)
+    tagged = _tagged_video()
+    tags = media_metadata.read_media_tags(tagged, ".mp4")
+    assert {RESULT_PROMPT_TAG, RESULT_WORKFLOW_TAG, RESULT_PROVENANCE_TAG} <= set(tags.values()), \
+        "positive control: the engine's file carries the tags"
+    body = _run_video_edit(world, FORGET)
+    assert "/view" in world.calls, "positive control: the engine's tagged file was fetched"
+    stored = proxy.asset_cache_path(body["results"][0]["asset_id"]).read_bytes()
+    assert stored != tagged and stored.startswith(b"\x00\x00\x00"), "the stored file is a rewrite of a valid video"
+    stored_tags = media_metadata.read_media_tags(stored, ".mp4")
+    assert not {RESULT_PROMPT_TAG, RESULT_WORKFLOW_TAG, RESULT_PROVENANCE_TAG} & set(stored_tags.values()), stored_tags
+    for needle in (RESULT_PROMPT_TAG, RESULT_WORKFLOW_TAG, RESULT_PROVENANCE_TAG):
+        assert needle.encode() not in stored
+    assert _prompt_rows(world) == []
+
+
+def test_video_edit_without_a_forget_control_strips_the_same_engine_tags_from_the_stored_file(world, monkeypatch):
+    """The positive control of the forget test above: the same run with no control reads the same tagged engine file and
+    also stores a clean file, so the strip is what removes the tags, not the forget. (This workflow has no prompt input,
+    so the route has no prompt text and keeps no prompt record in either case.)"""
+    _real_metadata(monkeypatch)
+    body = _run_video_edit(world, None)
+    assert "/view" in world.calls, "the engine's tagged file was fetched"
+    stored = proxy.asset_cache_path(body["results"][0]["asset_id"]).read_bytes()
+    assert stored != world.view_bytes
+    assert not {RESULT_PROMPT_TAG, RESULT_WORKFLOW_TAG, RESULT_PROVENANCE_TAG} & set(
+        media_metadata.read_media_tags(stored, ".mp4").values())
+
+
+def test_the_strip_the_video_edit_tests_rely_on_is_the_real_one(world, monkeypatch):
+    """Control of the control: with the world's identity replacement still in place the tags stay in the stored file, so
+    the two tests above can fail."""
+    body = _run_video_edit(world, FORGET)
+    stored = proxy.asset_cache_path(body["results"][0]["asset_id"]).read_bytes()
+    assert RESULT_PROMPT_TAG.encode() in stored
 
 
 @pytest.mark.parametrize("intent,extract", [

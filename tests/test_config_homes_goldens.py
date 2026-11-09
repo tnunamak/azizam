@@ -18,6 +18,10 @@ import proxy  # noqa: E402
 from tests.config_homes_golden import INPUT_FILES, capture, effective_config, load_golden, raw_config  # noqa: E402
 
 
+RELEASE_WORKFLOW_EXECUTION = {"max_wait_s": 60, "history_depth": 20,
+                              "bounds": {"max_template_bytes": 524288, "max_nodes": 2000, "max_depth": 32}}
+
+
 @pytest.fixture(scope="module")
 def captured(tmp_path_factory):
     return capture(proxy, tmp_path_factory.mktemp("config-homes-goldens"))
@@ -34,10 +38,13 @@ def _first_differences(expected: list, actual: list, limit: int = 3) -> list:
 ENTRIES_CHANGED_ON_PURPOSE = {
     # models is its own section now (a mapping, was a list); a deployment's list was empty. workflow_execution is a
     # section: the deployment's block is the same, a first run gains the empty release section. routing was read by no
-    # code and is gone. admin.brand.product is the instance section's name, not a startup key.
-    "tracked": {"models", "routing", "admin"},
-    "live_like": {"models", "routing", "admin"},
-    "first_run": {"models", "workflow_execution"},
+    # code and is gone. admin.brand.product is the instance section's name, not a startup key. workflow_execution
+    # (tracked and live_like) lost compile_from_pin and shows the release defaults of the S4 to S8 train (I7).
+    # videos: each workflow entry gained its node_roles (S7 parity M9, builder V2), the roles that were the graph file's
+    # _meta block before.
+    "tracked": {"models", "routing", "admin", "workflow_execution", "videos"},
+    "live_like": {"models", "routing", "admin", "workflow_execution", "videos"},
+    "first_run": {"models", "workflow_execution", "videos"},
 }
 
 
@@ -60,12 +67,13 @@ def test_the_entries_c10_changes_are_these_and_no_others(name, tmp_path):
     assert "routing" not in effective and "routing" in raw
     assert effective["admin"] == {key: value for key, value in raw["admin"].items() if key != "brand"}
     assert raw["admin"]["brand"] == {"product": "Azizam"}
-    assert effective["workflow_execution"] == raw["workflow_execution"]
+    assert "workflow_execution" not in raw
+    assert effective["workflow_execution"] == RELEASE_WORKFLOW_EXECUTION
 
 
 def test_a_first_run_gains_the_two_empty_sections(tmp_path):
     effective = effective_config(proxy, "first_run", tmp_path / "admin.db")
-    assert effective["models"] == {} and effective["workflow_execution"] == {}
+    assert effective["models"] == {} and effective["workflow_execution"] == RELEASE_WORKFLOW_EXECUTION
 
 
 @pytest.mark.parametrize("name", sorted(INPUT_FILES))

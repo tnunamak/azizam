@@ -34,6 +34,12 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 TRACE_SCHEMA = 1
+# The normaliser profile. Version 1 is the W6b profile; version 2 (S7 oracle hardening, golden design section 3)
+# keeps every rendered token of version 1 (so the committed goldens stay byte-identical) and adds checks that read
+# the raw values before they are masked: one identity map, clock order and units, per-object replay hashes, header
+# length and cardinality, event order, decoded media bytes and secrets. Each check has a control in
+# tests/test_adapter_differential_normalizer.py that goes red on its mutation.
+PROFILE_VERSION = 2
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "adapter_differential"
 BOUNDARY_TOKEN = "<boundary>"
 OUT_ENV = "AZIZAM_DIFFERENTIAL_OUT"
@@ -60,7 +66,7 @@ _NEUTRAL_HTTP_DATE = re.compile(
 # other names were found by diffing raw dumps of two runs and reading the code that
 # writes them. Everything else is compared exactly (see the normaliser tests).
 VOLATILE_TIME_SUFFIXES = ("_at", "_at_ms", "_at_s", "_deadline")
-VOLATILE_TIME_KEYS = frozenset({"created", "expires", "mtime", "ctime", "timestamp", "first_seen"})
+VOLATILE_TIME_KEYS = frozenset({"created", "expires", "mtime", "ctime", "timestamp", "first_seen", "deadline"})
 # Keys that are a duration measured on the real clock (milliseconds or seconds).
 VOLATILE_DURATION_KEYS = frozenset({
     "duration_ms", "latency_ms", "elapsed_ms", "total_ms", "ttfb_ms", "queue_ms", "upstream_ms",
@@ -71,14 +77,41 @@ VOLATILE_DURATION_KEYS = frozenset({
 # ``request_hash`` is a digest of the request for a seeded or idempotency-keyed image job; for every
 # other job it is a random token (``uuid4().hex * 2`` or ``secrets.token_hex(32)``).
 DETERMINISTIC_IDEMPOTENCY = frozenset({"seeded_request", "idempotency_key"})
-_REQUEST_HASH = re.compile(r'("request_hash"\s*:\s*)"[0-9a-f]{64}"')
-_INPUT_HASH = re.compile(r'("input_hash"\s*:\s*)"[0-9a-f]{64}"')
-_DETERMINISTIC_JOB = re.compile(r'"idempotency"\s*:\s*"(?:seeded_request|idempotency_key)"')
+_REQUEST_HASH = re.compile(r'("request_hash"\s*:\s*)"([0-9a-f]{64})"')
+_INPUT_HASH = re.compile(r'("input_hash"\s*:\s*)"([0-9a-f]{64})"')
 
 # A digest over fields that include a route-generated random request id cannot be normalised
 # by value. ``input_hash`` of a media job covers its metadata and input, which carry such ids.
 # (``request_hash`` is random only for an unseeded request: ``idempotency == "request"``.)
 VOLATILE_DIGEST_KEYS = frozenset({"input_hash"})
+
+
+_MEDIA_VALUE = re.compile(r'("(?:b64_json|audio|data)"\s*:\s*")([A-Za-z0-9+/=]{8,})(")')
+_MEDIA_HELD = "\0media:%d\0"
+_KEY_BEFORE = re.compile(r'"([A-Za-z0-9_]+)"\s*:\s*"$')
+
+
+def _hold_media_values(text: str) -> tuple[str, list[str]]:
+    """The base64 of a media field is bytes, not ids: no id pattern may rewrite it (N6)."""
+    held: list[str] = []
+
+    def hold(match: "re.Match[str]") -> str:
+        held.append(match.group(2))
+        return match.group(1) + _MEDIA_HELD % (len(held) - 1) + match.group(3)
+
+    return _MEDIA_VALUE.sub(hold, text), held
+
+
+def _restore_media_values(text: str, held: list[str]) -> str:
+    for index, value in enumerate(held):
+        text = text.replace(_MEDIA_HELD % index, value)
+    return text
+
+
+def _after_time_key(text: str, start: int) -> bool:
+    """Whether the string that starts at ``start`` is the value of a time key (``created_at``, ``expires`` ...)."""
+    found = _KEY_BEFORE.search(text[max(0, start - 80):start])
+    return bool(found) and _time_key(found.group(1))
 
 
 def _time_key(key: str | None) -> bool:
@@ -122,7 +155,11 @@ class Normalizer:
         # hash-seed artefact that differs between processes, so such a list is compared sorted.
         # Empty by default; a scenario opts a key in, naming the code that builds it.
         self.unordered_keys: frozenset[str] = frozenset()
+        # Profile 2: a scenario for a new deterministic ``input_hash`` keeps that digest exact (N3).
+        self.exact_input_hash = False
         self._seen: dict[str, dict[str, int]] = {}
+        self._job_prefix: dict[str, str] = {}
+        self.problems: list[str] = []
         roots = sorted({str(root).rstrip("/") for root in tmp_roots if str(root).strip("/")}, key=len, reverse=True)
         self._roots = roots
 
@@ -132,22 +169,84 @@ class Normalizer:
             table[value] = len(table) + 1
         return f"<{kind}:{table[value]}>"
 
-    def text(self, value: str) -> str:
+    def text(self, value: str, *, payload: bool = False) -> str:
+        """``payload``: the text is something the caller or the gateway sent in a request body. A date-time in it is
+        masked only under a time key; anywhere else it is the sender's own text, compared exactly."""
+        self.problems.extend(raw_json_clock_problems(value))
         for root in self._roots:
             value = value.replace(root, "<tmp>")
+        value, media = _hold_media_values(value)
         value = _SIG.sub("sig=<sig>", value)
         value = _EXPIRES.sub("expires=<expires>", value)
         value = _REQ_ID.sub(lambda m: self.token("req", m.group(0)), value)
-        value = _JOB_ID.sub(lambda m: self.token("job", m.group(0)), value)
+        value = _JOB_ID.sub(self._job_token, value)
         value = _UUID.sub(lambda m: self.token("uuid", m.group(0)), value)
         value = _HEX32.sub(lambda m: self.token("hex32", m.group(0)), value)
-        value = _ISO_TIME.sub("<iso-time>", value)
-        value = _NEUTRAL_HTTP_DATE.sub("<http-date>", value)
+        value = _ISO_TIME.sub(lambda m: "<iso-time>" if not payload or _after_time_key(value, m.start()) else m.group(0), value)
+        value = _NEUTRAL_HTTP_DATE.sub(lambda m: "<http-date>" if not payload or _after_time_key(value, m.start()) else m.group(0), value)
         value = _NUMBER_AFTER_KEY.sub(self._number_after_key, value)
-        value = _INPUT_HASH.sub(r'\1"<digest>"', value)
-        if not _DETERMINISTIC_JOB.search(value):
-            value = _REQUEST_HASH.sub(r'\1"<random-hash>"', value)
-        return value
+        keep_input, keep_request = self._exact_hashes(value)
+        value = _INPUT_HASH.sub(self._hash_sub(keep_input, '"<digest>"'), value)
+        value = _REQUEST_HASH.sub(self._hash_sub(keep_request, '"<random-hash>"'), value)
+        return _restore_media_values(value, media)
+
+    @staticmethod
+    def _hash_sub(keep: list[bool], token: str):
+        """Replace the n-th hash in the text unless the n-th object that holds one said to keep it."""
+        decisions = iter(keep)
+        return lambda m: m.group(0) if next(decisions, False) else f"{m.group(1)}{token}"
+
+    def _job_token(self, match: "re.Match[str]") -> str:
+        """One identity map for every job id: the id is its hex tail, whatever prefix a route gives it (N1).
+
+        The rendered token stays ``<job:N>``, so a prefix is not in the trace; ``job_prefixes`` is the side
+        assertion. The same tail under two prefixes is one job named two ways: a problem, never two tokens.
+        """
+        prefix, _, tail = match.group(0).partition("_")
+        known = self._job_prefix.setdefault(tail, prefix)
+        if known != prefix:
+            self.problems.append(f"job {tail[:8]}... appears as {known}_ and as {prefix}_")
+        return self.token("job", tail)
+
+    def job_prefixes(self) -> list[str]:
+        """The prefix of each job, in token order: ``<job:1>`` is the first entry."""
+        order = self._seen.get("job", {})
+        return [self._job_prefix[tail] for tail, _ in sorted(order.items(), key=lambda item: item[1])]
+
+    def _exact_hashes(self, text: str) -> tuple[list[bool], list[bool]]:
+        """Per hash, in text order: stays exact (True) or is masked (False). Decided per object (N3).
+
+        ``request_hash`` is a digest of the request only when the object that holds it says its idempotency
+        is deterministic; ``input_hash`` stays exact only under ``exact_input_hash`` and the same condition.
+        A document that mixes random and deterministic jobs is judged object by object, not as a whole,
+        and two objects holding equal hashes are still judged one by one.
+        """
+        if "_hash" not in text:
+            return [], []
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return [], []
+        keep_request: list[bool] = []
+        keep_input: list[bool] = []
+        hexdigest = re.compile(r"[0-9a-f]{64}")
+
+        def walk(node: Any) -> None:
+            if isinstance(node, Mapping):
+                deterministic = node.get("idempotency") in DETERMINISTIC_IDEMPOTENCY
+                for key, child in node.items():
+                    if key == "request_hash" and isinstance(child, str) and hexdigest.fullmatch(child):
+                        keep_request.append(deterministic)
+                    elif key == "input_hash" and isinstance(child, str) and hexdigest.fullmatch(child):
+                        keep_input.append(deterministic and self.exact_input_hash)
+                    else:
+                        walk(child)
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child)
+
+        walk(parsed)
+        return keep_input, keep_request
 
     @staticmethod
     def _number_after_key(match: "re.Match[str]") -> str:
@@ -168,10 +267,12 @@ class Normalizer:
             return self.text(value)
         if isinstance(value, Mapping):
             random_request = value.get("idempotency") not in DETERMINISTIC_IDEMPOTENCY
+            self.problems.extend(clock_problems(value))
             out: dict[str, Any] = {}
             for k, v in value.items():
                 if k in VOLATILE_DIGEST_KEYS and isinstance(v, str):
-                    out[self.text(str(k))] = "<digest>"
+                    exact = self.exact_input_hash and not random_request
+                    out[self.text(str(k))] = v if exact else "<digest>"
                 elif k == "request_hash" and random_request and isinstance(v, str):
                     out[self.text(str(k))] = "<random-hash>"
                 else:
@@ -217,7 +318,7 @@ def sort_json_keys(text: str) -> str:
 
 
 def describe_body(content: bytes | None, content_type: str | None, norm: Normalizer, *,
-                  unordered_json: bool = False) -> dict[str, Any]:
+                  unordered_json: bool = False, payload: bool = False) -> dict[str, Any]:
     """An exact, readable description of body bytes.
 
     ``unordered_json`` sorts the keys of a JSON body first, for a document the gateway builds by
@@ -226,12 +327,13 @@ def describe_body(content: bytes | None, content_type: str | None, norm: Normali
     Text and JSON keep their exact characters (so key order and spacing show), with
     volatile values normalised. Binary is its length, sha256 and first bytes.
     Multipart bodies are split into parts; the random boundary becomes a fixed token.
+    ``payload`` marks a request body: its date-times are the sender's text unless a time key holds them.
     """
     if not content:
         return {"kind": "empty"}
     main, params = _content_type_parts(content_type)
     if main.startswith("multipart/") and params.get("boundary"):
-        return _describe_multipart(content, params["boundary"], norm)
+        return _describe_multipart(content, params["boundary"], norm, payload=payload)
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
@@ -241,7 +343,7 @@ def describe_body(content: bytes | None, content_type: str | None, norm: Normali
         kind = "json" if (main.endswith(_JSON_TYPES) or _looks_json(text)) else "text"
         if unordered_json and kind == "json":
             text = sort_json_keys(text)
-        return {"kind": kind, "text": norm.text(text)}
+        return {"kind": kind, "text": norm.text(text, payload=payload)}
     return binary_summary(content)
 
 
@@ -285,7 +387,7 @@ def _looks_json(text: str) -> bool:
     return True
 
 
-def _describe_multipart(content: bytes, boundary: str, norm: Normalizer) -> dict[str, Any]:
+def _describe_multipart(content: bytes, boundary: str, norm: Normalizer, *, payload: bool = False) -> dict[str, Any]:
     token = BOUNDARY_TOKEN.encode()
     marker = b"--" + boundary.encode()
     pieces = content.split(marker)
@@ -303,7 +405,7 @@ def _describe_multipart(content: bytes, boundary: str, norm: Normalizer) -> dict
             parts.append({"malformed": binary_summary(piece)})
             continue
         trailing = rest.endswith(b"\r\n")
-        payload = rest[:-2] if trailing else rest
+        payload_bytes = rest[:-2] if trailing else rest
         header_text = head.decode("latin-1")
         part_type = ""
         for line in header_text.split("\r\n"):
@@ -311,7 +413,7 @@ def _describe_multipart(content: bytes, boundary: str, norm: Normalizer) -> dict
                 part_type = line.split(":", 1)[1].strip()
         parts.append({
             "headers": norm.text(header_text.replace(boundary, BOUNDARY_TOKEN)),
-            "body": describe_body(payload, part_type or None, norm),
+            "body": describe_body(payload_bytes, part_type or None, norm, payload=payload),
             "crlf_after_body": trailing,
         })
     _ = token
@@ -333,14 +435,24 @@ def describe_request_headers(headers: Iterable[tuple[str, str]], norm: Normalize
         if lowered in _DROPPED_REQUEST_HEADERS:
             continue
         if lowered in _SECRET_HEADERS:
-            out[lowered] = "<present>"
+            _add_header(out, lowered, "<present>")
             continue
         if lowered == "content-type":
             main, params = _content_type_parts(value)
             if main.startswith("multipart/") and params.get("boundary"):
                 value = value.replace(params["boundary"], BOUNDARY_TOKEN)
-        out[lowered] = norm.text(value)
+        _add_header(out, lowered, norm.text(value))
     return dict(sorted(out.items()))
+
+
+def _add_header(out: dict[str, Any], name: str, value: str) -> None:
+    """A repeated header becomes a list in arrival order; a single one stays a string (N4)."""
+    if name not in out:
+        out[name] = value
+    elif isinstance(out[name], list):
+        out[name].append(value)
+    else:
+        out[name] = [out[name], value]
 
 
 def settle_content_length(headers: dict[str, str], raw: bytes, body: Mapping[str, Any]) -> None:
@@ -351,6 +463,10 @@ def settle_content_length(headers: dict[str, str], raw: bytes, body: Mapping[str
     digit counts). When it did, the header is replaced by the length of the normalised text, so a
     change in any other byte of the body still changes it. Otherwise the real header stays.
     """
+    declared = headers.get("content-length")
+    if declared is not None and declared != str(len(raw)):
+        # N4: the raw length is checked before any settling, so a wrong header cannot be erased by it.
+        raise AssertionError(f"content-length {declared!r} but the body has {len(raw)} bytes")
     text = body.get("text")
     if "content-length" in headers and isinstance(text, str) and len(text.encode("utf-8")) != len(raw):
         headers["content-length"] = f"<{len(text.encode('utf-8'))} after normalisation>"
@@ -363,9 +479,9 @@ def describe_response_headers(headers: Iterable[tuple[str, str]], norm: Normaliz
         if lowered in _DROPPED_RESPONSE_HEADERS:
             continue
         if lowered in _TIME_RESPONSE_HEADERS:
-            out[lowered] = "<http-date>"
+            _add_header(out, lowered, "<http-date>")
             continue
-        out[lowered] = norm.text(value)
+        _add_header(out, lowered, norm.text(value))
     return dict(sorted(out.items()))
 
 
@@ -410,6 +526,7 @@ def dump_sqlite(path: Path, norm: Normalizer, *, skip_tables: Iterable[str] = ()
             if not fetched:
                 continue  # a table other tests created and left empty is not part of this scenario
             for raw in fetched:
+                norm.problems.extend(clock_problems(dict(zip(columns, raw))))
                 row: dict[str, Any] = {}
                 for column, cell in zip(columns, raw):
                     if isinstance(cell, bytes):
@@ -453,6 +570,155 @@ def describe_assets(directory: Path, norm: Normalizer) -> list[dict[str, Any]]:
     return sorted(out, key=lambda item: (item["suffix"], item.get("sha256", ""), item["name"]))
 
 
+# --------------------------------------------------------------------------- profile 2 checks
+
+_CLOCK_SECONDS = (1_000_000_000, 100_000_000_000)  # 2001 .. 5138 as epoch seconds
+_CLOCK_MILLIS = (1_000_000_000_000, 100_000_000_000_000)
+_ORDERED_CLOCKS = (("created_at", "updated_at"), ("created_at", "finished_at"), ("started_at", "finished_at"),
+                   ("created_at_s", "updated_at_s"), ("accepted_at", "finished_at"))
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def clock_problems(mapping: Mapping[str, Any]) -> list[str]:
+    """Raw clock readings of one object: right unit for the key, and the order a lifecycle implies (N2).
+
+    Run on raw values, before they become ``"<time>"``. A null or absent clock is not a reading and is skipped.
+    """
+    out: list[str] = []
+    for key, value in mapping.items():
+        if not _is_number(value) or value == 0:
+            continue
+        if key.endswith("_at_ms") and not _CLOCK_MILLIS[0] <= value < _CLOCK_MILLIS[1]:
+            out.append(f"{key}={value} is not epoch milliseconds")
+        elif (key.endswith("_at_s") or key in ("created_at", "updated_at", "finished_at")) and (
+                not _CLOCK_SECONDS[0] <= value < _CLOCK_SECONDS[1]):
+            out.append(f"{key}={value} is not epoch seconds")
+    for first, second in _ORDERED_CLOCKS:
+        a, b = mapping.get(first), mapping.get(second)
+        if _is_number(a) and _is_number(b) and b < a:
+            out.append(f"{second} ({b}) is before {first} ({a})")
+    return out
+
+
+def raw_json_clock_problems(text: str) -> list[str]:
+    """The clock problems of every object in a JSON text, read before any number in it is masked (N2)."""
+    stripped = text.lstrip()
+    if not stripped or stripped[0] not in "{[" or ("_at" not in text and "created" not in text):
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        return []
+    out: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, Mapping):
+            out.extend(clock_problems(node))
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(parsed)
+    return out
+
+
+TERMINAL_EVENT_TYPES = frozenset({"succeeded", "failed", "canceled", "cancelled"})
+
+
+def event_problems(events: Iterable[Mapping[str, Any]]) -> list[str]:
+    """Lifecycle events are kept as written; this only names what no real lifecycle writes (N5).
+
+    A sequence that does not rise by job, an id that does not rise, or a second terminal event for one job.
+    The events are never sorted or deduplicated by the harness.
+    """
+    out: list[str] = []
+    last_sequence: dict[Any, Any] = {}
+    last_id: Any = None
+    terminal: dict[Any, int] = {}
+    for event in events:
+        job = event.get("job_id")
+        sequence, event_id = event.get("sequence"), event.get("id")
+        if _is_number(sequence) and _is_number(last_sequence.get(job)) and sequence <= last_sequence[job]:
+            out.append(f"{job}: sequence {sequence} after {last_sequence[job]}")
+        if _is_number(sequence):
+            last_sequence[job] = sequence
+        if _is_number(event_id) and _is_number(last_id) and event_id <= last_id:
+            out.append(f"event id {event_id} after {last_id}")
+        if _is_number(event_id):
+            last_id = event_id
+        if event.get("event_type") in TERMINAL_EVENT_TYPES:
+            terminal[job] = terminal.get(job, 0) + 1
+            if terminal[job] == 2:
+                out.append(f"{job}: a second terminal event ({event.get('event_type')})")
+    return out
+
+
+_JOB_TAIL = re.compile(r"(?:mj|vidjob|imgjob|audjob|job)_([0-9a-f]{32})")
+
+
+def link_problems(headers: Iterable[tuple[str, str]], body: bytes) -> list[str]:
+    """The job a response names in ``Location`` and in its JSON body is one raw job (N1, N4).
+
+    Read the raw values. After masking, a wrong but well-formed id would pass as another ``<job:N>``.
+    """
+    location = next((v for k, v in headers if k.lower() == "location"), None)
+    try:
+        parsed = json.loads(body) if body else None
+    except ValueError:
+        parsed = None
+    named = {m.group(1) for m in _JOB_TAIL.finditer(location or "")}
+    if isinstance(parsed, Mapping):
+        for key in ("id", "job_id"):
+            if isinstance(parsed.get(key), str) and _JOB_TAIL.fullmatch(parsed[key]):
+                named.add(_JOB_TAIL.fullmatch(parsed[key]).group(1))
+        for key in ("poll_url", "content_url"):
+            if isinstance(parsed.get(key), str):
+                named |= {m.group(1) for m in _JOB_TAIL.finditer(parsed[key])}
+    return [f"one response names {len(named)} different jobs"] if len(named) > 1 else []
+
+
+_MEDIA_FIELDS = ("b64_json", "audio", "data")
+
+
+def decoded_media(text: str) -> list[dict[str, Any]]:
+    """The bytes inside base64 media fields of a JSON text, summarised by length, sha256 and magic (N6)."""
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return []
+    found: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, Mapping):
+            for key, child in node.items():
+                if key in _MEDIA_FIELDS and isinstance(child, str) and len(child) >= 8:
+                    try:
+                        found.append(binary_summary(base64.b64decode(child, validate=True)))
+                    except ValueError:
+                        pass
+                else:
+                    walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(parsed)
+    return found
+
+
+_REAL_SECRET = re.compile(r"\b(?:opk|oak|sk|hf|ghp)_[A-Za-z0-9]{16,}")
+
+
+def secret_problems(text: str) -> list[str]:
+    """A fixture or trace never holds a real credential: only the ``<present>`` marker (N6)."""
+    return ["a credential-shaped value is in the trace"] if _REAL_SECRET.search(text) else []
+
+
 # --------------------------------------------------------------------------- golden compare
 
 def dumps(trace: Mapping[str, Any]) -> str:
@@ -484,6 +750,19 @@ def first_difference(expected: Any, actual: Any, path: str = "$") -> tuple[str, 
                 return found
         return None
     return None if expected == actual else (path, expected, actual)
+
+
+def traces_differ(expected: Any, actual: Any) -> bool:
+    """Whether two traces differ anywhere. A value of another type differs (``False`` is not ``0``, ``1`` is not
+    ``1.0``), which Python's ``==`` does not say."""
+    return first_difference(expected, actual) is not None
+
+
+def with_job_prefixes(trace: dict[str, Any], norm: Normalizer) -> dict[str, Any]:
+    """The trace with the prefix of each job, in token order. The masked text keeps one token for a job whatever its
+    prefix, so this is where a route that renames its job ids shows (N1)."""
+    trace["job_prefixes"] = norm.job_prefixes()
+    return trace
 
 
 def _top_entry(path: str) -> str:
@@ -537,7 +816,7 @@ def readable_diff(name: str, expected: Mapping[str, Any], actual: Mapping[str, A
 
 
 def compare_golden(name: str, trace: Mapping[str, Any], *, fixture_dir: Path | None = None,
-                   environ: Mapping[str, str] | None = None) -> str:
+                   environ: Mapping[str, str] | None = None, deltas: "Iterable[Any] | None" = None) -> str:
     """Write the dump (if asked), update the golden (if asked), else compare.
 
     Returns an empty string when the trace equals its golden, else the readable diff.
@@ -560,7 +839,15 @@ def compare_golden(name: str, trace: Mapping[str, Any], *, fixture_dir: Path | N
                 f"docs/verification/ENGINE_W6B_DIFFERENTIAL.md and review it.")
     expected = json.loads(golden.read_text(encoding="utf-8"))
     actual = json.loads(text)
-    if expected == actual:
+    if "job_prefixes" not in expected:    # a golden recorded before the prefixes were kept is compared on the rest
+        actual.pop("job_prefixes", None)
+    from tests.support import adapter_differential_deltas as listed
+
+    try:  # the scenario's named differences (empty for a scenario that has none), applied to the OLD trace
+        expected = listed.apply_deltas(expected, tuple(listed.MANIFEST.get(name, ()) if deltas is None else deltas))
+    except listed.DeltaError as error:
+        return f"{name}: {error}"
+    if not traces_differ(expected, actual):
         return ""
     return readable_diff(name, expected, actual)
 

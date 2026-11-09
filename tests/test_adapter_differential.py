@@ -31,7 +31,6 @@ import pytest
 
 import proxy
 from tests.media_test_bytes import mp4_bytes
-from tests.support.config_snapshot import publish_section
 from tests.support.adapter_differential_rig import (
     REAL_OBJECT_INFO_LOOKUP, comfy_exchanges, comfy_object_info, exchange, history_done, play, scenario,
 )
@@ -75,6 +74,9 @@ def _long_mp4() -> bytes:
 def _comfy(rig, exchanges, name="comfy"):
     fake = rig.engine(name, scenario("comfyui", f"{rig.name}-comfy", exchanges), host=COMFY_HOST)
     rig.set(proxy, "COMFY_HOST", fake.base_url)
+    # The engine is declared as a deployment declares one: a service record the run core finds by its protocol.
+    rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), name: {
+        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph"}})
     return fake
 
 
@@ -420,10 +422,9 @@ def test_audio_generate_sync(tmp_path, record_testsuite_property):
          description="POST /v1/audio/generate against a fake audio file served by /view")
 
 
-def _audio_job_golden(tmp_path, record_testsuite_property, *, from_pin: bool):
-    """The audio job scenario with the route compiling from the job's pin or from the live file: one golden for both."""
+def _audio_job_golden(tmp_path, record_testsuite_property):
+    """The audio job scenario: the worker runs the job from what it pinned at accept, and reads no live definition."""
     def setup(rig):
-        publish_section(rig.monkeypatch, "workflow_execution", {"compile_from_pin": {"audio.generate": from_pin}})
         _capture_scheduling(rig)
         _audio_comfy(rig)
 
@@ -449,11 +450,7 @@ def _audio_job_golden(tmp_path, record_testsuite_property, *, from_pin: bool):
         real_pin = proxy._load_audio_pin
         rig.set(proxy, "_load_audio_pin", lambda pinned_job_id: (pin_reads.append(pinned_job_id), real_pin(pinned_job_id))[1])
         await proxy._run_audio_media_job(rig.scheduled[0])
-        # The two routes give one golden, so the golden alone cannot show the flag took effect: the reads do.
-        if from_pin:
-            assert pin_reads == [job_id] and live_reads == [], (pin_reads, live_reads)
-        else:
-            assert pin_reads == [] and live_reads, (pin_reads, live_reads)
+        assert pin_reads == [job_id] and live_reads == [], (pin_reads, live_reads)
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label="poll the finished job")
         content = await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/content", label="job content")
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/events", label="job events")
@@ -464,11 +461,7 @@ def _audio_job_golden(tmp_path, record_testsuite_property, *, from_pin: bool):
 
 
 def test_audio_generate_job(tmp_path, record_testsuite_property):
-    _audio_job_golden(tmp_path, record_testsuite_property, from_pin=False)
-
-
-def test_audio_generate_job_compiled_from_pin(tmp_path, record_testsuite_property):
-    _audio_job_golden(tmp_path, record_testsuite_property, from_pin=True)
+    _audio_job_golden(tmp_path, record_testsuite_property)
 
 
 def test_audio_generate_unreachable(tmp_path, record_testsuite_property):

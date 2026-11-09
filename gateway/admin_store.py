@@ -4487,7 +4487,11 @@ def write_service_registry_in_transaction(
         undeletable=lambda collection, record_id, record: collection == "services"
         and service_registry.is_litellm_service_record(record_id, record),
     )
-    removed_ids = set(old_services) - set(registry_layers.layer(value, release).get("services") or {})
+    after_effective = registry_layers.layer(value, release)
+    # The one name check every write of the registry document runs (CODE_TO_DATA_S4_S8, 3.0): a write may not give one
+    # name to two owners. A clash the registry already held does not stop an unrelated write.
+    service_registry.refuse_new_name_clashes(registry_layers.layer(before, release), after_effective)
+    removed_ids = set(old_services) - set(after_effective.get("services") or {})
     conn.executemany(
         "DELETE FROM retention_fact_overrides WHERE target_type IN ('engine','provider') AND target_id=?",
         [(str(service_id),) for service_id in removed_ids],

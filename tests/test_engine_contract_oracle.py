@@ -25,6 +25,7 @@ from gateway.discovery import WorkflowRegistry
 from gateway.manifests import Provenance
 from tests.support.workflow_docs import STANDARD_FACTS, facts
 from tests.test_gateway_api import _sample_capabilities
+from tests.support.registry_provider import provider_of
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "engine_contract_live_shapes.json"
@@ -87,7 +88,9 @@ def test_frontend_route_graph_is_frozen() -> None:
     # the digest is still 5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca.
     # Then DELETE /v1/assets/{asset_id} and its /openai alias (App keys delete assets they made); before them the digest was
     # 963290051e2e622bd481c6a0c380f91e93878d051c9301d4006d41c2a1926162.
-    assert _digest(graph) == "f9b65e5b01c09f2cd8a1d8ddb5a5ec0ac38d219013cd3d36a2a69caf95185c58"
+    # S7 (builder D4): POST /v1/meshes/generate left and POST /v1/3d/generations and POST /v1/3d/generations/glb arrived;
+    # before that change the digest was f9b65e5b01c09f2cd8a1d8ddb5a5ec0ac38d219013cd3d36a2a69caf95185c58.
+    assert _digest(graph) == "8cf497463c537c485a6fbc2bb0404c1edf33e00d15bba4cc4308d3d82a1390e9"
 
 
 def _build_registry() -> WorkflowRegistry:
@@ -143,7 +146,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     model_surface = [row for row in model_surface if row[0] not in added]
 
     app = FastAPI()
-    app.include_router(create_gateway_router(_build_registry(), capabilities_provider=lambda _r: _sample_capabilities()))
+    app.include_router(create_gateway_router(provider_of(_build_registry()), capabilities_provider=lambda _r: _sample_capabilities()))
     caps = TestClient(app).get("/gateway/v1/capabilities").json()
 
     catalog = load_engine_catalog()
@@ -160,7 +163,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # Re-captured 2026-11-06: config homes C3 serves the aliases from the override store, so the entries of one alias
     # table are listed in name order, not in the startup file's order. The same rows, types and architectures; only the
     # order of image-anime/image-uncensored and of stt-diarize/stt-fast/stt-quality moved. Capabilities and engine did not move.
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "4155396fb568ec2d4313437999281fc4347c3e0f373e5d7a67683f2ac019c379"
+    # Re-captured 2026-11-08 (S5 projections): the face-likeness workflow's output modalities read from its contract and now
+    # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "f358d972e72f0a2ad15acdb6b89ff724b6c8743643afa7724803b2aff82e5517"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

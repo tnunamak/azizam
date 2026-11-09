@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from gateway import media_jobs
 from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
+from tests.support.registry_provider import provider_of
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def db(tmp_path):
 
 def client_for(db):
     app = FastAPI()
-    app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db))
+    app.include_router(create_gateway_router(provider_of(WorkflowRegistry()), media_job_store_path=db))
     return TestClient(app)
 
 

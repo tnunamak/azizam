@@ -297,6 +297,9 @@ def graph_selector_cardinality(selector: Mapping[str, str]) -> tuple[int, int | 
 # ---------------------------------------------------------------------------
 
 
+UPLOAD_PATH = "/upload/image"
+
+
 class InputRefused(ProtocolError):
     """The typed inputs do not satisfy the manifest. ``param`` is the input's name."""
 
@@ -402,7 +405,7 @@ class GraphSession:
             raise failure(error) from error
 
     async def upload(self, files: Mapping[str, Any], *, headers: Any = UNSET) -> WireReply:
-        return await self._send(self.client.post, "/upload/image", want_text=True, **supplied(headers=headers, files=files))
+        return await self._send(self.client.post, UPLOAD_PATH, want_text=True, **supplied(headers=headers, files=files))
 
     async def cancel(self, prompt_id: str, *, headers: Any = UNSET, timeout: Any = UNSET) -> WireReply:
         return await self._send(self.client.post, f"/api/jobs/{prompt_id}/cancel",
@@ -441,6 +444,8 @@ class NodeGraphAdapter:
         self.binding = description.binding if description is not None else ""
         # The selector form this engine's bindings take, declared in its protocol description (None: it takes none).
         self.result_selectors = description.result_selectors if description is not None else None
+        # The run operations' poll cadence, as the description declares it (empty: built without a description).
+        self._operations = description.operations if description is not None else {}
         self._assets = assets
         # Where a manifest's graph path is resolved. Without it a manifest-backed request cannot compile.
         self._root = workflow_root
@@ -470,6 +475,14 @@ class NodeGraphAdapter:
             return
         async with self.open(conn) as opened:
             yield opened
+
+    def poll_for(self, op: str) -> Any:
+        """The poll cadence the description declares for run operation ``op`` (a ``description.Poll``)."""
+        declared = self._operations.get(op)
+        poll = getattr(declared, "poll", None)
+        if poll is None:
+            raise UnknownOperation(f"The protocol description declares no poll cadence for '{op}'.")
+        return poll
 
     # --- caller-facing messages (the engine's name is data) -----------------------------------
 
@@ -525,6 +538,15 @@ class NodeGraphAdapter:
                 return await session.stats(timeout=timeout)
             return await session.free(request.body, timeout=timeout)
 
+    async def stage_input(self, conn: Connection, *, filename: str, data: bytes, media_type: str) -> str:
+        """Hand one input file to the engine and return the name the engine holds it under, for the run's body."""
+        async with self._use(conn, None) as session:
+            reply = await session.upload({UPLOAD_PATH.rpartition("/")[2]: (filename, data, media_type)})  # the form field is the path's last segment
+        name = reply.json().get("name") if reply.status == 200 else None
+        if not isinstance(name, str) or not name:
+            raise UpstreamError(reply.status, "The engine did not take the input file.")
+        return name
+
     def validate(self, conn: Connection, op: str, request: CanonicalRequest) -> None:
         """The local checks ``submit`` makes before any I/O. A manifest-backed request is compiled here, so a refusal
         happens before the caller records that a submit was attempted. The compiled graph is discarded: ``submit``
@@ -552,9 +574,9 @@ class NodeGraphAdapter:
             raise MalformedResponse("No prompt_id returned")
         return JobRef(op, str(prompt_id))
 
-    def _workflow_payload(self, op: str, request: CanonicalRequest) -> dict[str, Any]:
-        """The prompt body of a manifest-backed request, compiled now from the request: the graph, this adapter's client
-        id and any UI twin. Nothing is cached on the request, so the body is read at the moment it is sent."""
+    def compile(self, op: str, request: CanonicalRequest) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The graph a manifest-backed request compiles to, and the prompt body that carries it: ``(graph, payload)``. A
+        round that polls the prompt names nodes of ``graph`` in a failure."""
         manifest = request.params.get("manifest")
         if not isinstance(manifest, Mapping):
             raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
@@ -562,7 +584,12 @@ class NodeGraphAdapter:
         pinned = request.params.get("template")
         template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)
         graph = compile_workflow(manifest, self.binding, template, request.body)
-        return build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
+        return graph, build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
+
+    def _workflow_payload(self, op: str, request: CanonicalRequest) -> dict[str, Any]:
+        """The prompt body of a manifest-backed request, compiled now from the request: the graph, this adapter's client
+        id and any UI twin. Nothing is cached on the request, so the body is read at the moment it is sent."""
+        return self.compile(op, request)[1]
 
     @staticmethod
     def _pinned_template(template: Any) -> dict[str, Any]:

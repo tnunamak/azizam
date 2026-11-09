@@ -40,7 +40,7 @@ from typing import Any
 from gateway import registry_layers as layers
 from gateway import service_registry
 from gateway.workflow_convert import POLICY_KEYS, convert_and_check
-from gateway.workflow_policy import facts_from_mapping
+from gateway.workflow_policy import stored_facts
 
 STEP = service_registry.WORKFLOW_SCHEMA_2_STEP
 FROZEN_RELEASE_PATH = Path(__file__).resolve().parent / "migration_data" / "workflow_schema_1_release.json"
@@ -155,10 +155,11 @@ def _convert_record(record_id: str, entry: Mapping[str, Any]) -> tuple[dict[str,
     manifest, beside = _split(entry)
     apply_release_fixes(record_id, manifest)
     facts = v1_effective_facts(manifest)
-    record_facts = facts_from_mapping(beside.get("policy"))
+    record_facts = stored_facts(beside.get("policy"), manifest.get("intent"))
     if record_facts is not None:  # facts the record states itself win over those derived from the manifest, then the defaults
         facts = {"exposure": record_facts.exposure, "trust_tier": record_facts.trust_tier,
-                 "resource_tier": record_facts.resource_tier, "tags": list(record_facts.tags)}
+                 "resource_tier": record_facts.resource_tier, "resource_class": record_facts.resource_class,
+                 "tags": list(record_facts.tags)}
     stated = {key: manifest.pop(key) for key in POLICY_KEYS if key in manifest}  # a v2 document holds none of these
     converted, notes, report = convert_and_check(manifest)
     failures = [Failure(error.pointer or "/", error.code, error.message) for error in report.errors]
@@ -306,6 +307,8 @@ def _plan_one(
         return _plan_patch(record_id, entry, base, v1_base)
     if set(entry) == {layers.REPLACE_KEY} and isinstance(entry[layers.REPLACE_KEY], Mapping):
         entry = entry[layers.REPLACE_KEY]  # no release record to replace: it is stored whole, as a read takes it
+    if entry.get(layers.RUN_CONTROL_PATCH_KEY):   # a run-control patch of a bundled id holds no contract to convert
+        return Row(record_id, ALREADY_V2), copy.deepcopy(dict(entry))
     if _schema_version(entry) == 2:
         return Row(record_id, ALREADY_V2), copy.deepcopy(dict(entry))
     record, failures, fields = _convert_record(record_id, entry)

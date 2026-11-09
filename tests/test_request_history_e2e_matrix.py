@@ -29,7 +29,7 @@ import proxy
 import responses_store
 from gateway import (
     admin_store, browser_sessions, media_jobs, prompt_memory, receipt_store,
-    request_history, request_history_capture, retention,
+    request_history, request_history_capture, request_spool, retention,
 )
 from gateway.admin_oidc import encode_session_cookie
 from gateway.runtime_auth import hash_api_key
@@ -44,6 +44,7 @@ from tests.test_request_history_capture import _kept_rows, _mint_member_key
 NAMESPACE = "com.azizam.prompts"
 FORGET = {NAMESPACE: {"mode": "forget"}}
 MARKER = "matrix harmless request text"
+MP4_HEAD = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"  # the run route measures an upload's type from its bytes
 MODEL = "garage-chat"
 LIMIT = int(retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["max_record_bytes"])
 
@@ -75,7 +76,13 @@ SHAPES = [
     Shape("near_limit", wire="near_limit"),
     Shape("over_limit", wire="over_limit"),
 ]
-SHAPE_IDS = [shape.name for shape in SHAPES]
+# An extra file part no input accepts: the run route refuses it with 422 (media_not_accepted), where the others ignore it.
+_ALLOWED_UPLOAD_STATUSES = {"audio_upload": {200, 400, 413, 502}, "image_edit_upload": {200, 400, 413, 502},
+                            "workflow_upload": {200, 400, 413, 422, 502}}
+
+
+def _params(shapes):
+    return [pytest.param(shape, id=shape.name) for shape in shapes]
 
 
 def _canaries() -> dict[str, str]:
@@ -130,6 +137,8 @@ class World:
     shape: Shape | None = None
     calls: list[str] = field(default_factory=list)
     reply_payload: dict = field(default_factory=dict)
+    # The file the fake graph engine returns for a video result; None: the bare MP4_HEAD stand-in.
+    view_bytes: bytes | None = None
 
 
 @pytest.fixture
@@ -148,6 +157,11 @@ def world(fake_upstreams, monkeypatch, tmp_path):
     prompt_memory.init_db(path=media)
     receipt_store.init_db(receipts)
     monkeypatch.setattr(media_jobs, "DB_PATH", media)
+    # The run route keeps the job's uploads and payload under the suite's own paths (the checkout is read-only).
+    monkeypatch.setattr(proxy, "_WORKFLOW_RUN_SPOOL_ROOT", tmp_path / "run-spool")
+    monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", request_spool.JobSpool(tmp_path / "run-spool"))
+    monkeypatch.setattr(proxy, "_workflow_core_cache", None)
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     with sqlite3.connect(receipts) as conn:
         conn.execute("DELETE FROM receipts")
     # Responses' conversation store is also owned by this hermetic pytest run.
@@ -213,7 +227,7 @@ def world(fake_upstreams, monkeypatch, tmp_path):
                 # The save node of the workflow each shape runs: the rife video one, the qwen image edit one.
                 "6" if video else "10": {"images": [{"filename": filename, "type": "output"}]}}}})
         if request.url.path == "/view":
-            return httpx.Response(200, content=b"rendered-video" if video else comfy_png(),
+            return httpx.Response(200, content=(w.view_bytes or MP4_HEAD + b"rendered-video") if video else comfy_png(),
                                   headers={"content-type": "video/mp4" if video else "image/png"})
         pytest.fail("unexpected graph HTTP path")
 
@@ -234,7 +248,9 @@ def world(fake_upstreams, monkeypatch, tmp_path):
         "id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://matrix-graph.fk.test"}})
     write_service_registry_for_test(registry, path=db)
     cfg = copy.deepcopy(proxy.config)
-    cfg["backends"] = {"matrix-speech": speech}
+    graph_engine = {"name": "Matrix graph engine", "host": "matrix-graph.fk.test", "port": 80, "enabled": True,
+                    "protocol": "node-graph", "capabilities": ["images", "videos"]}
+    cfg["backends"] = {"matrix-speech": speech, proxy._GRAPH_BACKEND_ID: graph_engine}
     cfg["model_aliases"]["transcriptions"] = {
         "engines": {"matrix-speech": {"service": "matrix-speech", "model": "matrix-speech"}},
         "stable": {},
@@ -253,6 +269,7 @@ def world(fake_upstreams, monkeypatch, tmp_path):
     # Metadata encoding is outside retention; keep this video fixture independent of ffmpeg.
     monkeypatch.setattr(proxy.media_delivery, "deliver_bytes", lambda data, *_a, **_kw: data)
     monkeypatch.setattr(proxy.media_delivery, "attach_provenance", lambda data, *_a, **_kw: data)
+    monkeypatch.setattr(proxy.media_metadata, "strip_metadata", lambda data, *_a, **_kw: data)  # stored result files
     return w
 
 
@@ -306,8 +323,11 @@ async def _send(w: World, shape: Shape, *, forget: str | None = None,
                 data.update(prompt=json.dumps(payload), response_format="b64_json", background="opaque")
                 files = {"image": ("input.png", comfy_png(), "image/png")}
             else:
-                data.update(multiplier="2")
-                files = {"source_video": ("sample.mp4", b"input-video-bytes", "video/mp4")}
+                # The S6 run form: an ``inputs`` JSON part, the control parts beside it, then the file parts. The job
+                # is awaited so the engine call and the result are part of what this shape proves.
+                data["inputs"] = json.dumps({"multiplier": 2})
+                headers["prefer"] = "wait=30"
+                files = {"source_video": ("sample.mp4", MP4_HEAD + b"input-video-bytes", "video/mp4")}
             files.update(extra_files or {})
             if forget == "body":
                 controls.update(FORGET)
@@ -349,6 +369,8 @@ def _run(w, shape, **kwargs):
     assert response.status_code == expected, f"{shape.name}: unexpected status {response.status_code}"
     if shape.name != "gzip_json" and not refused_form:
         assert w.calls, "positive control: no inference HTTP call"
+    if shape.name == "workflow_upload":      # the run route answers 200 for a job that ended, so the job must have worked
+        assert response.json()["status"] == "succeeded", "the run did not finish: " + json.dumps(response.json())
     if shape.stream:
         assert response.content, "stream was not consumed"
         expected_type = "application/x-ndjson" if shape.name.startswith("ollama") else "text/event-stream"
@@ -372,7 +394,7 @@ def _receipts(w: World) -> list[dict]:
         return [json.loads(row[0]) for row in conn.execute("SELECT receipt_json FROM receipts")]
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_credentials_are_absent_from_saved_request_reply_and_metadata(world, shape):
     _run(world, shape)
     rows = _kept_rows(world.media)
@@ -389,7 +411,7 @@ def test_credentials_are_absent_from_saved_request_reply_and_metadata(world, sha
     _assert_absent(json.dumps(_receipts(world)), {**world.canaries, "caller_key": world.key})
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 @pytest.mark.parametrize("control", ["body", "header"])
 def test_forget_keeps_no_history_and_only_structural_receipts(world, shape, control):
     _run(world, shape, forget=control)
@@ -410,7 +432,7 @@ def test_forget_keeps_no_history_and_only_structural_receipts(world, shape, cont
             assert conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
+@pytest.mark.parametrize("shape", _params(s for s in SHAPES if s.wire == "multipart"))
 def test_bracket_form_forget_keeps_no_history(world, shape):
     _run(world, shape, forget="bracket")
     assert _kept_rows(world.media) == []
@@ -442,7 +464,7 @@ def _second_key(w: World) -> str:
     return key
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_only_maker_can_read_and_delete_and_app_keys_stay_in_their_app(world, shape):
     _run(world, shape)
     # An omitted body still has no row to expose; these cases use the same route's readable control.
@@ -497,7 +519,7 @@ def test_only_maker_can_read_and_delete_and_app_keys_stay_in_their_app(world, sh
     assert _kept_rows(world.media) == []
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_capture_work_and_buffers_stay_bounded_through_the_app(world, shape, monkeypatch):
     """Observe real capture work; do not replace the writer or cleaning functions.
 
@@ -557,7 +579,7 @@ def _grant(w: World, label: str, *, grant_id: str | None = None) -> tuple[str, s
     return token, grant_id
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_mcp_grants_read_only_their_connection_and_cannot_delete(world, shape):
     token, grant_id = _grant(world, "first")
     rotated, _ = _grant(world, "rotated", grant_id=grant_id)
@@ -608,7 +630,7 @@ def test_mcp_grants_read_only_their_connection_and_cannot_delete(world, shape):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("shape", SHAPES, ids=SHAPE_IDS)
+@pytest.mark.parametrize("shape", _params(SHAPES))
 def test_cookie_fields_inside_json_are_removed_from_saved_content(world, shape):
     """Cookies in parsed header objects/JSON strings are credentials too (requirement 1)."""
     _run(world, shape, payload=_payload(world.canaries, cookies=True))
@@ -639,7 +661,7 @@ def test_a_duplicate_extensions_key_cannot_override_an_earlier_forget(world, chu
         pytest.fail("an earlier forget was overridden by a duplicate extensions key", pytrace=False)
 
 
-@pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
+@pytest.mark.parametrize("shape", _params(s for s in SHAPES if s.wire == "multipart"))
 @pytest.mark.parametrize("header_bytes", [LIMIT - 1, 4 * LIMIT], ids=["near_limit", "over_limit"])
 def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, shape, header_bytes, monkeypatch):
     """A file's field name/header is metadata; it must not bypass the byte budget."""
@@ -660,7 +682,7 @@ def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, sha
     monkeypatch.setattr(request_history.BodyCapture, "feed", feed)
     extra = {"x" * header_bytes: ("extra.bin", b"x", "application/octet-stream")}
     response = asyncio.run(_send(world, shape, extra_files=extra))
-    assert response.status_code in {200, 400, 413, 502}
+    assert response.status_code in _ALLOWED_UPLOAD_STATUSES[shape.name]
     assert captures
     assert max(metadata_sizes) <= LIMIT, f"capture metadata bytes={max(metadata_sizes)}, limit={LIMIT}"
     # The limit is on captured content and metadata, independent of upload size.
@@ -672,7 +694,7 @@ def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, sha
         assert row["byte_size"] <= 2 * LIMIT + 16384
 
 
-@pytest.mark.parametrize("shape", [s for s in SHAPES if s.wire == "multipart"], ids=lambda s: s.name)
+@pytest.mark.parametrize("shape", _params(s for s in SHAPES if s.wire == "multipart"))
 @pytest.mark.parametrize("part_count", [
     pytest.param(8, id="within_metadata_budget"),
     pytest.param(320, id="over_metadata_budget"),
@@ -691,7 +713,7 @@ def test_upload_part_list_has_an_aggregate_capture_budget(world, shape, part_cou
     extra = {f"extra-{index}-" + "x" * 4000: ("part.bin", b"x", "application/octet-stream")
              for index in range(part_count)}
     response = asyncio.run(_send(world, shape, extra_files=extra))
-    assert response.status_code in {200, 400, 413, 502}
+    assert response.status_code in _ALLOWED_UPLOAD_STATUSES[shape.name]
     assert captures and any(capture.body.total > 0 for capture in captures)
     metadata_bytes = max(sum(len(json.dumps(item).encode()) for item in capture.body._files)
                          for capture in captures)

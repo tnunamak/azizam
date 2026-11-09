@@ -23,6 +23,9 @@ from gateway.workflow_envelope import ENVELOPE_VERSION, Envelope, parse_envelope
 # The engine protocol descriptions carry no revision field yet (S2 design, D9). Until they do, the envelope records
 # this marker, so a reader can tell "not revisioned" from a real revision.
 UNREVISIONED = "unrevisioned"
+# A caller that has no registry incarnation or binding key (a route that reads a live file, not the S4 registry) records
+# this marker. Version 2 requires the two fields; the marker says plainly that nothing tracked them.
+UNTRACKED = "untracked"
 
 
 @dataclass(frozen=True)
@@ -64,9 +67,13 @@ def build_job_envelope(
     service_id: str,
     origin: str,
     generated: Mapping[str, Mapping[str, Any]] | None = None,
+    incarnation: str = UNTRACKED,
+    binding_key: str = UNTRACKED,
+    record_revision: int | None = None,
 ) -> JobEnvelope:
     """The envelope for one job. ``source_revision`` is the digest of the contract and binding together, so it
-    changes when either does. ``origin`` is digested, never stored. ``generated`` is the block ``resolve_generated`` made
+    changes when either does. ``incarnation``, ``binding_key`` and ``record_revision`` are the registry facts of
+    envelope version 2 (section 7.4); ``record_revision`` is audit only. ``origin`` is digested, never stored. ``generated`` is the block ``resolve_generated`` made
     for this job (input name to generator id and value); it is checked against the reviewed generators. Raises
     ``ValueError`` if the grammar refuses it."""
     contract_body = canonical_bytes(contract)
@@ -84,7 +91,8 @@ def build_job_envelope(
     envelope = parse_envelope(
         {
             "envelope_version": ENVELOPE_VERSION,
-            "source": {"kind": source_kind, "id": source_id, "revision": revision},
+            "source": {"kind": source_kind, "id": source_id, "revision": revision, "incarnation": incarnation,
+                       "binding_key": binding_key, "record_revision": record_revision},
             "definitions": definitions,
             "executor": {"adapter_id": adapter_id, "interface_version": interface_version},
             "upstream": {"service_id": service_id, "origin_digest": origin_digest(origin)},

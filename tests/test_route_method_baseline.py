@@ -60,6 +60,9 @@ baseline's paths and its own. Only these differences are allowed:
 * GET /admin/api/settings/effective and /admin/api/settings/effective/export are deleted (config homes C10; the
   sections routes under /admin/api/config replace them): each falls to the catch-all or a 405, like the other
   deleted paths;
+* /admin/api/workflows and the paths under it are new owner routes (the owner's workflow store, CODE_TO_DATA_S4_S8
+  I2; tests/test_workflow_owner_api.py covers them, tests/test_admin_secret_sweep_writes.py their writes): each answers
+  with its own route, that route's 405, or the catch-all; none existed in r18;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -106,12 +109,13 @@ MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/
 AVATAR_PREFIX = "/me/api/profile/avatar"
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
-# The mesh route (gateway/mesh_api.py) is new since the baseline: POST is the route; the other methods meet the
-# catch-all, and HEAD meets the route's 405 (POST only). Live outcomes name each caller's answer.
-MESH_PATH = "/v1/meshes/generate"
+# The two 3D rows (registry/protocol_frontends.yml, mounted by gateway/row_routes.py) are new since the baseline: POST is
+# the route; the other methods meet the catch-all, and HEAD meets the route's 405 (POST only). Live outcomes name each
+# caller's answer.
+MESH_PATHS = ("/v1/3d/generations", "/v1/3d/generations/glb")
 MESH_ROUTING = {
-    "POST": f"{MESH_PATH} generate_mesh",
-    "HEAD": f"405 allow=POST via {MESH_PATH} generate_mesh",
+    "POST": "<path> serve",
+    "HEAD": "405 allow=POST via <path> serve",
 }
 MESH_LIVE = {
     "HEAD": "none: 405 application/json allow=POST; app: 405 application/json allow=POST; admin: 405 application/json allow=POST",
@@ -184,6 +188,8 @@ def _deliberate(key: str) -> str | None:
         return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
     if path.startswith("/admin/api/config/") and path not in {"/admin/api/config/export", "/admin/api/config/reload"} or path == "/admin/api/config":
         return "config_sections"  # owner routes for the config sections (gateway/config_api.py); tests/test_config_api.py covers them
+    if path == "/admin/api/workflows" or path.startswith("/admin/api/workflows/"):
+        return "workflow_owner"  # the owner's workflow store routes (gateway/workflow_owner_api.py)
     if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
@@ -203,7 +209,7 @@ def _deliberate(key: str) -> str | None:
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if path == ENGINE_PROTOCOLS_PATH:
         return "engine_protocols"
-    if path == MESH_PATH:
+    if path in MESH_PATHS:
         return "mesh"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
@@ -323,7 +329,7 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "lifecycle_hop" and key not in old:
             continue  # new lifecycle hop endpoints; tests/test_litellm_inner_hop_endpoints.py covers them
         if kind == "mesh" and key not in old:
-            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route")
+            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route").replace("<path>", key.split(" ", 1)[1])
             if outcome == expected:
                 continue
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
@@ -343,6 +349,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # lightweight member CSRF-token read for sign-out; tests/test_session_lifecycle.py covers it
         if kind == "remembered" and key not in old:
             continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
+        if kind == "workflow_owner" and key not in old:
+            continue  # new owner workflow routes; tests/test_workflow_owner_api.py covers them
         if kind == "provider_sign_out":
             # As /login: GET is the route, HEAD says 405 for it, and every other method falls to the catch-all.
             expected = {"GET": "/login/provider-sign-out provider_sign_out",
@@ -423,6 +431,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if kind == "lifecycle_hop" and key not in old:
             continue
         if kind == "config_sections" and key not in old:
+            continue
+        if kind == "workflow_owner" and key not in old:
             continue
         if kind == "media_job_results" and key not in old:
             continue  # GET is the result route; the other methods answer as the catch-all does

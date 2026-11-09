@@ -145,6 +145,11 @@ def record_envelope_in(
     _add_refs(conn, job_id, "job", shas)
 
 
+def has_envelope_in(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Whether ``job_id`` recorded an envelope row at accept, readable or not."""
+    return conn.execute("SELECT 1 FROM job_envelope WHERE job_id = ?", (job_id,)).fetchone() is not None
+
+
 def envelope_in(conn: sqlite3.Connection, job_id: str, generators: Mapping[str, str] | None = None) -> Envelope | None:
     """The job's envelope, or None. ``generators`` is the reviewed map that ``parse_envelope`` needs while the envelope
     holds generated values; with none given, the reviewed generators' own map is used. An envelope that no longer parses (the map changed, or the row is damaged) raises
@@ -238,6 +243,26 @@ def release_holder_in(conn: sqlite3.Connection, holder_id: str) -> None:
     conn.execute("DELETE FROM definition_ref WHERE job_id = ? AND holder_kind = 'holder'", (holder_id,))
 
 
+def holder_shas_in(conn: sqlite3.Connection, holder_id: str) -> tuple[str, ...]:
+    """The blobs a holder (not a job) references, in sha order. Empty for an unknown holder."""
+    rows = conn.execute(
+        "SELECT blob_sha FROM definition_ref WHERE job_id = ? AND holder_kind = 'holder' ORDER BY blob_sha", (holder_id,)
+    ).fetchall()
+    return tuple(row[0] for row in rows)
+
+
+def replace_holder_in(conn: sqlite3.Connection, holder_id: str, shas: Iterable[str]) -> None:
+    """Make a holder reference exactly ``shas``: the others it held are released, in this one transaction. A missing blob
+    refuses all and changes nothing. A job id raises ``HolderIdError``."""
+    _require_transaction(conn)
+    shas = list(shas)
+    if _is_job_id(conn, holder_id):
+        raise HolderIdError(f"{holder_id!r} is a job id, not a holder id")
+    _require_blobs(conn, shas)
+    conn.execute("DELETE FROM definition_ref WHERE job_id = ? AND holder_kind = 'holder'", (holder_id,))
+    _add_refs(conn, holder_id, "holder", shas)
+
+
 def collect_garbage_in(conn: sqlite3.Connection, *, cutoff: float, limit: int | None = None) -> int:
     """Delete blobs created before ``cutoff`` that have no reference. Returns how many were deleted.
 
@@ -294,6 +319,10 @@ class DefinitionStore:
         with self._write() as conn:
             record_envelope_in(conn, job_id, envelope, generators=generators, now=self._clock(), blobs=blobs)
 
+    def has_envelope(self, job_id: str) -> bool:
+        with media_jobs.connection(self._path) as conn:
+            return has_envelope_in(conn, job_id)
+
     def envelope(self, job_id: str, generators: Mapping[str, str] | None = None) -> Envelope | None:
         with media_jobs.connection(self._path) as conn:
             return envelope_in(conn, job_id, generators)
@@ -305,6 +334,14 @@ class DefinitionStore:
     def hold(self, holder_id: str, shas: Iterable[str]) -> None:
         with self._write() as conn:
             hold_in(conn, holder_id, shas)
+
+    def holder_shas(self, holder_id: str) -> tuple[str, ...]:
+        with media_jobs.connection(self._path) as conn:
+            return holder_shas_in(conn, holder_id)
+
+    def replace_holder(self, holder_id: str, shas: Iterable[str]) -> None:
+        with self._write() as conn:
+            replace_holder_in(conn, holder_id, shas)
 
     def release_holder(self, holder_id: str) -> None:
         with self._write() as conn:

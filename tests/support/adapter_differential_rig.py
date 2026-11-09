@@ -163,7 +163,7 @@ class Recorder:
                 "path": recorder.norm.text(request.url.path),
                 "query": ad.sorted_query(request.url.query, recorder.norm),
                 "headers": ad.describe_request_headers(request.headers.multi_items(), recorder.norm),
-                "body": ad.describe_body(request.content, content_type, recorder.norm),
+                "body": ad.describe_body(request.content, content_type, recorder.norm, payload=True),
             }
             ad.settle_content_length(entry["headers"], request.content, entry["body"])
             recorder.engine.append(entry)
@@ -195,7 +195,7 @@ class Recorder:
                 "path": recorder.norm.text(request.url.path),
                 "query": ad.sorted_query(request.url.query, recorder.norm),
                 "headers": ad.describe_request_headers(request.headers.multi_items(), recorder.norm),
-                "body": ad.describe_body(request.content, request.headers.get("content-type"), recorder.norm),
+                "body": ad.describe_body(request.content, request.headers.get("content-type"), recorder.norm, payload=True),
             }
             ad.settle_content_length(entry["headers"], request.content, entry["body"])
             recorder.engine.append(entry)
@@ -397,7 +397,7 @@ class GatewayRig:
             "headers": ad.describe_request_headers(
                 [(k, v) for k, v in request.headers.multi_items() if k.lower() not in {"host", "accept", "accept-encoding", "connection", "user-agent"}],
                 self.norm),
-            "body": ad.describe_body(request.content, request.headers.get("content-type"), self.norm),
+            "body": ad.describe_body(request.content, request.headers.get("content-type"), self.norm, payload=True),
         }
         ad.settle_content_length(sent["headers"], request.content, sent["body"])
         if cancel_when is not None:
@@ -419,6 +419,7 @@ class GatewayRig:
         finally:
             await response.aclose()
         body = b"".join(received)
+        self.norm.problems.extend(ad.link_problems(response.headers.multi_items(), body))
         described: dict[str, Any] = {
             "status": response.status_code,
             "headers": ad.describe_response_headers(response.headers.multi_items(), self.norm),
@@ -432,7 +433,8 @@ class GatewayRig:
         self._last = _Buffered(response, body)
         return self._last  # type: ignore[return-value]
 
-    async def call_disconnecting(self, method: str, path: str, *, label: str, json_body: Any, disconnect_when) -> None:
+    async def call_disconnecting(self, method: str, path: str, *, label: str, json_body: Any, disconnect_when,
+                                 unordered_json: bool = False) -> None:
         """Send a JSON request straight to the app and report the client gone once ``disconnect_when()`` is true.
 
         Unlike ``call(cancel_when=...)`` the handler is not cancelled: its ``receive()`` returns
@@ -469,7 +471,7 @@ class GatewayRig:
                  "headers": headers, "extensions": {}}
         self.recorder.step = len(self.calls)
         sent = {"method": method, "path": path, "query": [], "headers": {"content-type": "application/json"},
-                "body": ad.describe_body(body, "application/json", self.norm)}
+                "body": ad.describe_body(body, "application/json", self.norm, payload=True)}
         task = asyncio.ensure_future(proxy.app(scope, receive, send))
         async with asyncio.timeout(HANG_BOUND_SECONDS):
             while not disconnect_when() and not task.done():
@@ -477,7 +479,8 @@ class GatewayRig:
             gone.set()
             await task
         described = {"status": out["status"], "headers": ad.describe_response_headers(out["headers"], self.norm),
-                     "body": ad.describe_body(out["body"], dict(out["headers"]).get("content-type"), self.norm),
+                     "body": ad.describe_body(out["body"], dict(out["headers"]).get("content-type"), self.norm,
+                                          unordered_json=unordered_json),
                      "disconnected_by_caller": True}
         ad.settle_content_length(described["headers"], out["body"], described["body"])
         self.calls.append({"label": label, "request": sent, "response": described})
@@ -486,7 +489,8 @@ class GatewayRig:
     def trace(self) -> dict[str, Any]:
         receipts = ad.dump_sqlite(self.receipts_db, self.norm, skip_tables=("receipt_history",))
         jobs = ad.dump_sqlite(self.media_jobs_db, self.norm)
-        return {
+        self.norm.problems.extend(ad.event_problems(jobs.get("media_job_events", [])))
+        return ad.with_job_prefixes({
             "schema": ad.TRACE_SCHEMA,
             "scenario": self.name,
             "description": self.description,
@@ -497,7 +501,7 @@ class GatewayRig:
             "media_jobs": jobs,
             "assets": ad.describe_assets(self.cache, self.norm),
             "notes": self.notes,
-        }
+        }, self.norm)
 
 
 class _Buffered:
@@ -536,9 +540,13 @@ def play(name: str, tmp_path: Path, record_testsuite_property, setup, drive, *, 
             setup(rig)
             asyncio.run(drive(rig))
             traces.append(json.loads(ad.dumps(rig.trace())))
+            problems = [*rig.norm.problems, *ad.secret_problems(ad.dumps(traces[-1]))]
+            if problems:
+                pytest.fail(f"{name}: the trace breaks a profile-{ad.PROFILE_VERSION} check:\n  " + "\n  ".join(problems),
+                            pytrace=False)
     record_testsuite_property(f"{ad.JUNIT_PROPERTY}.{name}", json.dumps(traces[0], sort_keys=True))
     for later in traces[1:]:
-        if later != traces[0]:
+        if ad.traces_differ(traces[0], later):
             pytest.fail("not deterministic: two runs in one process differ.\n"
                         + ad.readable_diff(name, traces[0], later), pytrace=False)
     problem = ad.compare_golden(name, traces[0])

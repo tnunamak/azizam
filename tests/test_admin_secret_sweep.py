@@ -37,6 +37,7 @@ PARAMETERS = {
     "system_id": "gateway",
     "request_id": "sweep-request",
     "section": "services", "record_id": "held-url",  # the routes that fix or remove a record the registry leaves out
+    "workflow_id": "owner.sweep.demo",  # the owner workflow routes; a built call saves it first
 }
 UNSEEDED_ID = "unseeded-id"
 
@@ -87,6 +88,9 @@ def _discovered_parameters(owner) -> dict[str, str]:
         found["plan_id"] = plans[0]["id"]
     if events:
         found["event_id"] = str(events[0].get("id") or events[0].get("event_id") or "")
+    workflows = owner.get("/admin/api/workflows").json().get("workflows") or []
+    if workflows:   # a bundled workflow: the owner workflow detail route reads it
+        found["workflow_id"] = workflows[0]["id"]
     return found
 
 

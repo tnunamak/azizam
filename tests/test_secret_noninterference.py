@@ -57,6 +57,9 @@ VOLATILE_KEYS = {
     # The config snapshot's generation (GET /admin/api/config/problems) holds the registry and override revisions: it
     # counts writes, and the replacement is a write. The bytes written do not reach it.
     "generation",
+    # GET /admin/api/workflows: the document's revision is the registry generation, and a bundled workflow's
+    # record_revision is that generation too (gateway/registry_snapshot.py). Both count writes, as above.
+    "revision", "record_revision",
     *EVIDENCE_TIME_FIELDS,
 }
 

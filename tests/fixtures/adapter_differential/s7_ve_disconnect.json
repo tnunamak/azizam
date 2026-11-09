@@ -1,0 +1,52 @@
+{
+  "assets": [],
+  "caller": [
+    {
+      "label": "http.disconnect during the request",
+      "request": {
+        "body": {
+          "kind": "json",
+          "text": "{\"prompt\": \"make it dusk\", \"video\": {\"id\": \"video_p1\"}}"
+        },
+        "headers": {
+          "content-type": "application/json"
+        },
+        "method": "POST",
+        "path": "/v1/videos/edits",
+        "query": []
+      },
+      "response": {
+        "body": {
+          "kind": "json",
+          "text": "{\"error\": {\"message\": \"video_id not found\", \"type\": \"not_found\"}}"
+        },
+        "disconnected_by_caller": true,
+        "headers": {
+          "content-length": "65",
+          "content-type": "application/json"
+        },
+        "status": 404
+      }
+    }
+  ],
+  "description": "S7 golden: POST /v1/videos/edits, outcome disconnect, recorded on the unchanged route",
+  "engine_requests": [],
+  "gateway_sleeps": [],
+  "media_jobs": {
+    "media_jobs_schema_version": [
+      {
+        "version": 6
+      }
+    ]
+  },
+  "notes": {},
+  "receipts": {
+    "schema_version": [
+      {
+        "version": 2
+      }
+    ]
+  },
+  "scenario": "s7_ve_disconnect",
+  "schema": 1
+}

@@ -97,6 +97,28 @@
           "subject_select": {
             "type": "boolean"
           },
+          "node_roles": {
+            "description": "The nodes of the graph file that a request fills. A role named ...node is one node id (a string); size_node is the two ids of the width and height nodes; a role named ...nodes is a list of ids. A role that names no node of the file is refused when the file loads. Other keys are options, such as a default strength.",
+            "type": "object",
+            "properties": {
+              "size_node": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "patternProperties": {
+              "^(?!size_node$).*_node$": {"type": "string", "minLength": 1},
+              "_nodes$": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              }
+            },
+            "additionalProperties": {
+              "type": ["string", "number", "boolean"]
+            }
+          },
           "source_video_input": {
             "type": "string",
             "minLength": 1

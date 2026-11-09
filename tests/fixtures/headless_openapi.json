@@ -16955,6 +16955,870 @@
         ]
       }
     },
+    "/admin/api/workflows": {
+      "get": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_workflows",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "List Workflows",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      },
+      "post": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_workflows",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Create Workflow",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      }
+    },
+    "/admin/api/workflows/check": {
+      "post": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_workflows_check",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Check Workflow",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      }
+    },
+    "/admin/api/workflows/{workflow_id}": {
+      "delete": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_delete_admin_api_workflows_workflow_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Delete Workflow",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      },
+      "get": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_workflows_workflow_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Get Workflow",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      },
+      "put": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_put_admin_api_workflows_workflow_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Update Workflow",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      }
+    },
+    "/admin/api/workflows/{workflow_id}/publish": {
+      "post": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_workflows_workflow_id_publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Set Published",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      }
+    },
+    "/admin/api/workflows/{workflow_id}/restore": {
+      "post": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_workflows_workflow_id_restore",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Restore",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      }
+    },
+    "/admin/api/workflows/{workflow_id}/state": {
+      "post": {
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_post_admin_api_workflows_workflow_id_state",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Set State",
+        "tags": [
+          "workflows",
+          "Owner and admins"
+        ]
+      }
+    },
     "/anthropic/v1/messages": {
       "post": {
         "description": "Anthropic Messages-compatible frontend over chat completions.",
@@ -19873,7 +20737,7 @@
         ]
       }
     },
-    "/gateway/v1/workflows/rife-interpolate/run": {
+    "/gateway/v1/workflows/video.edit.rife-interpolate/run": {
       "post": {
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
         "operationId": "run_rife_interpolate",
@@ -19890,14 +20754,23 @@
         "responses": {
           "200": {
             "content": {
-              "video/mp4": {
+              "application/json": {
                 "schema": {
-                  "format": "binary",
-                  "type": "string"
+                  "type": "object"
                 }
               }
             },
-            "description": "Rendered output."
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
           },
           "400": {
             "content": {
@@ -19978,7 +20851,7 @@
         "x-azizam-workflow-id": "video.edit.rife-interpolate"
       }
     },
-    "/gateway/v1/workflows/scail-2-replace/run": {
+    "/gateway/v1/workflows/video.edit.scail-2-replace/run": {
       "post": {
         "description": "Replace a person in a video with a character from a picture, keeping the original motion and scene.",
         "operationId": "run_scail_2_replace",
@@ -19995,14 +20868,23 @@
         "responses": {
           "200": {
             "content": {
-              "video/mp4": {
+              "application/json": {
                 "schema": {
-                  "format": "binary",
-                  "type": "string"
+                  "type": "object"
                 }
               }
             },
-            "description": "Rendered output."
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
           },
           "400": {
             "content": {
@@ -20136,7 +21018,7 @@
     },
     "/gateway/v1/workflows/{workflow_id}/run": {
       "post": {
-        "description": "Serves `video.edit` workflows only (`GET /gateway/v1/workflows` lists them). The request blocks until the render ends and returns the video bytes. For anything slower than a few seconds prefer the async route `POST /v1/videos` (see `x-azizam-workflows`). Every workflow also has a concrete path below with its exact form fields.",
+        "description": "Starts a media job for the workflow with this full id (`GET /gateway/v1/workflows` lists them) and answers the job: 202 while it is queued or running, with its address in `Location`. Read it at `GET /gateway/v1/media/jobs/{job_id}` and its output at `GET /gateway/v1/media/jobs/{job_id}/content`. `Prefer: wait=N` waits up to N seconds for the job to end before it answers. Each video-edit workflow also has a concrete path below with its exact form fields.",
         "operationId": "run_video_manifest_workflow_gateway_v1_workflows__workflow_id__run_post",
         "parameters": [
           {
@@ -20169,14 +21051,23 @@
         "responses": {
           "200": {
             "content": {
-              "video/mp4": {
+              "application/json": {
                 "schema": {
-                  "format": "binary",
-                  "type": "string"
+                  "type": "object"
                 }
               }
             },
-            "description": "Rendered video."
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
           },
           "400": {
             "content": {
@@ -20250,7 +21141,7 @@
             "AppKeyXApiKey": []
           }
         ],
-        "summary": "Run a video-edit workflow synchronously"
+        "summary": "Run a workflow by its full id"
       }
     },
     "/health": {
@@ -27897,6 +28788,60 @@
         "summary": "Systemone"
       }
     },
+    "/v1/3d/generations": {
+      "post": {
+        "operationId": "row_mesh_generations__v1_3d_generations_v1_3d_generations_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Row:Mesh-Generations:/V1/3D/Generations"
+      }
+    },
+    "/v1/3d/generations/glb": {
+      "post": {
+        "operationId": "row_mesh_glb__v1_3d_generations_glb_v1_3d_generations_glb_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Row:Mesh-Glb:/V1/3D/Generations/Glb"
+      }
+    },
     "/v1/assets/{asset_id}": {
       "delete": {
         "description": "Delete an asset this App (or its accountable person) made; the same work as the browser Delete.",
@@ -31774,33 +32719,6 @@
           }
         ],
         "summary": "Images Content"
-      }
-    },
-    "/v1/meshes/generate": {
-      "post": {
-        "operationId": "generate_mesh_v1_meshes_generate_post",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "AppKeyBearer": []
-          },
-          {
-            "AppKeyApiKey": []
-          },
-          {
-            "AppKeyXApiKey": []
-          }
-        ],
-        "summary": "Generate Mesh"
       }
     },
     "/v1/messages": {
@@ -38499,7 +39417,7 @@
               "Prefer": "respond-async"
             },
             "method": "POST",
-            "path": "/v1/meshes/generate"
+            "path": "/v1/3d/generations/glb"
           },
           "terminal": [
             "succeeded",
@@ -38533,7 +39451,7 @@
           },
           "method": "POST",
           "output": "model/gltf-binary (GLB bytes)",
-          "path": "/v1/meshes/generate"
+          "path": "/v1/3d/generations/glb"
         }
       },
       "id": "mesh.generate.trellis-2",
@@ -38619,8 +39537,8 @@
             }
           },
           "method": "POST",
-          "output": "video bytes (blocks until rendered)",
-          "path": "/gateway/v1/workflows/rife-interpolate/run"
+          "output": "a media job; its content is the video",
+          "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run"
         }
       },
       "id": "video.edit.rife-interpolate",
@@ -38812,8 +39730,8 @@
             }
           },
           "method": "POST",
-          "output": "video bytes (blocks until rendered)",
-          "path": "/gateway/v1/workflows/scail-2-replace/run"
+          "output": "a media job; its content is the video",
+          "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run"
         }
       },
       "id": "video.edit.scail-2-replace",

@@ -1854,5 +1854,77 @@
     "method": "GET",
     "path": "/status/raw/",
     "schema": false
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.list_workflows",
+    "method": "GET",
+    "path": "/admin/api/workflows",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.create_workflow",
+    "method": "POST",
+    "path": "/admin/api/workflows",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.check_workflow",
+    "method": "POST",
+    "path": "/admin/api/workflows/check",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.get_workflow",
+    "method": "GET",
+    "path": "/admin/api/workflows/{workflow_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.update_workflow",
+    "method": "PUT",
+    "path": "/admin/api/workflows/{workflow_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.delete_workflow",
+    "method": "DELETE",
+    "path": "/admin/api/workflows/{workflow_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.set_state",
+    "method": "POST",
+    "path": "/admin/api/workflows/{workflow_id}/state",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.set_published",
+    "method": "POST",
+    "path": "/admin/api/workflows/{workflow_id}/publish",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.workflow_owner_api.restore",
+    "method": "POST",
+    "path": "/admin/api/workflows/{workflow_id}/restore",
+    "schema": true
   }
 ]

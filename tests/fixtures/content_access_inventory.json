@@ -43,7 +43,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_run",
-      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa",
+      "source_sha256": "a69c34c2112b0af99d11a9724cb99b230293a08d4fb4c193cdd662e501bddd6a",
       "call": "_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -51,7 +51,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_run",
-      "source_sha256": "a7f61adda0f9c95620f6bdc4b43763be1721a5625e4d5660d2d1d4ee4cbeebaa",
+      "source_sha256": "a69c34c2112b0af99d11a9724cb99b230293a08d4fb4c193cdd662e501bddd6a",
       "call": "_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -80,7 +80,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "129590c78a6bb247611c7767cb2c096ab99b565c6d741e08a359a91937b68d15",
+      "source_sha256": "964f8500e5ef0cd303a6fcd57f7c6a035b24b1253d14decc07f59d7c15af76bf",
       "call": "append_event",
       "event": "'completed'",
       "access": "content:job:read"
@@ -134,9 +134,49 @@
       "access": "content:job:read"
     },
     {
+      "path": "gateway/workflow_run.py",
+      "function": "_create",
+      "source_sha256": "96ff4c907c63f613950a8ce63787493d9ed851ef2240aa35c724297cf3399f3e",
+      "call": "append_event",
+      "event": "'queued'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_before_retry",
+      "source_sha256": "48d200a49a43f91b2f48cbc6082380b3b9219324c6c243dc7eb838a87c9e8d79",
+      "call": "append_event",
+      "event": "'retry'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "4bd8f640b48b96a0888a83db70dfefb07085debeceda3b93d587cb44fe8f8f2c",
+      "call": "append_event",
+      "event": "'started'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "4bd8f640b48b96a0888a83db70dfefb07085debeceda3b93d587cb44fe8f8f2c",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_fail",
+      "source_sha256": "c42aa953767c6e3e06c0a033c5f659b0f1ffe6674d86396990c99ff66057e805",
+      "call": "append_event",
+      "event": "'failed'",
+      "access": "content:job:read"
+    },
+    {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "397422050c2e810dba9c5eea635793a4cf15fa48f3d078c1a069401558871bc4",
+      "source_sha256": "0beadb145638a4db6ed6a320b92c9db07b590ba2a5ea5df5aa498c01dde9bbb2",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -152,7 +192,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "4cb22f1c1ce939ce4c7a9bc69fa6db937a67cbaf3e33b9fdd215f8717f913fe4",
+      "source_sha256": "1c2b652bb79dc6663404252d219d84ffbbee32e70fad738c97d6891a9cf3ebff",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -176,7 +216,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "129590c78a6bb247611c7767cb2c096ab99b565c6d741e08a359a91937b68d15",
+      "source_sha256": "964f8500e5ef0cd303a6fcd57f7c6a035b24b1253d14decc07f59d7c15af76bf",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -260,21 +300,6 @@
       ]
     },
     {
-      "path": "gateway/mesh_api.py",
-      "function": "_event",
-      "source_sha256": "9d12524c75abac0f5179968e08309aba7baacebb82140372b32c4e4c6be05851",
-      "call": "append_event",
-      "event": "phase",
-      "access": "content:job:read",
-      "note": "Photo to 3D job lifecycle; callers pass only the four literals below.",
-      "resolved_types": [
-        "started",
-        "succeeded",
-        "failed",
-        "canceled"
-      ]
-    },
-    {
       "path": "gateway/media_jobs.py",
       "function": "append_event",
       "source_sha256": "ce3b4079468f0778b8aa3dd44b90703c5720cc556e4c8dedec35bace9d1a3136",
@@ -295,6 +320,14 @@
         "succeeded"
       ],
       "note": "Trusted writer currently accepts any nonempty event_type; close the set in step 3. SQL sink is inventoried to prevent alternate insert paths.",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/job_retry_hint.py",
+      "function": "write",
+      "source_sha256": "d36924af8aa509bfd0148a986c421363fcc803b29c8894dad5a8f3d70d259ea1",
+      "call": "append_event",
+      "event": "'retry_after'",
       "access": "content:job:read"
     }
   ],
@@ -3518,10 +3551,70 @@
       "access": "none"
     },
     {
-      "handler": "gateway.mesh_api.register_mesh_routes.<locals>.generate_mesh",
+      "handler": "gateway.row_routes._handler.<locals>.serve",
       "method": "POST",
-      "path": "/v1/meshes/generate",
+      "path": "/v1/3d/generations",
       "access": "own-account"
+    },
+    {
+      "handler": "gateway.row_routes._handler.<locals>.serve",
+      "method": "POST",
+      "path": "/v1/3d/generations/glb",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.list_workflows",
+      "method": "GET",
+      "path": "/admin/api/workflows",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.create_workflow",
+      "method": "POST",
+      "path": "/admin/api/workflows",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.check_workflow",
+      "method": "POST",
+      "path": "/admin/api/workflows/check",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.get_workflow",
+      "method": "GET",
+      "path": "/admin/api/workflows/{workflow_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.update_workflow",
+      "method": "PUT",
+      "path": "/admin/api/workflows/{workflow_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.delete_workflow",
+      "method": "DELETE",
+      "path": "/admin/api/workflows/{workflow_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.set_state",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/state",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.set_published",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/publish",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.workflow_owner_api.register_workflow_owner_routes.<locals>.restore",
+      "method": "POST",
+      "path": "/admin/api/workflows/{workflow_id}/restore",
+      "access": "operational"
     }
   ],
   "event_types": {
@@ -3534,6 +3627,7 @@
     "progress": "content:job:read",
     "queued": "content:job:read",
     "retry": "content:job:read",
+    "retry_after": "content:job:read",
     "started": "content:job:read",
     "submitted": "content:job:read",
     "succeeded": "content:job:read"

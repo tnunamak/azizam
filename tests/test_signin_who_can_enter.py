@@ -114,6 +114,9 @@ def gateway(tmp_path, monkeypatch):
     accounts.initialize(path)
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", path)
+    # The owner workflow routes write through their own store: it holds the admin.db path it was built with.
+    monkeypatch.setattr(proxy.WORKFLOW_REGISTRY_STORE, "_path", path)
+    monkeypatch.setattr(proxy.WORKFLOW_REGISTRY_STORE, "_cached", None)
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
     # A service-registry write through the real app fires the hot reload, which
     # swaps `proxy.config` and every backend constant for ones built from this

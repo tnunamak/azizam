@@ -837,15 +837,13 @@ def test_a_generator_fault_on_the_synchronous_image_routes_is_a_500(fault):
     assert calls == ["_generated_value_fault_response"] * 2
 
 
-@pytest.mark.parametrize("compile_from_pin", [False, True])
 @pytest.mark.parametrize("route", ["image", "audio"])
 @pytest.mark.parametrize("how", ["no-envelope", "write-fails"])
-def test_a_job_that_cannot_store_its_generated_value_is_not_created_whatever_compile_from_pin_says(
-        jobs_db, tmp_path, route, how, compile_from_pin):
+def test_a_job_that_cannot_store_its_generated_value_is_not_created(jobs_db, tmp_path, route, how):
     def refuse_write(*args, **kwargs):
         raise OSError("disk full")
 
-    patches = [patch.object(proxy, "_compile_from_pin", lambda capability: compile_from_pin)]
+    patches = []
     if how == "no-envelope":
         patches.append(patch.object(proxy, "_graph_job_envelope", lambda *args, **kwargs: None))
     else:
@@ -864,7 +862,6 @@ def test_a_job_that_cannot_store_its_generated_value_is_not_created_whatever_com
 
 def test_a_job_whose_caller_gave_every_value_needs_no_envelope(jobs_db):
     with patch.object(proxy, "_graph_job_envelope", lambda *args, **kwargs: None), \
-            patch.object(proxy, "_compile_from_pin", lambda capability: False), \
             patch.object(generated_defaults, "secure_source", refuse_a_draw):
         response, scheduled = submit_without_checking(
             "image", {**IMAGE_BODY, "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"seed": 9}}})
@@ -979,7 +976,8 @@ def test_the_audio_runner_fails_a_job_whose_stored_values_are_gone_without_calli
         asyncio.run(proxy._run_audio_media_job(job_id))
     job = media_jobs.get(job_id, audience="internal", path=jobs_db)
     assert job["status"] == media_jobs.STATUS_FAILED
-    # An unreadable envelope is first met where the audio runner reads the job's pin; it fails closed there.
+    # An erased value is first met where the audio runner reads the job's stored values. An unreadable envelope is met
+    # earlier, where the runner loads the job's pin: it fails closed there as definition_unavailable.
     assert ("erased" if state == "erased" else "no longer available") in job["error"]
     assert calls == []
 
@@ -1088,7 +1086,6 @@ def test_an_audio_job_whose_binding_has_no_pin_is_accepted_without_an_envelope_a
                                     if name != proxy.DERIVED._GRAPH_BINDING}}
     assert not proxy._manifest_has_pin(pinless)
     monkeypatch.setattr(proxy, "_load_audio_workflow_manifest", lambda name: pinless)
-    monkeypatch.setattr(proxy, "_compile_from_pin", lambda capability: False)
     with patch.object(generated_defaults, "secure_source", Recorder(2468)):
         job_id = submit_audio(AUDIO_BODY)  # asserts a 202: not refused for lacking an envelope
     assert DefinitionStore(jobs_db).envelope(job_id) is None
@@ -1179,7 +1176,37 @@ def test_a_fault_after_the_envelope_is_written_rolls_the_envelope_back(jobs_db, 
 @pytest.mark.parametrize("route", ["image", "audio"])
 def test_a_graph_workflow_whose_envelope_fails_to_build_is_still_refused(jobs_db, tmp_path, route):
     with patch.object(proxy, "_graph_job_envelope", lambda *args, **kwargs: None), \
-            patch.object(proxy, "_compile_from_pin", lambda capability: False), \
             patch.object(generated_defaults, "secure_source", Recorder(7)):
         response, scheduled = submit_without_checking(route, ROUTE_BODIES[route])
     assert response.status_code == 503 and scheduled == [] and job_rows(jobs_db) == [] and spool_files(tmp_path) == []
+
+
+@pytest.mark.parametrize("intent", ["audio.generate", "music.generate", "sfx.generate"])
+def test_a_job_without_its_intent_still_finds_a_pinless_workflow_by_its_qualified_short_name(monkeypatch, intent):
+    """A job records ``<intent>.<name>``; when it kept no intent, each workflow's own intent reads the name, so a pinless
+    workflow named by the tail of its id still runs as accepted instead of failing at the pin."""
+    base = proxy._load_audio_workflow_manifest("tangoflux")
+    pinless = {**base, "id": "custom.voice", "intent": intent,
+               "bindings": {name: binding for name, binding in base["bindings"].items()
+                            if name != proxy.DERIVED._GRAPH_BINDING}}
+    assert not proxy._manifest_has_pin(pinless)
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY",
+                        SimpleNamespace(records=lambda: [SimpleNamespace(intent=intent, manifest=pinless)]))
+    monkeypatch.setattr(proxy.definition_store, "DefinitionStore",
+                        lambda _path: SimpleNamespace(has_envelope=lambda _job_id: False))
+    assert not proxy._audio_job_runs_from_pin("legacy", {"workflow": "voice"})
+    assert not proxy._audio_job_runs_from_pin("legacy", {"workflow": f"{intent}.voice", "intent": intent})
+    assert not proxy._audio_job_runs_from_pin("legacy", {"workflow": f"{intent}.voice"})
+    assert proxy._audio_job_runs_from_pin("legacy", {"workflow": "other.generate.voice"}), "no workflow: fail closed"
+
+
+def test_a_job_without_its_intent_whose_name_two_workflows_answer_fails_closed(monkeypatch):
+    base = proxy._load_audio_workflow_manifest("tangoflux")
+    pinless = {name: binding for name, binding in base["bindings"].items() if name != proxy.DERIVED._GRAPH_BINDING}
+    records = [SimpleNamespace(intent="audio.generate", manifest={**base, "id": "a.voice", "bindings": pinless}),
+               SimpleNamespace(intent="audio.generate", manifest={**base, "id": "b.voice", "bindings": pinless})]
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", SimpleNamespace(records=lambda: records))
+    monkeypatch.setattr(proxy.definition_store, "DefinitionStore",
+                        lambda _path: SimpleNamespace(has_envelope=lambda _job_id: False))
+    # Both workflows answer the qualified name by their own intent, so neither is chosen and the job fails at the pin.
+    assert proxy._audio_job_runs_from_pin("legacy", {"workflow": "audio.generate.voice"})

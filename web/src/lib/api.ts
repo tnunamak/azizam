@@ -867,6 +867,18 @@ export async function confirmWithPassword(password: string): Promise<void> {
   resetSessionCache();
 }
 
+/** One admin request through the shared sender (writes get the action and
+ * CSRF headers; a stale session gets the confirm-it's-you prompt), answered
+ * as the raw response and its parsed JSON body (null when it has none). For
+ * callers that read response headers such as ETag or a richer error body than
+ * `ApiError` carries; the caller handles every status. */
+export async function adminExchange(
+  path: string,
+  init: AdminFetchInit = {},
+): Promise<{ response: Response; payload: unknown }> {
+  return sendWithReauth(path, init, true);
+}
+
 /** Run a registry mutation against the latest known snapshot ETag. */
 export async function adminRegistryMutation<T>(
   path: string,

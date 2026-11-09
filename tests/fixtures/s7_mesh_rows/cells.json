@@ -1,0 +1,742 @@
+{
+ "async_job": {
+  "claims_left": 0,
+  "created": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "content_url": "/gateway/v1/media/jobs/ID/content",
+    "created_at": 0,
+    "error": null,
+    "id": "ID",
+    "job_id": "ID",
+    "object": "media.job",
+    "poll_url": "/gateway/v1/media/jobs/ID",
+    "status": "queued",
+    "updated_at": 0,
+    "workflow_id": "mesh.generate.trellis-2"
+   },
+   "location": "/gateway/v1/media/jobs/ID",
+   "retry_after": null,
+   "status": 202
+  },
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "job": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  }
+ },
+ "busy_lease": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "content_url": "/gateway/v1/media/jobs/ID/content",
+    "created_at": 0,
+    "error": null,
+    "id": "ID",
+    "job_id": "ID",
+    "object": "media.job",
+    "poll_url": "/gateway/v1/media/jobs/ID",
+    "status": "queued",
+    "updated_at": 0,
+    "workflow_id": "mesh.generate.trellis-2"
+   },
+   "location": "/gateway/v1/media/jobs/ID",
+   "retry_after": null,
+   "status": 202
+  },
+  "first_job": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  },
+  "second_sync": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "resource_unavailable",
+     "message": "The job failed.",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": "30",
+   "status": 503
+  },
+  "third_async": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "content_url": "/gateway/v1/media/jobs/ID/content",
+    "created_at": 0,
+    "error": null,
+    "id": "ID",
+    "job_id": "ID",
+    "object": "media.job",
+    "poll_url": "/gateway/v1/media/jobs/ID",
+    "status": "queued",
+    "updated_at": 0,
+    "workflow_id": "mesh.generate.trellis-2"
+   },
+   "location": "/gateway/v1/media/jobs/ID",
+   "retry_after": null,
+   "status": 202
+  },
+  "third_job": {
+   "cancel_requested": false,
+   "error_category": "capacity",
+   "error_code": "resource_unavailable",
+   "results": {},
+   "retryable": true,
+   "status": "failed"
+  }
+ },
+ "cancel_finished": {
+  "after": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  },
+  "before": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  },
+  "cancel": {
+   "refused": "This job has already finished"
+  },
+  "cancel_again": {
+   "refused": "This job has already finished"
+  },
+  "claims_left": 0,
+  "created": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "content_url": "/gateway/v1/media/jobs/ID/content",
+    "created_at": 0,
+    "error": null,
+    "id": "ID",
+    "job_id": "ID",
+    "object": "media.job",
+    "poll_url": "/gateway/v1/media/jobs/ID",
+    "status": "queued",
+    "updated_at": 0,
+    "workflow_id": "mesh.generate.trellis-2"
+   },
+   "location": "/gateway/v1/media/jobs/ID",
+   "retry_after": null,
+   "status": 202
+  },
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ]
+ },
+ "cancel_running": {
+  "after": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {},
+   "retryable": null,
+   "status": "canceled"
+  },
+  "cancel": {
+   "cancel_requested": true,
+   "status": "running"
+  },
+  "cancel_again": {
+   "cancel_requested": true,
+   "status": "running"
+  },
+  "claims_left": 0,
+  "created": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "content_url": "/gateway/v1/media/jobs/ID/content",
+    "created_at": 0,
+    "error": null,
+    "id": "ID",
+    "job_id": "ID",
+    "object": "media.job",
+    "poll_url": "/gateway/v1/media/jobs/ID",
+    "status": "queued",
+    "updated_at": 0,
+    "workflow_id": "mesh.generate.trellis-2"
+   },
+   "location": "/gateway/v1/media/jobs/ID",
+   "retry_after": null,
+   "status": 202
+  },
+  "during": {
+   "cancel_requested": true,
+   "error_category": null,
+   "error_code": null,
+   "results": {},
+   "retryable": null,
+   "status": "running"
+  },
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "pool_held_after": false
+ },
+ "disconnect": {
+  "after": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  },
+  "claims_left": 0,
+  "created": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "content_url": "/gateway/v1/media/jobs/ID/content",
+    "created_at": 0,
+    "error": null,
+    "id": "ID",
+    "job_id": "ID",
+    "object": "media.job",
+    "poll_url": "/gateway/v1/media/jobs/ID",
+    "status": "queued",
+    "updated_at": 0,
+    "workflow_id": "mesh.generate.trellis-2"
+   },
+   "location": "/gateway/v1/media/jobs/ID",
+   "retry_after": null,
+   "status": 202
+  },
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   },
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "sync_walkaway": {
+   "pool_free_after": true,
+   "pool_held_while_gone": true
+  },
+  "while_running": {
+   "job": {
+    "cancel_requested": false,
+    "error_category": null,
+    "error_code": null,
+    "results": {},
+    "retryable": null,
+    "status": "running"
+   },
+   "pool_held": true
+  }
+ },
+ "engine_failure": {
+  "claims_left": 0,
+  "engine_502": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "upstream_error",
+     "message": "The job failed.",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 502
+  },
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   },
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   },
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "engine_unreachable": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "upstream_unavailable",
+     "message": "The job failed.",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 502
+  },
+  "job_after_502": {
+   "cancel_requested": false,
+   "error_category": "upstream",
+   "error_code": "upstream_error",
+   "results": {},
+   "retryable": false,
+   "status": "failed"
+  }
+ },
+ "health_503": {
+  "answer": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "service_unavailable",
+     "message": "The job failed.",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 503
+  },
+  "claims_left": 0,
+  "engine_requests": []
+ },
+ "observer_refusal": {
+  "answer": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "resource_unavailable",
+     "message": "The job failed.",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": "30",
+   "status": 503
+  },
+  "claims_left": 0,
+  "engine_requests": []
+ },
+ "policy_refusal": {
+  "answer": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "not_in_access_plan",
+     "details": {
+      "plans": [
+       "plan_test"
+      ],
+      "side": "person"
+     },
+     "message": "3D models isn't in your access plan.",
+     "type": "access_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 403
+  },
+  "claims_left": 0,
+  "engine_requests": []
+ },
+ "queued_behind": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjENCi0tQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0iaW1hZ2UiOyBmaWxlbmFtZT0iaW5wdXQucG5nIg0KQ29udGVudC1UeXBlOiBpbWFnZS9wbmcNCg0KiVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0KLS1CT1VOREFSWS0tDQo=",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   },
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjINCi0tQk9VTkRBUlkNCkNvbnRlbnQtRGlzcG9zaXRpb246IGZvcm0tZGF0YTsgbmFtZT0iaW1hZ2UiOyBmaWxlbmFtZT0iaW5wdXQucG5nIg0KQ29udGVudC1UeXBlOiBpbWFnZS9wbmcNCg0KiVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0KLS1CT1VOREFSWS0tDQo=",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first_job": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  },
+  "second_job": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {
+    "mesh": {
+     "count": 1,
+     "kind": "assets"
+    }
+   },
+   "retryable": null,
+   "status": "succeeded"
+  },
+  "waiting": {
+   "cancel_requested": false,
+   "error_category": null,
+   "error_code": null,
+   "results": {},
+   "retryable": null,
+   "status": "queued"
+  }
+ },
+ "replay_conflict": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "retry_after": null,
+   "status": 200
+  },
+  "second": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "idempotency_conflict",
+     "message": "this Idempotency-Key was used for a different request",
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 409
+  }
+ },
+ "replay_same": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "retry_after": null,
+   "status": 200
+  },
+  "second": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "retry_after": null,
+   "status": 200
+  }
+ },
+ "service_problem": {
+  "absent": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "binding_unavailable",
+     "message": "workflow mesh.generate.trellis-2 cannot start a run: binding_unavailable",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 503
+  },
+  "claims_left": 0,
+  "disabled": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "binding_unavailable",
+     "message": "workflow mesh.generate.trellis-2 cannot start a run: binding_unavailable",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 503
+  },
+  "engine_requests": [],
+  "no_pool_policy": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "binding_unavailable",
+     "message": "workflow mesh.generate.trellis-2 cannot start a run: binding_unavailable",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 503
+  }
+ },
+ "success_raw": {
+  "answer": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "retry_after": null,
+   "status": 200
+  },
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ]
+ },
+ "success_sync": {
+  "answer": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "created": 0,
+    "data": [
+     {
+      "b64_json": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+      "media_type": "model/gltf-binary"
+     }
+    ]
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 200
+  },
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9InNlZWQiDQoNCjQyDQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ]
+ },
+ "validation_refusal": {
+  "claims_left": 0,
+  "engine_requests": [],
+  "missing_image": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "missing_input",
+     "message": "Missing required input: image",
+     "param": "image",
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 400
+  },
+  "not_a_picture": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "invalid_inputs",
+     "message": "the run request is not valid",
+     "problems": [
+      {
+       "code": "media_type",
+       "message": "this media type is not accepted",
+       "path": [
+        "media",
+        "image",
+        0
+       ],
+       "pointer": "/media/image/0"
+      }
+     ],
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 422
+  },
+  "not_multipart": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "invalid_request_body",
+     "message": "The request body is not valid multipart/form-data",
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 400
+  },
+  "seed_negative": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "invalid_inputs",
+     "message": "the run request is not valid",
+     "problems": [
+      {
+       "code": "value_invalid",
+       "message": "seed must be >= 0",
+       "path": [
+        "inputs",
+        "seed"
+       ],
+       "pointer": "/inputs/seed"
+      }
+     ],
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 422
+  }
+ },
+ "wait_timeout": {
+  "claims_left": 0,
+  "engine_requests": [],
+  "job": {
+   "cancel_requested": false,
+   "error_category": "timeout",
+   "error_code": "upstream_timeout",
+   "results": {},
+   "retryable": false,
+   "status": "failed"
+  },
+  "sync": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "upstream_timeout",
+     "message": "The job failed.",
+     "type": "api_error"
+    }
+   },
+   "location": null,
+   "retry_after": null,
+   "status": 504
+  }
+ }
+}
