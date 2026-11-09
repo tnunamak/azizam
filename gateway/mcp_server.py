@@ -58,6 +58,7 @@ from urllib.parse import quote, urlsplit
 
 from PIL import Image, ImageOps
 
+from gateway.problem_report_tool import INSTRUCTION as REPORT_INSTRUCTION, REPORT_HINT, TOOL as REPORT_TOOL
 from gateway.stt_samples import RIGHTS_CAVEAT
 
 from fastapi import FastAPI, Request, Response
@@ -92,7 +93,8 @@ INSTRUCTIONS = (
     "(image, video, music, sfx, speech), `capabilities` with `target` for typed "
     "inputs, `run` to generate, `job` to poll slow work, and `view_asset` to inspect "
     "a reduced image preview. Results are signed URLs. "
-    "`rename_app` and `rename_key` rename the signed-in person's own apps and keys."
+    "`rename_app` and `rename_key` rename the signed-in person's own apps and keys. "
+    + REPORT_INSTRUCTION
 )
 
 DEFAULT_WAIT_SECONDS = 30
@@ -158,6 +160,11 @@ class McpDeps:
     rename: Callable[[Request, Any, str, Mapping[str, Any]], dict[str, Any]] | None = None
     retention_ledger: Callable[[Request, Any, str | None], dict[str, Any] | None] | None = None
     retention_visible: Callable[[Request, Any], bool] = lambda _request, _auth: False
+    # ``report_problem`` (gateway/problem_reports.py): (request, auth, arguments) -> the reply, or a ``CallError``.
+    # ``None`` means this host takes no reports and the tool is not listed. ``note_failure`` is told about each failed
+    # ``run`` or ``job`` so a later report can carry it (request, auth, facts).
+    problem_report: Callable[[Request, Any, Mapping[str, Any]], Awaitable[dict[str, Any]]] | None = None
+    note_failure: Callable[[Request, Any, Mapping[str, Any]], None] | None = None
 
 
 # ------------------------------------------------------------------ JSON-RPC
@@ -355,6 +362,8 @@ TOOLS.append({
     }, "required": ["action"], "additionalProperties": False},
     "annotations": {"readOnlyHint": False, "idempotentHint": True, "openWorldHint": False},
 })
+
+TOOLS.append(REPORT_TOOL)
 
 # ------------------------------------------------------------------ result I/O
 
@@ -974,6 +983,22 @@ def _tool_argument_error(message: str, version: str) -> dict[str, Any]:
     return tool_result({"status": "error", "error": message}, is_error=True, version=version)
 
 
+def _with_report_hint(deps: McpDeps, request: Request, auth: Any, tool: str, args: Mapping[str, Any],
+                      payload: dict[str, Any], error: Any, code: Any, category: Any, http_status: Any) -> dict[str, Any]:
+    """Tell the gateway about a failed ``run`` or ``job`` and put the reminder in the failure the agent is reading."""
+    if deps.problem_report is None:
+        return payload
+    if deps.note_failure is not None:
+        try:
+            deps.note_failure(request, auth, {
+                "tool": tool, "target": payload.get("target") or args.get("target"),
+                "job_id": payload.get("job_id") or args.get("job_id"), "error": error, "code": code,
+                "category": category, "http_status": http_status, "retryable": payload.get("retryable")})
+        except Exception:  # noqa: BLE001 - noting a failure must never change the failure
+            pass
+    return {**payload, "report_hint": REPORT_HINT}
+
+
 async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
                     version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
@@ -986,6 +1011,18 @@ async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args:
             return tool_result(await deps.stt_measurement(request, auth, args), version=version)
         except CallError as error:
             return tool_result({"status": "error", "error": str(error), **error.details}, is_error=True, version=version)
+    if name == REPORT_TOOL["name"]:
+        if deps.problem_report is None:
+            return tool_result({"status": "error", "error": "This gateway does not take problem reports."},
+                               is_error=True, version=version)
+        try:
+            return tool_result(await deps.problem_report(request, auth, args), version=version)
+        except CallError as exc:
+            return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True, version=version)
+        except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
+            print(f"[mcp] tool {name} failed: {type(exc).__name__}", flush=True)
+            return tool_result({"status": "error", "error": "the gateway could not take this report"},
+                               is_error=True, version=version)
     if name == "view_asset":
         try:
             payload, preview = await _view_asset(deps, request, auth, args)
@@ -1005,10 +1042,17 @@ async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args:
         # A canceled job is a valid outcome, including an explicit cancel request.
         payload = await handler(args)
         previews = await _image_preview_blocks(deps, request, auth, payload)
+        if payload.get("status") == "failed":
+            payload = _with_report_hint(deps, request, auth, name, args, payload, payload.get("error"),
+                                        payload.get("error_code"), payload.get("error_category"), None)
         return tool_result(payload, is_error=payload.get("status") == "failed", version=version,
                            image_previews=previews)
     except CallError as exc:
-        return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True, version=version)
+        payload = {"status": "error", "error": str(exc), **exc.details}
+        if exc.details.get("http_status") is not None:  # the core refused or failed it; a bad argument is not reported
+            payload = _with_report_hint(deps, request, auth, name, args, payload, str(exc), exc.details.get("code"),
+                                        None, exc.details.get("http_status"))
+        return tool_result(payload, is_error=True, version=version)
     except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
         print(f"[mcp] tool {name} failed: {type(exc).__name__}: {exc}", flush=True)
         return tool_result({"status": "error", "error": "the adapter hit an unexpected error; see the gateway log"},
@@ -1093,6 +1137,8 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
         listed_tools = []
         for tool in TOOLS:
             if tool["name"] == "stt_measurement" and not owner_can_measure:
+                continue
+            if tool["name"] == REPORT_TOOL["name"] and deps.problem_report is None:
                 continue
             if tool["name"] == "requests" and can_read_ledger:
                 # Keep the old operator ledger action available only to callers who can read it.
