@@ -65,6 +65,10 @@ def long_mp4_bytes(color: str = "black") -> bytes:
 
 def _run(tmp_path: Path, name: str, setup, drive) -> GatewayRig:
     with GatewayRig(name, tmp_path) as rig:
+        # The run core keeps its job spool and slots between tests; each test gets its own, built from its own directories.
+        rig.monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", None)
+        rig.monkeypatch.setattr(proxy, "_workflow_core_cache", None)
+        rig.monkeypatch.setattr(proxy, "_workflow_run_semaphore", None)
         setup(rig)
         asyncio.run(drive(rig))
         return rig
