@@ -51,8 +51,8 @@ def catalog(intent, **kwargs):
          ("/gateway/v1/media/jobs", "application/json", "demo"), "async"),
         ("mesh.generate", ("/v1/3d/generations/glb", "multipart/form-data", None),
          ("/v1/3d/generations/glb", "multipart/form-data", None), "async"),
-        ("speech.synthesis", None, None, "sync"),
-        ("future.unknown", None, None, "sync"),
+        ("speech.synthesis", None, None, None),
+        ("future.unknown", None, None, None),
     ],
 )
 def test_execution_route_words(intent, sync, submit, recommended):
