@@ -431,6 +431,20 @@ class RunRequest:
     # JSON-safe facts of the request the wire shows again later (a video's size and seconds): written once with the job, never
     # part of run identity, and kept out of the generic job view.
     facts: Mapping[str, Any] = field(default_factory=dict)
+    # The facts that wait for the job: filled in after the job is accepted (see ``FactRef``). Not part of run identity.
+    fact_refs: tuple["FactRef", ...] = ()
+
+
+@dataclass(frozen=True)
+class FactRef:
+    """A fact the shape cannot know before the job exists. The producer is the shape (``RunRequest.fact_refs``); the consumer is
+    ``workflow_run.resolve_fact_refs``, which runs after the job is accepted and before it is processed. ``source`` is
+    ``"job_id"`` (``prefix`` + the job id: the id the wire shows) or ``"generated:<input>"`` (the value the core drew for that
+    input). A ref is never part of run identity: a replay without the value is still the same request."""
+
+    path: tuple[str, ...]         # where the value goes in the facts
+    source: str
+    prefix: str = ""
 
 
 @dataclass(frozen=True)

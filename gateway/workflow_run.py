@@ -21,7 +21,7 @@ import logging
 import secrets
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +40,7 @@ from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
     DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SERVICE_UNREACHABLE, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
-    CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
+    CallerContext, FactRef, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
     ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
 )
 
@@ -433,6 +433,27 @@ class _AdmissionLost(Exception):
     def __init__(self, refused: "RunRefused") -> None:
         super().__init__(refused.code)
         self.refused = refused
+
+
+def resolve_fact_refs(facts: Mapping[str, Any], refs: Sequence[FactRef], *, job_id: str,
+                      generated: Mapping[str, Any]) -> dict[str, Any]:
+    """The request facts with every ``FactRef`` filled: the wire id of the job, or the value drawn for a generated input. A ref
+    whose value does not exist is left out of the facts (never a placeholder)."""
+    resolved = plain(facts)
+    for ref in refs:
+        if ref.source == "job_id":
+            value: Any = f"{ref.prefix}{job_id}"
+        elif ref.source.startswith("generated:"):
+            value = generated.get(ref.source.split(":", 1)[1])
+            if value is None:
+                continue
+        else:
+            raise ValueError(f"unknown fact source {ref.source!r}")
+        node = resolved
+        for key in ref.path[:-1]:
+            node = node.setdefault(key, {})
+        node[ref.path[-1]] = value
+    return resolved
 
 
 class WorkflowRunCore:

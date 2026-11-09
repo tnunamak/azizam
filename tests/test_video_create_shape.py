@@ -167,8 +167,7 @@ def test_a_request_without_size_seconds_or_seed_uses_the_manifest_defaults_and_d
     run_request = read({"prompt": "x", "model": "ltx-2.5-t2v"})
     assert (run_request.inputs["width"], run_request.inputs["height"]) == (960, 512)
     assert run_request.facts["seconds"] == "5" and run_request.inputs["length"] == 121
-    assert isinstance(run_request.inputs["seed"], int) and run_request.facts["seed"] == run_request.inputs["seed"]
-    assert read({"prompt": "x", "model": "ltx-2.5-t2v"}).inputs["seed"] != run_request.inputs["seed"]
+    assert "seed" not in run_request.inputs and "seed" not in run_request.facts          # the core draws it, once, after the claim
 
 
 def test_an_unreadable_size_is_cut_to_the_maximum_and_not_refused() -> None:
@@ -437,3 +436,32 @@ def _drive_background(db, tmp_path, adapter):
         return outcome
 
     return asyncio.run(go()), port
+
+
+# ------------------------------------------- the seed is drawn once by the core, and the facts learn it by a typed ref (review 4, 8)
+
+
+def test_two_creates_without_a_seed_are_one_request_for_the_idempotency_key() -> None:
+    from gateway.workflow_kernel import run_identity
+    first, second = (read({"prompt": "x", "model": "ltx-2.5-t2v"}) for _ in range(2))
+    assert run_identity("scope", "maker", first) == run_identity("scope", "maker", second)
+    seeded = read({"prompt": "x", "model": "ltx-2.5-t2v", "seed": 3})
+    assert run_identity("scope", "maker", seeded) != run_identity("scope", "maker", first)       # an explicit seed is an input
+
+
+def test_the_facts_wait_for_the_wire_id_and_the_drawn_seed_by_named_refs_that_never_enter_identity() -> None:
+    from gateway.workflow_kernel import run_identity
+    from gateway.workflow_run import resolve_fact_refs
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v"})
+    assert run_request.facts["provenance"]["request_id"] is None and run_request.facts["provenance"]["seed"] is None
+    assert {(ref.path, ref.source) for ref in run_request.fact_refs} == {
+        (("provenance", "request_id"), "job_id"), (("seed",), "generated:seed"), (("provenance", "seed"), "generated:seed")}
+    resolved = resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={"seed": 11})
+    assert resolved["seed"] == 11 and resolved["provenance"]["seed"] == 11 and resolved["provenance"]["request_id"] == "video_mj_a"
+    assert run_request.facts["provenance"]["request_id"] is None                       # the request itself is not changed
+    import dataclasses
+    assert run_identity("s", "m", dataclasses.replace(run_request, fact_refs=())) == run_identity("s", "m", run_request)
+    explicit = read({"prompt": "x", "model": "ltx-2.5-t2v", "seed": 5})
+    assert explicit.facts["seed"] == 5 and explicit.facts["provenance"]["seed"] == 5
+    assert all(ref.source != "generated:seed" for ref in explicit.fact_refs)
+    assert resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={})["provenance"]["seed"] is None

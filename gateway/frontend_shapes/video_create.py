@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import random
 import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
@@ -22,7 +21,7 @@ from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import LegacyRoute
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE, detect_unknown_top_level_fields
 from gateway.video_extensions import STANDARD_VIDEO_CREATE_FIELDS
-from gateway.workflow_runtime_types import FrontendRow, RegistrySnapshot, RequestSpool, RunRequest, WorkflowEntry
+from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapshot, RequestSpool, RunRequest, WorkflowEntry
 
 if TYPE_CHECKING:
     from gateway.frontend_shapes.shapes import OpenAIVideoCreate
@@ -173,15 +172,21 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     length = video_grid.seconds_to_length(seconds_value, manifest.fps, step=manifest.step, offset=manifest.offset,
                                           min_frames=manifest.min_frames, max_frames=manifest.max_frames)
     actual_seconds = round(length / manifest.fps, 4)
-    try:
-        seed = int(body["seed"]) if body.get("seed") is not None else random.randint(0, 2**32 - 1)
-    except (TypeError, ValueError):
-        seed = random.randint(0, 2**32 - 1)
+    # An omitted seed stays out of the request: the core draws it once, inside the claimed transaction, so two requests that
+    # differ only by a missing seed are one request for the idempotency key. The drawn value reaches the facts by a ref.
+    seed: int | None = None
+    if body.get("seed") is not None:
+        try:
+            seed = int(body["seed"])
+        except (TypeError, ValueError):
+            seed = None
     size = f"{width}x{height}"
     seconds_text = str(int(seconds_value)) if seconds_value.is_integer() else str(seconds_value)
 
     media: Mapping[str, Any] = {}
-    inputs: dict[str, Any] = {"prompt": prompt, "seed": seed}
+    inputs: dict[str, Any] = {"prompt": prompt}
+    if seed is not None:
+        inputs["seed"] = seed
     roles = manifest.roles
 
     def put(role: str, value: Any) -> None:
@@ -215,11 +220,16 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
                   "actual_seconds": actual_seconds, "length_frames": length}
     facts: dict[str, Any] = {
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
-        "length_frames": length, "frame_rate": manifest.fps, "seed": seed,
+        "length_frames": length, "frame_rate": manifest.fps,
         "provenance": provenance.build_provenance_record(
             kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
-            seed=seed, parameters=parameters, request_id="{wire_id}", created_at=now)}
+            seed=seed, parameters=parameters, request_id=None, created_at=now)}
+    if seed is not None:
+        facts["seed"] = seed
+    refs = [FactRef(("provenance", "request_id"), "job_id", shape.wire_id(""))]
+    if seed is None:
+        refs += [FactRef(("seed",), f"generated:{roles.get('seed', 'seed')}"), FactRef(("provenance", "seed"), f"generated:{roles.get('seed', 'seed')}")]
     if audio_off:
         facts[video_controls.AUDIO_CONTROL] = False
     if context is not None and context.requested_mode:
@@ -236,4 +246,4 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         idempotency_key=request.headers.get(IDEMPOTENCY_HEADER) or None, frontend_id=row.id,
         failure_text=row.job_failure_text, retries=row.job_retries,
         extensions=dict(extensions) if isinstance(extensions, Mapping) else {},
-        prompt_retention=hooks.prompt_retention(caller, body), submit_wait_s=SUBMIT_WAIT_S)
+        prompt_retention=hooks.prompt_retention(caller, body), submit_wait_s=SUBMIT_WAIT_S, fact_refs=tuple(refs))
