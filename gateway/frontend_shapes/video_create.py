@@ -208,6 +208,7 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     caller = getattr(request.state, "caller", None)
     request.state.input_notes = _wire.begin_notes()
     request.state.receipt_facts = _wire.begin_facts()
+    hooks.note_policy(caller)
     body = await read_body(shape, request)
     if isinstance(body, Response):
         return body

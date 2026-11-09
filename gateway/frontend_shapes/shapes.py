@@ -563,6 +563,9 @@ class VideoHooks:
         """The workflow name a public model name stands for (or the refusal the deployment gives for it)."""
         return name
 
+    def note_policy(self, caller: Any) -> None:
+        """Put the route policy's decision on the request's receipt, before the body is read (a refusal of the body keeps it)."""
+
     def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
         """Read the delivery controls of the body (metadata mode, prompt keeping); a Response refuses the request."""
         return None

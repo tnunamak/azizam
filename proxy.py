@@ -27350,6 +27350,12 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             return VIDEO_ALIASES.get(candidate.lower(), effective)
         return effective
 
+    def note_policy(self, caller: Any) -> None:
+        receipt = _ROW_RECEIPT.get()
+        policy = DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/videos") or _row_route_policy("/v1/videos")
+        if receipt is not None and policy is not None and isinstance(caller, AuthContext):
+            evaluate_and_apply(caller.identity, make_policy_request(**policy), receipt)
+
     def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
         _begin_media_delivery(caller, _ROW_RECEIPT.get())
         return _note_media_metadata_body(body)
