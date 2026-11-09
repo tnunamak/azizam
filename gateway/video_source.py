@@ -50,16 +50,16 @@ async def resolve_source(job_id: str, wire_id: str, caller: Any, jobs: Any, *,
                          probe: Callable[[bytes], Mapping[str, Any]] = probe_asset) -> VideoSource | SourceRefused:
     """The source a finished job holds, refused as the old source loader refused it: unknown or not the caller's, 404
     ``video_id not found``; not finished, 400 ``Source video is not completed (status=<word>)`` with code ``video_not_ready``;
-    a finished job with no stored clip, 404. The param of each is ``video``."""
+    a finished job with no stored clip, 404. The shape names the request field each one is about."""
     view = await asyncio.to_thread(jobs.get, job_id, caller)
     if view is None:
-        return SourceRefused(404, "video_id not found", param="video")
+        return SourceRefused(404, "video_id not found")
     if view.status != "succeeded":
         return SourceRefused(400, f"Source video is not completed (status={WIRE_STATUS.get(view.status, 'queued')})",
-                             param="video", code="video_not_ready")
+                             code="video_not_ready")
     ref = next((r for r in (view.results or ()) if r.asset_id and r.media_type != "application/json"), None)
     if ref is None:
-        return SourceRefused(404, "video_id not found", param="video")
+        return SourceRefused(404, "video_id not found")
     facts_of = getattr(jobs, "request_facts", None)
     facts = await asyncio.to_thread(facts_of, job_id, caller) if facts_of is not None else None
     asked = getattr(facts, "facts", None) or {}

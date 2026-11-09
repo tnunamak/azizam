@@ -599,7 +599,7 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         if found is None:
             return _wire.error_response(404, f"{self.wire_name}_id not found", param=self.wire_name)
         if hasattr(found, "http_status"):
-            return _wire.error_response(found.http_status, found.message, param=found.param, code=found.code)
+            return _wire.error_response(found.http_status, found.message, param=self.wire_name, code=found.code)
         inputs = {name: value for name, value in run.inputs.items() if name != self.wire_name}
         # The clip is what its file shows: the run keeps the source's own frame rate, and cannot ask for more seconds than it holds.
         if found.fps and _wire.declared(entry, "frame_rate"):

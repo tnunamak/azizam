@@ -692,7 +692,7 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
     class Hooks(shapes.VideoHooks):
         async def source(self, job_id, wire_id, caller):
             if job_id == "mj_open":
-                return SourceRefused(400, "Source video is not completed (status=queued)", param="video", code="video_not_ready")
+                return SourceRefused(400, "Source video is not completed (status=queued)", code="video_not_ready")
             return VideoSource(wire_id=wire_id, asset_id="asset-1", model="m", resolved_model="video-m", fps=30.0, size="1280x704",
                                seconds=4.2, has_audio=True)
 

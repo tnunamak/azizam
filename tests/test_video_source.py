@@ -43,6 +43,6 @@ def test_a_clip_that_cannot_be_probed_has_unknown_properties_never_the_requested
 def test_an_unknown_unfinished_or_clipless_job_is_refused() -> None:
     assert _resolve(Jobs(None)).http_status == 404
     unfinished = _resolve(Jobs(_view("running")))
-    assert (unfinished.http_status, unfinished.message, unfinished.code, unfinished.param) == (
-        400, "Source video is not completed (status=in_progress)", "video_not_ready", "video")      # the old loader's words
+    assert (unfinished.http_status, unfinished.message, unfinished.code) == (
+        400, "Source video is not completed (status=in_progress)", "video_not_ready")      # the old loader's words
     assert _resolve(Jobs(_view(asset=None))).http_status == 404
