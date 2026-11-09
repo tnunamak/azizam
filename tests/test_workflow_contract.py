@@ -760,6 +760,24 @@ def test_schema_one_capability_data_is_validated_before_use(tmp_path, monkeypatc
         convert_1_to_2({"schema_version": 1, "intent": "image.edit"})
 
 
+@pytest.mark.parametrize("field, message", [
+    ("prefix", r"prefixes\[0\]\.prefix"),
+    ("capability", r"prefixes\[0\]\.capability"),
+    ("default", "default"),
+])
+@pytest.mark.parametrize("control", ["\t", "\r", "\n"], ids=["tab", "CR", "LF"])
+def test_schema_one_capability_data_refuses_embedded_controls(tmp_path, monkeypatch, field, message, control):
+    rules = _capability_prefix_rules()
+    target = rules if field == "default" else rules["prefixes"][0]
+    original = target[field]
+    target[field] = original[:2] + control + original[2:]
+    path = _use_capability_prefix_file(tmp_path, monkeypatch, rules)
+    # The default must be validated even though image.edit matches the first row.
+    with pytest.raises(ValueError, match=message + r".*tab, CR or LF") as caught:
+        convert_1_to_2({"schema_version": 1, "intent": "image.edit"})
+    assert str(path) in str(caught.value)
+
+
 @pytest.mark.parametrize("text, message", [
     ("[]", "must be a mapping"),
     ("schema_version: [", "cannot read"),
