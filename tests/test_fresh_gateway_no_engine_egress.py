@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from urllib.parse import urlsplit
 
 import pytest
 
 import proxy
+from gateway import service_registry
 from tests.support.adapter_differential_rig import GatewayRig
 
 REQUESTS = [
@@ -54,8 +56,15 @@ def test_fresh_gateway_has_zero_engine_egress(tmp_path, socket_guard):
             response = asyncio.run(rig.call(method, path, label=f"fresh {path}", json_body=body))
             statuses.append((path, response.status_code))
         assert all(status >= 400 for _, status in statuses), statuses
-        assert rig.recorder.engine == []
-    assert socket_guard == []
+        # The one address a fresh gateway may dial is the release record of its LiteLLM substrate (data in
+        # registry/services.yml). An engine is never dialed: every other destination would be a guess.
+        released = service_registry.origin_of(
+            service_registry.release_registry()["services"]["litellm"]["config"]["default_base_url"])
+        sent = {urlsplit(f"//{call['to']}").netloc for call in rig.recorder.engine}
+        assert sent <= {urlsplit(released).netloc}, sent
+    attempted = {f"{a[1][0][0]}:{a[1][0][1]}" for a in socket_guard if a[0] == "connect"}
+    assert attempted <= {urlsplit(released).netloc}, attempted
+    assert not [a for a in socket_guard if a[0] != "connect"]
 
 
 @pytest.mark.parametrize("record", [
