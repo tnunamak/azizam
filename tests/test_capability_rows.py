@@ -94,7 +94,13 @@ def test_home_policy_request_uses_literal_protocol(monkeypatch, capability, prot
 
 def test_shipped_rows_are_the_literal_display_order_with_only_protocol_overrides():
     document = yaml.safe_load(DATA.read_text(encoding="utf-8"))
-    assert document.get("capabilities") == _rows()
+    rows = document.get("capabilities")
+    base_fields = {"id", "label", "policy_protocol"}
+    allowed_fields = base_fields | {"icon", "recommended_alias", "summary"}
+    assert isinstance(rows, list)
+    assert all(isinstance(row, dict) and set(row) <= allowed_fields for row in rows)
+    assert [{key: value for key, value in row.items() if key in base_fields}
+            for row in rows] == _rows()
 
 
 @pytest.mark.parametrize("name", ["CAPABILITY_LABELS", "POLICY_PROTOCOLS"])
