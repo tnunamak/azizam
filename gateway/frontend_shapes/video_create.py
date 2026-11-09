@@ -209,7 +209,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     except (TypeError, ValueError):
         return refuse(400, "seconds must be a number")
     if seconds_value < limits.min_seconds or seconds_value > limits.max_seconds:
-        return refuse(400, f"seconds must be between {limits.min_seconds} and {limits.max_seconds} for model {name}")
+        return refuse(400, f"seconds must be between {float(limits.min_seconds)} and {float(limits.max_seconds)} for model {name}")
     if body.get("size") is not None and not isinstance(body["size"], str):
         return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
     width, height = video_grid.resolve_size(body.get("size"), manifest.size)

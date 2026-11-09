@@ -27,7 +27,7 @@ from gateway import frontend_shapes
 from gateway.frontend_shapes import RowError, bundled_rows, parse_rows
 from gateway.frontend_shapes import _base, shapes
 from gateway.workflow_run import BindingAvailability
-from gateway.workflow_runtime_types import RunJobView, RunRefused
+from gateway.workflow_runtime_types import RunJobView, RunRefused, RunRequest
 from tests.test_frontend_shapes import FakeSpool, json_request, make_request
 from tests.test_workflow_run import Caller, make_core, request as core_request, run, snapshot as core_snapshot  # noqa: F401
 from tests.test_workflow_run import CONTRACT, db  # noqa: F401
