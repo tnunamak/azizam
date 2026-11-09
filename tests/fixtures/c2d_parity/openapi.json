@@ -50,6 +50,1045 @@
       }
     }
   },
+  "path_operations": {
+    "/gateway/v1/media/jobs": {
+      "bytes": 3721,
+      "full": {
+        "post": {
+          "description": "Async route for image, audio and video generation. Poll `GET /gateway/v1/media/jobs/{job_id}` until `status` is terminal (`succeeded`, `failed`, `canceled`), then fetch `/gateway/v1/media/jobs/{job_id}/content` for signed asset URLs.",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "intent": {
+                      "enum": [
+                        "image.generate",
+                        "audio.generate",
+                        "music.generate",
+                        "sfx.generate",
+                        "video.generate"
+                      ],
+                      "type": "string"
+                    },
+                    "request": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/ImageGenerationRequest"
+                        },
+                        {
+                          "$ref": "#/components/schemas/AudioGenerationRequest"
+                        },
+                        {
+                          "$ref": "#/components/schemas/VideoGenerationRequest"
+                        }
+                      ],
+                      "description": "The body you would send to the matching sync route: `/v1/images/generations` (image.generate), `/v1/audio/generate` (audio.generate, music.generate, sfx.generate) or `/v1/videos` (video.generate)."
+                    }
+                  },
+                  "required": [
+                    "intent",
+                    "request"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "202": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          },
+          "summary": "Submit durable async media work"
+        }
+      },
+      "sha256": "af1f1ef47b932fa90cc3302548a012fe2f81ea9add0613cd69742b59dbaad5f5"
+    },
+    "/gateway/v1/media/jobs/image-generations": {
+      "bytes": 2359,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerationRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "202": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job accepted. Poll `poll_url`."
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          }
+        }
+      },
+      "sha256": "76927474d0f5a3592b599df29bfb854980935094fdcad0e3226553d203b14686"
+    },
+    "/gateway/v1/media/jobs/{job_id}": {
+      "bytes": 533,
+      "full": {
+        "get": {
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJob"
+                  }
+                }
+              },
+              "description": "Job state."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            }
+          }
+        }
+      },
+      "sha256": "a6adde5a331bcc53769605513bdacb6293b81acc8249a21f9d2ae5f917c18a27"
+    },
+    "/gateway/v1/media/jobs/{job_id}/content": {
+      "bytes": 1640,
+      "full": {
+        "get": {
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/MediaJobContent"
+                  }
+                }
+              },
+              "description": "Signed URLs of the finished assets."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "409": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Job not finished yet (`media_job_not_ready`)."
+            },
+            "410": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Output files are missing (`media_job_outputs_missing`)."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Output storage is temporarily unavailable (`media_job_outputs_unavailable`); retry later.",
+              "headers": {
+                "Retry-After": {
+                  "description": "Seconds before retrying.",
+                  "schema": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "sha256": "2ccfdba86a41f4a90e3142b86b67ee2dad4ef74112040ddebd66108ba92ce9c7"
+    },
+    "/gateway/v1/workflows/{workflow_id}/run": {
+      "bytes": 3086,
+      "full": {
+        "post": {
+          "description": "Starts a media job for the workflow with this full id (`GET /gateway/v1/workflows` lists them) and answers the job: 202 while it is queued or running, with its address in `Location`. Read it at `GET /gateway/v1/media/jobs/{job_id}` and its output at `GET /gateway/v1/media/jobs/{job_id}/content`. `Prefer: wait=N` waits up to N seconds for the job to end before it answers. Each video-edit workflow also has a concrete path below with its exact form fields.",
+          "requestBody": {
+            "content": {
+              "multipart/form-data": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkflowForm_video_edit_rife_interpolate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowForm_video_edit_scail_2_replace"
+                    }
+                  ]
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object"
+                  }
+                }
+              },
+              "description": "The job, ended within `Prefer: wait`."
+            },
+            "202": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object"
+                  }
+                }
+              },
+              "description": "The job, queued or running; `Location` is its address."
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          },
+          "summary": "Run a workflow by its full id"
+        }
+      },
+      "sha256": "5d2044e1473b977776a8ca301d09c2a2fe8c3f0e7a932c7eec1229321ae59366"
+    },
+    "/openai/v1/audio/generate": {
+      "bytes": 1593,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "0654bd9012b4e4b429165c9e82e7851afa63be9169b495bfcd350bbccfbf6df9"
+    },
+    "/openai/v1/images/edits": {
+      "bytes": 96,
+      "full": {
+        "post": {
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "4eb8e501612f9d4780e0f85941638b5bd777fd7b08ce6b3719c3323680512eed"
+    },
+    "/openai/v1/images/generations": {
+      "bytes": 1593,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "0654bd9012b4e4b429165c9e82e7851afa63be9169b495bfcd350bbccfbf6df9"
+    },
+    "/openai/v1/videos": {
+      "bytes": 1828,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          },
+          "x-azizam-async": {
+            "content": "GET /v1/videos/{video_id}/content",
+            "poll": "GET /v1/videos/{video_id}",
+            "statuses": [
+              "queued",
+              "in_progress",
+              "completed",
+              "failed"
+            ]
+          }
+        }
+      },
+      "sha256": "ac6517bd7753b6047a92161af871ec824131f7a024d2400629dd52fe22e192b6"
+    },
+    "/openai/v1/videos/{video_id}/remix": {
+      "bytes": 2583,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "negative_prompt": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seconds": {
+                      "type": [
+                        "integer",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "size": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          }
+        }
+      },
+      "sha256": "6af9c719bd1e96f66033c98e648bb6e7a41c6a45a1f1bf2061b83adb7cc862f4"
+    },
+    "/v1/audio/generate": {
+      "bytes": 1593,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "0654bd9012b4e4b429165c9e82e7851afa63be9169b495bfcd350bbccfbf6df9"
+    },
+    "/v1/images/edits": {
+      "bytes": 96,
+      "full": {
+        "post": {
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "4eb8e501612f9d4780e0f85941638b5bd777fd7b08ce6b3719c3323680512eed"
+    },
+    "/v1/images/generations": {
+      "bytes": 1593,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          }
+        }
+      },
+      "sha256": "0654bd9012b4e4b429165c9e82e7851afa63be9169b495bfcd350bbccfbf6df9"
+    },
+    "/v1/videos": {
+      "bytes": 1828,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "extensions": {
+                      "additionalProperties": true,
+                      "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
+                      "properties": {
+                        "com.azizam.workflow": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux"
+                            },
+                            {
+                              "$ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song"
+                            }
+                          ],
+                          "description": "Inputs of the workflow named by `model`."
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            }
+          },
+          "x-azizam-async": {
+            "content": "GET /v1/videos/{video_id}/content",
+            "poll": "GET /v1/videos/{video_id}",
+            "statuses": [
+              "queued",
+              "in_progress",
+              "completed",
+              "failed"
+            ]
+          }
+        }
+      },
+      "sha256": "ac6517bd7753b6047a92161af871ec824131f7a024d2400629dd52fe22e192b6"
+    },
+    "/v1/videos/{video_id}/remix": {
+      "bytes": 2583,
+      "full": {
+        "post": {
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "model": {
+                      "type": "string"
+                    },
+                    "negative_prompt": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seconds": {
+                      "type": [
+                        "integer",
+                        "number",
+                        "string"
+                      ]
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "size": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "description": "ok"
+            },
+            "400": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Invalid input. `error.message` names the field and the rule."
+            },
+            "401": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Missing or invalid bearer token."
+            },
+            "403": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Not permitted by the app profile."
+            },
+            "404": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Unknown workflow, model, or job."
+            },
+            "502": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend failed while rendering."
+            },
+            "503": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                  }
+                }
+              },
+              "description": "Backend unavailable or disabled."
+            }
+          }
+        }
+      },
+      "sha256": "6af9c719bd1e96f66033c98e648bb6e7a41c6a45a1f1bf2061b83adb7cc862f4"
+    }
+  },
   "shared": {
     "bytes": 9613,
     "full": {

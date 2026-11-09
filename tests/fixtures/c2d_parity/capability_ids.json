@@ -2,6 +2,8 @@
   "capabilities_without_inner_endpoint": {
     "": [],
     "  chat  ": [],
+    "CHAT": [],
+    "Chat": [],
     "audio": [
       "audio"
     ],
@@ -150,6 +152,8 @@
   "capability_of_word": {
     "": "",
     "  chat  ": "chat",
+    "CHAT": "CHAT",
+    "Chat": "Chat",
     "audio": "audio",
     "audio.generate": "audio",
     "audio.speech": "speech",
@@ -249,6 +253,8 @@
       "/chat/completions",
       "/completions"
     ],
+    "CHAT": [],
+    "Chat": [],
     "audio": [],
     "audio.generate": [],
     "audio.speech": [],
@@ -393,6 +399,8 @@
   "offered_model_kinds": {
     "": [],
     "  chat  ": [],
+    "CHAT": [],
+    "Chat": [],
     "audio": [],
     "audio.generate": [],
     "audio.speech": [
@@ -489,6 +497,8 @@
   "words": [
     "",
     "  chat  ",
+    "CHAT",
+    "Chat",
     "audio",
     "audio.generate",
     "audio.speech",
