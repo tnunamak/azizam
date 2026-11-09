@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import json
 
 import pytest
@@ -22,6 +23,7 @@ import proxy
 from gateway import media_jobs as store_jobs
 from tests import test_adapter_differential as base
 from tests import test_adapter_differential_s7 as s7
+from tests.support import adapter_differential_deltas as deltas
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
 from tests.support.s7_parity_images_facts import (
@@ -44,11 +46,11 @@ ROW_PENDING = pytest.mark.xfail(strict=True, reason="row path pending: builder I
 
 
 
-def proposed(name):
-    """A difference that is not an approved delta (docs/design/CODE_TO_DATA_S7_PARITY.md section 4). Its case compares the
-    old route and the row with nothing masked and stays a strict xfail until the delta is approved and listed with its exact
-    leaf values; then the mark goes and the leaf delta is applied to the old value."""
-    return pytest.mark.xfail(strict=True, reason=f"PROPOSED delta {name}: not approved; compared with no delta applied")
+def with_deltas(old, case):
+    """The old route's observation with the approved differences of ``case`` applied (tests/support/adapter_differential_deltas.py,
+    ``MANIFEST['s7_parity_images/<case>']``). A delta that does not hold against the trace fails here; the row's observation
+    is never touched, and what the case's facts then compare is the old trace and the row's, difference for difference."""
+    return dataclasses.replace(old, trace=deltas.apply_deltas(old.trace, deltas.MANIFEST[f"s7_parity_images/{case}"]))
 
 
 FAILED = s7.FAILED_HISTORY
@@ -551,13 +553,12 @@ def test_images_E07_default_size_from_the_input_image(tmp_path):
     _edit_compare(old, row, ("size", lambda o: (doc(o) or {}).get("size")))
 
 
-@proposed("engine_session_id")
-def test_images_E07b_the_prompt_the_engine_got_has_no_session_id(tmp_path):
-    """PROPOSED ``engine_session_id``: the row's adapter adds the ``client_id`` its event watcher uses to the prompt; the old
-    edit route sent none. The prompts are compared whole."""
+def test_images_E07b_the_prompt_the_engine_got_differs_by_the_session_id_only(tmp_path):
+    """Delta ``engine_session_id``: the row's adapter adds the ``client_id`` its event watcher uses to the prompt; the old edit
+    route sent none. The prompts are compared whole, with that one leaf added to the old one."""
     old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
     old_has(old, "an answer", status(old) == 200)
-    assert_same(old, row, ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
+    assert_same(with_deltas(old, "E07b"), row, ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
 
 
 def test_images_E08_missing_prompt_400(tmp_path):
@@ -694,11 +695,10 @@ def test_images_E21b_masked_edit_facts_other_than_the_source(tmp_path):
     assert all(s["asset_id"] for x in origins(row) if x for s in x["sources"])
 
 
-@proposed("masked_edit_source")
 def test_images_E21c_masked_edit_source_is_the_upload(tmp_path):
-    """PROPOSED ``masked_edit_source``: when the workflow reads the mask in the picture's alpha the row folds the mask into
-    the picture before the run, and the Library keeps the folded picture as the result's source; the old route kept the
-    upload as sent. The origins and the stored files are compared whole."""
+    """When the workflow reads the mask in the picture's alpha the row folds the mask into the picture before the run; the
+    folded picture stays internal to the run and the Library keeps the upload as sent as the result's source, as the old
+    route did. The origins and the stored files are compared whole."""
     old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
     old_has(old, "a source", any((o or {}).get("sources") for o in origins(old)))
     assert_same(old, row, origins, asset_files)
@@ -742,12 +742,11 @@ def test_images_V05_delegated_prompt_workflow_and_denoise(tmp_path):
                 ("receipt", lambda o: receipt_work_fields(o, "resolved_workflow", "requested_workflow", "metadata")))
 
 
-@proposed("engine_session_id")
-def test_images_V05b_the_delegated_prompt_has_no_session_id(tmp_path):
-    """PROPOSED ``engine_session_id`` (see E07b): the delegated prompt is compared whole."""
+def test_images_V05b_the_delegated_prompt_differs_by_the_session_id_only(tmp_path):
+    """Delta ``engine_session_id`` (see E07b): the delegated prompt is compared whole, with that one leaf added."""
     old, row = pair(tmp_path, VAR, var_form(), variation_ok)
     old_has(old, "an answer", status(old) == 200)
-    assert_same(old, row, ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
+    assert_same(with_deltas(old, "V05b"), row, ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
 
 
 def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
@@ -872,13 +871,14 @@ def test_images_J03_metadata_control_is_checked(tmp_path):
     assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
 
 
-@proposed("job_submit_refuses_unknown_field")
-def test_images_J03b_unknown_top_level_field_is_refused_at_submit(tmp_path):
-    """PROPOSED ``job_submit_refuses_unknown_field``: the old job route accepted a field no image wire knows (202) and the
-    worker's sync handler failed the job later; the row refuses it at submit as the sync wires do (400, no job)."""
-    old, row = job_pair(tmp_path, job_body(metadata="nonsense"), job_setup(), run=False)
-    old_has(old, "an accepted job", status(old) == 202 and media_jobs(old))
-    assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
+def test_images_J03b_unknown_top_level_field_fails_the_job_not_the_submit(tmp_path):
+    """The job route takes a field no image wire knows (202); the run refuses it, and the job fails with the old failure
+    text and code, the run's receipt closes ``rejected``, and no engine is called. Nothing is masked."""
+    old, row = job_pair(tmp_path, job_body(metadata="nonsense"), job_setup(), after=job_get())
+    old_has(old, "an accepted job that failed later", status(old) == 202 and [j["status"] for j in media_jobs(old)] == ["failed"])
+    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]),
+                ("job states", lambda o: [(j["status"], j.get("error")) for j in media_jobs(o)]),
+                ("job doc", lambda o: _job_doc(o, 1)), receipt_summary, engine_without_probes)
 
 
 def test_images_J04_policy_then_admission(tmp_path):
@@ -905,14 +905,17 @@ def _job_rows(o):
     return [{k: v for k, v in j.items() if k != "job_id"} for j in media_jobs(o)]
 
 
-@proposed("job_row_metadata")
 def test_images_J07_job_metadata(tmp_path):
-    """PROPOSED ``job_row_metadata``: the old job row carried the mode ``async_image_generation``, the caller's plan as
-    ``app_profile`` and the request id as ``parent_request_id``; the row's job carries the run core's mode and no plan.
-    The whole job row is compared, ``metadata`` included."""
+    """Delta ``job_row_metadata``: the job row keeps every old leaf with its old value (the plan as ``app_profile``, the
+    request id as ``parent_request_id``, and ``idempotency``, ``request_hash``, ``requested_model``, ``size``, ``n`` and
+    ``response_format`` in the metadata). Only the mode differs, as the run core's; the run core's own bookkeeping keys are
+    added. The whole job row is compared, ``metadata`` included."""
     old, row = job_pair(tmp_path, job_body(n=3, size="512x512"), job_setup(), run=False)
     old_has(old, "a job row", media_jobs(old))
-    assert_same(old, row, ("job rows", _job_rows))
+    kept = {"app_profile", "parent_request_id"}
+    old_has(old, "the old leaves", all(_job_rows(old)[0][k] for k in kept) and {"idempotency", "request_hash", "requested_model", "size", "n", "response_format"}
+            <= set(_job_rows(old)[0]["job_json"]["metadata"]))
+    assert_same(with_deltas(old, "J07"), row, ("job rows", _job_rows))
 
 
 def test_images_J08_job_id_forms(tmp_path):
@@ -935,20 +938,18 @@ def test_images_J09_replay_returns_the_existing_job(tmp_path):
                 ("notes", lambda o: {k: v for k, v in o.trace["notes"].items() if k != "scheduled_jobs"}))
 
 
-@proposed("idempotency_conflict")
 def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
-    """PROPOSED ``idempotency_conflict``: the old route gave the first job back for a repeated key whatever the body; the row
-    refuses a repeated key with a different body (409) and runs the engine once."""
+    """Delta ``idempotency_conflict`` (acceptance matrix row 18): the old route gave the first job back for a repeated key
+    whatever the body; the row refuses a repeated key with a different body (409) and runs the engine once."""
     old, row = cell(tmp_path, "ij", "replay_conflict")
     old_has(old, "a second 202 for the changed body", [status(old, 0), status(old, 1)] == [202, 202])
-    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]),
+    assert_same(with_deltas(old, "J10"), row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]),
                 ("second answer", lambda o: failure(o, 1)), ("jobs", lambda o: len(media_jobs(o))), engine_without_probes)
 
 
-@proposed("job_create_failure_text")
 def test_images_J11_job_store_failure_500(tmp_path):
-    """PROPOSED ``job_create_failure_text``: both answer 500 ``api_error`` and store no job; the old text named the exception
-    class (``Could not create image media job: RuntimeError``), the row says a fixed sentence and logs the class."""
+    """Delta ``job_create_failure_text``: both answer 500 ``api_error`` and store no job; the old text named the exception
+    class (``Could not create image media job: RuntimeError``), the row says a fixed sentence with a code and logs the class."""
     from gateway import media_jobs as store
 
     def setup(rig):
@@ -959,7 +960,7 @@ def test_images_J11_job_store_failure_500(tmp_path):
         rig.set(store, "create", boom)
     old, row = pair(tmp_path, JOB, job_body(), setup)
     old_has(old, "500", status(old) == 500)
-    assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
+    assert_same(with_deltas(old, "J11"), row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
 
 
 def test_images_J12_accepted_202_with_links(tmp_path):
@@ -1005,19 +1006,16 @@ def test_images_J17_cancel_queued_and_finished(tmp_path, outcome):
                 ("job states", lambda o: [j["status"] for j in media_jobs(o)]), ("cancel notes", lambda o: o.trace["notes"]))
 
 
-@proposed("receipt_closes_with_job_outcome")
 def test_images_J17b_a_job_canceled_while_queued_leaves_the_submit_receipt_it_had(tmp_path):
-    """PROPOSED ``receipt_closes_with_job_outcome``: the old job route closed the submit receipt as ``ok`` when it answered
-    202, whatever became of the job; the row closes it when the job ends, so a job canceled while queued leaves a
-    ``cancelled`` receipt. Every receipt is compared."""
+    """The submit receipt closes ``succeeded`` (the old ``ok``) at the 202, whatever becomes of the job; a job canceled while
+    queued never starts its run, so it leaves that one receipt. Every receipt is compared."""
     old, row = cell(tmp_path, "ij", "cancel_queued")
     old_has(old, "a receipt", receipt_summary(old))
     assert_same(old, row, receipt_summary)
 
 
-@proposed("job_one_receipt")
 def test_images_J17c_a_finished_job_leaves_the_receipts_it_had(tmp_path):
-    """PROPOSED ``job_one_receipt`` (see J19): every receipt of a canceled-after-finished job is compared."""
+    """A job canceled after it finished leaves the two receipts it had (J19b); every receipt is compared."""
     old, row = cell(tmp_path, "ij", "cancel_finished")
     old_has(old, "a receipt", receipt_summary(old))
     assert_same(old, row, receipt_summary)
@@ -1035,12 +1033,11 @@ def test_images_J19_success_mirrors_assets_and_drops_payload(tmp_path):
     assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), asset_files, engine_without_probes)
 
 
-@proposed("job_one_receipt")
 def test_images_J19b_a_job_leaves_the_receipts_and_origins_it_had(tmp_path):
-    """PROPOSED ``job_one_receipt``: the old job route's executor called the sync image route inside the job, so a job left
-    two receipts (the submit on the job path, the run on the sync path) and its results named the run's request id as their
-    origin. The row files one receipt, the submit's, and the results name it. Every receipt and every origin is compared,
-    ``request_id`` included."""
+    """The old job route's executor called the sync image route inside the job, so a job left two receipts (the submit on
+    the job path, closed at the 202, and the run on the sync path, closed with the job's outcome) and its results named the
+    run's request id as their origin. The row does the same (``run_receipt_path``). Every receipt and every origin is
+    compared, ``request_id`` included."""
     old, row = cell(tmp_path, "ij", "success")
     old_has(old, "two receipts", len(receipt_summary(old)) == 2)
     assert_same(old, row, receipt_summary, origins)
@@ -1214,9 +1211,8 @@ def test_images_R05_restart_during_the_run(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@proposed("executor_crash_text")
 def test_images_R06_crash_mid_run_copy(tmp_path):
-    """PROPOSED ``executor_crash_text``: a worker that dies with an unexpected error. The old job stored "Image media job
+    """Delta ``executor_crash_text``: a worker that dies with an unexpected error. The old job stored "Image media job
     executor error: <type>" with HTTP 502 and retried; the core stores its fixed sentence for an unexpected failure and does
     not retry, because only an adapter's named retry reason retries."""
     from gateway import node_graph_runner
@@ -1230,7 +1226,8 @@ def test_images_R06_crash_mid_run_copy(tmp_path):
         rig.set(node_graph_runner.NodeGraphRunner, "_rounds", crash)
     old, row = job_pair(tmp_path, job_body(), setup, after=job_get())
     old_has(old, "the old executor text", _states(old) == [("failed", "Image media job executor error: RuntimeError")])
-    assert_same(old, row, ("job states", _states), ("job doc", lambda o: _job_doc(o, 1)), ("prompts", lambda o: engine_bodies(o, "/prompt")))
+    assert_same(with_deltas(old, "R06"), row, ("job states", _states), ("job doc", lambda o: _job_doc(o, 1)),
+                ("prompts", lambda o: engine_bodies(o, "/prompt")))
 
 
 def test_images_R07_restart_closes_open_receipts(tmp_path):

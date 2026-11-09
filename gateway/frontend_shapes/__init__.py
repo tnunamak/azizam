@@ -92,7 +92,7 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
                        receipt_opens=_receipt_opens(row_id, raw),
-                       refusal_receipt=_refusal_receipt(row_id, raw))
+                       refusal_receipt=_refusal_receipt(row_id, raw), run_receipt_path=str(raw.get("run_receipt_path") or ""))
 
 
 def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:

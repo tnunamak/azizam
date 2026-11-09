@@ -163,7 +163,7 @@ class Shape:
             if isinstance(read, Response):
                 return read
             fields = read
-        read_wire = self.read_wire(fields, [name for name, _ in uploads])
+        read_wire = self.read_wire(request, fields, [name for name, _ in uploads])
         if isinstance(read_wire, Response):
             return read_wire
         options, answer = read_wire
@@ -199,14 +199,18 @@ class Shape:
         media = await _wire.stage_uploads(spool, uploads, mapping)
         if isinstance(media, Response):
             return media
+        sources = await _wire.stage_uploads(spool, getattr(request.state, "source_uploads", None) or [], mapping)
+        if isinstance(sources, Response):
+            return sources
         inputs = {name: coerce(chosen, name, value) for name, value in fields.items() if name not in self.transport_fields}
         inputs = self.fill_inputs(chosen, inputs, fields)
         key = request.headers.get(IDEMPOTENCY_HEADER) if self.honours_idempotency_key else None
         options = {**options, **(getattr(request.state, "run_options", None) or {})}
-        return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, options=options, idempotency_key=key or None,
+        return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, sources=sources, options=options, idempotency_key=key or None,
+                          run_refusal=getattr(request.state, "run_refusal", None) or {},
                           frontend_id=row.id, failure_text=row.job_failure_text, retries=row.job_retries)
 
-    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+    def read_wire(self, request: Request, fields: dict[str, Any], upload_names: Sequence[str] = ()) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """Hook: the options this request asks of the run (they are part of its identity and reach the adapter) and the
         answer form it asks for (how this request wants the result shown; it never enters the job). A bad value is a
         shaped refusal. The fields are read, not removed: ``transport_fields`` keeps them out of the inputs."""

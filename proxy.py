@@ -23421,6 +23421,16 @@ def _image_media_job_request_id(
     return fallback_request_id, uuid.uuid4().hex + uuid.uuid4().hex, "request"
 
 
+def _image_job_body_with_short_model(body: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A full workflow id names the same workflow as its short name; the job runs it by the short name the image route takes."""
+    requested_name = body.get("model")
+    if isinstance(requested_name, str) and requested_name.startswith("image.generate."):
+        short_name = requested_name.removeprefix("image.generate.")
+        if _find_image_manifest("image.generate", short_name) is not None:
+            return {**body, "model": short_name}
+    return body
+
+
 def _safe_image_media_job_metadata(
     *,
     body: Mapping[str, Any],
@@ -25807,13 +25817,7 @@ async def gateway_image_generations_media_job(request: Request):
     if invalid_controls is not None:
         await run_receipt_write(finish_image_route_receipt, receipt, invalid_controls)
         return invalid_controls
-    # A full workflow id names the same workflow as its short name; the job
-    # runs it by the short name the image route takes.
-    requested_name = body.get("model")
-    if isinstance(requested_name, str) and requested_name.startswith("image.generate."):
-        short_name = requested_name.removeprefix("image.generate.")
-        if _find_image_manifest("image.generate", short_name) is not None:
-            body = {**body, "model": short_name}
+    body = _image_job_body_with_short_model(body)
     request_id, request_hash, idempotency = _image_media_job_request_id(
         body=body,
         auth_context=auth_context,
@@ -26842,6 +26846,22 @@ class _WorkflowRunPort:
         this process opened it after recovery began."""
         receipt_store.close_recovered(request_id, status, reason, opened_before_ms=_RECOVERY_FENCE_MS)
 
+    async def open_run_receipt(self, job: Mapping[str, Any], caller: AuthContext | None) -> str | None:
+        """Open the receipt a run files for itself (the row's ``run_receipt_path``) and keep it for the core to close when
+        the job ends. Its id is the one the Library names as the origin of the run's files."""
+        row = next((r for r in frontend_shapes.bundled_rows() if r.id == (job.get("metadata") or {}).get("frontend")), None)
+        path = (job.get("metadata") or {}).get("run_receipt_path")
+        if row is None or not path or caller is None:
+            return None
+        owner = _row_receipt_owner(caller, new_request_id(), str(path), row, declared_at=row.routes[0].canonical)
+        owner.receipt.job_id = str(job["job_id"])
+        pin = _pinned_of_job(str(job["job_id"]))
+        if pin is not None:
+            envelope = pin.envelope
+            _name_row_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
+        owner.handoff()
+        return owner.receipt.request_id
+
     async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
         """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
         handed off (a sync request closes its own) is not held here, and nothing is done."""
@@ -26991,7 +27011,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         for name, refs in ctx.media.items():
             if name in kept_off_engine:
                 continue
-            for ref in refs:
+            for ref in ctx.sources.get(name, refs):
                 if ref.spool_key is not None:
                     data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
                 else:
@@ -27240,19 +27260,45 @@ class _RunReceiptOwner(ReceiptLifecycleOwner):
         return self
 
 
-def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
-    """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
-    (``_name_row_receipt``)."""
+def _row_receipt_owner(auth: AuthContext, request_id: str, path: str, row: Any, *, declared_at: str | None = None) -> _RunReceiptOwner:
+    """``declared_at`` names the route of the row whose policy declares the receipt's intent and service, when the receipt's
+    own path is not one of the row's routes (the receipt a run files under another path)."""
     identity = auth.identity
+    declared_at = declared_at or path
     # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
     # activity read their capability from it. A route that declares none records the generic run intent.
     owner = _RunReceiptOwner(RouteReceipt(
-        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
-        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, declared_at), path=path, request_id=request_id,
+        backend=row_routes.route_backend(row, declared_at), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
     owner.short_names = row.receipt_names == "short"
+    return owner
+
+
+def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
+    """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
+    (``_name_row_receipt``)."""
+    owner = _row_receipt_owner(auth, request_id, path, row)
     _ROW_REQUEST_RECEIPT.set(owner.receipt)
     return owner
+
+
+async def _row_job_record(request: Request, auth: AuthContext, request_id: str) -> dict[str, Any]:
+    """What the old image job route stored on the job row besides the run's own fields: the caller's plan, the submit's
+    request id, and the request's identity and size facts. The mode is the run core's, so it is left out."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - the shape already refused a body that is not JSON
+        body = {}
+    if not isinstance(body, Mapping):
+        body = {}
+    body = _image_job_body_with_short_model(body)
+    key = request.headers.get("idempotency-key")
+    _, request_hash, idempotency = _image_media_job_request_id(
+        body=body, auth_context=auth, idempotency_key=key.strip() if key else None, fallback_request_id=request_id)
+    metadata = _safe_image_media_job_metadata(body=body, request_hash=request_hash, idempotency=idempotency)
+    metadata.pop("mode")
+    return {"app_profile": plan_ref(auth.identity), "parent_request_id": request_id, "metadata": metadata}
 
 
 def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
@@ -27333,6 +27379,7 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
     record_refusal=_record_row_refusal,
+    job_record=_row_job_record,
 )
 
 

@@ -389,6 +389,9 @@ class RunRequest:
     workflow_id: str
     inputs: Mapping[str, Any]
     media: Mapping[str, tuple[MediaRef, ...]] = field(default_factory=dict)
+    # Files the Library keeps as the result's sources in place of ``media`` for the same input (a wire that changes a file
+    # before the run keeps the caller's own). They are never sent to the engine. Not part of run identity.
+    sources: Mapping[str, tuple[MediaRef, ...]] = field(default_factory=dict)
     binding_key: str | None = None
     idempotency_key: str | None = None
     wait_s: float = 0.0
@@ -414,6 +417,14 @@ class RunRequest:
     # The intent the job row is filed under: the one the matched route declares (``runtime_policy.intent``), the same value
     # the request receipt records. Empty: the generic run intent. Not part of run identity.
     intent: str = ""
+    # The path the run files its own receipt under (``FrontendRow.run_receipt_path``); empty: the run files none.
+    run_receipt_path: str = ""
+    # A refusal the shape found but leaves to the run: ``status``, ``code``, ``category`` and ``message``. The run fails the
+    # job with it before any engine call. Empty: none. Not part of run identity.
+    run_refusal: Mapping[str, Any] = field(default_factory=dict)
+    # What the old job route stored on the job row besides the run's own fields, for a row that declares a run receipt:
+    # ``app_profile``, ``parent_request_id`` and ``metadata`` (extra keys, merged under the core's). Not part of run identity.
+    job_record: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -581,6 +592,10 @@ class FrontendRow:
     # How a refusal of the request (a 4xx) closes the receipt: "failed" (default) or "rejected", the word the old image
     # routes wrote. A refusal by the service or the gateway (a 5xx) closes failed under either word.
     refusal_receipt: Literal["failed", "rejected"] = "failed"
+    # The path a job of this row files its own run receipt under, when the job route's old handler ran the sync route inside
+    # the job (S7 parity, images): the submit receipt then closes ``succeeded`` at the 202 and a second receipt, opened when
+    # the run starts, closes with the job's outcome. "" (default): one receipt, closed by the run core at the job's end.
+    run_receipt_path: str = ""
     # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
     job_failure_text: Literal["adapter", "category_copy"] = "adapter"
     # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits

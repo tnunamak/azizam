@@ -954,6 +954,7 @@ frontends:
     receipt_protocol: openai.images
     receipt_opens: before_policy
     refusal_receipt: rejected
+    run_receipt_path: /v1/images/generations
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
     routes:

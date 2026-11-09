@@ -169,6 +169,7 @@ def frontend_row(raw: Mapping[str, Any]) -> FrontendRow:
         strictness="lenient" if raw.get("strictness") == "lenient" else "exact",
         lists_as_model=bool(raw.get("lists_as_model", False)),
         receipt_opens=_receipt_opens(row_id, raw), refusal_receipt=_refusal_receipt(row_id, raw),
+        run_receipt_path=str(raw.get("run_receipt_path") or ""),
     )
 
 
@@ -355,6 +356,8 @@ def _row_value(row: FrontendRow) -> dict[str, Any]:
         value["receipt_opens"] = row.receipt_opens
     if row.refusal_receipt != "failed":
         value["refusal_receipt"] = row.refusal_receipt
+    if row.run_receipt_path:
+        value["run_receipt_path"] = row.run_receipt_path
     return value
 
 

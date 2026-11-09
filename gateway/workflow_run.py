@@ -23,7 +23,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -61,6 +61,7 @@ RECEIPT_OUTCOMES = {
     media_jobs.STATUS_FAILED: ("failed", "failed"),
     media_jobs.STATUS_CANCELED: ("cancelled", "cancelled"),
 }
+RUN_RECEIPT_ID_KEY = "run_receipt_id"        # the request id of the receipt a run filed for itself (``run_receipt_path``)
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
@@ -195,6 +196,8 @@ class RunContext:
     media: Mapping[str, tuple[MediaRef, ...]]
     generated: Mapping[str, Any]
     spool: JobSpool
+    # Files the Library keeps as the result's sources in place of ``media`` for the same input (``RunRequest.sources``).
+    sources: Mapping[str, tuple[MediaRef, ...]] = field(default_factory=dict)
     request_id: str | None = None      # the request the job answers (the Library asset origin names it)
     # The adapter calls it once, with its result metadata, before it commits the bundle (S7 parity M5).
     record_result_metadata: Callable[[Mapping[str, Any]], None] = lambda metadata: None
@@ -598,9 +601,13 @@ class WorkflowRunCore:
         job = media_jobs.MediaJob(
             intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
-            metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
-                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries})
+            app_profile=req.job_record.get("app_profile"), parent_request_id=req.job_record.get("parent_request_id"),
+            metadata={**dict(req.job_record.get("metadata") or {}),
+                      "mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
+                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries,
+                      **({"run_receipt_path": req.run_receipt_path} if req.run_receipt_path else {})})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
+        adopted_sources: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
             # Admission again, inside the write transaction that inserts the job: a count taken before it can be stale
@@ -619,10 +626,14 @@ class WorkflowRunCore:
                 service_id=identity.service_id, origin=identity.origin, generated=generated,
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
+            adopted_sources.update(self._spool.adopt(record.job_id, dict(req.sources)))
             port.save_payload(record.job_id, {
                 "body": {"inputs": plain(req.inputs), **({"options": plain(req.options)} if req.options else {}),
+                         **({"refusal": plain(req.run_refusal)} if req.run_refusal else {}),
                          **({"extensions": plain(req.extensions)} if req.extensions else {})}, "auth": port.caller_payload(caller),
-                "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()}}, caller)
+                "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()},
+                **({"sources": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted_sources.items()}}
+                   if adopted_sources else {})}, caller)
             return envelope
 
         try:
@@ -693,10 +704,19 @@ class WorkflowRunCore:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
         if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
             return None
+        metadata = job.get("metadata") or {}
+        # A job whose run files its own receipt closed the submit receipt at the 202: the outcome belongs to the run's
+        # receipt, and a job that never started a run has none to close.
+        receipt_id = metadata.get(RUN_RECEIPT_ID_KEY) if metadata.get("run_receipt_path") else job["request_id"]
+        if not receipt_id:
+            return None
         status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
         if status == "failed":
             reason = str(job.get("error_code") or reason)
-        return str(job["request_id"]), status, reason
+            # A run refused as invalid input is a refusal of the request, as its sync route would have closed it.
+            if metadata.get("run_receipt_path") and job.get("error_category") == "invalid_input":
+                status = "rejected"
+        return str(receipt_id), status, reason
 
     def _close_recovered_receipt(self, job_id: str) -> None:
         """Recovery settled this job from its committed result: close its request receipt with the job's outcome. The
@@ -755,13 +775,21 @@ class WorkflowRunCore:
         if (job.get("metadata") or {}).get("retries") == "none":
             policy = dataclasses.replace(policy, max_attempts=1)
         attempt = int(job.get("attempt_number") or 1)       # the durable number: a recovered job keeps its budget
+        request_id = str(job.get("request_id") or "") or None
+        if (job.get("metadata") or {}).get("run_receipt_path"):
+            request_id = await self._open_run_receipt(job_id, job, caller) or request_id
+        refusal = (payload.get("body") or {}).get("refusal")
+        if refusal:
+            self._refuse_at_run(job_id, job, refusal)
+            return
         while True:
             ctx = RunContext(
                 job_id=job_id, caller=caller, pin=pin, payload=payload,
                 inputs=dict((payload.get("body") or {}).get("inputs") or {}),
                 media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
                 generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
-                request_id=str(job.get("request_id") or "") or None,
+                sources={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("sources") or {}).items()},
+                request_id=request_id,
                 record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
             media_jobs.append_event(
                 job_id, "attempt", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": min(95, 5 + (attempt - 1) * 10),
@@ -840,6 +868,34 @@ class WorkflowRunCore:
         if started is None:
             return None, None, ("job_settled", "internal", "The job ended while it waited to retry.")
         return caller, payload, None
+
+    def _refuse_at_run(self, job_id: str, job: Mapping[str, Any], refusal: Mapping[str, Any]) -> None:
+        """The shape took a request the run refuses (``RunRequest.run_refusal``): the job fails with the refusal's code and the
+        row's failure text for its category, and no engine is called."""
+        category = str(refusal.get("category") or "invalid_input")
+        text, _ = media_job_shape.stored_failure(
+            str((job.get("metadata") or {}).get("failure_text") or "adapter"), category, str(refusal.get("message") or ""),
+            str(refusal.get("code") or ""), None)
+        with contextlib.suppress(ValueError):
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
+                                     metadata_patch={"last_http_status": int(refusal.get("status") or 400)})
+        self._fail(job_id, str(refusal.get("code") or INTERNAL_ERROR), category, text)
+
+    async def _open_run_receipt(self, job_id: str, job: Mapping[str, Any], caller: CallerContext | None) -> str | None:
+        """The run files its own receipt (a row's ``run_receipt_path``): the port opens it, and its id is kept on the job so
+        the end of the job closes it and the Library names it as the origin. None when the port opens none. Never raises."""
+        open_receipt = getattr(self._port, "open_run_receipt", None)
+        if open_receipt is None:
+            return None
+        try:
+            receipt_id = await open_receipt(job, caller)
+            if receipt_id:
+                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
+                                         metadata_patch={RUN_RECEIPT_ID_KEY: receipt_id})
+            return receipt_id or None
+        except Exception:  # noqa: BLE001 - a run with no receipt of its own still runs
+            log.exception("job %s could not open its run receipt", job_id)
+            return None
 
     def _record_result_metadata(self, job_id: str, result_metadata: Mapping[str, Any]) -> None:
         """Keep the adapter's result metadata on the still-running job, as it gave it (the job store refuses unsafe

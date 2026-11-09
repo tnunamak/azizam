@@ -112,7 +112,10 @@ class OpenAIImagesJson(Shape):
     # The top-level wire fields this route accepts; any other is refused (a workflow's own inputs go under ``extensions``).
     standard_fields: ClassVar[frozenset[str]] = image_extensions.STANDARD_IMAGE_GENERATE_FIELDS
 
-    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()
+    # A field the wire does not know is refused when the request is read (False), or taken and refused by the run (True).
+    refuses_unknown_at_run: ClassVar[bool] = False
+
+    def read_wire(self, request: Request, fields: dict[str, Any], upload_names: Sequence[str] = ()
                   ) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """The options that change the picture or its encoding (they reach the adapter and the run's identity), and the
         answer form (how this request wants the pictures shown). Each is checked as the wire always checked it."""
@@ -123,7 +126,13 @@ class OpenAIImagesJson(Shape):
             return fields.get(name) not in (None, "")
 
         unknown = image_extensions.detect_unknown_top_level_fields({**fields, **dict.fromkeys(upload_names)}, self.standard_fields)
-        if unknown:
+        if unknown and self.refuses_unknown_at_run:
+            # The job route took the field at submit and its run refused it: the run fails the job with this refusal.
+            name, message = next(iter(unknown.items()))
+            request.state.run_refusal = {"status": 400, "code": "unknown_parameter", "category": "invalid_input", "message": message}
+            for field_name in unknown:
+                fields.pop(field_name, None)
+        elif unknown:
             for name, reason in unknown.items():
                 _wire.note(name, rejected=reason)
             name, message = next(iter(unknown.items()))
@@ -373,11 +382,16 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
         first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
         if first is None:
             return uploads
-        made = compose(await first.read(), await masks[0].read())
+        original = await first.read()
+        made = compose(original, await masks[0].read())
         if isinstance(made, Response):
             _wire.note(MASK_PART, rejected="invalid_mask")
             return made
         content, mode = made
+        # The folded picture is the run's own input; the Library keeps the picture the caller sent as the result's source.
+        kept = _Bytes(first.filename, original)
+        kept.content_type = getattr(first, "content_type", None) or kept.content_type
+        request.state.source_uploads = [(name, kept) for name, upload in uploads if upload is first]
         answer = getattr(request.state, "answer_form", None)
         if isinstance(answer, dict):
             answer["image_mask"] = "workflow"
@@ -495,7 +509,10 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
 class ImageJobs(OpenAIImagesJson):
     """The image jobs route: the request of the JSON images shape, answered as a job object (202, or 200 when the job
-    is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes."""
+    is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes. A field the wire does not
+    know is taken at submit and refused by the run, which fails the job (as the old job route did)."""
+
+    refuses_unknown_at_run = True
 
     shape_id = "openai.images.jobs"
     not_object_text = "JSON body must be an object"

@@ -474,3 +474,19 @@ def test_the_refusal_vocabulary_is_row_data_and_only_the_image_rows_declare_the_
     image_rows = {"images-generations", "images-edits", "images-variations", "image-jobs"}
     assert {rid for rid, word in words.items() if word == "rejected"} == image_rows
     assert {word for word in words.values()} <= {"rejected", "failed"}
+
+
+def test_a_run_receipt_path_is_row_data_kept_in_the_snapshot_and_only_the_image_job_row_declares_it():
+    """A job whose old handler ran the sync route inside the job files a second receipt for the run under that route's path
+    (``run_receipt_path``). The path is row data: the snapshot reads it, and it changes the row's digest only when set."""
+    from gateway import registry_snapshot
+    from gateway.frontend_shapes import bundled_rows
+    declared = {row.id: row.run_receipt_path for row in bundled_rows() if row.run_receipt_path}
+    assert declared == {"image-jobs": "/v1/images/generations"}
+    raw = {"id": "x", "shape": "openai.images.jobs", "mode": "job", "receipt_protocol": "openai.images",
+           "routes": [{"methods": ["POST"], "canonical": "/x", "runtime_policy": {}}]}
+    plain = registry_snapshot.frontend_row(raw)
+    kept = registry_snapshot.frontend_row({**raw, "run_receipt_path": "/y"})
+    assert plain.run_receipt_path == "" and kept.run_receipt_path == "/y"
+    assert registry_snapshot._row_value(plain) != registry_snapshot._row_value(kept)
+    assert "run_receipt_path" not in registry_snapshot._row_value(plain)

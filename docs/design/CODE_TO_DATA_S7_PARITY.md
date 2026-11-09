@@ -202,6 +202,24 @@ and a reason. Nothing else may differ.
   `metadata.terminal_reason`) where it wrote `error`. A refusal of the request (a 4xx: policy, body, unknown model) still
   closes as `rejected`; the lifecycle owner accepts `rejected` as a terminal status. Which word a 4xx refusal takes is row data (`refusal_receipt: rejected | failed`, default `failed`); only the four image rows declare `rejected`, so the mesh row keeps `failed`. The Usage and Activity pages label
   both vocabularies the same way. Test `test_images_receipt_status_words_refusal_is_rejected_service_state_is_failed`.
+- Image routes, decided by the lead (rule: the old contract wins unless a merged design rule requires the change). Each has
+  its exact leaf entries in `MANIFEST['s7_parity_images/<case>']`:
+  - `idempotency_conflict` (J10): the same key with another body answers 409 `idempotency_conflict` (acceptance matrix row 18);
+    the old route answered the first job again.
+  - `job_create_failure_text` (J11) and `executor_crash_text` (R06): the client text no longer names an exception class, and an
+    unexpected executor error is not retried (run-core rule 7d3eb681a; the job-retry rule above). The job states
+    `retryable: false`.
+  - `engine_session_id` (E07b, V05b): the adapter names its session (`client_id`) in the engine prompt. Engine-facing only.
+  - `job_row_metadata` (J07): the `metadata.mode` leaf is the run core's (`workflow.run`). Every other old leaf stays with its
+    old value: `app_profile` (the plan), `parent_request_id`, and in the metadata `idempotency`, `request_hash`,
+    `requested_model`, `size`, `n`, `response_format`. The run core's own keys (`binding_key`, `failure_text`, `frontend`,
+    `resource_class`, `retries`, `run_receipt_path`) are added.
+  - Not deltas (the old behaviour is kept): the job route takes an unknown top-level field with a 202 and the run fails the job
+    with the old text and code (`RunRequest.run_refusal`); the job route files two receipts, the submit's (closed `succeeded`
+    at the 202) and the run's (opened when the run starts, under the sync path, closed with the job's outcome; a refusal of
+    the run closes `rejected`), and the Library origin names the run's request id (`FrontendRow.run_receipt_path`); a masked
+    edit keeps the caller's upload as the result's source and the mask-folded picture stays internal to the run
+    (`RunRequest.sources`).
 - `event_driven_wait` is not a delta: the 0.1 s poll in `JobService.wait` was a defect. The writer that ends a job wakes
   its waiters (`gateway/job_wake.py`); a bounded 1 s fallback read covers a job another process ends.
 - `refusal_precedence`: a request with several faults gets the first refusal of authentication, route policy, body
