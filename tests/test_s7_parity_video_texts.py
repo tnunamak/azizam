@@ -194,7 +194,7 @@ def test_the_refusal_is_exactly_the_row(tmp_path, case):
 
             def history_without_a_video(kind, name, **k):
                 consumed.append(name)
-                return original(kind, "clip.png", **k)
+                return original(kind, "clip.png", **{**k, "count": 0})
             w.rig.monkeypatch.setattr(video_rig, "history_done", history_without_a_video)
         if "completed" in needs:
             await finish(w, vid, ends_failed="view_error" in needs or "no_video_file" in needs)
