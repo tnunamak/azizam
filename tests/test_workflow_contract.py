@@ -746,6 +746,10 @@ def test_schema_one_prefix_rows_are_ordered_and_the_default_is_data(tmp_path, mo
     (lambda d: d["prefixes"][0].pop("capability"), "capability"),
     (lambda d: d["prefixes"][0].update(capability=""), "capability"),
     (lambda d: d.update(default=None), "default"),
+    # A padded value would load, never match, and be written verbatim.
+    (lambda d: d["prefixes"][0].update(prefix=" " + d["prefixes"][0]["prefix"]), "prefixes\\[0\\].prefix"),
+    (lambda d: d["prefixes"][0].update(capability=d["prefixes"][0]["capability"] + " "), "capability"),
+    (lambda d: d.update(default=" " + d["default"]), "default"),
 ])
 def test_schema_one_capability_data_is_validated_before_use(tmp_path, monkeypatch, change, message):
     rules = _capability_prefix_rules()
