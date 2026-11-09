@@ -488,9 +488,9 @@ def test_io_index_is_derived_from_both_tables_without_ambiguous_pairs(monkeypatc
     conflict = mm.ModelMetadata("video", ("image",), ("audio",))
     family_only = mm.ModelMetadata("embedding", ("audio",), ("embedding",))
     monkeypatch.setattr(mm, "_CAPABILITY_INTENTS", {"unfamiliar.exact": first})
-    monkeypatch.setattr(mm, "_CAPABILITY_INTENT_FAMILIES", (
-        ("unfamiliar.conflict.", conflict), ("unfamiliar.family.", family_only),
-    ))
+    monkeypatch.setattr(mm, "_CAPABILITY_INTENT_FAMILIES", {
+        "unfamiliar.conflict.": conflict, "unfamiliar.family.": family_only,
+    })
     assert mm._capability_types_by_io() == {
         (frozenset({"audio"}), frozenset({"embedding"})): "embedding",
     }
