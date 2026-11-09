@@ -335,7 +335,9 @@ class KeyframeRouteBase(unittest.TestCase):
         self.stack.enter_context(patch.object(proxy, "_WORKFLOW_JOB_SPOOL", None))        # built from the root above, at first use
         self.stack.enter_context(patch.object(proxy, "_workflow_core_cache", None))        # the core holds the job spool
         self.stack.enter_context(patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", Path(spool.name) / "payloads"))
-        self.stack.enter_context(patch.object(proxy.media_jobs, "DB_PATH", Path(spool.name) / "media.db"))   # a row job lands here, not in the shared file
+        media_db = Path(spool.name) / "media.db"
+        media_jobs.init_db(media_db)
+        self.stack.enter_context(patch.object(media_jobs, "DB_PATH", media_db))   # a row job lands here, not in the shared file
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
