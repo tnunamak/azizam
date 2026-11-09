@@ -125,7 +125,7 @@ from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
-    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
+    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -27296,6 +27296,20 @@ async def videos_create(request: Request):
     return await proxy_graph_video_create(request, auth_context)
 
 
+def _video_wire_shape():
+    """The wire shape that answers the create route, found by the route it owns; the lifecycle routes render job views with it."""
+    row = next((r for r in frontend_shapes.bundled_rows() if any(route.canonical == "/v1/videos" and "POST" in route.methods for route in r.routes)), None)
+    return frontend_shapes.build_shape(row) if row is not None else None
+
+
+async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
+    """The job a wire id names, or None when the id is not a job of the run core (an old record answers it instead)."""
+    job_id = shape.job_id_of(video_id) if shape is not None else None
+    if job_id is None:
+        return None
+    return await asyncio.to_thread(_workflow_job_service().get, job_id, auth_context)
+
+
 async def videos_status(video_id: str, request: Request):
     """Poll a previously-submitted video job."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}"))
@@ -27304,6 +27318,10 @@ async def videos_status(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}"))
     if policy_response is not None:
         return policy_response
+    shape = _video_wire_shape()
+    view = await _video_job_view(shape, video_id, auth_context)
+    if view is not None:
+        return shape.render_status(view)
     return await proxy_graph_video_status(video_id, auth_context)
 
 
@@ -27319,6 +27337,10 @@ async def videos_content(video_id: str, request: Request):
     metadata_error = _note_media_metadata_query(request)
     if metadata_error is not None:
         return metadata_error
+    shape = _video_wire_shape()
+    view = await _video_job_view(shape, video_id, auth_context)
+    if view is not None:
+        return await asyncio.to_thread(shape.render_bytes, view, _workflow_job_service(), auth_context)
     prompt_id = _prompt_id_from_video_id(video_id)
     record = _video_job_records.get(prompt_id) if prompt_id else None
     delivery = media_delivery.current()
@@ -27354,6 +27376,16 @@ async def videos_delete(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
+    shape = _video_wire_shape()
+    view = await _video_job_view(shape, video_id, auth_context)
+    if view is not None:
+        try:
+            await asyncio.to_thread(_workflow_job_service().delete, view.job_id, auth_context)
+        except JobDeleteConflict:
+            return shape.render_delete_conflict()
+        except JobNotFound:
+            return shape.unknown_id()
+        return shape.render_deleted(view.job_id)
     return await proxy_graph_video_delete(video_id, auth_context)
 
 

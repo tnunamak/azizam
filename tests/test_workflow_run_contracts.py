@@ -522,3 +522,22 @@ def test_an_uploaded_source_image_reaches_the_engine_through_the_real_adapter(wo
     assert engine.calls.index("POST /upload/image") < engine.calls.index("POST /prompt")
     node = manifest["bindings"]["comfyui"]["map"]["source_image"][0]
     assert engine.prompts[0]["prompt"][node["node"]]["inputs"][node["input"]] == "staged-input.png"
+
+
+def test_a_run_core_video_job_is_read_and_deleted_through_the_video_routes_by_its_wire_id(world):  # S7 M7
+    manifest = manifest_of(VIDEO_ID)
+    engine = serve_engine(world, FakeGraphEngine(manifest, mp4_bytes(), "video/mp4", "out.mp4"))
+    made = call("post", f"/gateway/v1/workflows/{VIDEO_ID}/run", json={"inputs": {"prompt": "waves at dusk"}},
+                headers={"Prefer": "wait=20"})
+    assert made.status_code == 200 and made.json()["status"] == "succeeded", (made.text, engine.calls)
+    wire_id = f"video_{made.json()['job_id']}"
+    status = call("get", f"/v1/videos/{wire_id}")
+    assert status.status_code == 200, status.text
+    assert (status.json()["id"], status.json()["status"], status.json()["azizam_status"]) == (wire_id, "completed", "succeeded")
+    content = call("get", f"/v1/videos/{wire_id}/content")
+    assert (content.status_code, content.headers["content-type"], content.content) == (200, "video/mp4", mp4_bytes())
+    gone = call("delete", f"/v1/videos/{wire_id}")
+    assert (gone.status_code, gone.json()) == (200, {"id": wire_id, "object": "video", "deleted": True})
+    for path in (f"/v1/videos/{wire_id}", f"/v1/videos/{wire_id}/content"):
+        assert call("get", path).status_code in (400, 404)
+    assert call("delete", f"/v1/videos/{wire_id}").status_code in (400, 404)
