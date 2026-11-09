@@ -69,8 +69,8 @@ Poster = Callable[..., Awaitable[None]]
 
 async def post_webhook(url: str, *, body: Any, headers: Mapping[str, str], as_json: bool) -> None:
     """The one place this module touches a network. No redirects; any non-2xx status raises."""
-    import httpx
-    async with httpx.AsyncClient(timeout=NOTIFY_TIMEOUT_S, follow_redirects=False) as http:
+    from gateway import engine_egress  # the gateway's one client factory: a destination on an engine address is checked
+    async with engine_egress.async_client(timeout=NOTIFY_TIMEOUT_S, follow_redirects=False) as http:
         if as_json:
             response = await http.post(url, json=body, headers=dict(headers))
         else:
@@ -115,24 +115,35 @@ def _normal(value: Any, limit: int = 200) -> str:
 
 
 class ProblemReports:
-    def __init__(self, path: Path, *, destinations: Callable[[], list[Mapping[str, Any]]],
+    def __init__(self, path: Path | Callable[[], Path], *, destinations: Callable[[], list[Mapping[str, Any]]],
                  post: Poster = post_webhook,
                  job_lookup: Callable[[str], Mapping[str, Any] | None] = lambda _job_id: None,
                  now: Callable[[], float] = time.time, hourly_limit: int = HOURLY_LIMIT) -> None:
-        self.path = Path(path)
+        # A callable path is read at first use, so building the store at import reads no setting and touches no disk.
+        self._path_source = path
+        self._schema_ready = False
         self._destinations, self._post, self._job_lookup, self._now = destinations, post, job_lookup, now
         self._hourly_limit = hourly_limit
         self._failures: dict[str, deque[tuple[float, dict[str, Any]]]] = {}
         self._submitted: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA)
+        if not callable(path):
+            self._connect().close()
+
+    @property
+    def path(self) -> Path:
+        source = self._path_source
+        return Path(source() if callable(source) else source)
 
     def _connect(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=5.0)
+        path = self.path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        if not self._schema_ready:
+            conn.executescript(_SCHEMA)
+            self._schema_ready = True
         return conn
 
     # -- failures the gateway saw ---------------------------------------------------

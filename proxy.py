@@ -16269,7 +16269,7 @@ def _mcp_retention_ledger(request: Request, auth: Any, request_id: str | None) -
 
 
 PROBLEM_REPORTS = problem_reports.ProblemReports(
-    Path(ADMIN_DB_PATH).with_name("problem_reports.db"),
+    lambda: Path(ADMIN_DB_PATH).with_name("problem_reports.db"),
     destinations=lambda: problem_reports.destinations_from_settings(ADMIN_DB_PATH),
     job_lookup=lambda job_id: media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH),
 )

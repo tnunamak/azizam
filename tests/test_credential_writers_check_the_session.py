@@ -407,6 +407,9 @@ REVIEWED_UNGUARDED_TABLES = {
     "operator_settings": "settings; the ones that hold a secret keep it in provider_secrets, and the registry and OIDC writers are guarded",
 }
 NOT_CREDENTIAL_TABLES = {
+    # Agent problem reports (gateway/problem_reports.py): untrusted report text, a fingerprint, a count and the
+    # reporting App's id. A row grants nothing and holds no secret; text is scrubbed before it is stored.
+    "problem_reports",
     # request history content: written only by the retention writer, under its lock, never by a credential
     "kept_requests",
     # A person's "Not now" on the one-time History notice: one row per person and when it was dismissed. It holds no
