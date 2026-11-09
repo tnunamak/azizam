@@ -176,8 +176,6 @@ def test_the_refusal_is_exactly_the_row(tmp_path, case):
     error = seen["body"].get("error") or {}
     got = {"status": seen["status"], "type": error.get("type"), "param": error.get("param"), "code": error.get("code"),
            "message": error.get("message")}
-    if case == "content_not_ready":      # the row names the queued wording the old reader sent
-        got["message"] = got["message"]
     assert got == want, case
 
 
