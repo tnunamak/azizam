@@ -41,6 +41,8 @@ SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/admin/api/admin-keys"),
     ("PUT", "/me/api/credentials/*/privacy-permission"),
     ("PUT", "/me/api/mcp/connections/*/privacy-permission"),
+    # Where problem reports go, with the bearer token sent there: a thief could point it at their own host.
+    ("PUT", "/admin/api/problem-reports/destinations"),
     # An extension package can read this computer.
     ("POST", "/admin/api/extensions/enable"),
     # Whether Azizam may run commands on this computer.

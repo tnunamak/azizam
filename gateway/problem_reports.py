@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store, log_scrub, secret_refs, secret_store
 from gateway.admin_api import AdminAuth, _require_admin
 from gateway.problem_report_tool import CATEGORIES, REPORT_HINT, SUMMARY_MAX, TOOL, WORKAROUND_MAX  # noqa: F401
+from gateway.session_guard import SessionEnded
 
 SETTING_KEY = "problem_report_destinations"
 TEXT_FORMAT = "plain_text"
@@ -109,9 +110,14 @@ def clean_text(value: Any, limit: int) -> str:
     return log_scrub.scrub(text, limit=limit)[:limit]
 
 
+def _number(match: "re.Match[str]") -> str:
+    run = match.group()
+    return run if len(run) == 3 and "1" <= run[0] <= "5" else "#"  # an HTTP status says what failed; a count or a percent does not
+
+
 def _normal(value: Any, limit: int = 200) -> str:
     text = _LONG_ID.sub("#", str(value or "").lower())
-    return re.sub(r"\s+", " ", _NUMBERS.sub("#", text)).strip()[:limit]
+    return re.sub(r"\s+", " ", _NUMBERS.sub(_number, text)).strip()[:limit]
 
 
 class ProblemReports:
@@ -164,12 +170,12 @@ class ProblemReports:
         cutoff = self._now() - FAILURE_WINDOW_S
         with self._lock:
             recent = [info for ts, info in self._failures.get(caller.key, ()) if ts >= cutoff]
+        if not job_id and not target:
+            return {}  # the report names nothing: no unrelated failure is adopted as its cause
         for info in reversed(recent):
-            if (job_id and info.get("job_id") == job_id) or (not job_id and target and info.get("target") == target):
+            if (job_id and info.get("job_id") == job_id) or (not job_id and info.get("target") == target):
                 return info
-        if job_id or target:
-            return {}
-        return recent[-1] if recent else {}
+        return {}
 
     def _job_facts(self, caller: Caller, job_id: str) -> dict[str, Any]:
         try:
@@ -238,10 +244,11 @@ class ProblemReports:
         if code or error:  # a failure the gateway saw names the problem, whatever words each agent uses
             basis = f"{tool}|{target}|{code}|{_normal(error)}"
         else:  # nothing seen: the agent's own words are the identity, so two problems stay two reports
+            context["latest_summary"] = fields["summary"]  # the first summary stays on the row; this one is kept here
             basis = f"-|{target}|{fields['category']}|{_normal(fields['summary'], 120)}"
         fingerprint = hashlib.sha256(basis.encode("utf-8")).hexdigest()
         row, event = self._upsert(fingerprint, fields, caller, context, tool=tool, target=target, code=code,
-                                  error=error, engine=job.get("engine"))
+                                  error=error, engine=job.get("engine"), keep_summary=not (code or error))
         if event:
             await self._notify(row, event)
             row = self.get(row["id"]) or row
@@ -251,7 +258,8 @@ class ProblemReports:
                          else "The operator has been told. Carry on with your task.")}
 
     def _upsert(self, fingerprint: str, fields: Mapping[str, Any], caller: Caller, context: Mapping[str, Any], *,
-                tool: Any, target: Any, code: Any, error: Any, engine: Any) -> tuple[dict[str, Any], str | None]:
+                tool: Any, target: Any, code: Any, error: Any, engine: Any,
+                keep_summary: bool = False) -> tuple[dict[str, Any], str | None]:
         now = int(self._now())
         app = {"app_id": caller.app_id, "app_name": caller.app_name}
         text = lambda value, limit: clean_text(value, limit) if value else None  # noqa: E731
@@ -279,7 +287,7 @@ class ProblemReports:
                 conn.execute(
                     "UPDATE problem_reports SET count=?, last_seen=?, apps_json=?, summary=?, workaround_used=?, "
                     "last_context_json=?, status=?, category=? WHERE id=?",
-                    (count, now, json.dumps(apps), fields["summary"], fields["workaround"] or old["workaround_used"],
+                    (count, now, json.dumps(apps), old["summary"] if keep_summary else fields["summary"], fields["workaround"] or old["workaround_used"],
                      context_json, "open" if reopened else old["status"], fields["category"], rid))
                 event = ("problem_report.reopened" if reopened
                          else "problem_report.repeat" if count in NOTIFY_COUNTS else None)
@@ -303,7 +311,9 @@ class ProblemReports:
                 if destination.get("secret_ref"):
                     if self._secret_for is None:
                         raise LookupError("no secret reader")
-                    origin = secret_refs.origin_or_none(destination["url"]) or ""
+                    origin = secret_refs.origin_or_none(destination["url"])
+                    if origin is None:  # a secret with no origin to check is never sent
+                        raise LookupError("no origin")
                     headers["Authorization"] = "Bearer " + self._secret_for(destination["secret_ref"], origin)
                 await asyncio.wait_for(self._post(destination["url"], body=body, headers=headers, as_json=as_json),
                                        NOTIFY_TIMEOUT_S)
@@ -412,7 +422,7 @@ def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dic
         raise ProblemReportError("destinations must be a list of at most 10")
     by_id = {d.get("id"): d for d in stored}
     out, seen = [], set()
-    for item in items:
+    for index, item in enumerate(items):
         if not isinstance(item, Mapping):
             raise ProblemReportError("each destination must be an object")
         did = item.get("id")
@@ -431,20 +441,29 @@ def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dic
         parts = urlsplit(url) if isinstance(url, str) else None
         if not parts or parts.scheme not in ("http", "https") or not parts.netloc or re.search(r"\s", url or ""):
             raise ProblemReportError("a webhook destination needs an http or https url")
+        new_origin = secret_refs.origin_or_none(url)
+        if new_origin is None:
+            raise ProblemReportError(f"destinations[{index}].url has no origin the gateway can check; use a plain "
+                                     "https://host/path address")
         _check_secret(item)
+        if item.get("secret") is not None and parts.scheme != "https":
+            raise ProblemReportError(f"destinations[{index}].secret needs an https url: a token must not cross the "
+                                     "network in clear text")
         checked = {"id": did, "type": item["type"], "url": url, "format": fmt, "enabled": enabled}
         old = by_id.get(did) or {}
         if "secret" in item:
             checked["secret"] = item["secret"]  # stored as a reference by the route; never kept as text
-        elif old.get("secret_ref") and secret_refs.origin_or_none(old.get("url") or "") == secret_refs.origin_or_none(url):
+        elif old.get("secret_ref") and secret_refs.origin_or_none(old.get("url") or "") == new_origin:
             checked["secret_ref"] = old["secret_ref"]
         out.append(checked)
     return out
 
 
 def _store_secrets(checked: list[dict[str, Any]], stored: list[dict[str, Any]], *, admin_path: Path,
-                   session: Any) -> tuple[list[dict[str, Any]], list[str]]:
-    """Swap each new secret for a reference bound to its url's origin; return the references no longer used."""
+                   session: Any, made: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Swap each new secret for a reference bound to its url's origin; return the references no longer used.
+
+    Each reference stored is added to ``made`` at once, so the caller can take back what a failed save stored."""
     out = []
     for item in checked:
         item = dict(item)
@@ -453,9 +472,19 @@ def _store_secrets(checked: list[dict[str, Any]], stored: list[dict[str, Any]], 
             if value is not None:
                 item["secret_ref"] = secret_refs.store(value, db_path=admin_path, origin=secret_refs.origin_or_none(item["url"]),
                                                        session=session)
+                made.append(item["secret_ref"])
         out.append(item)
     kept = {item.get("secret_ref") for item in out}
     return out, [d["secret_ref"] for d in stored if d.get("secret_ref") and d["secret_ref"] not in kept]
+
+
+def _discard(refs: list[str], path: Path) -> None:
+    """Delete stored secrets that nothing references. No sign-in is passed: this clean-up runs even when it has ended."""
+    for ref in refs:
+        try:
+            secret_refs.delete(ref, db_path=path)
+        except KeyError:
+            pass
 
 
 def _public_destination(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -518,13 +547,16 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports,
         except ValueError:
             return _error(400, "invalid_request", "the body must be JSON")
         session = getattr(ctx, "browser_session", None)
-        checked, unused = _store_secrets(checked, stored, admin_path=path, session=session)
-        admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=path)
-        for ref in unused:  # a replaced, cleared or moved secret is deleted, not left behind
-            try:
-                secret_store.delete_provider_secret(ref, db_path=path, session=session)
-            except KeyError:
-                pass
+        made: list[str] = []
+        try:  # all or nothing: a failure at any step takes back the secrets this request stored
+            checked, unused = _store_secrets(checked, stored, admin_path=path, session=session, made=made)
+            admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=path)
+        except BaseException as exc:
+            _discard(made, path)
+            if isinstance(exc, SessionEnded):
+                return _error(401, exc.code, exc.message)
+            raise
+        _discard(unused, path)  # a replaced, cleared or moved secret is deleted, not left behind
         return {"destinations": [_public_destination(d) for d in checked]}
 
     @router.get("/{report_id}")
