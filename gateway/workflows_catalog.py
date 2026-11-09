@@ -152,7 +152,7 @@ def _workflow_row(
     routes = _execution(record, _typical_seconds(openapi_row))
     sync_route = routes.get("sync")
     async_route = routes.get("async")
-    preferred = routes.get(str(routes.get("recommended") or "sync"))
+    preferred = routes.get(routes.get("recommended"))
     native_route = gateway_route(record)
     short = short_id(record)
     stable_aliases = list(openapi_row.get("aliases") or _aliases_for(record.id, aliases))
@@ -264,9 +264,9 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
     props = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
     manifest_inputs = record.contract.get("inputs") if isinstance(record.contract.get("inputs"), Mapping) else {}
     required = set(schema.get("required") or [])
-    preferred = routes.get(str(routes.get("recommended") or "sync")) or routes.get("sync") or routes.get("async") or {}
-    mode = "async" if preferred == routes.get("async") else "sync"
-    mapping = request_mapping(record, mode)
+    preferred = routes.get(routes.get("recommended")) or routes.get("sync") or routes.get("async")
+    mode = ("async" if preferred == routes.get("async") else "sync") if preferred else None
+    mapping = request_mapping(record, mode) if mode else {name: {"in": "none"} for name in props}
     rows: list[dict[str, Any]] = []
     for name, spec in props.items():
         if not isinstance(spec, Mapping):
@@ -279,7 +279,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
             "required": str(name) in required,
             "accepted": location != "none",
             "ignored": location == "none",
-            "applies": _applies_label(location),
+            "applies": _applies_label(location) if preferred else "No execution route",
             "request_field": mapped.get("field"),
         }
         for optional in ("default", "minimum", "maximum", "enum", "description"):
@@ -299,7 +299,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         if isinstance(declared.get("label"), str) and declared["label"].strip():
             row["label"] = declared["label"].strip()
         rows.append(row)
-    for extra in route_inputs(record):
+    for extra in (route_inputs(record) if preferred else ()):
         row = {
             "name": extra["name"],
             "type": extra.get("type", "string"),
@@ -322,6 +322,19 @@ def _example_request(
     route: Mapping[str, Any] | None,
     base_url: str,
 ) -> dict[str, Any]:
+    if not route:
+        return {
+            "method": None,
+            "path": None,
+            "content_type": None,
+            "body": {},
+            "form": {},
+            "files": {},
+            "curl": "",
+            "python": "",
+            "javascript": "",
+            "reason": "No execution route is available for this workflow.",
+        }
     path = _route_path(route) or f"/gateway/v1/workflows/{short_id(record)}/run"
     # The wire of the request: a route that names its ``submit`` is sent as that submit says.
     wire = {**(route or {}), **((route or {}).get("submit") or {})}

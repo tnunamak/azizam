@@ -690,8 +690,10 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
         recommended = "sync"
     elif async_:
         recommended = "async"
-    else:
+    elif sync:
         recommended = "sync"
+    else:
+        recommended = None
     return {"recommended": recommended, "sync": sync, "async": async_}
 
 
