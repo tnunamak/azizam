@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from gateway.frontend_shapes.shapes import OpenAIVideoCreate
 
 LEGACY_CREATE = "videos.create"
-SUBMIT_WAIT_S = 180.0              # how long a create holds for the engine to take the job; its own transport limits end it sooner
 DEFAULT_SECONDS = 5.0
 FORM_TYPES = ("multipart/form-data", "application/x-www-form-urlencoded")
 MIN_BASE64_BYTES = 64               # a reference that is plain base64 must decode to more than this, as it always had to
@@ -322,4 +321,4 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         idempotency_key=request.headers.get(IDEMPOTENCY_HEADER) or None, frontend_id=row.id,
         failure_text=row.job_failure_text, retries=row.job_retries,
         extensions=dict(extensions) if isinstance(extensions, Mapping) else {},
-        prompt_retention=hooks.prompt_retention(caller, body), submit_wait_s=SUBMIT_WAIT_S, fact_refs=tuple(refs))
+        prompt_retention=hooks.prompt_retention(caller, body), fact_refs=tuple(refs))

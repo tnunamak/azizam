@@ -808,3 +808,19 @@ def test_video_list_merges_old_records_and_jobs_under_one_cursor(tmp_path):
         gone = await w.listing(after=first)
         assert gone.status_code == 400 and gone.json()["error"]["code"] == "cursor_not_found"
     run(tmp_path, exercise)
+
+
+def test_video_130_create_answers_queued_while_the_engine_never_answers(tmp_path):
+    """Contract: a create answers as soon as the job is durably queued, as the old route did. It does not wait for the
+    engine's reply, so an engine that never answers costs the caller no time."""
+    async def exercise(w):
+        w.engine.prompt_gate = asyncio.Event()           # never set: the engine holds the submission for good
+        started = asyncio.get_running_loop().time()
+        vid = await asyncio.wait_for(w.create(), timeout=1.0)
+        assert asyncio.get_running_loop().time() - started < 1.0
+        view = await w.status(vid)
+        assert view.status_code == 200
+        body = view.json()
+        assert body["status"] == "queued" and body["object"] == "video" and body["id"] == vid
+        assert w.engine.prompt_ids == []
+    run(tmp_path, exercise)

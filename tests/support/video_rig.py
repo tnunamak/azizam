@@ -19,7 +19,6 @@ import httpx
 
 import proxy
 from gateway import media_jobs, workflow_run
-from gateway.frontend_shapes import video_create
 from gateway.workflow_runtime_types import RunJobView
 from tests.media_test_bytes import mp4_bytes
 from tests.support.access import authenticated, everything, identity
@@ -59,12 +58,15 @@ class Engine:
         self.view_started: asyncio.Event | None = None
         self.view_release: asyncio.Event | None = None
         self.before_cancel = None
+        self.prompt_gate: asyncio.Event | None = None   # while set up, the engine takes a prompt and never answers it
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         await request.aread()
         self.requests.append(request)
         path, method = request.url.path, request.method
         if method == "POST" and path == "/prompt":
+            if self.prompt_gate is not None:
+                await self.prompt_gate.wait()
             pid = f"p{len(self.states) + 1}"
             self.states[pid] = "queued"
             self.prompt_ids.append(pid)
@@ -289,9 +291,6 @@ def run(tmp_path: Path, exercise) -> None:
         # The rig's sleeps cost no time, so a runner polling an engine the test has not driven yet would spend its whole wait in
         # no real time. The wait is made so long that only a state the test sets ends a run.
         rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_TIMEOUT", 10 ** 9)
-        # A create holds for the engine to take the job; the job records the engine's prompt only when its round ends, so a
-        # prompt the test leaves unfinished would hold every create for the full 180 s. The hold is cut to a moment.
-        rig.monkeypatch.setattr(video_create, "SUBMIT_WAIT_S", 0.05)
         world = World(rig, engine)
         rig.monkeypatch.setattr(time, "time", lambda: world.now)
         rig.monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", None)
