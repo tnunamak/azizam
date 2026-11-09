@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -247,6 +248,14 @@ def post_video(rig, reference=None, *, files=None):
     return rig.client.post("/v1/videos", json={**body, "input_reference": reference})
 
 
+def settled_uploads(rig, count: int = 1, *, wait_s: float = 5.0) -> list:
+    """The files the engine was sent. The create answers at once and the run core stages the file a moment later."""
+    deadline = time.monotonic() + wait_s
+    while len(rig.comfy.uploads) < count and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return rig.comfy.uploads
+
+
 def data_uri(raw: bytes, mime: str = "image/png") -> str:
     return f"data:{mime};base64," + base64.b64encode(raw).decode()
 
@@ -257,7 +266,8 @@ def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt):
     response = post_video(video_rig, data_uri(data, f"image/{fmt.lower()}"))
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
-    assert video_rig.comfy.uploads == [(f"input.{ext}", data, "image/png")]
+    # Delta video_reference_declared_type: the engine is told the type the caller declared, not a fixed image/png.
+    assert settled_uploads(video_rig) == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
     assert ended(video_rig)
 
 
@@ -267,7 +277,8 @@ def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt):
     response = post_video(video_rig, files={"input_reference": (f"ref{SUFFIX[fmt]}", data, f"image/{fmt.lower()}")})
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
-    assert video_rig.comfy.uploads == [(f"input.{ext}", data, "image/png")]
+    # Delta video_reference_declared_type: the engine is told the type the caller declared, not a fixed image/png.
+    assert settled_uploads(video_rig) == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
     assert ended(video_rig)
 
 
