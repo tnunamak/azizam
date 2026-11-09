@@ -6,6 +6,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -395,3 +397,100 @@ def test_operations_of_matches_the_operation_metadata_by_type_and_inputs():
     assert of("language", ["text"], among=engines) == ()
     assert of(None, ["text"], among=engines) == ()
     assert of("language", ["text"]) == ("chat",)
+
+
+# Pin all existing exact/family rows both with their declared I/O and with no I/O.
+_CAPABILITY_ROWS = [
+    *[(intent, metadata) for intent, metadata in mm._CAPABILITY_INTENTS.items()],
+    *[(prefix + "unfamiliar", metadata) for prefix, metadata in mm._CAPABILITY_INTENT_FAMILIES],
+]
+
+
+@pytest.mark.parametrize("intent,expected", _CAPABILITY_ROWS, ids=[row[0] for row in _CAPABILITY_ROWS])
+@pytest.mark.parametrize("declared", [True, False], ids=["declared-io", "empty-io"])
+def test_capability_table_rows_keep_exact_metadata(intent, expected, declared):
+    inputs = expected.input_modalities if declared else ()
+    outputs = expected.output_modalities if declared else ()
+    actual = mm.from_capability(intent, inputs, outputs)
+    assert actual == expected
+
+
+def _capability_pair_types():
+    pairs = {}
+    for _, metadata in _CAPABILITY_ROWS:
+        pair = (metadata.input_modalities, metadata.output_modalities)
+        pairs.setdefault(pair, set()).add(metadata.type)
+    return pairs
+
+
+@pytest.mark.parametrize(
+    "inputs,outputs,expected",
+    [(inputs, outputs, next(iter(types)))
+     for (inputs, outputs), types in _capability_pair_types().items() if len(types) == 1],
+)
+def test_unfamiliar_capability_uses_each_unambiguous_pair(inputs, outputs, expected):
+    actual = mm.from_capability("smell.infer", inputs, outputs)
+    assert actual == mm.ModelMetadata(expected, inputs, outputs)
+
+
+@pytest.mark.parametrize("intent,inputs,outputs,expected", [
+    ("image.sonify", ("text",), ("audio",), "audio"),
+    ("image.sonify", ("audio",), ("text",), "audio"),
+    ("audio.describe", ("image",), ("text",), "image"),
+    ("video.rank", ("text",), ("embedding",), "embedding"),
+    ("chat.completions", ("text",), ("audio",), "audio"),
+    ("decision.classify", ("text",), ("image",), "image"),
+])
+def test_unambiguous_declared_pair_overrides_exact_or_family_intent(intent, inputs, outputs, expected):
+    assert mm.from_capability(intent, inputs, outputs) == mm.ModelMetadata(expected, inputs, outputs)
+
+
+@pytest.mark.parametrize("intent,expected", [
+    ("chat.completions", "language"),
+    ("text.rerank", "reranking"),
+    ("decision.choose", "decision"),
+    ("smell.infer", "language"),
+])
+def test_ambiguous_text_pair_uses_intent_then_type_of(intent, expected):
+    assert mm.from_capability(intent, ["text"], ["text"]) == mm.ModelMetadata(
+        expected, ("text",), ("text",),
+    )
+
+
+@pytest.mark.parametrize("intent,inputs,outputs,expected", [
+    ("image.generate", (), ("audio",), mm.ModelMetadata("image", ("text",), ("audio",))),
+    ("image.generate", ("audio",), (), mm.ModelMetadata("image", ("audio",), ("image",))),
+    ("smell.infer", (), (), None),
+    (None, (), (), None),
+])
+def test_empty_modalities_keep_intent_defaults_or_unknown(intent, inputs, outputs, expected):
+    assert mm.from_capability(intent, inputs, outputs) == expected
+
+
+@pytest.mark.parametrize("intent,expected", [
+    ("chat.completions", "language"),
+    ("smell.infer", "video"),
+])
+def test_unlisted_pair_uses_intent_then_type_of(intent, expected):
+    assert mm.from_capability(intent, ["video"], ["text"]) == mm.ModelMetadata(
+        expected, ("video",), ("text",),
+    )
+
+
+def test_declared_pair_is_a_set_and_one_shot_inputs_are_consumed_once():
+    assert mm.from_capability(
+        "smell.infer", iter([" IMAGE ", "text", "image"]), iter([" IMAGE ", "image"]),
+    ) == mm.ModelMetadata("image", ("text", "image"), ("image",))
+
+
+def test_io_index_is_derived_from_both_tables_without_ambiguous_pairs(monkeypatch):
+    first = mm.ModelMetadata("audio", ("image",), ("audio",))
+    conflict = mm.ModelMetadata("video", ("image",), ("audio",))
+    family_only = mm.ModelMetadata("embedding", ("audio",), ("embedding",))
+    monkeypatch.setattr(mm, "_CAPABILITY_INTENTS", {"unfamiliar.exact": first})
+    monkeypatch.setattr(mm, "_CAPABILITY_INTENT_FAMILIES", (
+        ("unfamiliar.conflict.", conflict), ("unfamiliar.family.", family_only),
+    ))
+    assert mm._capability_types_by_io() == {
+        (frozenset({"audio"}), frozenset({"embedding"})): "embedding",
+    }
