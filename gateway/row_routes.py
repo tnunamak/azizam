@@ -76,6 +76,8 @@ class RowRouteDeps:
     record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
     # legacy: the handlers a shape may hand a request to (``LegacyRoute.name``), each ``handler(request, caller, body, owner)`` ->
     # the answer. They exist for requests the data path does not serve yet; ``tests/test_legacy_video_ratchet.py`` counts them.
+    # openapi: the OpenAPI operation documents of rows, by row id (the request and answer schemas the generic route does not know).
+    openapi: Mapping[str, Mapping[str, Any]] = dataclasses.field(default_factory=dict)
     legacy: Mapping[str, Callable[[Request, Any, Mapping[str, Any], Any], Awaitable[Response]]] = dataclasses.field(default_factory=dict)
 
 
@@ -102,7 +104,7 @@ def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None
         for route in row.routes:
             app.add_api_route(route.canonical, _handler(deps, row, shape, route.canonical), methods=list(route.methods),
                               include_in_schema=True, name=f"row:{row.id}:{route.canonical}",
-                              openapi_extra=operation_security.openapi_extra(operation_security.APP_KEY))
+                              openapi_extra={**deps.openapi.get(row.id, {}), **operation_security.openapi_extra(operation_security.APP_KEY)})
 
 
 def run_facts(workflow_id: str, contract: Mapping[str, Any]) -> dict[str, str]:

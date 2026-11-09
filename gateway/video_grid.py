@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+BLOCK = "video"            # the key of the block in a contract
+REFERENCE = "image"        # what a manifest calls a picture the request supplies: the name in ``requires``, ``variants`` and ``roles``
+
+
 @dataclass(frozen=True)
 class VideoManifest:
     """The ``video`` block of one manifest, typed. Absent keys are None or empty."""
@@ -31,10 +35,24 @@ class VideoManifest:
     select_subject: bool = False
     chain: bool = False
 
+    @property
+    def needs_reference(self) -> bool:
+        return REFERENCE in self.requires
+
+    @property
+    def reference_variant(self) -> str | None:
+        """The workflow that takes the request's picture when one is sent."""
+        return self.variants.get(REFERENCE)
+
+    @property
+    def other_requires(self) -> frozenset[str]:
+        """What the manifest requires beyond a picture: a request the create wire does not read."""
+        return frozenset(self.requires) - {REFERENCE}
+
 
 def video_facts(entry: Any) -> VideoManifest | None:
     """The typed ``video`` block of a workflow entry's contract; None when the contract has none."""
-    block = (entry.contract or {}).get("video") if entry is not None else None
+    block = (entry.contract or {}).get(BLOCK) if entry is not None else None
     if not isinstance(block, Mapping):
         return None
     size, length, grid = (block.get(name) or {} for name in ("size", "length", "grid"))

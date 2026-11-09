@@ -27234,6 +27234,7 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
     legacy={"videos.create": _legacy_video_create},
+    openapi={"videos-create": VIDEOS_CREATE_OPENAPI},
 )
 
 
@@ -27347,17 +27348,6 @@ async def _run_workflow_open(workflow_id: str, request: Request, auth_context: A
     status, reason = row_routes._outcome(view, waited=wait_s > 0)
     owner.report(status=status, reason=reason)
     return _workflow_run_response(view)
-
-
-async def videos_create(request: Request):
-    """Sora-shaped video generation submit. Returns {id, status: queued}."""
-    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
-    if isinstance(auth_context, Response):
-        return auth_context
-    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos"))
-    if policy_response is not None:
-        return policy_response
-    return await proxy_graph_video_create(request, auth_context)
 
 
 def _video_wire_shape():

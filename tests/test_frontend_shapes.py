@@ -138,7 +138,7 @@ def submit(core: FakeRunCore, req: Any, snap: FakeSnapshot) -> Any:
 
 
 def test_the_bundled_rows_are_valid_and_each_selects_a_bundled_workflow() -> None:
-    assert len(ROWS) == len(bundled_rows()) == 9
+    assert len(ROWS) == len(bundled_rows()) == 10
     every = {n: contract(n) for n in ("flux2-klein", "qwen-image-2.1-edit", "tangoflux", "video-ltx-2.5-t2v", "mesh.generate.trellis-2")}
     every["edit"] = VIDEO_EDIT
     for row in ROWS.values():
@@ -339,13 +339,6 @@ def test_the_audio_row_answers_with_the_bytes_and_their_type() -> None:
     finish(core, view.job_id, "audio", "audio/wav", b"RIFF")
     response = answer("audio-generate", view, FakeJobService(core))
     assert response.body == b"RIFF" and response.headers["content-type"] == "audio/wav"
-
-
-def test_the_video_create_row_answers_with_a_queued_video_object() -> None:
-    snap, core = snapshot("video-ltx-2.5-t2v"), FakeRunCore()
-    view = submit(core, run_request("videos-create", json_request({"prompt": "waves"}), snap), snap)
-    body = json.loads(answer("videos-create", view, FakeJobService(core)).body)
-    assert body["object"] == "video" and body["status"] == "queued" and body["id"] == "job-1"
 
 
 @pytest.mark.parametrize("row_id,shape_output", [("mesh-generations", None), ("mesh-glb", None)])

@@ -144,11 +144,11 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     reference = body.get("input_reference")
     if manifest is None or manifest.chain:
         return LegacyRoute(LEGACY_CREATE, body)
-    variant = snapshot.get(manifest.variants.get("image", "")) if reference and manifest.variants.get("image") else None
+    variant = snapshot.get(manifest.reference_variant) if reference and manifest.reference_variant else None
     if variant is not None and video_grid.video_facts(variant) is not None:
         chosen, manifest = variant, video_grid.video_facts(variant)
     name = short_name(chosen)
-    if "image" in manifest.requires and not reference:
+    if manifest.needs_reference and not reference:
         return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
     seconds = body.get("seconds")
     if body.get("shots") is not None or _beyond(seconds, manifest.max_seconds):
@@ -156,7 +156,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
             return LegacyRoute(LEGACY_CREATE, body)
         return refuse(400, f"Model {name} cannot render shots or clips longer than {manifest.max_seconds:g} s; use a long-video model",
                       param="shots" if body.get("shots") is not None else "seconds", code="long_video_not_supported")
-    if (set(manifest.requires) - {"image"} or manifest.select_subject or body.get("inputs") or _workflow_block(body)
+    if (manifest.other_requires or manifest.select_subject or body.get("inputs") or _workflow_block(body)
             or (reference is not None and _reference_bytes(reference) is None)):
         return LegacyRoute(LEGACY_CREATE, body)
 
@@ -194,7 +194,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:
         decoded = _reference_bytes(reference)
-        target = roles.get("image", "input_reference")
+        target = roles.get(video_grid.REFERENCE, "input_reference")
         staged = await _wire.stage_uploads(spool, [(target, _BytesUpload(*decoded))], {target: target})
         if isinstance(staged, Response):
             return staged
@@ -214,16 +214,16 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
         "length_frames": length, "frame_rate": manifest.fps, "seed": seed,
         "provenance": provenance.build_provenance_record(
-            kind="video", requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
+            kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
             seed=seed, parameters=parameters, request_id="{wire_id}", created_at=now)}
     if audio_off:
-        facts["audio"] = False
+        facts[video_controls.AUDIO_CONTROL] = False
     if context is not None and context.requested_mode:
         facts["metadata_mode"] = context.requested_mode
     options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": manifest.fps}
     if audio_off:
-        options["audio"] = False
+        options[video_controls.AUDIO_CONTROL] = False
     request.state.video_facts = facts
     request.state.video_prompt = prompt
     extensions = body.get("extensions")
