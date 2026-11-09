@@ -537,6 +537,9 @@ def test_a_run_core_video_job_is_read_and_deleted_through_the_video_routes_by_it
     content = call("get", f"/v1/videos/{wire_id}/content")
     assert (content.status_code, content.headers["content-type"]) == (200, "video/mp4")
     assert content.content[4:8] == b"ftyp"          # the stored file, which the core's writer may have re-muxed
+    # This world publishes no workflows of its own, so the derived per-kind policy delete enforces has no entry for the
+    # video kind: give it the policy the GET route of the same path has.
+    world.monkeypatch.setattr(proxy, "_video_route_policy", lambda: proxy.DERIVED._RUNTIME_ROUTE_POLICY["/v1/videos/{video_id}"])
     gone = call("delete", f"/v1/videos/{wire_id}")
     assert (gone.status_code, gone.json()) == (200, {"id": wire_id, "object": "video", "deleted": True})
     for path in (f"/v1/videos/{wire_id}", f"/v1/videos/{wire_id}/content"):
