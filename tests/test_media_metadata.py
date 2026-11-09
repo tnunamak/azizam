@@ -486,6 +486,27 @@ class FfmpegTests(unittest.TestCase):
                 self.assertEqual(tags.get("workflow"), '{"nodes": []}')
                 self.assertEqual(self.md5(out, suffix, sel), self.md5(src, suffix, sel))
 
+    def test_embed_value_larger_than_one_command_line_argument(self):
+        # A 60 s chained clip carries a ComfyUI workflow tag above 128 KiB, the
+        # kernel's limit for one argument. The restore of that tag must not fail.
+        huge = json.dumps({"nodes": ["n" * 100] * 1500})  # about 150 KB
+        self.assertGreater(len(huge), 131072)
+        src = self.make("big.mp4", self.VIDEO, ["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        out = mm.embed_media_tags(src, ".mp4", {"workflow": huge, "azizam_provenance": BIG}, workdir=self.work)
+        tags = mm.read_media_tags(out, ".mp4", workdir=self.work)
+        self.assertEqual(tags.get("workflow"), huge)
+        self.assertEqual(tags.get("azizam_provenance"), BIG)
+        self.assertEqual(tags.get("prompt"), '{"1": {}}')  # kept
+        self.assertEqual(self.md5(out, ".mp4", "0:v"), self.md5(src, ".mp4", "0:v"))
+
+    def test_embed_values_with_metadata_file_syntax_round_trip(self):
+        tricky = 'a=b;c#d\\e\nline two {"q": "=;#"}'
+        src = self.make("tricky.mp4", self.VIDEO, ["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        out = mm.embed_media_tags(src, ".mp4", {"azizam_provenance": tricky}, workdir=self.work)
+        tags = mm.read_media_tags(out, ".mp4", workdir=self.work)
+        self.assertEqual(tags.get("azizam_provenance"), tricky)
+        self.assertEqual(tags.get("workflow"), '{"nodes": []}')
+
     def test_embed_wav_falls_back_to_comment(self):
         src = self.make("e.wav", self.AUDIO, ["-c:a", "pcm_s16le"], tags=False)
         out = mm.embed_media_tags(src, ".wav", {"azizam_provenance": BIG}, workdir=self.work)

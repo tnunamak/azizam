@@ -473,7 +473,7 @@ def _run(cmd: list[str], *, pass_fds: tuple[int, ...] = ()) -> subprocess.Comple
 
 
 def _ffmpeg_rewrite(content: bytes, suffix_or_mime: str, workdir: Path | None,
-                    extra_out: list[str]) -> bytes:
+                    extra_out: list[str], metadata_file: bytes | None = None) -> bytes:
     suffix = _suffix(suffix_or_mime)
     muxer = _MUXER.get(suffix)
     if muxer is None:
@@ -483,11 +483,22 @@ def _ffmpeg_rewrite(content: bytes, suffix_or_mime: str, workdir: Path | None,
     # Retain the optional workdir API, but never put media bytes in it.
     if workdir is not None:
         Path(workdir).mkdir(parents=True, exist_ok=True)
-    with _media_buffers(content) as (src, dst):
-        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", f"/proc/self/fd/{src.fileno()}",
+    with ExitStack() as stack:
+        src, dst = stack.enter_context(_media_buffers(content))
+        meta_in: list[str] = []
+        fds = (src.fileno(), dst.fileno())
+        if metadata_file is not None:
+            meta = os.fdopen(_memfd("azizam-media-metadata"), "w+b")
+            stack.enter_context(meta)
+            meta.write(metadata_file)
+            meta.flush()
+            meta.seek(0)
+            meta_in = ["-f", "ffmetadata", "-i", f"/proc/self/fd/{meta.fileno()}"]
+            fds += (meta.fileno(),)
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", f"/proc/self/fd/{src.fileno()}", *meta_in,
                "-map", "0", *extra_out, "-c", "copy", "-fflags", "+bitexact",
                "-f", muxer, f"/proc/self/fd/{dst.fileno()}"]
-        proc = _run(cmd, pass_fds=(src.fileno(), dst.fileno()))
+        proc = _run(cmd, pass_fds=fds)
         if proc.returncode != 0 or os.fstat(dst.fileno()).st_size == 0:
             # Tool stderr can echo an embedded prompt; keep it out of logs/errors.
             raise MediaMetadataError(f"ffmpeg failed ({proc.returncode})")
@@ -614,6 +625,7 @@ def embed_image_metadata(content: bytes, suffix_or_mime: str,
 
 _MP4_LIKE = {".mp4", ".m4v", ".m4a", ".mov"}
 _WAV_INFO_FALLBACK_KEY = "comment"
+_ARG_LIMIT = 100_000  # bytes in one ``-metadata key=value`` argument; the kernel allows 131072
 
 
 def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str],
@@ -634,16 +646,45 @@ def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str
     suffix = _suffix(suffix_or_mime)
     if suffix not in _MUXER:
         return content
-    extra: list[str] = []
     if suffix == ".wav":
         joined = "\n".join(f"{k}={v}" for k, v in tags.items())
-        extra += ["-metadata", f"{_WAV_INFO_FALLBACK_KEY}={joined}"]
-    else:
-        for k, v in tags.items():
-            extra += ["-metadata", f"{k}={v}"]
+        tags = {_WAV_INFO_FALLBACK_KEY: joined}
     if suffix in _MP4_LIKE:
-        extra += ["-movflags", "+use_metadata_tags"]
-    return _ffmpeg_rewrite(content, suffix_or_mime, workdir, extra)
+        flags = ["-movflags", "+use_metadata_tags"]
+    else:
+        flags = []
+    if all(len(f"{k}={v}".encode("utf-8")) <= _ARG_LIMIT for k, v in tags.items()):
+        extra = [arg for k, v in tags.items() for arg in ("-metadata", f"{k}={v}")]
+        return _ffmpeg_rewrite(content, suffix_or_mime, workdir, [*extra, *flags])
+    # Linux caps one command-line argument at 128 KiB, and a chained clip's
+    # workflow tag is larger. Such tags travel in an anonymous ffmetadata file.
+    # ``-map_metadata`` replaces the global tags, so the file also holds the
+    # tags already in the container.
+    merged = {**_format_tags(content, workdir), **tags}
+    return _ffmpeg_rewrite(content, suffix_or_mime, workdir, ["-map_metadata:g", "1:g", *flags],
+                           metadata_file=_ffmetadata(merged))
+
+
+def _ffmetadata(tags: Mapping[str, str]) -> bytes:
+    """FFMETADATA1 text: ``=``, ``;``, ``#``, ``\\`` and newline are escaped with a backslash."""
+    def esc(text: str) -> str:
+        return "".join("\\" + c if c in "=;#\\\n" else c for c in text)
+    return (";FFMETADATA1\n" + "".join(f"{esc(k)}={esc(v)}\n" for k, v in tags.items())).encode("utf-8")
+
+
+def _format_tags(content: bytes, workdir: Path | None) -> dict[str, str]:
+    """The container's own (format-level) tags, keys as stored."""
+    import json
+
+    if shutil.which("ffprobe") is None:
+        raise MediaMetadataError("ffprobe not found")
+    with _media_buffers(content) as (src, _dst):
+        proc = _run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format",
+                     f"/proc/self/fd/{src.fileno()}"], pass_fds=(src.fileno(),))
+        if proc.returncode != 0:
+            raise MediaMetadataError(f"ffprobe failed ({proc.returncode})")
+        data = json.loads(proc.stdout or b"{}")
+    return dict((data.get("format") or {}).get("tags") or {})
 
 
 def read_media_tags(content: bytes, suffix_or_mime: str, *,

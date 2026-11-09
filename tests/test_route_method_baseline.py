@@ -207,6 +207,8 @@ def _deliberate(key: str) -> str | None:
         return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)
     if path == "/admin/api/signin" or path.startswith("/admin/api/signin/"):
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
+    if path == "/admin/api/problem-reports" or path.startswith("/admin/api/problem-reports/"):
+        return "signin"  # owner routes added after the baseline (gateway/problem_reports.py; tests/test_problem_reports.py)
     if path == ENGINE_PROTOCOLS_PATH:
         return "engine_protocols"
     if path in MESH_PATHS:

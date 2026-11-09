@@ -350,7 +350,9 @@
     "store_asset": "content:creation:link",
     "stt_measurement": "operational",
     "visible": "none",
-    "read_preview_asset": "content:creation:read"
+    "read_preview_asset": "content:creation:read",
+    "note_failure": "none",
+    "problem_report": "own-account"
   },
   "mcp_tools": [
     {
@@ -509,6 +511,18 @@
         "mine_get": "own-account",
         "mine_set": "own-account"
       }
+    },
+    {
+      "name": "report_problem",
+      "parameters": [
+        "category",
+        "job_id",
+        "summary",
+        "target",
+        "workaround"
+      ],
+      "actions": [],
+      "access": "own-account"
     }
   ],
   "routes": [
@@ -3615,6 +3629,36 @@
       "method": "POST",
       "path": "/admin/api/workflows/{workflow_id}/restore",
       "access": "operational"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/api/problem-reports/destinations",
+      "handler": "gateway.problem_reports.create_problem_reports_router.<locals>.get_destinations",
+      "access": "operational"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/api/problem-reports/{report_id}",
+      "handler": "gateway.problem_reports.create_problem_reports_router.<locals>.get_report",
+      "access": "operational"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/api/problem-reports",
+      "handler": "gateway.problem_reports.create_problem_reports_router.<locals>.list_reports",
+      "access": "operational"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/api/problem-reports/{report_id}",
+      "handler": "gateway.problem_reports.create_problem_reports_router.<locals>.patch_report",
+      "access": "operational"
+    },
+    {
+      "method": "PUT",
+      "path": "/admin/api/problem-reports/destinations",
+      "handler": "gateway.problem_reports.create_problem_reports_router.<locals>.put_destinations",
+      "access": "operational"
     }
   ],
   "event_types": {
@@ -3633,7 +3677,7 @@
     "succeeded": "content:job:read"
   },
   "mcp_dispatch": {
-    "McpDeps": "562522e05d91a79cfdda031292d2d86ccc2924c2f1c8a437139caa64a5d1a281",
+    "McpDeps": "aa80d651a8e863e1b2a6199c290edaf613b98a4f4f3a599263d328bd4c5114d1",
     "rpc_error": "a23c4b9c67defee55675b673cded5661de031a6216b4231e661eef8f2c62e7a2",
     "_decode_header_value": "34648136c6a4cdfc8071129770a4beb60738f3a5053d8f974c6ce18c4b605878",
     "_normal_origin": "96df6d69434cf32e0e38a64189bb2fcb0fad04285c4e48c1cd66d970f6fbbcea",
@@ -3648,16 +3692,17 @@
     "_job_family": "0d1684dce09411c6a345fb99bbfc4cbbffc4c1c09ff44cbedd7907393ba8f187",
     "_job_paths": "7c5795ab8594aadbbbf6f357064596c572702cd82aab0b35c4b45e5c94a36465",
     "_normalize_job": "2dcd8c0b5d75a70126d32343159f807c6f945c78f9ceda43adba1daf45377944",
-    "Tools": "1afef617156a354537eb9b553396e3c706515b124467ebf4cddcc490752bc5c2",
+    "Tools": "ceb42e47959ec2d5f8fc51d852a96217c33a4aa1a2d018a0f92c01dcfb59a702",
     "tool_result": "e1efa86a533c6754836ea6f5cf96ada46537d05b4e1fa96a599b7689573c38d9",
     "_history_tool": "c5b1ad4a40f691f9ec1ecebe32a1103c1ce8e62296767cefdd4f60183ece3efd",
     "_tool_argument_error": "3f32675ba4c92fb3b901967a8cca48cf5fe7bcdbd69b673d88e05b51de80b1ae",
-    "call_tool": "23f6f7b4e5e7dc286e8f7b5926d218643e7bc203e3837d5b3777fb49d7a05fa0",
+    "_with_report_hint": "e77adcfd9dac4cc5e8293cf728993425417ecde33e426bee2853dae2c2c47daa",
+    "call_tool": "5c3048ce5d80bcf07bc53fef838a3a295c400f523d6d9fef5da7361ee4dee152",
     "_json": "d6cf8d0eccd7337c47b15be6d9560f65a5840c0594a91465a4f77f5eb985a098",
     "_bad_request": "a294e7977da5864ff89dd16e015edfcec2fa1d8e301de8da7bdd95120665f97a",
     "_validate_modern": "432f7895202e0642c6fa654e8220a821e5df44273f09d0619cca939675224d58",
     "_valid_envelope": "22fc29e2742465753487013398e5186278267ef295aa1bc64093a58d5fda2587",
-    "handle_message": "a85c1a9c2a5464f0d86d438499f82fb6ca4feba3e1dd8d92370dca7569056067",
+    "handle_message": "b5971f988c4af35fbdd3656d49bd1c8277642bb0deff73e454124949390ef5a4",
     "_quoted": "b5c1398422b4a8d3081e4f0d7620a28718369daca734207393de9e2fc1c0ae7d",
     "bearer_challenge": "39a19c7740529da1df86cb38aad57a7e54ed8b3220ab24d7134c2f626a44e63c",
     "register_mcp_routes": "23da16a0a1fe022c5b5a26fbedb7632bbdda4a5e628c25ca55b75dbb0682a019",
@@ -3674,7 +3719,7 @@
     "_wait": "62f9ea33e8db6edbb2567654350e22765ccf795e41b4e94ac4ef865af207055e",
     "_done": "758fcaf9dd5da692064f7d820b5e4bb15dc2efb3eb22d29e7ec2cd0a19c84f77",
     "_poll": "aee312761350f28e2290a9e3b5035661374b2dee6245e18b336e99e3774ff498",
-    "_await": "7a6273f815f3c0951d8290f9acd526a08751bdb6823ad69a95fdc903bf8a8923",
+    "_await": "852bf0e0f68e4c0cd20cde95ca3d932ad576ea6c0e7f3e6f714f09fdfcb2150c",
     "_job_assets": "fd4c6f32ce5644515a3314cbae97b1fe8bb293a69e3fdc329cbac6abbd331a49",
     "job": "0ef6e3762a63fe1cb8757e71beb72fd3d722d6d69b9fb678a02389de3ec6acd5",
     "rename": "2f7b61af84cd091b444556c024ab01e678e568de109e6d232ae85dc7a3dd7cdc",
@@ -3685,6 +3730,6 @@
     "mcp_no_stream": "dc1118144f06960affd356e3f599ae76703726c95f144af06f2d3554079690b3",
     "protected_resource": "a9bd38a702db1bfd58c9833c829c59973acf8b5fd595d733418f0542f3cf5215",
     "rank": "0b045bdafd1ab65458de7bd9f45a79a1c2fa18bd5cd8a8eeedb53a30d8d46f55",
-    "<module>": "47d6a7543aa107135c5e7bf8f3fcd7e75d2aa15c4c1372c5f05f457a9b0f5c40"
+    "<module>": "e3598876e9b26cfcaa4bc61228ef99da87013211058bdc7d67104e289a07dba4"
   }
 }

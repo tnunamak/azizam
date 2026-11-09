@@ -366,8 +366,12 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         done = poll()
         self.assertEqual((done["status"], done["progress"]), ("completed", 100))
         self.assertIsInstance(done["completed_at"], int)
-        full = self.client.get(f"/v1/videos/{video_id}/content")
-        self.assertEqual(full.status_code, 403)  # No retained maker identity for this caller.
+        default = self.client.get(f"/v1/videos/{video_id}/content")
+        # No retained maker identity for this caller: a fetch that does not ask for full metadata still gets the video,
+        # without metadata; asking for full is refused.
+        self.assertEqual(default.status_code, 200)
+        full = self.client.get(f"/v1/videos/{video_id}/content?metadata=full")
+        self.assertEqual(full.status_code, 403)
         content = self.client.get(f"/v1/videos/{video_id}/content?metadata=none")
         self.assertEqual(content.status_code, 200)
         expected = proxy.media_metadata.strip_metadata(_rendered_mp4(), ".mp4")

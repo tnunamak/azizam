@@ -231,6 +231,33 @@ def test_anonymous_media_stamp_and_probe_use_the_real_guard(tmp_path, monkeypatc
     assert commands == ["ffmpeg", "ffprobe"]
 
 
+def test_anonymous_media_guard_allows_the_metadata_file_embed_for_a_large_tag(tmp_path, monkeypatch):
+    import io
+    import wave
+    from gateway import media_metadata
+
+    audio = io.BytesIO()
+    with wave.open(audio, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\0\0" * 800)
+    run = subprocess.run
+    commands = []
+
+    def guarded_run(command, **kwargs):
+        check_event("subprocess.Popen", (command[0], command, None, None),
+                    {18750}, tmp_path / "images")
+        commands.append(command[0])
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    big = "x" * 140_000
+    stamped = media_metadata.embed_media_tags(audio.getvalue(), ".wav", {"title": big})
+    assert commands == ["ffprobe", "ffmpeg"]
+    assert media_metadata.read_media_tags(stamped, ".wav").get("comment") == "title=" + big
+
+
 def test_anonymous_media_guard_rejects_other_inputs_and_commands(tmp_path):
     from gateway import media_metadata
 

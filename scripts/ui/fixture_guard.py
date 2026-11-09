@@ -29,8 +29,24 @@ def _anonymous_media_command(executable, command):
     command = list(command)
     probe = ["ffprobe", "-v", "error", "-print_format", "json",
              "-show_format", "-show_streams"]
-    if executable == "ffprobe" and command[:-1] == probe:
+    if executable == "ffprobe" and command[:-1] in (probe, probe[:-1]):
         return _media_buffer(command[-1], "input")
+    # Tag embedding: the tags come from a second anonymous buffer, not the command line.
+    if (
+        executable == "ffmpeg"
+        and len(command) >= 18
+        and command[:6] == ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i"]
+        and command[7:10] == ["-f", "ffmetadata", "-i"]
+        and command[11:15] == ["-map", "0", "-map_metadata:g", "1:g"]
+        and command[-7:-2] == ["-c", "copy", "-fflags", "+bitexact", "-f"]
+        and command[-2] in {"mp4", "mov", "webm", "matroska", "avi", "wav",
+                            "flac", "mp3", "ogg", "adts"}
+        and command[15:-7] in ([], ["-movflags", "+use_metadata_tags"])
+        and _media_buffer(command[6], "input")
+        and _media_buffer(command[10], "metadata")
+        and _media_buffer(command[-1], "output")
+    ):
+        return True
     if not (
         executable == "ffmpeg"
         and len(command) >= 16

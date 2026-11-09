@@ -20,6 +20,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/admin/api/problem-reports": "owner-only list, read and edit of agent problem reports and their webhook destinations "
+                                  "(docs/design/MCP_PROBLEM_REPORTS.md); tests/test_problem_reports.py covers auth, scrubbing and the round trip",
     "/admin/api/workflows": "the owner's workflow registry (CODE_TO_DATA_S4_S8 I6): list, check, create, read, replace, delete, state, publish and restore, each with the os-N ETag; admin guard; tests/test_workflow_owner_api.py covers it",
     "/v1/assets/{asset_id}": "an App key deletes an asset its accountable person made (DELETE; owner-scoped, a signed content URL is no "
                              "right to delete); tests/test_app_asset_delete.py covers it",
@@ -235,7 +237,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # full id, and the run route documents the media job it answers (202, ``Location``) instead of video bytes;
         # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the digest was
         # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5.
-        assert route_graph.openapi_digest(proxy.app) == "78dec8a0e5e1d3dcc0b2f74ba44fb14ac552d8a9d8eb0a04ccf185358775b158"
+        # Re-captured 2026-11-09 for the problem-report admin routes under /admin/api/problem-reports (see ADDED_PATHS):
+        # only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing else).
+        # Before it the digest was 78dec8a0e5e1d3dcc0b2f74ba44fb14ac552d8a9d8eb0a04ccf185358775b158.
+        assert route_graph.openapi_digest(proxy.app) == "08a9bb3cd24fc180577b69df6a6c7acc5f4fc456b8d7b25bf09ba650a49b2dd7"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
