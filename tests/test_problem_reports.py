@@ -125,6 +125,45 @@ def test_reports_without_a_seen_failure_split_by_what_the_agent_says(tmp_path):
     assert again["report_id"] == one["report_id"] and again["count"] == 2  # numbers aside, the same words
 
 
+def test_reports_that_differ_only_in_category_or_only_in_target_stay_apart(tmp_path):
+    svc, _ = make(tmp_path, destinations=())
+    base = {"category": "failure", "target": "video", "summary": "The preview never loads."}
+    one = run(svc.submit(A1, base))
+    other_category = run(svc.submit(A1, {**base, "category": "differs_from_description"}))
+    other_target = run(svc.submit(A1, {**base, "target": "music"}))
+    ids = {one["report_id"], other_category["report_id"], other_target["report_id"]}
+    assert len(ids) == 3 and len(svc.list()) == 3
+
+
+def test_http_statuses_in_the_words_keep_two_reports_apart_and_the_first_summary_survives(tmp_path):
+    svc, _ = make(tmp_path, destinations=())
+    a = run(svc.submit(A1, {"category": "failure", "target": "video", "summary": "Render fails with HTTP 403."}))
+    b = run(svc.submit(A2, {"category": "failure", "target": "video", "summary": "Render fails with HTTP 500."}))
+    assert a["report_id"] != b["report_id"] and len(svc.list()) == 2
+    same = run(svc.submit(A2, {"category": "failure", "target": "video", "summary": "Render fails with HTTP 403."}))
+    assert same["report_id"] == a["report_id"] and same["count"] == 2
+    row = svc.get(a["report_id"])
+    assert row["summary"] == "Render fails with HTTP 403."
+
+
+def test_a_second_report_with_the_same_basis_keeps_the_first_summary_and_puts_the_latest_in_context(tmp_path):
+    svc, _ = make(tmp_path, destinations=())
+    first = run(svc.submit(A1, {"category": "failure", "target": "video", "summary": "Renders fail at 90% with a 403."}))
+    run(svc.submit(A2, {"category": "failure", "target": "video", "summary": "Renders fail at 87% with a 403."}))
+    row = svc.get(first["report_id"])
+    assert row["count"] == 2 and row["summary"] == "Renders fail at 90% with a 403."
+    assert row["last_context"].get("latest_summary") == "Renders fail at 87% with a 403."
+
+
+def test_a_report_that_names_no_target_and_no_job_takes_nothing_from_an_unrelated_failure(tmp_path):
+    svc, _ = make(tmp_path, destinations=())
+    svc.note_failure(A1, FAILURE)
+    out = run(svc.submit(A1, {"category": "failure", "summary": "The voice list is empty."}))
+    row = svc.get(out["report_id"])
+    assert row["tool"] is None and row["target"] is None and row["error_text"] is None
+    assert row["error_code"] is None and "job_id" not in row["last_context"]
+
+
 def test_operator_workaround_comes_back_to_the_next_agent(tmp_path):
     svc, _ = make(tmp_path)
     svc.note_failure(A1, FAILURE)
@@ -365,7 +404,8 @@ def admin(tmp_path):
         role = request.headers.get("test-role", "owner")
         if role == "anonymous":
             raise AdminAuthError("Sign in", status_code=401)
-        return AdminContext(subject="tester", roles=frozenset({role}))
+        session = {"session_id": "sess_test"} if request.headers.get("test-session") else {}
+        return AdminContext(subject="tester", roles=frozenset({role}), **session)
 
     app = FastAPI()
     app.include_router(problem_reports.create_problem_reports_router(auth=auth, service=svc, admin_path=admin_db))
@@ -472,9 +512,11 @@ def test_a_destination_secret_is_cleared_by_null_and_bad_secrets_are_refused(adm
     assert cleared.status_code == 200 and cleared.json()["destinations"][0]["has_secret"] is False
     with pytest.raises(KeyError):
         secret_store.get_provider_secret(ref, db_path=admin.path)
-    for bad in ("", "has space", "x" * 5000, 7):
+    for bad in ("", "has space", "x" * 5000, 7, "tk_bad\ttoken"):
         resp = admin.client.put("/admin/api/problem-reports/destinations", json={"destinations": [{**NTFY, "secret": bad}]})
-        assert resp.status_code == 400 and "tk_" not in resp.text
+        assert resp.status_code == 400
+        if isinstance(bad, str) and bad:
+            assert bad not in resp.text
 
 
 def test_a_secret_that_cannot_be_read_is_a_failed_delivery_that_names_nothing(tmp_path):
@@ -487,3 +529,136 @@ def test_a_secret_that_cannot_be_read_is_a_failed_delivery_that_names_nothing(tm
                          destinations=lambda: [{**NTFY, "secret_ref": "sec_1"}])
     out = run(svc.submit(A1, {"category": "failure", "summary": "a problem"}))
     assert poster.sent == [] and svc.get(out["report_id"])["last_notify_error"] == "delivery_failed"
+
+
+# ---------------------------------------------------------------- review findings: origin, atomicity, reader
+
+_SECRET = "tk_destinationtoken123"
+_PUT = "/admin/api/problem-reports/destinations"
+
+
+def _secret_rows(path):
+    import sqlite3
+    with sqlite3.connect(path) as conn:
+        try:
+            return conn.execute("SELECT id FROM provider_secrets").fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+
+def test_a_url_whose_origin_cannot_be_computed_is_refused_with_its_index_and_field(admin):
+    odd = {**NTFY, "id": "odd", "url": "https://good.example:+443/x"}
+    for body in ({**odd, "secret": _SECRET}, odd):
+        resp = admin.client.put(_PUT, json={"destinations": [NTFY, body]})
+        assert resp.status_code == 400, resp.text
+        assert "destinations[1]" in resp.text and "url" in resp.text and _SECRET not in resp.text
+    assert _secret_rows(admin.path) == []
+
+
+def test_an_edit_to_an_unparseable_origin_never_sends_the_bearer_to_the_new_host(admin, tmp_path):
+    good = {**NTFY, "url": "https://good.example/x"}
+    assert admin.client.put(_PUT, json={"destinations": [{**good, "secret": _SECRET}]}).status_code == 200
+    evil = admin.client.put(_PUT, json={"destinations": [{**good, "url": "https://evil.example:+443/y"}]})
+    assert evil.status_code == 400
+    poster = FakePoster()
+    svc = ProblemReports(tmp_path / "sent.db", post=poster,
+                         destinations=lambda: problem_reports.destinations_from_settings(admin.path),
+                         secret_for=lambda ref, origin: secret_store.get_provider_secret(
+                             ref, db_path=admin.path, expected_origin=origin))
+    run(svc.submit(A1, {"category": "failure", "summary": "a problem"}))
+    assert all("evil.example" not in sent["url"] for sent in poster.sent)
+
+
+def test_a_stored_destination_without_a_computable_origin_is_never_delivered_to(tmp_path):
+    poster = FakePoster()
+    asked = []
+    svc = ProblemReports(tmp_path / "p.db", post=poster,
+                         secret_for=lambda ref, origin: asked.append((ref, origin)) or "tk_value",
+                         destinations=lambda: [{**NTFY, "url": "https://evil.example:+443/y", "secret_ref": "sref_1"}])
+    out = run(svc.submit(A1, {"category": "failure", "summary": "a problem"}))
+    assert poster.sent == [] and asked == []
+    assert svc.get(out["report_id"])["last_notify_error"] == "delivery_failed"
+
+
+def test_a_secret_is_refused_on_a_plain_http_url_but_the_url_alone_is_allowed(admin):
+    plain = {**NTFY, "url": "http://ntfy.example.com/alerts"}
+    resp = admin.client.put(_PUT, json={"destinations": [{**plain, "secret": _SECRET}]})
+    assert resp.status_code == 400 and "destinations[0]" in resp.text and _SECRET not in resp.text
+    assert _secret_rows(admin.path) == []
+    assert admin.client.put(_PUT, json={"destinations": [plain]}).status_code == 200
+
+
+def test_a_failed_setting_write_leaves_no_stored_secret(admin, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(admin_store, "put_operator_setting", refuse)
+    with pytest.raises(RuntimeError):
+        admin.client.put(_PUT, json={"destinations": [{**NTFY, "secret": _SECRET}]})
+    assert _secret_rows(admin.path) == []
+
+
+def test_a_session_that_ends_before_the_second_secret_leaves_no_stored_secret(admin, monkeypatch):
+    from gateway import session_guard
+    original = secret_store.put_provider_secret
+    calls = []
+
+    def second_store_finds_the_session_ended(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise session_guard.SessionEnded()
+        return original(*args, **{**kwargs, "session": None})
+
+    monkeypatch.setattr(secret_store, "put_provider_secret", second_store_finds_the_session_ended)
+    other = {**NTFY, "id": "other", "url": "https://other.example.com/x"}
+    resp = admin.client.put(_PUT, headers={"test-session": "1"},
+                            json={"destinations": [{**NTFY, "secret": _SECRET}, {**other, "secret": "tk_second_token_99"}]})
+    assert resp.status_code == 401, resp.text
+    assert _secret_rows(admin.path) == []
+    assert problem_reports.destinations_from_settings(admin.path) == []
+
+
+def test_a_sign_out_after_the_save_does_not_undo_it_or_keep_the_old_token(admin, monkeypatch):
+    from gateway import session_guard
+    admin.client.put(_PUT, json={"destinations": [{**NTFY, "secret": _SECRET}]})
+    old = problem_reports.destinations_from_settings(admin.path)[0]["secret_ref"]
+    original_put, original_delete = secret_store.put_provider_secret, secret_store.delete_provider_secret
+
+    def delete(*args, **kwargs):
+        if kwargs.get("session") is not None:
+            raise session_guard.SessionEnded()
+        return original_delete(*args, **kwargs)
+
+    monkeypatch.setattr(secret_store, "delete_provider_secret", delete)
+    monkeypatch.setattr(secret_store, "put_provider_secret",
+                        lambda *a, **k: original_put(*a, **{**k, "session": None}))
+    resp = admin.client.put(_PUT, headers={"test-session": "1"},
+                            json={"destinations": [{**NTFY, "secret": "tk_replacement_token_7"}]})
+    assert resp.status_code == 200, resp.text
+    assert problem_reports.destinations_from_settings(admin.path)[0]["secret_ref"] != old
+    with pytest.raises(KeyError):
+        secret_store.get_provider_secret(old, db_path=admin.path)
+
+
+def test_the_gateways_store_sends_the_bearer_to_its_origin_only_and_registers_the_value(admin, tmp_path, monkeypatch):
+    import proxy
+    from gateway import secret_refs
+    assert admin.client.put(_PUT, json={"destinations": [{**NTFY, "secret": _SECRET}]}).status_code == 200
+    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", admin.path)
+    monkeypatch.setattr(secret_refs, "_db_path", None)
+    poster = FakePoster()
+    reports = proxy.PROBLEM_REPORTS
+    monkeypatch.setattr(reports, "_post", poster)
+    monkeypatch.setattr(reports, "_path_source", lambda: tmp_path / "gateway_reports.db")
+    log_scrub.clear()
+    run(reports.submit(A1, {"category": "failure", "summary": "the first problem"}))
+    assert poster.sent[0]["url"] == NTFY["url"]
+    assert poster.sent[0]["headers"]["Authorization"] == "Bearer " + _SECRET
+    assert _SECRET not in log_scrub.scrub("an upstream echoed " + _SECRET)
+    ref = problem_reports.destinations_from_settings(admin.path)[0]["secret_ref"]
+    admin_store.put_operator_setting(problem_reports.SETTING_KEY, {"destinations": [
+        {**NTFY, "url": "https://elsewhere.example.net/x", "secret_ref": ref}]}, path=admin.path)
+    run(reports.submit(A1, {"category": "failure", "summary": "the second problem"}))
+    assert len(poster.sent) == 1  # the secret is bound to another origin: nothing was sent
+    second = [row for row in reports.list() if row["summary"] == "the second problem"][0]
+    assert second["last_notify_error"] == "delivery_failed"
