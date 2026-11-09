@@ -1,0 +1,1308 @@
+{
+ "video.edit.rife-interpolate": {
+  "example": {
+   "body": {},
+   "content_type": "multipart/form-data",
+   "files": {
+    "source_video": {
+     "field": "source_video",
+     "input": "source_video",
+     "media_type": "video/*",
+     "required": true
+    }
+   },
+   "form": {
+    "multiplier": 2
+   },
+   "method": "POST",
+   "path": "/gateway/v1/workflows/rife-interpolate/run"
+  },
+  "mapping": {
+   "async": {
+    "multiplier": {
+     "field": "multiplier",
+     "in": "extension"
+    },
+    "source_video": {
+     "field": "source_video",
+     "in": "extension"
+    }
+   },
+   "sync": {
+    "multiplier": {
+     "field": "multiplier",
+     "in": "form"
+    },
+    "source_video": {
+     "field": "source_video",
+     "in": "file"
+    }
+   }
+  }
+ },
+ "video.edit.scail-2-replace": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "reference_fit": true,
+      "reference_image": "data:image/png;base64,...",
+      "reference_subject": "person",
+      "source_point_x": 0.0,
+      "source_point_y": 0.0,
+      "source_subject": "person",
+      "source_video": "data:image/png;base64,...",
+      "subject_index": "0"
+     }
+    },
+    "model": "video-scail-2-replace",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 81,
+    "seed": 0,
+    "size": "832x448"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "reference_fit": {
+     "field": "reference_fit",
+     "in": "extension"
+    },
+    "reference_image": {
+     "field": "reference_image",
+     "in": "extension"
+    },
+    "reference_subject": {
+     "field": "reference_subject",
+     "in": "extension"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "source_point_x": {
+     "field": "source_point_x",
+     "in": "extension"
+    },
+    "source_point_y": {
+     "field": "source_point_y",
+     "in": "extension"
+    },
+    "source_subject": {
+     "field": "source_subject",
+     "in": "extension"
+    },
+    "source_video": {
+     "field": "source_video",
+     "in": "extension"
+    },
+    "subject_index": {
+     "field": "subject_index",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "height": {
+     "field": "height",
+     "in": "form"
+    },
+    "length": {
+     "field": "length",
+     "in": "form"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "form"
+    },
+    "reference_fit": {
+     "field": "reference_fit",
+     "in": "form"
+    },
+    "reference_image": {
+     "field": "reference_image",
+     "in": "file"
+    },
+    "reference_subject": {
+     "field": "reference_subject",
+     "in": "form"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "form"
+    },
+    "source_point_x": {
+     "field": "source_point_x",
+     "in": "form"
+    },
+    "source_point_y": {
+     "field": "source_point_y",
+     "in": "form"
+    },
+    "source_subject": {
+     "field": "source_subject",
+     "in": "form"
+    },
+    "source_video": {
+     "field": "source_video",
+     "in": "file"
+    },
+    "subject_index": {
+     "field": "subject_index",
+     "in": "form"
+    },
+    "width": {
+     "field": "width",
+     "in": "form"
+    }
+   }
+  }
+ },
+ "video.generate.ltx-2.5-i2v": {
+  "example": {
+   "body": {
+    "image_strength": 0.7,
+    "input_reference": "data:image/png;base64,...",
+    "model": "video-ltx-2.5-i2v",
+    "negative_prompt": "value",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 9,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "image_strength": {
+     "field": "image_strength",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "image_strength": {
+     "field": "image_strength",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.ltx-2.5-keyframes": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "frames": 9,
+      "img_compression": 18,
+      "last_frame": "data:image/png;base64,...",
+      "last_frame_strength": 1
+     }
+    },
+    "image_strength": 0.7,
+    "input_reference": "data:image/png;base64,...",
+    "model": "video-ltx-2.5-keyframes",
+    "negative_prompt": "value",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 1.0,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "image_strength": {
+     "field": "image_strength",
+     "in": "body"
+    },
+    "img_compression": {
+     "field": "img_compression",
+     "in": "extension"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "last_frame_strength": {
+     "field": "last_frame_strength",
+     "in": "extension"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "image_strength": {
+     "field": "image_strength",
+     "in": "body"
+    },
+    "img_compression": {
+     "field": "img_compression",
+     "in": "extension"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "last_frame_strength": {
+     "field": "last_frame_strength",
+     "in": "extension"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.ltx-2.5-keyframes-mid": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "frames": 9,
+      "img_compression": 18,
+      "last_frame": "data:image/png;base64,...",
+      "last_frame_strength": 1,
+      "mid_frame": "data:image/png;base64,...",
+      "mid_frame_index": 1,
+      "mid_frame_strength": 1
+     }
+    },
+    "image_strength": 0.7,
+    "input_reference": "data:image/png;base64,...",
+    "model": "video-ltx-2.5-keyframes-mid",
+    "negative_prompt": "value",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 1.0,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "image_strength": {
+     "field": "image_strength",
+     "in": "body"
+    },
+    "img_compression": {
+     "field": "img_compression",
+     "in": "extension"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "last_frame_strength": {
+     "field": "last_frame_strength",
+     "in": "extension"
+    },
+    "mid_frame": {
+     "field": "mid_frame",
+     "in": "extension"
+    },
+    "mid_frame_index": {
+     "field": "mid_frame_index",
+     "in": "extension"
+    },
+    "mid_frame_strength": {
+     "field": "mid_frame_strength",
+     "in": "extension"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "image_strength": {
+     "field": "image_strength",
+     "in": "body"
+    },
+    "img_compression": {
+     "field": "img_compression",
+     "in": "extension"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "last_frame_strength": {
+     "field": "last_frame_strength",
+     "in": "extension"
+    },
+    "mid_frame": {
+     "field": "mid_frame",
+     "in": "extension"
+    },
+    "mid_frame_index": {
+     "field": "mid_frame_index",
+     "in": "extension"
+    },
+    "mid_frame_strength": {
+     "field": "mid_frame_strength",
+     "in": "extension"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.ltx-2.5-long": {
+  "example": {
+   "body": {
+    "model": "video-ltx-2.5-long",
+    "negative_prompt": "value",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 1.0,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.ltx-2.5-t2v": {
+  "example": {
+   "body": {
+    "model": "video-ltx-2.5-t2v",
+    "negative_prompt": "value",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 9,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "negative_prompt": {
+     "field": "negative_prompt",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.minimax-h3-i2v": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "steps": 8
+     }
+    },
+    "input_reference": "data:image/png;base64,...",
+    "model": "video-minimax-h3-i2v",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 22,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.minimax-h3-keyframes": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "frames": 22,
+      "last_frame": "data:image/png;base64,...",
+      "steps": 8
+     }
+    },
+    "input_reference": "data:image/png;base64,...",
+    "model": "video-minimax-h3-keyframes",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 1.0,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.minimax-h3-keyframes-mid": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "frames": 22,
+      "last_frame": "data:image/png;base64,...",
+      "mid_frame_index": 1,
+      "middle_frame": "data:image/png;base64,...",
+      "steps": 8
+     }
+    },
+    "input_reference": "data:image/png;base64,...",
+    "model": "video-minimax-h3-keyframes-mid",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 1.0,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "mid_frame_index": {
+     "field": "mid_frame_index",
+     "in": "extension"
+    },
+    "middle_frame": {
+     "field": "middle_frame",
+     "in": "extension"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "frames": {
+     "field": "frames",
+     "in": "extension"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "image": {
+     "field": "input_reference",
+     "in": "body"
+    },
+    "last_frame": {
+     "field": "last_frame",
+     "in": "extension"
+    },
+    "mid_frame_index": {
+     "field": "mid_frame_index",
+     "in": "extension"
+    },
+    "middle_frame": {
+     "field": "middle_frame",
+     "in": "extension"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.minimax-h3-long": {
+  "example": {
+   "body": {
+    "model": "video-minimax-h3-long",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 1.0,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ },
+ "video.generate.minimax-h3-t2v": {
+  "example": {
+   "body": {
+    "extensions": {
+     "com.azizam.workflow": {
+      "steps": 8
+     }
+    },
+    "model": "video-minimax-h3-t2v",
+    "prompt": "A small teal fish mark on a clean white card.",
+    "seconds": 22,
+    "seed": 0,
+    "size": "64x64"
+   },
+   "content_type": "application/json",
+   "files": {},
+   "form": {},
+   "method": "POST",
+   "path": "/v1/videos"
+  },
+  "mapping": {
+   "async": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   },
+   "sync": {
+    "frame_rate": {
+     "in": "none"
+    },
+    "height": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    },
+    "length": {
+     "field": "seconds",
+     "in": "body"
+    },
+    "prompt": {
+     "field": "prompt",
+     "in": "body"
+    },
+    "seed": {
+     "field": "seed",
+     "in": "body"
+    },
+    "steps": {
+     "field": "steps",
+     "in": "extension"
+    },
+    "width": {
+     "combine": [
+      "width",
+      "height"
+     ],
+     "field": "size",
+     "in": "body"
+    }
+   }
+  }
+ }
+}
