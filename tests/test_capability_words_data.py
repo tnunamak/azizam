@@ -78,6 +78,14 @@ EXPECTED_INTENTS = {**PROTOCOL, **EXTRA_INTENTS}
 def _document():
     return {
         "schema_version": 1,
+        "capabilities": [
+            {"id": "chat", "label": "Chat"}, {"id": "image", "label": "Images"},
+            {"id": "video", "label": "Video"}, {"id": "speech", "label": "Voice"},
+            {"id": "transcribe", "label": "Transcription"}, {"id": "music", "label": "Music"},
+            {"id": "sfx", "label": "Sound effects"}, {"id": "audio", "label": "Audio"},
+            {"id": "decide", "label": "Decisions"}, {"id": "embed", "label": "Document search"},
+            {"id": "rerank", "label": "Reranking"}, {"id": "mesh", "label": "3D models"},
+        ],
         "protocol_words": dict(PROTOCOL),
         "route_intents": dict(EXTRA_INTENTS),
     }
@@ -119,7 +127,7 @@ def test_loaded_maps_equal_literal_base_tables_including_order(tmp_path):
 
 def test_shipped_file_has_only_extra_intents_and_no_duplicate_transcription():
     document = yaml.safe_load(DATA.read_text(encoding="utf-8"))
-    assert list(document) == ["schema_version", "protocol_words", "route_intents"]
+    assert list(document) == ["schema_version", "capabilities", "protocol_words", "route_intents"]
     assert document["schema_version"] == 1
     assert list(document["protocol_words"].items()) == list(PROTOCOL.items())
     assert list(document["route_intents"].items()) == list(EXTRA_INTENTS.items())
@@ -140,8 +148,8 @@ def test_exported_maps_are_read_only(tmp_path, name):
     (None, "<document>"),
     ([], "<document>"),
     ({}, "schema_version"),
-    ({"schema_version": 1}, "protocol_words"),
-    ({"schema_version": 1, "protocol_words": {}}, "route_intents"),
+    ({"schema_version": 1, "capabilities": _document()["capabilities"]}, "protocol_words"),
+    ({"schema_version": 1, "capabilities": _document()["capabilities"], "protocol_words": {}}, "route_intents"),
     ({**_document(), "surprise": {}}, "surprise"),
     ({**_document(), 42: {}}, "42"),
     ({**_document(), "schema_version": 2}, "schema_version"),
