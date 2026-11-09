@@ -248,6 +248,25 @@ The private admission evidence gains `service_id`. That ships as its own small c
   checkpoint that fails leaves the engine unchanged; that is what `failure_semantics: no_change` attests.
 - **Bytes come from the reply or the file.** A checkpoint success reports its byte count, or the adapter takes the
   size of the file at the path. With neither, the outcome is unknown and no snapshot is published.
+- **Failure semantics are profile data (S8 part B, 2026-11-09).** Every effect operation (release, load, checkpoint,
+  restore, and restore.reset) may declare `failure_semantics: no_change | unknown` in the reviewed profile; absent means
+  `unknown`. The adapter reads a declared `failed` as `no_change` only where the profile attests it, and as `partial`
+  everywhere else; a query of a step uses that step's semantics; it keeps no per-operation table (a guard test checks
+  this). Live 2026-11-08: a refused checkpoint save wrote nothing, was read as `partial`, and held a gate
+  `failed_closed` for 4 h 52 min.
+  An attested `no_change` means the engine is as it was before the step, and the servable re-check (G7: the
+  profile's `servable_check`, else the source's resident observation) judges it:
+  - confirmed servable: the operation ends `aborted` and the gate reopens;
+  - confirmed not servable: the gate stays `failed_closed`;
+  - unknown (no fresh, incarnation-matched answer): the outcome is recorded `unknown` and the gate is `reconciling`.
+  Release and load (`_EffectStep.settle`), the startup reconcile (`Executor._recover` through `_settle`) and the owner's
+  resolve with outcome `no_change` all use that rule (`no_change_verdict` in `gateway/transition_executor.py`). A
+  `no_change` the profile does not attest holds `failed_closed`, and an owner resolve of it that cannot read the check
+  changes nothing. Two steps keep their own rule, which reads the same profile data: a checkpoint (best_effort goes on
+  cold, required re-checks servable) and a restore (attested `no_change` serves cold with no reset; otherwise the
+  declared reset runs, and a reset that fails is judged by `restore.reset.failure_semantics` and `verify`, G1).
+  The shipped profiles attest only the checkpoint: no protocol description in the repository promises that a failed
+  release, load, restore or reset leaves the engine unchanged.
 - **Compatibility is a map of strings.** Unknown means cold: an empty compatibility map never matches a published
   snapshot. A success is never attested for checkpoint, restore or reset.
 - **The new profile.** `declared-snapshot-ops-v1` declares all nine operations and the reviewed checkpoint, restore

@@ -17,6 +17,11 @@ Rules the steps keep:
   evidence, for the intent's incarnation, that nothing is resident. Stale, missing or foreign evidence is
   ``unknown``; resident evidence is ``partial`` (a residual allocation). Neither settles stock.
 - Load verifies the target: fresh evidence that the target itself is resident and ready.
+- A ``no_change`` outcome of a step the reviewed profile attests (``failure_semantics: no_change``) means the engine is
+  as it was before the step. The step then asks the servable re-check (decision G7: the profile's ``servable_check``
+  observation, else the source's resident observation): servable reopens the gate (the operation is ``aborted``), not
+  servable holds ``failed_closed``, unknown holds ``reconciling``. A ``no_change`` the profile does not attest holds
+  ``failed_closed``. Settle, the startup reconcile and the owner's resolve all use this one rule.
 - Recovery from a failed load is a new operation (``compensates=``), never a rollback call.
 - Leases live in memory. The open step mints the trigger's lease under the lock and then finishes the
   operation and opens the gate in one transaction (decision G6). Reconcile never mints a lease.
@@ -38,6 +43,7 @@ from gateway.transition_ops import (
     FINISHED_STATES, STEP_ORDER, BeginResult, Begun, Conflict, EffectResult, Evidence, Operation, OperationStore,
     SameOperation, Step, StepContext, StepIntent, StepName, StepVerdict, TransitionAdapter, TransitionKind,
 )
+from gateway.transition_profiles import attests_no_change
 from gateway.transition_store import StaleOutcome, request_hash
 
 EFFECT_STEPS: frozenset[str] = frozenset({"checkpoint", "release", "load", "restore"})
@@ -211,13 +217,48 @@ class _EffectStep:
                 result = await self._verify(ctx, intent, result)
             except Exception as exc:  # noqa: BLE001 - evidence that cannot be read is unknown
                 result = EffectResult(outcome="unknown", evidence_ref=f"verify_error:{type(exc).__name__}")
+        result, verdict = await judge_outcome(ctx, self.name, result, clock=self._clock)
         written = await asyncio.to_thread(ctx.store.write_outcome, ctx.operation.op_id, self.name, result)
         if written.step_outcome != result.outcome:
             # The store ignored the outcome as stale (decision G10): another incarnation, or a settled step.
             # Nothing is learned from it, so the step is unknown.
             result = EffectResult(outcome="unknown", evidence_ref="stale_outcome")
             await asyncio.to_thread(ctx.store.write_outcome, ctx.operation.op_id, self.name, result)
-        return verdict_for(result.outcome)
+            return verdict_for(result.outcome)
+        return verdict
+
+
+async def no_change_verdict(ctx: StepContext, step: str, *, clock: Callable[[], float] = time.time) -> StepVerdict:
+    """What a ``no_change`` outcome of ``step`` holds. Only a no_change the reviewed profile attests is believed; then the
+    servable re-check decides: ``reopen`` when the source is confirmed servable, ``fail_closed`` when it is confirmed
+    not servable, ``reconcile`` when that is unknown. Anything else is ``fail_closed``."""
+    profile = ctx.policy.get("profile")
+    if not isinstance(profile, Mapping) or not attests_no_change(profile, step):
+        return "fail_closed"
+    observation = profile.get("servable_check")
+    observe = getattr(ctx.adapter, "observe", None)
+    domain = ctx.operation.domain
+    try:
+        call = observe(domain, observation) if observation and observe is not None else ctx.adapter.resident(domain)
+        evidence = await asyncio.wait_for(call, setting(ctx.policy, "probe_deadline_s"))
+    except Exception:  # noqa: BLE001 - evidence that cannot be read is unknown
+        return "reconcile"
+    servable = evidence_state(evidence, now=clock(), fresh_within_s=fresh_within(ctx.policy),
+                              incarnation=ctx.operation.incarnation)
+    return "reopen" if servable is True else "fail_closed" if servable is False else "reconcile"
+
+
+async def judge_outcome(ctx: StepContext, step: str, result: EffectResult, *,
+                        clock: Callable[[], float] = time.time) -> tuple[EffectResult, StepVerdict]:
+    """The outcome to write and the verdict for a settled ``result``. A ``no_change`` whose servable check cannot be read is
+    written as ``unknown``: only an unknown outcome may hold ``reconciling``."""
+    if result.outcome != "no_change":
+        return result, verdict_for(result.outcome)
+    verdict = await no_change_verdict(ctx, step, clock=clock)
+    if verdict == "reconcile":
+        return EffectResult(outcome="unknown", evidence_ref="no_change_servable_unknown",
+                            correlation_id=result.correlation_id), verdict
+    return result, verdict
 
 
 def verdict_for(outcome: str) -> StepVerdict:
@@ -732,8 +773,9 @@ class Executor:
         settle = getattr(step, "settle", None)
         if settle is not None:
             return await settle(ctx, intent, result)
+        result, verdict = await judge_outcome(ctx, intent.step, result)
         written = await asyncio.to_thread(self.store.write_outcome, operation.op_id, intent.step, result)
-        return verdict_for(written.step_outcome or "unknown")
+        return verdict if written.step_outcome == result.outcome else verdict_for(written.step_outcome or "unknown")
 
     def _resume_point(self, operation: Operation) -> Optional[StepName]:
         """The step to go on after: the last one that ended, or None to start from the first.
@@ -768,8 +810,9 @@ class Executor:
     async def resolve(self, op_id: str, *, step: StepName, outcome: str, evidence_ref: Optional[str]) -> Operation:
         """The owner settles a held step (decision G3). Only a reconciling operation, at that step, takes it.
 
-        ``success`` lets the operation go on with its next step; ``unknown`` changes nothing; any other
-        outcome holds ``failed_closed``. A stale call raises ``StaleOutcome`` and changes nothing.
+        ``success`` lets the operation go on with its next step; ``unknown`` changes nothing; ``no_change``
+        follows the servable rule (see the module notes) when the profile attests it for the step, and holds
+        ``failed_closed`` otherwise; any other outcome holds ``failed_closed``. A stale call raises ``StaleOutcome`` and changes nothing.
         """
         operation = await asyncio.to_thread(self.store.get, op_id)
         if operation is None:
@@ -777,10 +820,18 @@ class Executor:
         if operation.state != "reconciling" or operation.step != step or operation.step_intent is None:
             raise StaleOutcome(f"operation {op_id} is {operation.state} at step {operation.step!r}; nothing to resolve at {step!r}")
         result = EffectResult(outcome=outcome, evidence_ref=evidence_ref)  # type: ignore[arg-type]
+        ctx = StepContext(operation=operation, store=self.store, adapter=self._adapter_for(operation.domain),
+                          snapshots=self._snapshots, policy=self._policy_of(operation.domain))
+        verdict = verdict_for(outcome)
+        if outcome == "no_change":
+            # The owner says the step changed nothing: believe it as a profile-attested no_change is believed. A check
+            # that cannot be read changes nothing, as an "unknown" resolve does.
+            verdict = await no_change_verdict(ctx, step)
+            if verdict == "reconcile":
+                return operation
         written = await asyncio.to_thread(self.store.write_outcome, op_id, step, result)
         if written.step_outcome != outcome:
             raise StaleOutcome(f"operation {op_id}: the outcome was refused as stale")
-        verdict = verdict_for(outcome)
         if verdict == "reconcile":
             return written
         if verdict != "continue":

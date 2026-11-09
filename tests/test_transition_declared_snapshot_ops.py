@@ -267,13 +267,13 @@ def test_a_declared_failed_checkpoint_is_the_profiles_failed_checkpoint(tmp_path
     # speaks about exactly this failure; a declared "partial" stays partial (unknown to the step).
     invoke = FakeInvoke({"transition.checkpoint": Reply(200, {"outcome": declared, "evidence_ref": "save_refused"}),
                          "transition.query": Reply(200, {"outcome": declared})})
-    adapter = adapter_for(snapshot_profile(), invoke, tmp_path)
+    adapter = adapter_for(snapshot_profile(checkpoint={"failure_semantics": "no_change"}), invoke, tmp_path)
     result = run(adapter.checkpoint("dom", intent()))
     assert (result.outcome, result.evidence_ref) == (reported, "save_refused") and result.handle is not None
     assert run(adapter.query("dom", intent("checkpoint"))).outcome == reported
 
 
-def test_a_declared_failed_effect_other_than_a_checkpoint_stays_partial(tmp_path: Path) -> None:
+def test_a_declared_failed_effect_the_profile_does_not_attest_stays_partial(tmp_path: Path) -> None:
     invoke = FakeInvoke({"transition.release": Reply(200, {"outcome": "failed"}),
                          "transition.query": Reply(200, {"outcome": "failed"})})
     adapter = adapter_for(snapshot_profile(), invoke, tmp_path)

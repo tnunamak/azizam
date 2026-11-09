@@ -12,10 +12,10 @@ Rules:
 - ``attested`` comes from the profile, never from the reply or the owner's config.
 - Any transport error, a reply that is not a finished answer, or an ``outcome`` the adapter does not know is
   ``unknown``. The executor then asks ``query``; nothing reopens on an unknown outcome.
-- A declared ``failed`` outcome is reported as ``partial``: the step did not succeed, so the gate stays closed.
-- A checkpoint is the exception: a declared ``failed`` checkpoint (or a ``query`` of one) is reported as
-  ``no_change``, the case the profile's checkpoint ``failure_semantics`` speaks about. The checkpoint step trusts it
-  only when the profile attests ``no_change``; a declared ``partial`` checkpoint stays ``partial``.
+- A declared ``failed`` outcome means what the reviewed profile says for that operation: ``no_change`` when the
+  profile's block for it (release, load, checkpoint, restore, or restore.reset) declares ``failure_semantics:
+  no_change``, ``partial`` otherwise. A ``query`` of a step uses that step's semantics. A declared ``partial`` stays
+  ``partial``. The adapter keeps no table of operations: the profile decides.
 - Evidence is stamped with the adapter's clock, so the executor's freshness window is the time of the read.
 - ``checkpoint`` mints its own handle and writes the snapshot only at the path the snapshot store gives it; a
   success is never attested. ``compatibility`` is an empty map when the engine's answer is unknown.
@@ -37,8 +37,7 @@ Invoke = Callable[[str, str, Mapping[str, Any]], Awaitable[Any]]
 """``invoke(domain, protocol_op, body)`` -> a reply with ``status`` and ``selected`` (http-v1 ``Reply``). It is bound
 to the right engine record by the caller; it raises on a transport error."""
 
-_OUTCOMES = {"success": "success", "no_change": "no_change", "partial": "partial", "failed": "partial",
-             "unknown": "unknown"}
+_OUTCOMES = {"success": "success", "no_change": "no_change", "partial": "partial", "unknown": "unknown"}
 
 
 def _flag(value: Any) -> Optional[bool]:
@@ -112,14 +111,20 @@ class DeclaredOperationAdapter:
     async def resident(self, domain: str) -> Evidence:
         return await self._evidence(domain, "resident", "resident")
 
+    def _outcome(self, declared: str, block: str) -> str:
+        """The outcome word for a declared one. ``failed`` is ``no_change`` only when the profile's ``block`` attests it."""
+        if declared == "failed":
+            return "no_change" if self._profile.attests_no_change(block) else "partial"
+        return _OUTCOMES.get(declared, "unknown")
+
     async def _effect(self, domain: str, key: str, body: Mapping[str, Any], *, attests: bool,
-                      failed_as: str = "partial") -> EffectResult:
+                      block: Optional[str] = None) -> EffectResult:
+        """One effect call. ``block`` names the profile block that speaks for a ``failed`` reply (default: ``key``)."""
         try:
             selected = await self._selected(domain, key, body)
         except Exception:  # noqa: BLE001 - the engine may or may not have acted
             return EffectResult(outcome="unknown", evidence_ref="invoke_error")
-        declared = str(selected.get("outcome") or "")
-        outcome = failed_as if declared == "failed" else _OUTCOMES.get(declared, "unknown")
+        outcome = self._outcome(str(selected.get("outcome") or ""), block or key)
         return EffectResult(outcome=outcome,  # type: ignore[arg-type]
                             evidence_ref=_text(selected.get("evidence_ref")),
                             incarnation=_text(selected.get("incarnation")),
@@ -141,7 +146,7 @@ class DeclaredOperationAdapter:
 
     async def query(self, domain: str, intent: StepIntent) -> EffectResult:
         return await self._effect(domain, "query", self._body(intent, step=intent.step), attests=intent.step == "release",
-                                  failed_as="no_change" if intent.step == "checkpoint" else "partial")
+                                  block=intent.step)
 
     def _path(self, domain: str, handle: str) -> Optional[Path]:
         """The snapshot store's path for ``handle``, or None when the store refuses it."""
@@ -164,8 +169,7 @@ class DeclaredOperationAdapter:
                                             self._body(intent, handle=handle, path=str(path)))
         except Exception:  # noqa: BLE001 - the engine may or may not have acted
             return EffectResult(outcome="unknown", evidence_ref="invoke_error", handle=handle)
-        declared = str(selected.get("outcome") or "")
-        outcome = "no_change" if declared == "failed" else _OUTCOMES.get(declared, "unknown")
+        outcome = self._outcome(str(selected.get("outcome") or ""), "checkpoint")
         incarnation = _text(selected.get("incarnation"))
         if outcome != "success":
             return EffectResult(outcome=outcome,  # type: ignore[arg-type]
@@ -191,7 +195,8 @@ class DeclaredOperationAdapter:
     async def reset(self, domain: str, intent: StepIntent) -> EffectResult:
         if "reset" not in self._profile.operations:
             return EffectResult(outcome="unknown", evidence_ref="reset_unsupported")
-        return await self._effect(domain, "reset", self._body(intent), attests=False)
+        return await self._effect(domain, "reset", self._body(intent), attests=False,
+                                  block="restore.reset")
 
     async def compatibility(self, domain: str) -> Mapping[str, str]:
         """The compatibility token as strings. An empty map means unknown, and unknown means cold."""
