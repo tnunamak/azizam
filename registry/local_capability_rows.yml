@@ -1,0 +1,158 @@
+schema_version: 1
+alias_operations:
+  - name: chat
+    intent: chat.completions
+    input_modalities: [text]
+    output_modalities: [text]
+    execution: sync
+  - name: embeddings
+    intent: text.embeddings
+    input_modalities: [text]
+    output_modalities: [embedding]
+    execution: sync
+  - name: images
+    intent: image.generate
+    input_modalities: [text]
+    output_modalities: [image]
+    execution: job
+  - name: image_edits
+    intent: image.edit
+    input_modalities: [text, image]
+    output_modalities: [image]
+    execution: job
+  - name: videos
+    intent: video.generate
+    input_modalities: [text]
+    output_modalities: [video]
+    execution: job
+  - name: speech
+    intent: speech.synthesis
+    input_modalities: [text]
+    output_modalities: [audio]
+    execution: sync
+    capability: speech
+  - name: transcriptions
+    intent: speech.transcription
+    input_modalities: [audio]
+    output_modalities: [text]
+    execution: sync
+  - name: audio_generate
+    intent: audio.generate
+    input_modalities: [text]
+    output_modalities: [audio]
+    execution: job
+workflow_families:
+  - section: videos
+    enabled_flag: videos
+    intent: video.generate
+    input_modalities: [text]
+    output_modalities: [video]
+    resource_tier: expensive
+  - section: audio
+    enabled_flag: audio
+    intent: audio.generate
+    input_modalities: [text]
+    output_modalities: [audio]
+    resource_tier: batch
+
+backend_rows:
+  - group: endpoints
+    triggers: [chat]
+    flag: llm
+    intent: chat.completions
+    inputs: [text]
+    outputs: [text]
+    streaming: true
+    execution: sync
+    gpu_required: true
+    vision:
+      trigger: vision
+      inputs: [text, image]
+  - group: endpoints
+    triggers: [completions]
+    flag: llm
+    intent: text.completions
+    inputs: [text]
+    outputs: [text]
+    streaming: true
+    execution: sync
+    gpu_required: true
+  - group: endpoints
+    triggers: [embeddings]
+    flag: embeddings
+    intent: text.embeddings
+    inputs: [text]
+    outputs: [text]
+    streaming: false
+    execution: sync
+    gpu_required: false
+    resources_from: backend
+  - group: speech
+    triggers: [speech, tts]
+    flag: tts
+    capability: speech
+    intent: speech.synthesis
+    inputs: [text]
+    outputs: [audio]
+    streaming: true
+    execution: sync
+    gpu_required: true
+    tags:
+      - response_format:wav
+      - response_format:mp3
+      - response_format:opus
+      - response_format:aac
+      - response_format:flac
+      - response_format:pcm
+  - group: recognition
+    triggers: [transcriptions, stt]
+    flag: stt
+    intent: speech.transcription
+    inputs: [audio]
+    outputs: [text]
+    streaming: false
+    execution: sync
+    gpu_required: true
+    action_label: Transcribe
+    recordable_inputs: [audio]
+  - group: recognition
+    triggers: [translations, translation]
+    flag: stt
+    intent: speech.translation
+    inputs: [audio]
+    outputs: [text]
+    streaming: false
+    execution: sync
+    gpu_required: true
+    action_label: Translate
+    recordable_inputs: [audio]
+    caveats:
+      - Only advertised when the local STT backend declares translation support.
+image_defaults:
+  section: images
+  enabled_flag: images
+  section_required: false
+  backend_presence: nonempty_mapping
+  default_backend: comfyui
+  output_modalities: [image]
+  execution: job
+  streaming: false
+  resource_tier: batch
+  gpu_required: true
+image_rows:
+  - intent: image.generate
+    input_modalities: [text]
+    model_sources:
+      - backend.default_model
+      - config.model_compatibility.defaults.images
+  - intent: image.edit
+    input_modalities: [text, image]
+    model_sources:
+      - config.model_compatibility.defaults.image_edits
+workflow_defaults:
+  section_required: true
+  backend_presence: declared
+  default_backend: comfyui
+  execution: job
+  streaming: false
+  gpu_required: true

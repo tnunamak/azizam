@@ -5,9 +5,9 @@ Given a ``proxy_config.yml``-shaped dict (and optional enabled flags), produce
 gateway is locally configured to serve. This replaces the small hard-coded
 set the gateway has historically advertised.
 
-This module is pure:
+Capability builders are pure after package rows load once at import:
 
-* No filesystem reads. Workflow file existence and adapter binaries are not
+* No per-call filesystem reads. Workflow file existence and adapter binaries are not
   probed here. Callers may pass optional ``known_workflow_files`` metadata
   (a set of relative paths the caller has already inventoried) to suppress
   "workflow file may not exist on disk" caveats.
@@ -36,7 +36,11 @@ leak local paths even when the ``internal`` audience is requested.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from pathlib import Path
+from types import MappingProxyType
 from typing import Any
+
+import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate
 from gateway.model_files import missing_model_file_caveat, model_file_availability
@@ -95,22 +99,254 @@ def build_local_capabilities(
     capabilities.extend(_build_tts_capabilities(backends, flags))
     capabilities.extend(_build_stt_capabilities(backends, flags))
     capabilities.extend(_build_image_capabilities(config, backends, flags))
-    capabilities.extend(_build_video_capabilities(config, backends, flags, known_files))
-    capabilities.extend(_build_audio_capabilities(config, backends, flags, known_files))
+    capabilities.extend(_build_workflow_capabilities(config, backends, flags, known_files))
 
     return capabilities
 
 
-_ALIAS_INTENTS: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str, str | None]] = {
-    "chat": (INTENT_CHAT, ("text",), ("text",), "sync", None),
-    "embeddings": (INTENT_EMBEDDINGS, ("text",), ("embedding",), "sync", None),
-    "images": (INTENT_IMAGE_GENERATE, ("text",), ("image",), "job", None),
-    "image_edits": (INTENT_IMAGE_EDIT, ("text", "image"), ("image",), "job", None),
-    "videos": (INTENT_VIDEO_GENERATE, ("text",), ("video",), "job", None),
-    "speech": (INTENT_SPEECH, ("text",), ("audio",), "sync", "speech"),
-    "transcriptions": (INTENT_TRANSCRIPTIONS, ("audio",), ("text",), "sync", None),
-    "audio_generate": (INTENT_AUDIO_GENERATE, ("text",), ("audio",), "job", None),
-}
+_LOCAL_CAPABILITY_ROWS_PATH = (
+    Path(__file__).resolve().parents[1] / "registry" / "local_capability_rows.yml"
+)
+
+
+def _load_local_capability_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+) -> tuple[
+    Mapping[str, tuple[str, tuple[str, ...], tuple[str, ...], str, str | None]],
+    tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
+    tuple[Mapping[str, Any], ...],
+    Mapping[str, Any],
+    tuple[Mapping[str, Any], ...],
+    Mapping[str, Any],
+]:
+    """Load ordered package facts; errors identify the file and logical row."""
+    source = Path(path)
+
+    def fail(where: str, message: str) -> None:
+        raise ValueError(f"{source}: {where}: {message}")
+
+    def fields(
+        row: Any, required: set[str], where: str, optional: frozenset[str] = frozenset(),
+    ) -> None:
+        if not isinstance(row, Mapping):
+            fail(where, "must be a mapping")
+        missing = required - row.keys()
+        unknown = row.keys() - required - optional
+        if missing:
+            fail(where, f"missing fields: {', '.join(sorted(missing))}")
+        if unknown:
+            fail(where, f"unknown fields: {', '.join(sorted(map(str, unknown)))}")
+
+    def text(row: Mapping[str, Any], key: str, where: str) -> str:
+        value = row[key]
+        if not isinstance(value, str) or not value.strip():
+            fail(where, f"{key} must be a non-empty string")
+        return value
+
+    def modalities(row: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
+        value = row[key]
+        if not isinstance(value, list) or not value or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            fail(where, f"{key} must be a non-empty list of non-empty strings")
+        return tuple(value)
+
+    try:
+        document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        fail("document row 0", f"could not read rows: {error}")
+    fields(
+        document, {
+            "schema_version", "alias_operations", "workflow_families",
+            "image_defaults", "image_rows", "workflow_defaults",
+        },
+        "document row 0", frozenset({"backend_rows"}),
+    )
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        fail("document row 0", "schema_version must be 1")
+
+    aliases = {}
+    families = []
+    common = {"intent", "input_modalities", "output_modalities"}
+    for table, name_key, required in (
+        ("alias_operations", "name", common | {"name", "execution"}),
+        ("workflow_families", "section", common | {"section", "enabled_flag", "resource_tier"}),
+    ):
+        rows = document[table]
+        if not isinstance(rows, list):
+            fail("document row 0", f"{table} must be a list")
+        names = set()
+        for number, row in enumerate(rows, start=1):
+            where = f"{table} row {number}"
+            fields(row, required, where, frozenset({"capability"}) if table == "alias_operations" else frozenset())
+            name = text(row, name_key, where)
+            if name in names:
+                fail(where, f"duplicate name: {name!r}")
+            names.add(name)
+            intent = text(row, "intent", where)
+            inputs = modalities(row, "input_modalities", where)
+            outputs = modalities(row, "output_modalities", where)
+            if table == "alias_operations":
+                execution = text(row, "execution", where)
+                if execution not in {"sync", "job"}:
+                    fail(where, "execution must be sync or job")
+                subtype = text(row, "capability", where) if "capability" in row else None
+                aliases[name] = (intent, inputs, outputs, execution, subtype)
+            else:
+                flag = text(row, "enabled_flag", where)
+                tier = text(row, "resource_tier", where)
+                if tier not in {"batch", "expensive"}:
+                    fail(where, "resource_tier must be batch or expensive")
+                families.append((name, flag, intent, inputs, outputs, tier))
+    default_fields = {
+        "section_required", "backend_presence", "default_backend",
+        "execution", "streaming", "gpu_required",
+    }
+
+    def family_defaults(table: str, required: set[str]) -> Mapping[str, Any]:
+        where = f"{table} row 1"
+        row = document[table]
+        fields(row, required, where)
+        frozen = dict(row)
+        for key in ("section", "enabled_flag", "default_backend", "backend_presence", "execution"):
+            if key in required:
+                text(row, key, where)
+        for key in ("section_required", "streaming", "gpu_required"):
+            if type(row[key]) is not bool:
+                fail(where, f"{key} must be a boolean")
+        if row["backend_presence"] not in {"declared", "nonempty_mapping"}:
+            fail(where, "backend_presence must be declared or nonempty_mapping")
+        if row["execution"] not in {"sync", "job"}:
+            fail(where, "execution must be sync or job")
+        if "resource_tier" in required:
+            tier = text(row, "resource_tier", where)
+            if tier not in {"batch", "expensive"}:
+                fail(where, "resource_tier must be batch or expensive")
+        if "output_modalities" in required:
+            frozen["output_modalities"] = modalities(row, "output_modalities", where)
+        return MappingProxyType(frozen)
+
+    image_defaults = family_defaults("image_defaults", default_fields | {
+        "section", "enabled_flag", "output_modalities", "resource_tier",
+    })
+    workflow_defaults = family_defaults("workflow_defaults", default_fields)
+    if not isinstance(document["image_rows"], list):
+        fail("document row 0", "image_rows must be a list")
+    images = []
+    intents = set()
+    for number, row in enumerate(document["image_rows"], start=1):
+        where = f"image_rows row {number}"
+        fields(row, {"intent", "input_modalities", "model_sources"}, where)
+        intent = text(row, "intent", where)
+        if intent in intents:
+            fail(where, f"duplicate intent: {intent!r}")
+        intents.add(intent)
+        sources = modalities(row, "model_sources", where)
+        for source_path in sources:
+            parts = source_path.split(".")
+            if len(parts) < 2 or any(not part or part != part.strip() for part in parts):
+                fail(where, f"model_sources must contain dotted paths: {source_path!r}")
+            if parts[0] not in {"backend", "config"}:
+                fail(where, f"unknown model_sources root: {parts[0]!r}")
+        images.append(MappingProxyType({
+            "intent": intent,
+            "input_modalities": modalities(row, "input_modalities", where),
+            "model_sources": sources,
+        }))
+    backend_rows = []
+    triggers_seen: dict[str, int] = {}
+    rows = document.get("backend_rows", [])
+    if not isinstance(rows, list):
+        fail("document row 0", "backend_rows must be a list")
+    required = {
+        "group", "triggers", "flag", "intent", "inputs", "outputs",
+        "streaming", "execution", "gpu_required",
+    }
+    optional = frozenset({
+        "vision", "resources_from", "tags", "action_label", "recordable_inputs", "caveats", "capability",
+    })
+    for number, row in enumerate(rows, start=1):
+        where = f"backend_rows row {number}"
+        fields(row, required, where, optional)
+        group = text(row, "group", where)
+        if group not in {"endpoints", "speech", "recognition"}:
+            fail(where, "unknown group")
+        flag = text(row, "flag", where)
+        if flag not in {"llm", "embeddings", "tts", "stt", "images", "videos", "audio"}:
+            fail(where, "unknown flag")
+        triggers = tuple(value.lower() for value in modalities(row, "triggers", where))
+        for trigger in triggers:
+            if trigger in triggers_seen:
+                fail(where, f"duplicate trigger: {trigger!r} (first in backend_rows row {triggers_seen[trigger]})")
+            triggers_seen[trigger] = number
+        execution = text(row, "execution", where)
+        if execution not in {"sync", "job"}:
+            fail(where, "execution must be sync or job")
+        for key in ("streaming", "gpu_required"):
+            if type(row[key]) is not bool:
+                fail(where, f"{key} must be a boolean")
+        frozen = {
+            "group": group, "triggers": triggers, "flag": flag,
+            "intent": text(row, "intent", where),
+            "inputs": modalities(row, "inputs", where),
+            "outputs": modalities(row, "outputs", where),
+            "streaming": row["streaming"], "execution": execution,
+            "gpu_required": row["gpu_required"],
+        }
+        for key in ("tags", "recordable_inputs", "caveats"):
+            if key in row:
+                frozen[key] = modalities(row, key, where)
+        if "action_label" in row:
+            frozen["action_label"] = text(row, "action_label", where)
+        if "capability" in row:
+            frozen["capability"] = text(row, "capability", where)
+        if "resources_from" in row:
+            if text(row, "resources_from", where) != "backend":
+                fail(where, "resources_from must be backend")
+            frozen["resources_from"] = "backend"
+        if "vision" in row:
+            vision_where = f"{where} vision"
+            fields(row["vision"], {"trigger", "inputs"}, vision_where)
+            frozen["vision"] = MappingProxyType({
+                "trigger": text(row["vision"], "trigger", vision_where).lower(),
+                "inputs": modalities(row["vision"], "inputs", vision_where),
+            })
+        backend_rows.append(MappingProxyType(frozen))
+    return (
+        MappingProxyType(aliases), tuple(families), tuple(backend_rows),
+        image_defaults, tuple(images), workflow_defaults,
+    )
+
+
+def load_local_capability_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+) -> tuple[
+    Mapping[str, tuple[str, tuple[str, ...], tuple[str, ...], str, str | None]],
+    tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
+]:
+    """Keep the original two-table API, validating all supplied tables."""
+    aliases, families = _load_local_capability_rows(path)[:2]
+    return aliases, families
+
+
+def load_backend_capability_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+) -> tuple[Mapping[str, Any], ...]:
+    """Load immutable backend rows; legacy two-table files yield no rows."""
+    return _load_local_capability_rows(path)[2]
+
+
+def load_local_capability_image_rows(
+    path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+) -> tuple[Mapping[str, Any], tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
+    """Return deeply read-only image defaults/rows and workflow defaults."""
+    return _load_local_capability_rows(path)[3:]
+
+
+(
+    _ALIAS_INTENTS, _WORKFLOW_FAMILIES, _BACKEND_ROWS,
+    _IMAGE_DEFAULTS, _IMAGE_ROWS, _WORKFLOW_DEFAULTS,
+) = _load_local_capability_rows()
 
 
 def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]:
@@ -241,17 +477,11 @@ def _build_llm_capabilities(
     return out
 
 
-def _build_openai_endpoint_capabilities(
-    backends: Mapping[str, Any],
-    flags: Mapping[str, bool],
+def _build_backend_capabilities(
+    backends: Mapping[str, Any], flags: Mapping[str, bool], group: str,
 ) -> list[Capability]:
-    """Generic chat/completions/embeddings exposed by backends that declare
-    them under ``backends.<name>.capabilities``.
-
-    These are *not* keyed to a role/model — they represent that a backend
-    can satisfy the OpenAI-style endpoint shape. Routers use these to know
-    a passthrough completion is locally supported.
-    """
+    """Preserve backend-major, then row order within each public group."""
+    rows = tuple(row for row in _BACKEND_ROWS if row["group"] == group)
     out: list[Capability] = []
     for backend_name, raw in backends.items():
         spec = _as_mapping(raw)
@@ -259,126 +489,72 @@ def _build_openai_endpoint_capabilities(
         if not isinstance(caps, list):
             continue
         backend_caps = {str(c).lower() for c in caps if isinstance(c, str)}
-        if flags.get("llm", True):
-            if "chat" in backend_caps:
-                out.append(
-                    Capability(
-                        intent=INTENT_CHAT,
-                        backend=backend_name,
-                        input_modalities=_modalities_for_backend(backend_caps),
-                        output_modalities=("text",),
-                        execution="sync",
-                        streaming=True,
-                        resources=ResourceEstimate(gpu_required=True),
-                    )
-                )
-            if "completions" in backend_caps:
-                out.append(
-                    Capability(
-                        intent=INTENT_COMPLETIONS,
-                        backend=backend_name,
-                        input_modalities=("text",),
-                        output_modalities=("text",),
-                        execution="sync",
-                        streaming=True,
-                        resources=ResourceEstimate(gpu_required=True),
-                    )
-                )
-        if flags.get("embeddings", True) and "embeddings" in backend_caps:
-            out.append(
-                Capability(
-                    intent=INTENT_EMBEDDINGS,
-                    backend=backend_name,
-                    input_modalities=("text",),
-                    output_modalities=("text",),
-                    execution="sync",
-                    streaming=False,
-                    resources=_resource_estimate(spec, default_gpu_required=False),
-                )
+        for row in rows:
+            if not flags.get(row["flag"], True) or not backend_caps.intersection(row["triggers"]):
+                continue
+            inputs = row["inputs"]
+            vision = row.get("vision")
+            if vision is not None and vision["trigger"] in backend_caps:
+                inputs = vision["inputs"]
+            resources = (
+                _resource_estimate(spec, default_gpu_required=row["gpu_required"])
+                if row.get("resources_from") == "backend"
+                else ResourceEstimate(gpu_required=row["gpu_required"])
             )
+            extras = {
+                key: row[key]
+                for key in ("tags", "action_label", "recordable_inputs", "caveats", "capability")
+                if key in row
+            }
+            out.append(Capability(
+                intent=row["intent"], backend=backend_name,
+                input_modalities=inputs, output_modalities=row["outputs"],
+                execution=row["execution"], streaming=row["streaming"],
+                resources=resources, **extras,
+            ))
     return out
+
+
+def _build_openai_endpoint_capabilities(
+    backends: Mapping[str, Any], flags: Mapping[str, bool],
+) -> list[Capability]:
+    return _build_backend_capabilities(backends, flags, "endpoints")
 
 
 def _build_tts_capabilities(
-    backends: Mapping[str, Any], flags: Mapping[str, bool]
+    backends: Mapping[str, Any], flags: Mapping[str, bool],
 ) -> list[Capability]:
-    if not flags.get("tts", True):
-        return []
-    out: list[Capability] = []
-    for backend_name, raw in backends.items():
-        spec = _as_mapping(raw)
-        caps = spec.get("capabilities")
-        if not isinstance(caps, list):
-            continue
-        backend_caps = {str(c).lower() for c in caps if isinstance(c, str)}
-        if "speech" in backend_caps or "tts" in backend_caps:
-            out.append(
-                Capability(
-                    intent=INTENT_SPEECH,
-                    capability="speech",
-                    backend=backend_name,
-                    input_modalities=("text",),
-                    output_modalities=("audio",),
-                    execution="sync",
-                    streaming=True,
-                    tags=(
-                        "response_format:wav",
-                        "response_format:mp3",
-                        "response_format:opus",
-                        "response_format:aac",
-                        "response_format:flac",
-                        "response_format:pcm",
-                    ),
-                    resources=ResourceEstimate(gpu_required=True),
-                )
-            )
-    return out
+    return _build_backend_capabilities(backends, flags, "speech")
 
 
 def _build_stt_capabilities(
-    backends: Mapping[str, Any], flags: Mapping[str, bool]
+    backends: Mapping[str, Any], flags: Mapping[str, bool],
 ) -> list[Capability]:
-    if not flags.get("stt", True):
-        return []
-    out: list[Capability] = []
-    for backend_name, raw in backends.items():
-        spec = _as_mapping(raw)
-        caps = spec.get("capabilities")
-        if not isinstance(caps, list):
-            continue
-        backend_caps = {str(c).lower() for c in caps if isinstance(c, str)}
-        if "transcriptions" in backend_caps or "stt" in backend_caps:
-            out.append(
-                Capability(
-                    intent=INTENT_TRANSCRIPTIONS,
-                    backend=backend_name,
-                    input_modalities=("audio",),
-                    output_modalities=("text",),
-                    action_label="Transcribe",
-                    recordable_inputs=("audio",),
-                    execution="sync",
-                    streaming=False,
-                    resources=ResourceEstimate(gpu_required=True),
-                )
-            )
-        if "translations" in backend_caps or "translation" in backend_caps:
-            out.append(
-                Capability(
-                    intent=INTENT_TRANSLATIONS,
-                    backend=backend_name,
-                    input_modalities=("audio",),
-                    output_modalities=("text",),
-                    action_label="Translate",
-                    recordable_inputs=("audio",),
-                    execution="sync",
-                    streaming=False,
-                    resources=ResourceEstimate(gpu_required=True),
-                    caveats=(
-                        "Only advertised when the local STT backend declares translation support.",
-                    ),
-                )
-            )
-    return out
+    return _build_backend_capabilities(backends, flags, "recognition")
+
+
+def _family_backend(section: Mapping[str, Any], family: str, default_backend: str) -> str:
+    backend = section.get("backend", default_backend)
+    if not isinstance(backend, str) or not backend:
+        raise ValueError(
+            f"{family}.backend must be a non-empty string; got {backend!r}"
+        )
+    return backend
+
+
+def _family_backend_present(backends: Mapping[str, Any], backend: str, presence: str) -> bool:
+    if presence == "declared":
+        return backend in backends
+    return bool(_as_mapping(backends.get(backend)))
+
+
+def _model_source(path: str, roots: Mapping[str, Any]) -> Any:
+    value: Any = roots
+    for part in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(part)
+    return value
 
 
 def _build_image_capabilities(
@@ -386,104 +562,77 @@ def _build_image_capabilities(
     backends: Mapping[str, Any],
     flags: Mapping[str, bool],
 ) -> list[Capability]:
-    if not flags.get("images", True):
+    defaults = _IMAGE_DEFAULTS
+    if not flags.get(defaults["enabled_flag"], True):
         return []
-    comfy = _as_mapping(backends.get("comfyui"))
-    if not comfy:
+    section = _as_mapping(config.get(defaults["section"]))
+    if defaults["section_required"] and not section:
         return []
-    default_model = comfy.get("default_model")
-    default_edit = None
-    compat = _as_mapping(config.get("model_compatibility"))
-    defaults = _as_mapping(compat.get("defaults"))
-    if defaults:
-        default_edit = defaults.get("image_edits")
-        if not default_model:
-            default_model = defaults.get("images")
-
+    backend = _family_backend(section, defaults["section"], defaults["default_backend"])
+    if not _family_backend_present(backends, backend, defaults["backend_presence"]):
+        return []
+    backend_spec = _as_mapping(backends.get(backend))
+    roots = {"backend": backend_spec, "config": config}
     out: list[Capability] = []
-    if isinstance(default_model, str) and default_model:
+    for row in _IMAGE_ROWS:
+        model = None
+        for source in row["model_sources"]:
+            model = _model_source(source, roots)
+            if model:
+                break
+        # Preserve first-truthy precedence before the type check: a truthy
+        # non-string value suppresses the row rather than selecting a fallback.
+        if not isinstance(model, str) or not model:
+            continue
         out.append(
             Capability(
-                intent=INTENT_IMAGE_GENERATE,
-                backend="comfyui",
-                model=default_model,
-                input_modalities=("text",),
-                output_modalities=("image",),
-                execution="job",
-                streaming=False,
-                resource_tier="batch",
-                resources=ResourceEstimate(gpu_required=True),
-                caveats=_workflow_dir_caveats(comfy.get("workflows_dir")),
-            )
-        )
-    if isinstance(default_edit, str) and default_edit:
-        out.append(
-            Capability(
-                intent=INTENT_IMAGE_EDIT,
-                backend="comfyui",
-                model=default_edit,
-                input_modalities=("text", "image"),
-                output_modalities=("image",),
-                execution="job",
-                streaming=False,
-                resource_tier="batch",
-                resources=ResourceEstimate(gpu_required=True),
-                caveats=_workflow_dir_caveats(comfy.get("workflows_dir")),
+                intent=row["intent"],
+                backend=backend,
+                model=model,
+                input_modalities=row["input_modalities"],
+                output_modalities=defaults["output_modalities"],
+                execution=defaults["execution"],
+                streaming=defaults["streaming"],
+                resource_tier=defaults["resource_tier"],
+                resources=ResourceEstimate(gpu_required=defaults["gpu_required"]),
+                caveats=_workflow_dir_caveats(backend_spec.get("workflows_dir")),
             )
         )
     return out
 
 
-def _build_video_capabilities(
+def _build_workflow_capabilities(
     config: Mapping[str, Any],
     backends: Mapping[str, Any],
     flags: Mapping[str, bool],
     known_files: set[str],
 ) -> list[Capability]:
-    if not flags.get("videos", True):
-        return []
-    videos = _as_mapping(config.get("videos"))
-    if not videos:
-        return []
-    backend = "comfyui" if "comfyui" in backends else "comfyui"  # canonical
-    workflows = _as_mapping(videos.get("workflows"))
-    aliases = _as_mapping(videos.get("aliases"))
-    return _workflow_family_capabilities(
-        intent=INTENT_VIDEO_GENERATE,
-        backend=backend,
-        workflows=workflows,
-        aliases=aliases,
-        input_modalities=("text",),
-        output_modalities=("video",),
-        known_files=known_files,
-        resource_tier="expensive",
-    )
-
-
-def _build_audio_capabilities(
-    config: Mapping[str, Any],
-    backends: Mapping[str, Any],
-    flags: Mapping[str, bool],
-    known_files: set[str],
-) -> list[Capability]:
-    if not flags.get("audio", True):
-        return []
-    audio = _as_mapping(config.get("audio"))
-    if not audio:
-        return []
-    workflows = _as_mapping(audio.get("workflows"))
-    aliases = _as_mapping(audio.get("aliases"))
-    backend = "comfyui" if "comfyui" in backends else "comfyui"
-    return _workflow_family_capabilities(
-        intent=INTENT_AUDIO_GENERATE,
-        backend=backend,
-        workflows=workflows,
-        aliases=aliases,
-        input_modalities=("text",),
-        output_modalities=("audio",),
-        known_files=known_files,
-        resource_tier="batch",
-    )
+    out: list[Capability] = []
+    for (
+        section_key, flag_key, intent, input_modalities, output_modalities,
+        resource_tier,
+    ) in _WORKFLOW_FAMILIES:
+        if not flags.get(flag_key, True):
+            continue
+        section = _as_mapping(config.get(section_key))
+        if _WORKFLOW_DEFAULTS["section_required"] and not section:
+            continue
+        backend = _family_backend(section, section_key, _WORKFLOW_DEFAULTS["default_backend"])
+        if not _family_backend_present(backends, backend, _WORKFLOW_DEFAULTS["backend_presence"]):
+            continue
+        out.extend(
+            _workflow_family_capabilities(
+                intent=intent,
+                backend=backend,
+                workflows=_as_mapping(section.get("workflows")),
+                aliases=_as_mapping(section.get("aliases")),
+                input_modalities=input_modalities,
+                output_modalities=output_modalities,
+                known_files=known_files,
+                resource_tier=resource_tier,
+            )
+        )
+    return out
 
 
 def _workflow_family_capabilities(
@@ -527,10 +676,10 @@ def _workflow_family_capabilities(
                 workflow=workflow_id,
                 input_modalities=input_modalities,
                 output_modalities=output_modalities,
-                execution="job",
-                streaming=False,
+                execution=_WORKFLOW_DEFAULTS["execution"],
+                streaming=_WORKFLOW_DEFAULTS["streaming"],
                 resource_tier=resource_tier,
-                resources=ResourceEstimate(gpu_required=True),
+                resources=ResourceEstimate(gpu_required=_WORKFLOW_DEFAULTS["gpu_required"]),
                 caveats=tuple(caveats),
             )
         )
@@ -555,12 +704,6 @@ def _llm_input_modalities(
         }
     name_implies_vision = consider_role_name and role_name.lower() == "vision"
     if has_mmproj or name_implies_vision or "vision" in backend_caps:
-        return ("text", "image")
-    return ("text",)
-
-
-def _modalities_for_backend(backend_caps: set[str]) -> tuple[str, ...]:
-    if "vision" in backend_caps:
         return ("text", "image")
     return ("text",)
 
