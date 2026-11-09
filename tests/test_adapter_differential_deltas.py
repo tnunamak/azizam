@@ -149,3 +149,19 @@ def test_the_image_case_entries_name_only_the_approved_kinds():
     seen = {delta.kind for name, entries in listed.MANIFEST.items() if name.startswith("s7_parity_images/") for delta in entries}
     assert seen == approved
     assert not {"job_submit_refuses_unknown_field", "receipt_closes_with_job_outcome", "job_one_receipt", "masked_edit_source"} & listed.KINDS
+
+
+def test_every_rerecorded_golden_exists_and_is_listed_with_a_reason():
+    for name, reason in listed.RERECORDED.items():
+        assert (ad.FIXTURE_DIR / f"{name}.json").is_file(), name
+        assert len(reason) > 20, name
+    assert listed.ENGINE_FACING_CHANGES <= set(listed.RERECORDED)
+    assert not set(listed.RERECORDED) & set(listed.MANIFEST)
+
+
+def test_no_golden_origin_block_holds_prompt_text():
+    for path in sorted(ad.FIXTURE_DIR.glob("*.json")):
+        for asset in json.loads(path.read_text(encoding="utf-8")).get("assets") or []:
+            origin = (asset.get("json") or {}).get("origin")
+            if origin is not None:
+                assert set(origin) <= listed.ORIGIN_KEYS, (path.name, sorted(origin))

@@ -352,3 +352,35 @@ MANIFEST: dict[str, tuple[Delta, ...]] = {
                              ("resource_class", "image"), ("retries", "binding"), ("run_receipt_path", "/v1/images/generations"))),
     ),
 }
+
+
+#: Goldens re-recorded on purpose, each with the reason. A name here is NOT a delta: the golden file holds the new trace, so the
+#: guard (KEPT_IDENTICAL, no error or status change) does not compare it with the old route. Keep this list honest: a re-record
+#: that hides an engine-facing change is listed under ENGINE_FACING_CHANGES too.
+_ASSET_URL = ("the job view lists asset_url and url for a finished asset: the run core signs the link on read (I2); "
+              "content-length follows")
+_ORIGIN = ("the Library sidecar of a stored asset gains an origin block (request_id, workflow_name, takes_text); "
+           "it holds no prompt text (test_the_library_sidecar_origin_block_holds_no_prompt_text)")
+_VIDEO_RUN_CORE = ("create answers once the job is queued and the run core runs it: ids are video_mj_*, the first status is "
+                   "queued, the prompt is not echoed, and the job rows are the run core's")
+RERECORDED: dict[str, str] = {
+    "video_job_succeeds": _ASSET_URL,
+    "audio_generate_job": _ASSET_URL,
+    **{f"s7_{cell}_cancel_finished": _ASSET_URL for cell in ("ig", "ie", "iv", "as", "aj")},
+    "video_lifecycle": f"{_VIDEO_RUN_CORE}; {_ORIGIN}",
+    "video_extend": f"{_VIDEO_RUN_CORE}; {_ORIGIN}; the reference upload goes before the prompt, as a video_<job>.mp4 file",
+    "video_create_unreachable": "create answers 200 queued before the engine is called, so an unreachable engine fails the job, "
+                                "not the create (the old 502 body named the engine address)",
+    **{f"s7_{cell}": f"{_VIDEO_RUN_CORE}; {_ORIGIN}"
+       for cell in ("vc_replay_same", "vc_replay_conflict", "vc_cancel_queued", "vc_cancel_finished", "ve_success",
+                    "ve_replay_same", "ve_replay_conflict", "ve_cancel_queued", "ve_cancel_finished")},
+    "s7_vc_admission_refusal": "a disabled video service answers 503 service_disabled with the resource decision on the receipt; "
+                               "the body is compact JSON (video_id_namespace and json spacing only)",
+    "s7_ve_admission_refusal": "as s7_vc_admission_refusal",
+    "s7_ve_validation_refusal": "the extend body names the new video id video_<job> where the old route named video_p1 (video_id_namespace)",
+    "s7_ve_disconnect": "as s7_ve_validation_refusal",
+}
+#: Re-records that change what is sent to the engine. These are the behaviour-preservation exceptions to report, not hide.
+ENGINE_FACING_CHANGES = frozenset({"video_lifecycle", "video_extend", "s7_ve_success", "s7_ve_replay_same", "s7_ve_replay_conflict",
+                                   "s7_ve_cancel_queued", "s7_ve_cancel_finished"})
+ORIGIN_KEYS = frozenset({"request_id", "workflow_name", "takes_text", "sources"})

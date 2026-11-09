@@ -19,10 +19,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"error\": {\"message\": \"Video generation not enabled\", \"type\": \"service_unavailable\"}}"
+          "text": "{\"error\":{\"message\":\"Video generation not enabled\",\"type\":\"service_unavailable\"}}"
         },
         "headers": {
-          "content-length": "85",
+          "content-length": "81",
           "content-type": "application/json",
           "x-request-id": "<req:1>"
         },
@@ -33,6 +33,7 @@
   "description": "S7 golden: POST /v1/videos, outcome admission_refusal, recorded on the unchanged route",
   "engine_requests": [],
   "gateway_sleeps": [],
+  "job_prefixes": [],
   "media_jobs": {
     "media_jobs_schema_version": [
       {
@@ -77,8 +78,7 @@
           "manifest_id": null,
           "manifest_version": null,
           "metadata": {
-            "status_code": 503,
-            "terminal_reason": "http_503"
+            "terminal_reason": "service_disabled"
           },
           "owner_key_hash": "app:app_test",
           "parent_request_id": null,
@@ -99,7 +99,85 @@
           "requested_workflow": null,
           "resolved_model": null,
           "resolved_workflow": null,
-          "retention": [],
+          "resource_decision": {
+            "facts": [
+              {
+                "name": "available",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "value": false
+              },
+              {
+                "name": "degraded",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "value": false
+              },
+              {
+                "name": "disabled_intents",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "disabled_resource_classes",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "reserved_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "required_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "optional_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "requires_gpu",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": true
+              }
+            ],
+            "outcome": "denied",
+            "reasons": [
+              {
+                "code": "service_unavailable",
+                "effect": "rejection",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "rule": "ComfyUI media backend disabled"
+              }
+            ],
+            "wait_deadline": "<time>"
+          },
+          "retention": [
+            {
+              "decision": "not_kept",
+              "kind": "library_prompt",
+              "reason": "no_person"
+            }
+          ],
           "source_kind": "app",
           "source_label": "test-app",
           "started_at_ms": null,

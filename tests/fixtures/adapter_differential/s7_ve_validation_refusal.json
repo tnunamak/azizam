@@ -6,10 +6,10 @@
       "request": {
         "body": {
           "kind": "json",
-          "text": "{\"video\":{\"id\":\"video_p1\"}}"
+          "text": "{\"video\":{\"id\":\"video_<job:1>\"}}"
         },
         "headers": {
-          "content-length": "27",
+          "content-length": "<32 after normalisation>",
           "content-type": "application/json"
         },
         "method": "POST",
@@ -32,6 +32,9 @@
   "description": "S7 golden: POST /v1/videos/edits, outcome validation_refusal, recorded on the unchanged route",
   "engine_requests": [],
   "gateway_sleeps": [],
+  "job_prefixes": [
+    "mj"
+  ],
   "media_jobs": {
     "media_jobs_schema_version": [
       {
