@@ -527,7 +527,9 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     longer names Bernini-R. Adding flux2-klein-snofs (2026-10-28) re-captured the two image generation paths and
     ImageGenerationRequest, whose workflow extension gained the workflow's input schema. Schema 2 of the bundled
     workflows (S3.5a) removed the `prompt` input of ace-step-1.5-xl-turbo (the route sends the prompt to `tags`), so
-    WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo was re-captured.
+    WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo was re-captured. The generic run route (S6) takes full workflow
+    ids and answers a media job, so the rife-interpolate and scail-2-replace run paths are keyed by their full ids and were
+    re-captured.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())

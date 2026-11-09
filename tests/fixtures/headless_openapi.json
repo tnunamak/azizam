@@ -20737,7 +20737,7 @@
         ]
       }
     },
-    "/gateway/v1/workflows/rife-interpolate/run": {
+    "/gateway/v1/workflows/video.edit.rife-interpolate/run": {
       "post": {
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
         "operationId": "run_rife_interpolate",
@@ -20754,14 +20754,23 @@
         "responses": {
           "200": {
             "content": {
-              "video/mp4": {
+              "application/json": {
                 "schema": {
-                  "format": "binary",
-                  "type": "string"
+                  "type": "object"
                 }
               }
             },
-            "description": "Rendered output."
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
           },
           "400": {
             "content": {
@@ -20842,7 +20851,7 @@
         "x-azizam-workflow-id": "video.edit.rife-interpolate"
       }
     },
-    "/gateway/v1/workflows/scail-2-replace/run": {
+    "/gateway/v1/workflows/video.edit.scail-2-replace/run": {
       "post": {
         "description": "Replace a person in a video with a character from a picture, keeping the original motion and scene.",
         "operationId": "run_scail_2_replace",
@@ -20859,14 +20868,23 @@
         "responses": {
           "200": {
             "content": {
-              "video/mp4": {
+              "application/json": {
                 "schema": {
-                  "format": "binary",
-                  "type": "string"
+                  "type": "object"
                 }
               }
             },
-            "description": "Rendered output."
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
           },
           "400": {
             "content": {
@@ -21000,7 +21018,7 @@
     },
     "/gateway/v1/workflows/{workflow_id}/run": {
       "post": {
-        "description": "Serves `video.edit` workflows only (`GET /gateway/v1/workflows` lists them). The request blocks until the render ends and returns the video bytes. For anything slower than a few seconds prefer the async route `POST /v1/videos` (see `x-azizam-workflows`). Every workflow also has a concrete path below with its exact form fields.",
+        "description": "Starts a media job for the workflow with this full id (`GET /gateway/v1/workflows` lists them) and answers the job: 202 while it is queued or running, with its address in `Location`. Read it at `GET /gateway/v1/media/jobs/{job_id}` and its output at `GET /gateway/v1/media/jobs/{job_id}/content`. `Prefer: wait=N` waits up to N seconds for the job to end before it answers. Each video-edit workflow also has a concrete path below with its exact form fields.",
         "operationId": "run_video_manifest_workflow_gateway_v1_workflows__workflow_id__run_post",
         "parameters": [
           {
@@ -21033,14 +21051,23 @@
         "responses": {
           "200": {
             "content": {
-              "video/mp4": {
+              "application/json": {
                 "schema": {
-                  "format": "binary",
-                  "type": "string"
+                  "type": "object"
                 }
               }
             },
-            "description": "Rendered video."
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
           },
           "400": {
             "content": {
@@ -21114,7 +21141,7 @@
             "AppKeyXApiKey": []
           }
         ],
-        "summary": "Run a video-edit workflow synchronously"
+        "summary": "Run a workflow by its full id"
       }
     },
     "/health": {
@@ -39510,8 +39537,8 @@
             }
           },
           "method": "POST",
-          "output": "video bytes (blocks until rendered)",
-          "path": "/gateway/v1/workflows/rife-interpolate/run"
+          "output": "a media job; its content is the video",
+          "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run"
         }
       },
       "id": "video.edit.rife-interpolate",
@@ -39703,8 +39730,8 @@
             }
           },
           "method": "POST",
-          "output": "video bytes (blocks until rendered)",
-          "path": "/gateway/v1/workflows/scail-2-replace/run"
+          "output": "a media job; its content is the video",
+          "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run"
         }
       },
       "id": "video.edit.scail-2-replace",

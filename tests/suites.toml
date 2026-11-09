@@ -404,6 +404,11 @@ project = "chromium"
 case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the sso-only sign-in with remembered people at 1440 and 390, light and dark"
 reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
 
+[[skip]]
+framework = "pytest"
+case = "tests/test_s7_parity_video_lifecycle.py::test_video_62_absent_engine_job_is_orphaned"
+reason = "orphan marking runs only in the lifespan reconcile loop, which the HTTP rig does not start; pinned at unit level by test_video_handler_coverage_gaps.py"
+
 # Gate cases that xfail. A new xfail fails the gate.
 [[xfail]]
 framework = "pytest"

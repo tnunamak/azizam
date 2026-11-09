@@ -522,9 +522,9 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
             "fields": request_mapping(record, "async"),
         }
         if intent == "video.edit":
-            sync = {"method": "POST", "path": f"/gateway/v1/workflows/{short_id(record)}/run",
+            sync = {"method": "POST", "path": f"/gateway/v1/workflows/{record.id}/run",
                     "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
-                    "output": "video bytes (blocks until rendered)"}
+                    "output": "a media job; its content is the video"}
     if typical_seconds is not None and typical_seconds <= SLOW_SECONDS and sync:
         recommended = "sync"
     elif async_:
@@ -927,13 +927,14 @@ def augment_openapi(
         components[form_name] = workflow_inputs_schema(record, form=True)
     generic = paths.get(RUN_ROUTE, {}).get("post")
     if generic is not None:
-        generic["summary"] = "Run a video-edit workflow synchronously"
+        generic["summary"] = "Run a workflow by its full id"
         generic["description"] = (
-            "Serves `video.edit` workflows only (`GET /gateway/v1/workflows` lists "
-            "them). The request blocks until the render ends and returns the video "
-            "bytes. For anything slower than a few seconds prefer the async route "
-            "`POST /v1/videos` (see `x-azizam-workflows`). Every workflow also "
-            "has a concrete path below with its exact form fields."
+            "Starts a media job for the workflow with this full id (`GET /gateway/v1/workflows` "
+            "lists them) and answers the job: 202 while it is queued or running, with its "
+            "address in `Location`. Read it at `GET /gateway/v1/media/jobs/{job_id}` and its "
+            "output at `GET /gateway/v1/media/jobs/{job_id}/content`. `Prefer: wait=N` waits "
+            "up to N seconds for the job to end before it answers. Each video-edit workflow "
+            "also has a concrete path below with its exact form fields."
         )
         generic["requestBody"] = {
             "required": True,
@@ -942,14 +943,14 @@ def augment_openapi(
             } if run_records else {"type": "object"}}},
         }
         generic["responses"] = {
-            "200": {"description": "Rendered video.",
-                    "content": {"video/mp4": {"schema": {"type": "string", "format": "binary"}}}},
+            "200": {"description": "The job, ended within `Prefer: wait`.",
+                    "content": {_JSON: {"schema": {"type": "object"}}}},
+            "202": {"description": "The job, queued or running; `Location` is its address.",
+                    "content": {_JSON: {"schema": {"type": "object"}}}},
             **errors,
         }
     for record in run_records:
-        path = f"/gateway/v1/workflows/{short_id(record)}/run"
-        outputs = (record.contract.get("outputs") or {})
-        media = next((o.get("media_type") for o in outputs.values() if o.get("media_type")), "video/mp4")
+        path = f"/gateway/v1/workflows/{record.id}/run"        # the route takes full ids only (design S4-S8 3.0)
         paths[path] = {"post": {
             "tags": ["gateway-workflows"],
             "operationId": f"run_{short_id(record).replace('.', '_').replace('-', '_')}",
@@ -959,8 +960,10 @@ def augment_openapi(
             "requestBody": {"required": True, "content": {
                 _MULTIPART: {"schema": _ref(_schema_name(record, FORM_PREFIX))}}},
             "responses": {
-                "200": {"description": "Rendered output.",
-                        "content": {media: {"schema": {"type": "string", "format": "binary"}}}},
+                "200": {"description": "The job, ended within `Prefer: wait`.",
+                        "content": {_JSON: {"schema": {"type": "object"}}}},
+                "202": {"description": "The job, queued or running; `Location` is its address.",
+                        "content": {_JSON: {"schema": {"type": "object"}}}},
                 **errors,
             },
         }}
