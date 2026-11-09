@@ -332,7 +332,6 @@ def test_images_25_view_missing_fails_the_round(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_26_client_disconnect_during_poll_cancels_and_answers_499(tmp_path):
     def setup(rig):
         timeout(rig)
@@ -371,7 +370,6 @@ def test_images_29_receipt_opens_before_the_route_policy(tmp_path):
     assert_same(old, row, receipt_summary, ("retention", retention_destinations))
 
 
-@ROW_PENDING
 def test_images_30_failure_texts(tmp_path):
     results = [pair(tmp_path / n, GEN, body(), s) for n, s in (("a", UNREACHABLE), ("b", NO_PROMPT_ID), ("c", EXEC_ERROR), ("d", timeout))]
     for old, row in results:
@@ -1019,6 +1017,9 @@ def _restart(held_setup, mutate=None):
             if mutate is not None:
                 mutate(rig, job_id)
             proxy._recover_media_jobs()
+            if use_row:      # the restarted gateway has free run slots: the held first start and the resumed run both go
+                for _ in range(2):
+                    proxy._workflow_run_semaphore.release()
             for _ in range(100):
                 await asyncio.sleep(0)
             if not use_row and rig.scheduled:
@@ -1113,7 +1114,6 @@ def test_images_F01_engine_unreachable(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_F02_prompt_http_500(tmp_path):
     old, row = pair(tmp_path, GEN, body(), HTTP_500)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
@@ -1139,7 +1139,6 @@ def test_images_F05_timeout(tmp_path):
     assert_same(old, row, status, failure, sleeps)
 
 
-@ROW_PENDING
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
