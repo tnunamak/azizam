@@ -212,7 +212,18 @@ def env(monkeypatch, tmp_path, fake_upstreams):
     async def stop(config):
         # Real synchronous HTTP driver, no service manager or fake request client.
         driver = lifecycle_drivers.HttpLoadUnloadDriver()
-        await asyncio.to_thread(driver.stop, config["backends"][SID])
+        def stop_on_worker():
+            # The driver's sync stop() runs its own loop; a worker thread has none,
+            # and the driver swallows that error, so give the thread a private loop.
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                driver.stop(config["backends"][SID])
+            finally:
+                asyncio.set_event_loop(None)
+                loop.close()
+
+        await asyncio.to_thread(stop_on_worker)
 
     in_case = True
     yield SimpleNamespace(
