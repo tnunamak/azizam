@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import HomePage from "@/app/_home/home-page";
@@ -1105,17 +1106,55 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(screen.queryByRole("button", { name: /^Change / })).toBeNull();
   });
 
-  it("chips keep slot order whichever slot is filled first", async () => {
+  it("chips keep DOM and Tab order after reverse filling and removing and re-adding Starting", async () => {
+    const user = userEvent.setup();
     await chooseKind([textRow, mediaRow()], "Video");
-    fireEvent.change(fileInput(/^Choose an ending picture$/), { target: { files: [new File(["e"], "end.png", { type: "image/png" })] } });
+    const ending = new File(["e"], "end.png", { type: "image/png" });
+    fireEvent.change(fileInput(/^Choose an ending picture$/), { target: { files: [ending] } });
     await screen.findByText("end.png");
     fireEvent.change(fileInput(/^Choose a starting picture$/), { target: { files: [picture()] } });
     await screen.findByText("fox.png");
-    const chips = Array.from(composer().querySelectorAll<HTMLElement>('[data-slot="home-picked-file"]'));
-    expect(chips.map((chip) => chip.style.order)).toEqual(["1", "0"]);
-    expect(chips.sort((a, b) => Number(a.style.order) - Number(b.style.order)).map((chip) => chip.textContent)).toEqual([
-      expect.stringContaining("a starting picture"), expect.stringContaining("an ending picture"),
-    ]);
+
+    // Start outside the chips, rather than focusing the expected first chip and masking DOM order.
+    const beforeChips = document.createElement("button");
+    beforeChips.textContent = "Before media slots";
+    composer().before(beforeChips);
+    const expectSlotOrder = async () => {
+      const chips = Array.from(composer().querySelectorAll<HTMLElement>('[data-slot="home-picked-file"]'));
+      expect(chips.map((chip) => chip.textContent)).toEqual([
+        expect.stringContaining("a starting picture"), expect.stringContaining("an ending picture"),
+      ]);
+      const names = [
+        "Change a starting picture", "Remove a starting picture",
+        "Change an ending picture", "Remove an ending picture",
+      ];
+      beforeChips.focus();
+      expect(beforeChips).toHaveFocus();
+      for (const name of names) {
+        await user.tab();
+        const button = screen.getByRole("button", { name, exact: true });
+        expect(button).toHaveFocus();
+        expect(button.tabIndex).toBe(0);
+      }
+    };
+    try {
+      await expectSlotOrder();
+      await user.click(screen.getByRole("button", { name: "Remove a starting picture" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Attach a starting picture" })).toHaveFocus());
+      expect(screen.getByRole("button", { name: "Change an ending picture" })).toHaveTextContent("end.png");
+      const replacement = new File(["s"], "start-again.png", { type: "image/png" });
+      fireEvent.change(fileInput(/^Choose a starting picture$/), { target: { files: [replacement] } });
+      await screen.findByText("start-again.png");
+      await expectSlotOrder();
+      expect(fileInput(/^Choose a starting picture$/).accept).toBe("image/png,image/jpeg");
+      expect(fileInput(/^Choose an ending picture$/).accept).toBe("image/*");
+      fireEvent.click(makeButton());
+      const handoff = takeHomeHandoff("video");
+      expect(handoff?.files?.map((file) => file.name)).toEqual(["start-again.png", "end.png"]);
+      expect(handoff?.file_inputs).toEqual(["image", "last_frame"]);
+    } finally {
+      beforeChips.remove();
+    }
   });
 
   it("an unfilled slot's pill draws its modality's icon, not a paperclip; a single slot keeps the paperclip", async () => {

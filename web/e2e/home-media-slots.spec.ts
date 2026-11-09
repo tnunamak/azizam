@@ -238,3 +238,43 @@ for (const width of [1440, 390]) {
     await shot(page, `edit-${width}-filled`);
   });
 }
+
+test("image and video slot Change and Remove targets are at least 44 px at phone width", async ({ isolated }) => {
+  const { page, context } = await isolated.member();
+  await page.setViewportSize({ width: 390, height: 860 });
+  const kind = byKind("scail");
+  const composer = await openKind(page, context, kind);
+  await seeComposer(composer);
+  for (const slot of kind.slots!) {
+    await composer.getByLabel(`Choose ${slot.label}`, { exact: true }).setInputFiles(filePath(slot));
+    await expect(composer.getByRole("button", { name: `Change ${slot.label}`, exact: true })).toBeVisible();
+  }
+  await expect(composer.getByRole("button", { name: /^Change / })).toHaveCount(2);
+  await expect(composer.getByRole("button", { name: /^Remove / })).toHaveCount(2);
+  for (const slot of kind.slots!) {
+    for (const action of ["Change", "Remove"]) {
+      const control = composer.getByRole("button", { name: `${action} ${slot.label}`, exact: true });
+      const box = await control.boundingBox();
+      expect(box, `${action} ${slot.label} has a hit area`).not.toBeNull();
+      expect(box!.width, `${action} ${slot.label} width`).toBeGreaterThanOrEqual(44);
+      expect(box!.height, `${action} ${slot.label} height`).toBeGreaterThanOrEqual(44);
+    }
+    // Exercise the added top edge, not just the old 32 px thumbnail's centre.
+    const change = composer.getByRole("button", { name: `Change ${slot.label}`, exact: true });
+    const box = (await change.boundingBox())!;
+    await change.click({ position: { x: box.width / 2, y: 1 } });
+    const choose = page.getByRole("menuitem", { name: `Choose ${slot.label}`, exact: true });
+    await expect(choose).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Choose from Library", exact: true })).toBeVisible();
+    const [picker] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      choose.click(),
+    ]);
+    expect(await picker.element().getAttribute("aria-label")).toBe(`Choose ${slot.label}`);
+    expect(await picker.element().getAttribute("accept")).toBe(slot.accepts.join(","));
+    await picker.setFiles(filePath(slot));
+    await expect(choose).toBeHidden();
+    await expect(change).toBeVisible();
+  }
+  await expectFits(page, composer);
+});
