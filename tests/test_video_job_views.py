@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -23,7 +24,7 @@ def shape():
 
 def view(job_id="mj_a", status="queued", **kw) -> RunJobView:
     base = dict(job_id=job_id, status=status, disposition="replay", workflow_id="w", record_revision=1, binding_key="b",
-                created_at_s=100, updated_at_s=130)
+                created_at_s=100, updated_at_s=130, finished_at_s=120 if status in ("succeeded", "failed", "canceled") else None)
     return RunJobView(**{**base, **kw})
 
 
@@ -106,7 +107,7 @@ def test_the_fake_service_lists_what_the_shape_renders(shape):
     core = FakeRunCore()
     jobs = FakeJobService(core)
     for index, name in enumerate(("mj_a", "mj_b", "mj_c")):
-        core.jobs[name] = view(name, created_at_s=100 + index)
+        core.jobs[name] = view(name, created_at_s=100 + index, intent="x")
     views, more = jobs.list(None, intents=("x",), limit=2)
     assert [v.job_id for v in views] == ["mj_c", "mj_b"] and more is True
     with pytest.raises(JobNotFound):
@@ -220,3 +221,46 @@ def test_a_finished_job_without_exactly_one_video_is_a_500(shape, served):
 
 def test_not_ready_is_an_invalid_request_error(shape):
     assert body(shape.render_bytes(view(status="running"), None, None))["error"]["type"] == "invalid_request_error"
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "canceled"])
+def test_completed_at_is_the_finish_time_and_not_the_last_update(shape, status):
+    answer = body(shape.render_status(view(status=status, updated_at_s=500)))
+    assert answer["completed_at"] == 120 and answer["updated_at"] == 500
+
+
+def test_a_job_canceled_while_its_file_was_read_delivers_and_publishes_nothing(shape, served):
+    core, jobs = served
+    done = finished(core, jobs)
+    told = []
+
+    def read_then_cancel(job_id, ref, caller):
+        core.jobs[job_id] = replace(core.jobs[job_id], status="canceled")      # the cancel lands during the read
+        return type("C", (), {"body": b"mp4-bytes", "media_type": ref.media_type})()
+
+    jobs.open_result = read_then_cancel
+    answer = shape.render_bytes(done, jobs, None, caller_person_id="p1", on_delivered=lambda *a: told.append(a))
+    assert answer.status_code == 404 and told == []
+
+
+def test_a_repeat_fetch_tells_the_library_again_and_leaves_reuse_to_it(shape, served):
+    core, jobs = served
+    done = finished(core, jobs)
+    told = []
+    for _ in range(2):
+        shape.render_bytes(done, jobs, None, caller_person_id="p1", on_delivered=lambda *a: told.append(a[1]))
+    assert told == ["asset-1", "asset-1"]            # the same asset id each time; the index keys on the wire id
+
+
+def test_the_library_index_of_a_job_takes_the_maker_from_the_facts_and_a_repeat_reuses_the_row(tmp_path, monkeypatch):
+    from gateway import media_ingestion, media_jobs
+    db = tmp_path / "media_jobs.db"
+    media_jobs.init_db(db)
+    monkeypatch.setattr(media_jobs, "DB_PATH", db)
+    facts = RequestFacts({"model": "m"}, prompt="p", maker_person_id="person-1")
+    first = media_ingestion.index_video_delivery(video_id="video_mj_a", asset_id="asset-1", filename="c.mp4",
+                                                 media_type="video/mp4", record=facts)
+    again = media_ingestion.index_video_delivery(video_id="video_mj_a", asset_id="asset-1", filename="c.mp4",
+                                                 media_type="video/mp4", record=facts)
+    assert first is not None and again is not None and first.job_id == again.job_id
+    assert first.maker_person_id == "person-1"
