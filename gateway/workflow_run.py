@@ -1193,7 +1193,10 @@ def rollback_job_inventory(path: Path | None = None) -> list[dict[str, Any]]:
     This reports stored envelope versions, not whether their definitions can execute.
     It never rewrites a pin, filters tombstones, or applies a history-page limit.
     """
-    with media_jobs.connection(path or media_jobs.DB_PATH) as conn:
+    store = Path(path or media_jobs.DB_PATH)
+    if not store.exists():  # a read-only check never creates the store
+        return []
+    with media_jobs.connection(store) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "media_jobs" not in tables:
             return []
@@ -1231,12 +1234,19 @@ def rollback_job_inventory(path: Path | None = None) -> list[dict[str, Any]]:
 
 
 def assert_rollback_ready(path: Path | None = None) -> None:
-    """Refuse running media first, then deleted rows an old reader would resurrect.
+    """Refuse running media first, then deleted rows an old reader would resurrect, then queued jobs it cannot read.
+
+    A queued job whose envelope the older build cannot read (``definition_unavailable``) would be failed by that build,
+    so the rollback waits until the owner lets it finish or cancels it. ``pin_not_recorded`` jobs are not refused: on an
+    older store those are runnable v1 jobs.
 
     The caller must keep submissions quiesced under the single-instance/drain
     protocol through the rollback; this read-only snapshot is not an admission lock.
     """
-    with media_jobs.connection(path or media_jobs.DB_PATH) as conn:
+    store = Path(path or media_jobs.DB_PATH)
+    if not store.exists():  # a read-only check never creates the store
+        return
+    with media_jobs.connection(store) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "media_jobs" not in tables:
             return
@@ -1254,3 +1264,6 @@ def assert_rollback_ready(path: Path | None = None) -> None:
         )]
         if retained:
             raise RollbackRefused("retained_deleted_jobs", retained)
+    unreadable = [row["job_id"] for row in rollback_job_inventory(store) if row["reason"] == DEFINITION_UNAVAILABLE]
+    if unreadable:
+        raise RollbackRefused("queued_jobs_unreadable_by_older_build", unreadable)

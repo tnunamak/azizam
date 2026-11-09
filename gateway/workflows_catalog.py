@@ -688,7 +688,7 @@ def _curl_job_example(submit: str, poll_url: str, content_url: str) -> str:
         "if not isinstance(value, str) or not value: raise SystemExit('Missing ' + sys.argv[1])\n"
         "print(value)"
     )
-    submit = submit.replace("curl ", "curl --fail --silent --show-error --max-time 300 ", 1)
+    submit = submit.replace("curl ", "curl --fail --silent --show-error --globoff --max-time 300 ", 1)
     return "\n".join([
         "# Bash, curl and Python 3. A 200 or 202 submit response is still a job.",
         "set -euo pipefail",
@@ -711,15 +711,20 @@ def _curl_job_example(submit: str, poll_url: str, content_url: str) -> str:
         "  esac",
         "  remaining=$((deadline - SECONDS))",
         "  if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
-        "  job=$(curl --fail --silent --show-error --max-time \"$remaining\" \"$poll_url\" \\",
+        "  job=$(curl --fail --silent --show-error --globoff --max-time \"$remaining\" \"$poll_url\" \\",
         "    -H \"Authorization: Bearer $AZIZAM_API_KEY\")",
         "  sleep 2",
         "done",
-        "content=$(curl --fail --silent --show-error --max-time 60 \"$content_url\" \\",
+        "# The deadline covers the whole run, downloads included.",
+        "remaining=$((deadline - SECONDS))",
+        "if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
+        "content=$(curl --fail --silent --show-error --globoff --max-time \"$(( remaining < 60 ? remaining : 60 ))\" \"$content_url\" \\",
         "  -H \"Authorization: Bearer $AZIZAM_API_KEY\")",
         "asset_url=$(printf '%s' \"$content\" | json_field data.0.url)",
+        "remaining=$((deadline - SECONDS))",
+        "if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
         "# Signed asset URLs are fetched without the API bearer token.",
-        "curl --fail --silent --show-error --globoff --location --max-time 300 --url \"$asset_url\" --output workflow-output.bin",
+        "curl --fail --silent --show-error --globoff --location --max-time \"$(( remaining < 300 ? remaining : 300 ))\" --url \"$asset_url\" --output workflow-output.bin",
     ])
 
 
@@ -750,14 +755,21 @@ def _python_job_followup(poll_url: str, content_url: str) -> str:
         "    if time.monotonic() >= deadline:",
         "        raise TimeoutError(f'Job {job_id} deadline exceeded')",
         "    time.sleep(2)",
-        "content = requests.get(content_url, headers=headers, timeout=60)",
+        "# The deadline covers the whole run, downloads included.",
+        "def time_left():",
+        "    left = deadline - time.monotonic()",
+        "    if left <= 0:",
+        "        raise TimeoutError(f'Job {job_id} deadline exceeded')",
+        "    return left",
+        "content = requests.get(content_url, headers=headers, timeout=min(60, time_left()))",
         "content.raise_for_status()",
         "assets = content.json().get('data') or []",
         "if not assets or not assets[0].get('url'):",
         "    raise RuntimeError('Job content has no signed asset URL')",
         "# Do not forward the API bearer token to the signed asset URL.",
-        "asset = requests.get(assets[0]['url'], timeout=300)",
+        "asset = requests.get(assets[0]['url'], timeout=min(300, time_left()))",
         "asset.raise_for_status()",
+        "time_left()",
         "with open('workflow-output.bin', 'wb') as output:",
         "    output.write(asset.content)",
     ])
@@ -785,12 +797,16 @@ def _javascript_job_followup(poll_url: str, content_url: str) -> str:
         "  job = await (await checkedGet(pollUrl, jobHeaders, Math.min(60000, remaining))).json();",
         "  await new Promise(resolve => setTimeout(resolve, 2000));",
         "}",
-        "const content = await (await checkedGet(contentUrl, jobHeaders, 60000)).json();",
+        "// The deadline covers the whole run, downloads included.",
+        "const timeLeft = () => { const left = deadline - Date.now(); if (left <= 0) throw new Error('Job ' + job_id + ' deadline exceeded'); return left; };",
+        "const content = await (await checkedGet(contentUrl, jobHeaders, Math.min(60000, timeLeft()))).json();",
         "const assetUrl = content.data?.[0]?.url;",
         "if (!assetUrl) throw new Error('Job content has no signed asset URL');",
         "// Signed asset URLs need no API bearer token.",
-        "const asset = await checkedGet(assetUrl);",
-        "await writeFile('workflow-output.bin', Buffer.from(await asset.arrayBuffer()));",
+        "const asset = await checkedGet(assetUrl, {}, Math.min(300000, timeLeft()));",
+        "const bytes = Buffer.from(await asset.arrayBuffer());",
+        "timeLeft();",
+        "await writeFile('workflow-output.bin', bytes);",
     ])
 
 

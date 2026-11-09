@@ -889,7 +889,8 @@ class JobRunExampleTests(unittest.TestCase):
             self.assertIn("/content", code)
 
     def run_python(self, steps: list[dict], *, expired: bool = False,
-                   poll_elapsed: float | None = None) -> tuple[bytes | None, list[str], Exception | None]:
+                   poll_elapsed: float | None = None,
+                   arrives_at: dict[str, float] | None = None) -> tuple[bytes | None, list[str], Exception | None]:
         import io
         import sys
         import types
@@ -917,6 +918,10 @@ class JobRunExampleTests(unittest.TestCase):
             if poll_elapsed is not None and url.endswith("/media/jobs/job-1"):
                 self.assertEqual(kwargs["timeout"], 60)
                 now[0] = poll_elapsed  # The response arrives after time passes inside the poll.
+            for suffix, at in (arrives_at or {}).items():
+                if url.endswith(suffix) or url.startswith(suffix):
+                    self.assertLessEqual(kwargs["timeout"], 600 - now[0])  # never waits past the deadline
+                    now[0] = at  # The response arrives after time passes inside this request.
             if url.startswith("https://assets.test/"):
                 self.assertNotIn("Authorization", kwargs.get("headers", {}))
             return Response(queue.pop(0))
@@ -933,7 +938,8 @@ class JobRunExampleTests(unittest.TestCase):
         requests = types.SimpleNamespace(request=request, get=lambda url, **kwargs: request("GET", url, **kwargs))
         failure = None
         clock = (patch("time.monotonic", side_effect=[0, 601]) if expired else
-                 patch("time.monotonic", side_effect=lambda: now[0]) if poll_elapsed is not None else nullcontext())
+                 patch("time.monotonic", side_effect=lambda: now[0])
+                 if poll_elapsed is not None or arrives_at else nullcontext())
         code = self.example()["python"]
         with clock, patch.dict(sys.modules, {"requests": requests}), patch("builtins.open", side_effect=open_file), \
              patch("time.sleep", return_value=None):
@@ -1055,6 +1061,39 @@ class JobRunExampleTests(unittest.TestCase):
                     "https://gateway.test/gateway/v1/media/jobs/job-1",
                 ])
 
+    def test_python_downloads_finishing_after_deadline_are_not_saved(self) -> None:
+        run = "https://gateway.test/gateway/v1/workflows/video.edit.fixture/run"
+        poll = "https://gateway.test/gateway/v1/media/jobs/job-1"
+        cases = {
+            # A timely success, then a slow content read: the asset is never requested.
+            "content": ({"/media/jobs/job-1": 590, "/content": 640}, [run, poll, poll + "/content"]),
+            # The asset body finishes after the deadline: nothing is written.
+            "asset": ({"/media/jobs/job-1": 590, "https://assets.test/": 640},
+                      [run, poll, poll + "/content", "https://assets.test/movie?sig=fixture"]),
+        }
+        for name, (arrives_at, expected_calls) in cases.items():
+            with self.subTest(late=name):
+                output, calls, failure = self.run_python(self.steps(202), arrives_at=arrives_at)
+                self.assertIsNone(output)
+                self.assertIsInstance(failure, TimeoutError)
+                self.assertEqual(calls, expected_calls)
+
+    def test_bash_and_javascript_bound_downloads_by_the_deadline(self) -> None:
+        example = self.example()
+        curl_lines = [line for line in example["curl"].replace("\\\n", " ").splitlines() if "curl --" in line]
+        self.assertEqual(len(curl_lines), 4)  # submit, poll, content, asset
+        for line in curl_lines:
+            with self.subTest(curl=line[:60]):
+                self.assertIn("--globoff", line)
+        self.assertIn("remaining < 60 ? remaining : 60", example["curl"])
+        self.assertIn("remaining < 300 ? remaining : 300", example["curl"])
+        js = example["javascript"]
+        order = ["const timeLeft", "checkedGet(contentUrl, jobHeaders, Math.min(60000, timeLeft()))",
+                 "checkedGet(assetUrl, {}, Math.min(300000, timeLeft()))", "timeLeft();", "writeFile("]
+        positions = [js.find(marker) for marker in order]
+        self.assertNotIn(-1, positions)
+        self.assertEqual(positions, sorted(positions))
+
     def test_python_success_arriving_before_deadline_is_downloaded(self) -> None:
         output, calls, failure = self.run_python(self.steps(202), poll_elapsed=599)
         self.assertIsNone(failure)
@@ -1106,7 +1145,7 @@ class JobRunExampleTests(unittest.TestCase):
         # fixtures drive the curl and Python examples end to end above.
         code = self.example()["javascript"]
         order = ["await response.json()", "job.job_id", "const deadline", "['failed', 'canceled']", "checkedGet(pollUrl",
-                 "checkedGet(contentUrl", "content.data?.[0]?.url", "checkedGet(assetUrl)", "asset.arrayBuffer()"]
+                 "checkedGet(contentUrl", "content.data?.[0]?.url", "checkedGet(assetUrl,", "asset.arrayBuffer()"]
         positions = [code.index(marker) for marker in order]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("response.arrayBuffer()", code)

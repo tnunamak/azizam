@@ -745,5 +745,31 @@ def test_rollback_running_media_jobs_take_priority_then_clear_when_finished(roll
 
     media_jobs.reap_tombstones(before=1, path=rollback_db)
     before = _rollback_dump(rollback_db)
+    # The older build cannot read the queued v2 job and would fail it, so the rollback waits for it.
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "queued_jobs_unreadable_by_older_build"
+    assert caught.value.job_ids == ["queued-workflow"]
+    assert _rollback_dump(rollback_db) == before
+
+    media_jobs.update_status("queued-workflow", "canceled", path=rollback_db)
+    before = _rollback_dump(rollback_db)
     assert workflow_run.assert_rollback_ready(rollback_db) is None
     assert _rollback_dump(rollback_db) == before
+
+
+def test_rollback_check_never_creates_a_missing_store(tmp_path):
+    store = tmp_path / "absent" / "media_jobs.db"
+    store.parent.mkdir()
+    assert workflow_run.rollback_job_inventory(store) == []
+    assert workflow_run.assert_rollback_ready(store) is None
+    assert not store.exists()
+
+
+def test_rollback_allows_queued_jobs_with_no_recorded_pin(rollback_db):
+    # On an older store an unpinned queued job is a runnable v1 job, not one the older build cannot read.
+    _rollback_job(rollback_db, "queued-v1", version=1)
+    _rollback_job(rollback_db, "queued-unpinned", version=None)
+    reasons = {row["job_id"]: row["reason"] for row in workflow_run.rollback_job_inventory(rollback_db)}
+    assert reasons == {"queued-unpinned": workflow_run.PIN_NOT_RECORDED, "queued-v1": "v1_compatible"}
+    assert workflow_run.assert_rollback_ready(rollback_db) is None
