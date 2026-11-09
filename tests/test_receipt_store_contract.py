@@ -196,7 +196,7 @@ def test_begin_status_and_terminal_status_rules_are_exact():
     assert str(begin.value) == "receipt begin status must be in_progress"
     with pytest.raises(ValueError) as terminal:
         rs._assert_lifecycle_data({"request_id": "r", "status": "in_progress", "accepted_at_ms": 1, "updated_at_ms": 1}, terminal=True)
-    assert str(terminal.value) == "receipt terminal status must be one of ['cancelled', 'disconnected', 'failed', 'succeeded', 'timed_out']"
+    assert str(terminal.value) == "receipt terminal status must be one of ['cancelled', 'disconnected', 'failed', 'rejected', 'succeeded', 'timed_out']"
     rs._assert_lifecycle_data({"request_id": "r", "status": "failed", "updated_at_ms": 1}, terminal=True)   # accepted_at is restored later
 
 
