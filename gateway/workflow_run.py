@@ -38,7 +38,7 @@ from gateway.result_bundle import Reader, ResultLimits, ResultRefused
 from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
-    ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
+    DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
     CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
     ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
@@ -375,6 +375,29 @@ def load_envelope(conn: sqlite3.Connection, job_id: str) -> Envelope | None | st
         if version not in SUPPORTED_VERSIONS:
             return ENVELOPE_VERSION_UNSUPPORTED
         raise
+
+
+_PIN_PROBLEM_TEXT = {
+    PIN_NOT_RECORDED: "The job did not record what it runs, so it cannot start.",
+    ENVELOPE_VERSION_UNSUPPORTED: "The job's record has a version this gateway cannot read.",
+    DEFINITION_UNAVAILABLE: "The job's recorded definitions can no longer be read, so it cannot start.",
+}
+
+
+def pin_problem(conn: sqlite3.Connection, job_id: str) -> str | None:
+    """Why the job's pin cannot be used: ``PIN_NOT_RECORDED`` only when it has no envelope row,
+    ``ENVELOPE_VERSION_UNSUPPORTED`` for a version this gateway does not read, ``DEFINITION_UNAVAILABLE`` for any other
+    unreadable envelope. None when the envelope reads; a blob that is gone or damaged shows only when the definitions are
+    loaded, and the caller maps that to ``DEFINITION_UNAVAILABLE`` as well."""
+    from gateway.definition_store import has_envelope_in
+
+    if not has_envelope_in(conn, job_id):
+        return PIN_NOT_RECORDED
+    try:
+        found = load_envelope(conn, job_id)
+    except DefinitionUnavailable:
+        return DEFINITION_UNAVAILABLE
+    return ENVELOPE_VERSION_UNSUPPORTED if found == ENVELOPE_VERSION_UNSUPPORTED else None
 
 
 def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") -> RunJobView:
@@ -740,7 +763,9 @@ class WorkflowRunCore:
             with media_jobs.connection(self._path) as conn:
                 pin = load_in(conn, job_id)
         except DefinitionUnavailable:
-            self._fail(job_id, PIN_NOT_RECORDED, "internal", "The job did not record what it runs, so it cannot start.")
+            with media_jobs.connection(self._path) as conn:
+                code = pin_problem(conn, job_id) or DEFINITION_UNAVAILABLE
+            self._fail(job_id, code, "internal", _PIN_PROBLEM_TEXT[code])
             return
         payload = port.load_payload(job_id)
         if payload is None:
@@ -947,18 +972,10 @@ class WorkflowRunCore:
                 continue
             job_id = str(job["job_id"])
             with media_jobs.connection(self._path) as conn:
-                try:
-                    envelope = load_envelope(conn, job_id)
-                except DefinitionUnavailable:
-                    envelope = None
-            if envelope is None:
-                note("pin_not_recorded")
-                self._fail(job_id, PIN_NOT_RECORDED, "internal", "The job did not record what it runs, so it cannot start.")
-                failed.append(job_id)
-                continue
-            if envelope == ENVELOPE_VERSION_UNSUPPORTED:
-                note("envelope_version_unsupported")
-                self._fail(job_id, ENVELOPE_VERSION_UNSUPPORTED, "internal", "The job's record has a version this gateway cannot read.")
+                problem = pin_problem(conn, job_id)
+            if problem is not None:
+                note(problem)
+                self._fail(job_id, problem, "internal", _PIN_PROBLEM_TEXT[problem])
                 failed.append(job_id)
                 continue
             action = self._classify(job)

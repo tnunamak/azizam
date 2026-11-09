@@ -37,6 +37,52 @@ def test_one_text_field_inside_the_text_bound_is_read() -> None:
     assert isinstance(result, tuple) and len(result[0]["a"]) == 600_000
 
 
+def _chunked_urlencoded(fields: list[tuple[str, int]]):
+    """A chunked application/x-www-form-urlencoded request with no Content-Length, and the body bytes it gave."""
+    from starlette.requests import Request
+    taken = [0]
+    pieces: list[bytes] = []
+    for index, (name, size) in enumerate(fields):
+        pieces.append((("&" if index else "") + name + "=").encode())
+        remaining = size
+        while remaining > 0:
+            pieces.append(b"x" * min(BLOCK, remaining))
+            remaining -= BLOCK
+    queue = iter(pieces)
+
+    async def receive():
+        piece = next(queue, None)
+        if piece is None:
+            return {"type": "http.disconnect"}
+        taken[0] += len(piece)
+        return {"type": "http.request", "body": piece, "more_body": piece is not pieces[-1]}
+
+    scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "headers": [
+        (b"content-type", b"application/x-www-form-urlencoded")]}
+    return Request(scope, receive), taken
+
+
+@pytest.mark.parametrize("fields", [[("a", 600_000), ("b", 600_000)], [("a", 2 * MIB)],
+                                    [(f"f{i}", 30_000) for i in range(40)]],
+                         ids=["two-fields", "one-huge-field", "many-small-fields"])
+def test_urlencoded_text_cannot_spend_unused_file_budget(fields) -> None:
+    """A urlencoded body is all text: past the text bound it is refused while it is read, whatever file allowance the
+    route has (the multipart parser is not used for it, so the bound is on the stream)."""
+    limits = _wire.FormLimits(file_slots=1, max_file_bytes=4 * MIB)
+    request, taken = _chunked_urlencoded(fields)
+    result = asyncio.run(_wire.split_form(request, limits))
+    assert isinstance(result, Response) and result.status_code == 413
+    assert json.loads(result.body)["error"]["code"] == "payload_too_large"
+    assert taken[0] <= _wire.FORM_PART_BYTES + 2 * BLOCK
+
+
+def test_urlencoded_text_inside_the_text_bound_is_read() -> None:
+    limits = _wire.FormLimits(file_slots=1, max_file_bytes=4 * MIB)
+    request, _ = _chunked_urlencoded([("a", 300_000), ("b", 300_000)])
+    result = asyncio.run(_wire.split_form(request, limits))
+    assert isinstance(result, tuple) and len(result[0]["a"]) == 300_000 and len(result[0]["b"]) == 300_000
+
+
 def test_deep_json_returns_shape_error() -> None:
     result = asyncio.run(_wire.json_object(make_request(DEEP)))
     assert isinstance(result, Response) and result.status_code == 400

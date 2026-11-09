@@ -547,6 +547,70 @@ def test_a_job_with_no_envelope_or_an_unknown_version_fails_at_recovery(db, tmp_
     assert codes == {bare.job_id: "pin_not_recorded", odd.job_id: "envelope_version_unsupported"}
 
 
+def _damage_the_pin(db: Path, job_id: str, how: str) -> None:
+    """Break one definition blob the job's envelope names, leaving the envelope row in place."""
+    with sqlite3.connect(db) as conn:
+        sha = json.loads(conn.execute("SELECT envelope_json FROM job_envelope WHERE job_id=?", (job_id,)).fetchone()[0])["definitions"]["contract"]
+        if how == "deleted":
+            conn.execute("DELETE FROM definition_blob WHERE sha=?", (sha,))
+        else:
+            conn.execute("UPDATE definition_blob SET body=? WHERE sha=?", (b'{"tampered": true}', sha))
+
+
+@pytest.mark.parametrize("how", ["deleted", "tampered"])
+@pytest.mark.parametrize("where", ["direct", "after_recovery"])
+def test_an_unreadable_pin_fails_definition_unavailable_not_pin_not_recorded(db, tmp_path, how, where):
+    """A job that DID record an envelope, whose blob is gone or changed, is not a job that recorded nothing: it settles
+    failed, nonretryable, definition_unavailable, with no engine call and no use of the live definition."""
+    core, port, view, snap = submitted(db, tmp_path)
+    _damage_the_pin(db, view.job_id, how)
+    if where == "after_recovery":
+        report = core.recover_runs(0)
+        assert "pin_not_recorded" not in report.counts
+        port.scheduled.clear()
+    run(core.execute_run(view.job_id))
+    failed = media_jobs.get(view.job_id, audience="internal", path=db)
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "definition_unavailable" and failed["retryable"] is False
+    assert port.engine_calls == 0
+
+
+@pytest.mark.parametrize("where", ["direct", "after_recovery"])
+def test_a_supported_envelope_that_does_not_parse_fails_definition_unavailable(db, tmp_path, where):
+    core, port, view, snap = submitted(db, tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE job_envelope SET envelope_json=? WHERE job_id=?",
+                     (json.dumps({"envelope_version": 2}), view.job_id))
+    if where == "after_recovery":
+        assert "pin_not_recorded" not in core.recover_runs(0).counts
+    run(core.execute_run(view.job_id))
+    failed = media_jobs.get(view.job_id, audience="internal", path=db)
+    assert failed["status"] == "failed" and failed["error_code"] == "definition_unavailable" and failed["retryable"] is False
+    assert port.engine_calls == 0
+
+
+def _run_a_bare_job(db, tmp_path, envelope_json=None):
+    job = media_jobs.create(media_jobs.MediaJob(intent="workflow.run", workflow="demo.run"), path=db)
+    if envelope_json is not None:
+        with sqlite3.connect(db) as conn:
+            conn.execute("INSERT INTO job_envelope (job_id, envelope_json, created) VALUES (?, ?, 0)", (job.job_id, envelope_json))
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    port.payloads[job.job_id] = {"auth": {"scope": "app-1", "person": "person-1"}, "body": {}, "media": {}}
+    run(core.execute_run(job.job_id))
+    assert port.engine_calls == 0
+    return media_jobs.get(job.job_id, audience="internal", path=db)
+
+
+def test_a_job_with_no_envelope_row_is_pin_not_recorded_when_it_runs(db, tmp_path):
+    """The control: absence of any envelope row stays pin_not_recorded on the direct path."""
+    assert _run_a_bare_job(db, tmp_path)["error_code"] == "pin_not_recorded"
+
+
+def test_a_job_with_an_unknown_envelope_version_is_envelope_version_unsupported_when_it_runs(db, tmp_path):
+    """The version case has its own code on the direct path, as it has at recovery."""
+    assert _run_a_bare_job(db, tmp_path, json.dumps({"envelope_version": 9}))["error_code"] == "envelope_version_unsupported"
+
+
 def test_a_version_one_job_is_listed_by_the_pre_deploy_check_and_shows_unknown_facts(db, tmp_path):
     v1 = build_job_envelope(source_kind="workflow", source_id="demo.run", contract={"a": 1}, binding={"b": 1}, template=None,
                             protocol_id="p", adapter_id="a", interface_version=1, service_id="s", origin="http://e")

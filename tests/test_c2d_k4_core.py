@@ -450,31 +450,41 @@ def _receipt(request_id, *, accepted_at_ms, path):
     receipt_store.begin(RouteReceipt(protocol="p", intent="i", path="/row", request_id=request_id), now_ms=accepted_at_ms, path=path)
 
 
-def test_the_startup_sweep_leaves_a_receipt_opened_after_its_fence_and_that_request_finalizes_as_succeeded(tmp_path):
+def test_the_startup_sweep_closes_only_the_receipts_open_at_its_snapshot_and_that_request_finalizes_as_succeeded(tmp_path):
     from gateway import receipt_store
     path = tmp_path / "receipts.db"
-    fence = 2_000_000
-    _receipt("req-old", accepted_at_ms=fence - 1000, path=path)
-    _receipt("req-live", accepted_at_ms=fence + 1000, path=path)
-    assert receipt_store.close_orphans_on_paths(["/row"], opened_before_ms=fence, path=path) == 1
+    _receipt("req-old", accepted_at_ms=2_001_000, path=path)          # a timestamp above the clock below: no matter
+    snapshot = receipt_store.open_request_ids(path=path)
+    assert snapshot == {"req-old"}
+    _receipt("req-live", accepted_at_ms=1_000, path=path)             # opened after the snapshot, with an older timestamp
+    assert receipt_store.close_orphans_on_paths(["/row"], among=snapshot, path=path) == 1
     assert _status(path, "req-old") == "failed"              # the stopped gateway's receipt
     assert _status(path, "req-live") == "in_progress"        # the live request's is not swept
-    assert receipt_store.close_orphan("req-live", opened_before_ms=fence, path=path) is False
-    done = {"request_id": "req-live", "status": "succeeded", "updated_at_ms": fence + 2000,
+    assert receipt_store.close_orphan("req-live", among=snapshot, path=path) is False
+    done = {"request_id": "req-live", "status": "succeeded", "updated_at_ms": 5_000,
             "metadata": {"terminal_reason": "succeeded"}}
     assert receipt_store.finalize(done, path=path) is True                           # its own finalize still wins
     assert _status(path, "req-live") == "succeeded"
 
 
-def test_a_recovered_run_closes_its_receipt_with_the_job_outcome_and_the_fence_still_applies(tmp_path):
+def test_a_recovered_run_closes_its_receipt_with_the_job_outcome_and_the_snapshot_still_applies(tmp_path):
     from gateway import receipt_store
     path = tmp_path / "receipts.db"
-    fence = 2_000_000
-    _receipt("req-old", accepted_at_ms=fence - 1000, path=path)
-    _receipt("req-live", accepted_at_ms=fence + 1000, path=path)
-    assert receipt_store.close_recovered("req-live", "succeeded", "succeeded", opened_before_ms=fence, path=path) is False
-    assert receipt_store.close_recovered("req-old", "succeeded", "succeeded", opened_before_ms=fence, path=path) is True
+    _receipt("req-old", accepted_at_ms=2_001_000, path=path)
+    snapshot = receipt_store.open_request_ids(path=path)
+    _receipt("req-live", accepted_at_ms=1_000, path=path)
+    assert receipt_store.close_recovered("req-live", "succeeded", "succeeded", among=snapshot, path=path) is False
+    assert receipt_store.close_recovered("req-old", "succeeded", "succeeded", among=snapshot, path=path) is True
     old = receipt_store.get("req-old", path=path)
     assert old["status"] == "succeeded" and old["metadata"]["terminal_reason"] == "succeeded"
-    assert receipt_store.close_recovered("req-old", "failed", "gateway_restarted", path=path) is False    # closed stays closed
+    assert receipt_store.close_recovered("req-old", "failed", "gateway_restarted", among=snapshot, path=path) is False   # closed stays closed
     assert _status(path, "req-live") == "in_progress"
+
+
+def test_the_snapshot_holds_in_progress_receipts_only(tmp_path):
+    from gateway import receipt_store
+    path = tmp_path / "receipts.db"
+    _receipt("req-open", accepted_at_ms=1_000, path=path)
+    _receipt("req-done", accepted_at_ms=1_000, path=path)
+    assert receipt_store.close_orphan("req-done", path=path) is True
+    assert receipt_store.open_request_ids(path=path) == {"req-open"}

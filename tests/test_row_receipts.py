@@ -425,23 +425,74 @@ def test_restart_closes_open_row_receipts_without_an_unfinished_job(rig):
     assert receipt_store.get(other)["status"] == "in_progress"
 
 
-def test_restart_leaves_a_receipt_a_live_request_opened_after_recovery_began(rig):
-    """K3 recheck P2: the sweep closes receipts the stopped gateway left, not one a live request opens. Here the request
-    is accepted a minute after recovery starts, so it must stay open and finalize as succeeded."""
-    stopped, live = ("req_" + c * 32 for c in "fg")
-    now_ms = int(time.time() * 1000)
-    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=stopped), now_ms=now_ms - 5000)
-    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=live), now_ms=now_ms + 60_000)
+def _stored_status(request_id: str) -> str:
+    import sqlite3
+    with sqlite3.connect(receipt_store.DB_PATH) as conn:
+        return conn.execute("SELECT status FROM receipts WHERE request_id=?", (request_id,)).fetchone()[0]
+
+
+def _legacy_without_accepted_time(request_id: str, created_at_s: int) -> None:
+    """A row written before ``accepted_at_ms`` existed: no accepted time in its JSON, only ``created_at``."""
+    import sqlite3
+    with sqlite3.connect(receipt_store.DB_PATH) as conn:
+        conn.execute("UPDATE receipts SET receipt_json = json_remove(receipt_json, '$.accepted_at_ms'), created_at=? "
+                     "WHERE request_id=?", (created_at_s, request_id))
+
+
+@pytest.mark.parametrize("opened", ["at_the_startup_clock", "after_the_startup_clock", "legacy_row_after_the_clock"])
+def test_restart_closes_a_stopped_gateways_receipt_whatever_its_timestamp_says(rig, monkeypatch, opened):
+    """The clock stepped back between the stopped gateway and this start, so the abandoned receipt's accepted time equals
+    or exceeds the startup clock. It is the stopped gateway's by identity (it was open when recovery began), and it closes."""
+    startup_s = 2_000_000
+    request_id = "req_" + "h" * 32
+    accepted_ms = startup_s * 1000 + (0 if opened == "at_the_startup_clock" else 3_600_000)
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=request_id), now_ms=accepted_ms)
+    if opened == "legacy_row_after_the_clock":
+        _legacy_without_accepted_time(request_id, startup_s + 3600)
+    monkeypatch.setattr(proxy.time, "time", lambda: float(startup_s))
 
     proxy._recover_workflow_runs()
 
-    after = receipt_store.get(stopped)
+    after = receipt_store.get(request_id)
     assert (after["status"], reason(after)) == ("failed", GATEWAY_RESTARTED)
-    assert receipt_store.get(live)["status"] == "in_progress"
-    done = {"request_id": live, "status": "succeeded", "updated_at_ms": now_ms + 61_000,
-            "metadata": {"terminal_reason": "succeeded"}}
+
+
+def test_restart_leaves_a_receipt_opened_after_recovery_began_whatever_its_timestamp_says(rig, monkeypatch):
+    """A request that opens its receipt while recovery runs is live. Its timestamp is lower than the startup clock (the
+    clock stepped back), and it still stays open and finalizes as succeeded."""
+    stopped, live = ("req_" + c * 32 for c in "jk")
+    now_ms = int(time.time() * 1000)
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=stopped), now_ms=now_ms - 5000)
+
+    class Core:
+        def recover_runs(self, now_s):
+            receipt_store.begin(RouteReceipt(protocol="p", intent="i", path=RAW, request_id=live), now_ms=now_ms - 3_600_000)
+            return type("Report", (), {"counts": {}})()
+
+    monkeypatch.setattr(proxy, "_workflow_run_core", lambda: Core())
+
+    proxy._recover_workflow_runs()
+
+    assert (receipt_store.get(stopped)["status"], reason(receipt_store.get(stopped))) == ("failed", GATEWAY_RESTARTED)
+    assert _stored_status(live) == "in_progress"       # the read API shows an old open receipt as stale; the row says open
+    done = {"request_id": live, "status": "succeeded", "updated_at_ms": now_ms, "metadata": {"terminal_reason": "succeeded"}}
     assert receipt_store.finalize(done) is True
     assert receipt_store.get(live)["status"] == "succeeded"
+
+
+def test_restart_closes_the_receipt_of_a_run_that_recovery_ends_even_when_its_path_is_no_longer_mounted(rig):
+    """The stopped release served the receipt's path; this one does not. Recovery fails the job (it recorded no pin), so
+    neither the mounted-path sweep nor a re-read of the unfinished jobs would find the receipt."""
+    request_id = "req_" + "m" * 32
+    receipt_store.begin(RouteReceipt(protocol="p", intent="i", path="/gateway/v1/not-mounted-any-more", request_id=request_id))
+    job = media_jobs.create(media_jobs.MediaJob(intent="workflow.run", workflow=WORKFLOW, backend="b", request_id=request_id,
+                                                metadata={"mode": "workflow.run"}), path=media_jobs.DB_PATH)
+
+    proxy._recover_workflow_runs()
+
+    assert media_jobs.get(job.job_id, audience="internal", path=media_jobs.DB_PATH)["status"] == "failed"
+    after = receipt_store.get(request_id)
+    assert after["status"] == "failed", "the receipt of a run recovery ended stayed open"
 
 
 # ------------------------------------------------------------------------------------------------ (d) no domain words

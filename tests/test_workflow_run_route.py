@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
@@ -307,3 +308,112 @@ def test_a_control_sent_as_a_file_is_refused(served):
                                           "extensions": ("e.json", json.dumps(FORGET), "application/json")})
     assert response.status_code == 422, response.text
     assert served.engine_calls == 0
+
+
+# ------------------------------------------------------------------------------- the key and the prompt-memory decision
+# The effective retention decision (header, body and member policy combined) is part of what an Idempotency-Key is bound
+# to. A second submit with the same key and inputs but a forget decision must not return, or continue under, the first
+# run that was remembered.
+
+KEY = {"Idempotency-Key": "k-memory"}
+
+
+def remember_first(**extra):
+    return call("post", ROUTE, json={"inputs": {"prompt": SENTINEL}}, headers={**KEY, **extra})
+
+
+@pytest.mark.parametrize("form", list(forms_of_forget()))
+def test_a_forget_submit_on_a_key_used_by_a_queued_remembered_run_is_a_conflict(queued, tmp_path, form):
+    first = remember_first()
+    assert first.status_code == 202, first.text
+    kwargs, headers = forms_of_forget()[form]
+    second = call("post", ROUTE, headers={**KEY, **headers}, **kwargs)
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "idempotency_conflict"
+    assert "job_id" not in second.json()
+    with media_jobs.connection(queued.media) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0] == 1
+    # The remembered run is untouched: nothing turned its payload into a forgotten one.
+    payload = proxy._load_image_media_job_payload(first.json()["job_id"])
+    assert prompt_memory.NAMESPACE not in (payload["body"].get("extensions") or {})
+
+
+@pytest.mark.parametrize("form", list(forms_of_forget()))
+def test_a_forget_submit_on_a_key_used_by_a_completed_remembered_run_is_a_conflict(served, form):
+    first = remember_first(Prefer="wait=10")
+    assert first.status_code == 200 and first.json()["status"] == "succeeded", first.text
+    kwargs, headers = forms_of_forget()[form]
+    second = call("post", ROUTE, headers={**KEY, **headers, "Prefer": "wait=10"}, **kwargs)
+    assert second.status_code == 409, second.text
+    assert second.json()["error"]["code"] == "idempotency_conflict"
+    assert "job_id" not in second.json() and "results" not in second.json()
+    assert served.engine_calls == 1
+
+
+@pytest.mark.parametrize("form", list(forms_of_forget()))
+def test_a_remember_submit_on_a_key_used_by_a_forgotten_run_is_a_conflict_too(queued, form):
+    kwargs, headers = forms_of_forget()[form]
+    first = call("post", ROUTE, headers={**KEY, **headers}, **kwargs)
+    assert first.status_code == 202, first.text
+    second = remember_first()
+    assert second.status_code == 409 and second.json()["error"]["code"] == "idempotency_conflict"
+
+
+@pytest.mark.parametrize("form", list(forms_of_forget()))
+def test_the_same_forget_decision_twice_on_one_key_still_replays(served, form):
+    kwargs, headers = forms_of_forget()[form]
+    first = call("post", ROUTE, headers={**KEY, **headers, "Prefer": "wait=10"}, **kwargs)
+    second = call("post", ROUTE, headers={**KEY, **headers, "Prefer": "wait=10"}, **kwargs)
+    assert first.status_code == 200 and second.status_code == 200, (first.text, second.text)
+    assert first.json()["job_id"] == second.json()["job_id"] and second.json()["disposition"] == "replay"
+    assert served.engine_calls == 1
+
+
+def test_the_same_forget_decision_in_two_spellings_is_one_request(queued):
+    """The identity holds the effective decision, not the spelling: a header forget and a body forget are one."""
+    kwargs, headers = forms_of_forget()["header"]
+    first = call("post", ROUTE, headers={**KEY, **headers}, **kwargs)
+    kwargs, headers = forms_of_forget()["json_body"]
+    second = call("post", ROUTE, headers={**KEY, **headers}, **kwargs)
+    assert first.status_code == 202 and second.status_code == 202
+    assert second.json()["job_id"] == first.json()["job_id"] and second.json()["disposition"] == "replay"
+
+
+# ------------------------------------------------------------------------------------------------- restart and receipts
+
+
+def _after_a_restart_with_a_run_on_the_job_store(queued):
+    """A run accepted by the stopped gateway: its job is queued, its receipt is open, and no owner holds the receipt."""
+    created = call("post", ROUTE, json={"inputs": {"prompt": "hi"}})
+    assert created.status_code == 202, created.text
+    request_id = created.headers["x-request-id"]
+    proxy._RUN_RECEIPT_OWNERS.pop(request_id, None)
+    return created.json()["job_id"], request_id
+
+
+def test_a_run_recovery_replays_from_its_committed_result_keeps_its_receipt_succeeded(queued):
+    job_id, request_id = _after_a_restart_with_a_run_on_the_job_store(queued)
+    limits = result_bundle.ResultLimits()
+    with media_jobs.connection(queued.media) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        result_bundle.stage_json_in(conn, job_id, 1, "result", b"{}", limits=limits)
+        result_bundle.publish_in(conn, job_id, 1, limits=limits)
+        conn.commit()
+
+    proxy._recover_workflow_runs()
+
+    assert media_jobs.get(job_id, audience="internal", path=queued.media)["status"] == "succeeded"
+    closed = receipt_store.get(request_id)
+    assert (closed["status"], closed["metadata"]["terminal_reason"]) == ("succeeded", "succeeded")
+
+
+def test_a_run_recovery_cannot_start_closes_its_receipt_even_though_the_job_is_no_longer_unfinished(queued):
+    job_id, request_id = _after_a_restart_with_a_run_on_the_job_store(queued)
+    with sqlite3.connect(queued.media) as conn:
+        conn.execute("DELETE FROM job_envelope WHERE job_id=?", (job_id,))
+
+    proxy._recover_workflow_runs()
+
+    job = media_jobs.get(job_id, audience="internal", path=queued.media)
+    assert (job["status"], job["error_code"]) == ("failed", "pin_not_recorded"), job
+    assert receipt_store.get(request_id)["status"] == "failed"
