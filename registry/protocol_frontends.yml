@@ -971,6 +971,7 @@ frontends:
     shape: openai.video.create
     mode: job
     cancel_wait_s: 10
+    receipt_opens: before_policy
     receipt_closes: submit
     history_facts: false
     backend_at_run: true

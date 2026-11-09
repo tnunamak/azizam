@@ -252,7 +252,6 @@ def refusal_of(status, code: str, http_status: int) -> None:
     assert json.loads(content.text)["error"]["code"] == code
 
 
-@pytest.mark.xfail(strict=True, reason="V5d: a content download answers 403 prompt_not_accessible when no metadata mode is set")
 def test_the_video_content_route_takes_the_file_the_selector_names(tmp_path: Path):
     async def exercise(world: World):
         world.engine.outputs = NOISY_VIDEO_OUTPUTS

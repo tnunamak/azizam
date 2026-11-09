@@ -195,6 +195,14 @@ async def legacy_route(shape: OpenAIVideoCreate, request: Request, row: Frontend
 
 async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                          spool: RequestSpool) -> RunRequest | LegacyRoute | Response:
+    result = await _to_run_request(shape, request, row, snapshot, spool=spool)
+    if isinstance(result, Response) and result.status_code >= 400:
+        _wire.fact("status_code", result.status_code)      # the old route's receipt keeps the status of every refusal it gave
+    return result
+
+
+async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
+                          spool: RequestSpool) -> RunRequest | LegacyRoute | Response:
     from gateway.frontend_shapes import shapes
     hooks = shapes.VIDEO_HOOKS or shapes.VideoHooks()
     caller = getattr(request.state, "caller", None)
