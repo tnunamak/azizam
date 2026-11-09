@@ -625,6 +625,7 @@ def embed_image_metadata(content: bytes, suffix_or_mime: str,
 
 _MP4_LIKE = {".mp4", ".m4v", ".m4a", ".mov"}
 _WAV_INFO_FALLBACK_KEY = "comment"
+_ARG_LIMIT = 100_000  # bytes in one ``-metadata key=value`` argument; the kernel allows 131072
 
 
 def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str],
@@ -648,15 +649,20 @@ def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str
     if suffix == ".wav":
         joined = "\n".join(f"{k}={v}" for k, v in tags.items())
         tags = {_WAV_INFO_FALLBACK_KEY: joined}
-    # The tags travel in an anonymous ffmetadata file, never on the command
-    # line: Linux caps one argument at 128 KiB and a chained clip's workflow
-    # tag is larger than that. ``-map_metadata`` replaces the global tags, so
-    # the file holds the tags already in the container as well as the new ones.
-    merged = {**_format_tags(content, workdir), **tags}
-    extra = ["-map_metadata:g", "1:g"]
     if suffix in _MP4_LIKE:
-        extra += ["-movflags", "+use_metadata_tags"]
-    return _ffmpeg_rewrite(content, suffix_or_mime, workdir, extra, metadata_file=_ffmetadata(merged))
+        flags = ["-movflags", "+use_metadata_tags"]
+    else:
+        flags = []
+    if all(len(f"{k}={v}".encode("utf-8")) <= _ARG_LIMIT for k, v in tags.items()):
+        extra = [arg for k, v in tags.items() for arg in ("-metadata", f"{k}={v}")]
+        return _ffmpeg_rewrite(content, suffix_or_mime, workdir, [*extra, *flags])
+    # Linux caps one command-line argument at 128 KiB, and a chained clip's
+    # workflow tag is larger. Such tags travel in an anonymous ffmetadata file.
+    # ``-map_metadata`` replaces the global tags, so the file also holds the
+    # tags already in the container.
+    merged = {**_format_tags(content, workdir), **tags}
+    return _ffmpeg_rewrite(content, suffix_or_mime, workdir, ["-map_metadata:g", "1:g", *flags],
+                           metadata_file=_ffmetadata(merged))
 
 
 def _ffmetadata(tags: Mapping[str, str]) -> bytes:
