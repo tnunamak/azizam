@@ -352,9 +352,9 @@ def _example_request(
         if isinstance(response, Mapping) and response.get("kind") == "media_job"
         else None
     )
-    answers_job = job_urls is not None or (route or {}).get("kind") == "respond_async"
-    binary_response = ((record.intent == "audio.generate" and (route or {}).get("kind") != "media_job")
-                       or content_type == "multipart/form-data") and not answers_job
+    answers_job = job_urls is not None or (route or {}).get("kind") in {"media_job", "respond_async"}
+    response_kind = response.get("kind") if isinstance(response, Mapping) else None
+    binary_response = response_kind == "binary" and not answers_job
     # Made-up local paths belong in the code examples only. The catalog's
     # `files` says which input each file part carries, never a path, so no
     # screen can show "./source-image.bin" as if it were helper text.
@@ -382,6 +382,7 @@ def _example_request(
         "javascript": _javascript_example(
             method, url, content_type=content_type, body=body, form=form, files=paths,
             binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
+            json_response=response_kind == "json" and not answers_job,
         ),
     }
 
@@ -624,6 +625,7 @@ def _javascript_example(
     binary_response: bool,
     headers: Mapping[str, str] | None = None,
     job_urls: tuple[str, str] | None = None,
+    json_response: bool = False,
 ) -> str:
     if job_urls is not None:
         submit = _javascript_example(
@@ -657,6 +659,7 @@ def _javascript_example(
             (
                 "await writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
                 if binary_response else
+                "console.log(await response.json());" if json_response else
                 "console.log(await response.text());"
             ),
         ]

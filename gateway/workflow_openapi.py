@@ -471,29 +471,34 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
     if native:
         sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
-                "output": "JSON (see the route's response schema)"}
+                "output": "JSON (see the route's response schema)",
+                "response": {"kind": "json"}}
         if intent == "image.edit":
             sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
                                  "note": "options go in extensions['com.azizam.workflow']"}
     elif intent == "image.generate":
         sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
-                "output": "data[].b64_json or data[].url"}
+                "output": "data[].b64_json or data[].url",
+                "response": {"kind": "json"}}
         async_ = job_route("image.generate")
     elif intent == "image.edit":
         sync = {"method": "POST", "path": "/v1/images/edits", "content_type": _MULTIPART,
                 "model": model, "fields": request_mapping(record, "sync"),
                 "extensions_field": "extensions (JSON string)",
-                "output": "data[].b64_json or data[].url"}
+                "output": "data[].b64_json or data[].url",
+                "response": {"kind": "json"}}
     elif intent == "audio.generate":
         sync = {"method": "POST", "path": "/v1/audio/generate", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
-                "output": "audio bytes (see Content-Type)"}
+                "output": "audio bytes (see Content-Type)",
+                "response": {"kind": "binary"}}
         async_ = job_route("audio.generate")
     elif intent == "mesh.generate":
         sync = {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
-                "output": "model/gltf-binary (GLB bytes)"}
+                "output": "model/gltf-binary (GLB bytes)",
+                "response": {"kind": "binary", "media_type": "model/gltf-binary"}}
         # The same route answers 202 with a media job when the request says ``Prefer: respond-async`` (RFC 7240). The
         # run takes minutes under load, and a held connection that drops loses the answer; the job does not.
         async_ = {
