@@ -95,7 +95,8 @@ async def _parse_body(request: Request) -> dict[str, Any] | Response:
     try:
         parsed = json.loads(await request.body() or b"")
     except (ValueError, UnicodeDecodeError, RecursionError):
-        return _wire.error_response(400, "Invalid JSON body")
+        return Response(content=json.dumps({"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}}),
+                        status_code=400, media_type="application/json")
     return parsed if isinstance(parsed, dict) else _wire.error_response(400, "Request body must be a JSON object")
 
 
