@@ -62,19 +62,27 @@ class CursorNotFound(Exception):
 
 class VideoLedger:
     def __init__(self, jobs: JobService, job_id_of: Callable[[str], str | None], intents: Sequence[str],
-                 legacy: LegacyRecords | None = None) -> None:
+                 legacy: LegacyRecords | None = None, is_job_id: Callable[[str], bool] = lambda raw: False) -> None:
         self._jobs = jobs
         self._job_id_of = job_id_of           # the wire's own rule: wire id -> raw id, None when malformed
         self._intents = tuple(intents)
         self._legacy = legacy
+        self._is_job_id = is_job_id           # the job store's id form: such an id never names an older record
+
+    def names_a_job(self, wire_id: str) -> bool:
+        """True when the id has the job store's form. Such an id that ``lookup`` does not find (unknown, hidden, deleted,
+        reaped, or a job of another kind) is unknown; it never falls back to the older records."""
+        raw = self._job_id_of(wire_id)
+        return raw is not None and self._is_job_id(raw)
 
     def lookup(self, wire_id: str, caller: CallerContext) -> Hit | None:
+        """The item an id names, or None. A job counts only when it is filed under one of this wire's intents."""
         raw = self._job_id_of(wire_id)
         if raw is None:
             return None
-        view = self._jobs.get(raw, caller)
-        if view is not None:
-            return JobHit(view)
+        if self._is_job_id(raw):
+            view = self._jobs.get(raw, caller)
+            return JobHit(view) if view is not None and view.intent in self._intents else None
         record = self._legacy.find(raw, caller) if self._legacy is not None else None
         return LegacyHit(raw, record) if record is not None else None
 

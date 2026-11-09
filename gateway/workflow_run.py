@@ -421,7 +421,9 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
         workflow_id=str(job.get("workflow") or ""), record_revision=revision, binding_key=binding_key,
         created_at_s=int(job.get("created_at") or 0), updated_at_s=int(job.get("updated_at") or 0),
         failure=failure, results=results, result_metadata=dict((job.get("metadata") or {}).get(RESULT_METADATA_KEY) or {}),
-        progress=100 if status == media_jobs.STATUS_SUCCEEDED else int(job.get("progress") or 0))
+        progress=100 if status == media_jobs.STATUS_SUCCEEDED else int(job.get("progress") or 0),
+        intent=str(job.get("intent") or ""),
+        finished_at_s=int(job["finished_at"]) if media_jobs.is_terminal(status) and job.get("finished_at") is not None else None)
 
 
 WIRE_ID_PLACEHOLDER = "{wire_id}"       # what a shape writes where the id the caller will see is not yet known

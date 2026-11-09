@@ -64,7 +64,7 @@ class VideoViews:
         body: dict[str, Any] = {
             "id": self.wire_id(view.job_id), "object": self.wire_name, "azizam_object": f"{self.wire_name}.generation",
             "status": status, "azizam_status": own, "progress": 100 if view.status == "succeeded" else view.progress,
-            "created_at": view.created_at_s, "completed_at": view.updated_at_s if view.status in TERMINAL else None,
+            "created_at": view.created_at_s, "completed_at": view.finished_at_s if view.status in TERMINAL else None,
             "expires_at": view.created_at_s + EXPIRES_AFTER_S if view.created_at_s is not None else None,
             "prompt": getattr(facts, "prompt", None), "remixed_from_video_id": None, "error": None, "updated_at": view.updated_at_s}
         if facts is not None:
@@ -132,6 +132,9 @@ class VideoViews:
                 content = media_delivery.deliver_bytes(content, suffix or ".bin", mode)
         except media_metadata.MediaMetadataError:
             return _wire.error_response(502, "Could not prepare video for delivery", kind="api_error")
+        current = jobs.get(view.job_id, caller)           # the cancel fence: a job canceled or deleted while its file was
+        if current is None or current.status != "succeeded":      # read publishes nothing and delivers nothing
+            return self.unknown_id()
         if on_delivered is not None and facts is not None and facts.maker_person_id is not None and ref.asset_id:
             on_delivered(self.wire_id(view.job_id), ref.asset_id, filename if isinstance(filename, str) else "", media_type, facts)
         headers = {"Content-Disposition": f'inline; filename="{posixpath.basename(filename)}"'} if isinstance(filename, str) and filename else {}

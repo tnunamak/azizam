@@ -27334,7 +27334,7 @@ class _LegacyVideoRecords:
 
 
 def _video_ledger(shape) -> VideoLedger:
-    return VideoLedger(_workflow_job_service(), shape.job_id_of, _video_intents(), _LegacyVideoRecords())
+    return VideoLedger(_workflow_job_service(), shape.job_id_of, _video_intents(), _LegacyVideoRecords(), media_jobs.is_job_id)
 
 
 async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
@@ -27343,6 +27343,11 @@ async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
         return None
     hit = await asyncio.to_thread(_video_ledger(shape).lookup, video_id, auth_context)
     return hit.view if isinstance(hit, JobHit) else None
+
+
+def _names_a_video_job(shape, video_id: str) -> bool:
+    """True when the id has the job store's form: a job that is not found is unknown, never an older record."""
+    return shape is not None and _video_ledger(shape).names_a_job(video_id)
 
 
 def _index_video_job_delivery(wire_id: str, asset_id: str, filename: str, media_type: str, facts) -> None:
@@ -27364,6 +27369,8 @@ async def videos_status(video_id: str, request: Request):
     if view is not None:
         facts = await asyncio.to_thread(_workflow_job_service().request_facts, view.job_id, auth_context)
         return shape.render_status(view, facts)
+    if _names_a_video_job(shape, video_id):
+        return shape.unknown_id()
     return await proxy_graph_video_status(video_id, auth_context)
 
 
@@ -27389,6 +27396,8 @@ async def videos_content(video_id: str, request: Request):
             metadata_mode=delivery.requested_mode if delivery is not None else None,
             caller_person_id=_auth_person_id(auth_context), never_keep=bool(household["never_keep"]),
             on_delivered=_index_video_job_delivery)
+    if _names_a_video_job(shape, video_id):
+        return shape.unknown_id()
     prompt_id = _prompt_id_from_video_id(video_id)
     record = _video_job_records.get(prompt_id) if prompt_id else None
     delivery = media_delivery.current()
@@ -27437,6 +27446,8 @@ async def videos_delete(video_id: str, request: Request):
             if ref.asset_id:
                 await asyncio.to_thread(prompt_memory.delete_asset, ref.asset_id)
         return shape.render_deleted(hit.view.job_id)
+    if _names_a_video_job(shape, video_id):
+        return shape.unknown_id()
     return await proxy_graph_video_delete(video_id, auth_context)
 
 

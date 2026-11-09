@@ -13,9 +13,9 @@ from gateway.workflow_runtime_types import JobDeleteConflict, JobNotFound, RunJo
 from tests.workflow_runtime_fakes import FakeJobService, FakeRunCore
 
 
-def view(job_id, created_at, status="succeeded") -> RunJobView:
+def view(job_id, created_at, status="succeeded", intent="x") -> RunJobView:
     return RunJobView(job_id=job_id, status=status, disposition="replay", workflow_id="w", record_revision=1, binding_key="b",
-                      created_at_s=created_at, updated_at_s=created_at + 1)
+                      created_at_s=created_at, updated_at_s=created_at + 1, intent=intent)
 
 
 class Older:
@@ -38,7 +38,7 @@ def ledger(jobs=(), older=None):
     for item in jobs:
         core.jobs[item.job_id] = item
     service = FakeJobService(core)
-    return VideoLedger(service, job_id_of, ("x", "y"), None if older is None else Older(older)), service
+    return VideoLedger(service, job_id_of, ("x", "y"), None if older is None else Older(older), lambda raw: raw.startswith("mj_")), service
 
 
 def ids(page):
@@ -131,3 +131,38 @@ def test_a_cancel_that_does_not_take_keeps_the_job_and_raises_the_conflict():
     with pytest.raises(JobDeleteConflict):
         book.delete("video_mj_r", None)
     assert isinstance(book.lookup("video_mj_r", None), JobHit)
+
+
+# ------------------------------------------------------------------------------------------------ membership and identity
+
+
+def test_a_job_of_another_kind_is_not_found_by_lookup_and_cannot_be_deleted():
+    book, service = ledger([view("mj_v", 100), view("mj_audio", 200, intent="speech")])
+    assert book.lookup("video_mj_audio", None) is None and isinstance(book.lookup("video_mj_v", None), JobHit)
+    assert book.delete("video_mj_audio", None) is None and "mj_audio" not in service.deleted
+
+
+@pytest.mark.parametrize("order", ["asc", "desc"])
+@pytest.mark.parametrize("intent", ["speech", ""])
+def test_a_job_of_another_kind_is_not_a_cursor_even_between_two_videos(order, intent):
+    book, _ = ledger([view("mj_1", 100), view("mj_other", 200, intent=intent), view("mj_3", 300, intent="y")])
+    with pytest.raises(CursorNotFound):
+        book.page(None, 10, "video_mj_other", order)
+    assert ids(book.page(None, 10, None, order)) == (["mj_1", "mj_3"] if order == "asc" else ["mj_3", "mj_1"])
+
+
+def test_both_video_intents_are_members():
+    book, _ = ledger([view("mj_a", 100, intent="x"), view("mj_b", 200, intent="y")])
+    assert all(isinstance(book.lookup(f"video_{name}", None), JobHit) for name in ("mj_a", "mj_b"))
+
+
+def test_an_id_in_the_job_store_form_never_falls_back_to_an_older_record():
+    clash = {"mj_same": {"created_at": 50}, "plain-prompt": {"created_at": 60}}
+    book, service = ledger([view("mj_same", 100)], clash)
+    assert isinstance(book.lookup("video_mj_same", None), JobHit)
+    book.delete("video_mj_same", None)                                       # the job is deleted ...
+    assert book.lookup("video_mj_same", None) is None and book.names_a_job("video_mj_same")   # ... the id stays unknown
+    with pytest.raises(CursorNotFound):
+        book.page(None, 10, "video_mj_same", "asc")
+    assert isinstance(book.lookup("video_plain-prompt", None), LegacyHit) and not book.names_a_job("video_plain-prompt")
+    assert not book.names_a_job("not-a-wire-id")

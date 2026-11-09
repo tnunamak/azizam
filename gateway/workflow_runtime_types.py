@@ -531,6 +531,11 @@ class RunJobView:
     result_metadata: Mapping[str, Any] = field(default_factory=dict)
     # How far the run is, 0 to 100, from the job row. It never goes down; a succeeded job shows 100.
     progress: int = 0
+    # The intent the job row is filed under (the route's ``runtime_policy.intent``; empty for a job made without one), so a
+    # wire that serves one kind of job can tell its own jobs from any other readable job of the run core.
+    intent: str = ""
+    # When the job reached a terminal state, set once by the job store; None until then. ``updated_at_s`` moves on every write.
+    finished_at_s: int | None = None
 
 
 @dataclass(frozen=True)

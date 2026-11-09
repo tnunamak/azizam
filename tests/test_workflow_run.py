@@ -899,3 +899,22 @@ def test_list_refuses_both_cursors_at_once(db, tmp_path):
     port, ids = listed_jobs(db, tmp_path, 1)
     with pytest.raises(ValueError):
         WorkflowJobService(port=port, path=db).list(Caller(), intents=("demo.listing",), limit=1, after_id=ids[0], after_key=(1, "x"))
+
+
+def test_a_job_view_carries_the_intent_it_is_filed_under(db, tmp_path):
+    core, port, view = submit_one(db, tmp_path)
+    shown = WorkflowJobService(port=port, path=db).get(view.job_id, Caller())
+    assert shown.intent == media_jobs.get(view.job_id, audience="internal", path=db)["intent"]
+
+
+def test_the_finish_time_is_set_once_and_a_later_write_to_a_finished_job_does_not_move_it(db, tmp_path):
+    core, port, view = submit_one(db, tmp_path)
+    service = WorkflowJobService(port=port, path=db)
+    assert service.get(view.job_id, Caller()).finished_at_s is None
+    run(core.execute_run(view.job_id))
+    done = service.get(view.job_id, Caller())
+    assert done.status == "succeeded" and done.finished_at_s is not None
+    later = done.updated_at_s + 500
+    media_jobs.update_status(view.job_id, "succeeded", metadata_patch={"bookkeeping": 1}, now=later, path=db)
+    again = service.get(view.job_id, Caller())
+    assert (again.finished_at_s, again.updated_at_s) == (done.finished_at_s, later)
