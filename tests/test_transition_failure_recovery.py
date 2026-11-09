@@ -571,18 +571,25 @@ def test_a_revalidation_hold_carries_the_recorded_outcome_not_no_change(tmp_path
 # -- an unknown reset is not run again; a hold from the previous format still re-reads the clean check (review 2327) -------
 
 
-def test_a_reset_whose_outcome_is_unknown_is_never_run_again_by_the_next_restart(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("crash_before_finish", [False, True])
+def test_a_reset_whose_outcome_is_unknown_is_never_run_again_by_the_next_restart(tmp_path, monkeypatch, crash_before_finish) -> None:
     gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
     engine.reset_outcome, engine.query_outcome, engine.clean = "unknown", "unknown", True
     op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="restore", outcome="partial",
                               evidence="restore:failed:state_not_known_clean", target="alpha")
     engine.resident = "alpha"
-    first = _restart(runtime, op_id)
-    assert (first.state, gates.state("dom")) == ("reconciling", "reconciling")
+    executor = runtime.executor()
+    if crash_before_finish:  # the process dies after the hold is written and before the operation is finished
+        with monkeypatch.context() as patch:
+            _die_in(executor, patch, "finish")
+            _restart_dying(runtime)
+    else:
+        first = _restart(runtime, op_id)
+        assert (first.state, gates.state("dom")) == ("reconciling", "reconciling")
     assert engine.resets == 1
-    print("FIRST", first.step, first.step_outcome, first.evidence_ref, first.step_intent)
+    row = executor.store.get(op_id)
+    assert not (row.evidence_ref or "").startswith("revalidate:"), "the held reset is not rewritten into the stale partial"
     second = _restart(runtime, op_id)
-    print("SECOND", second.step, second.step_outcome, second.evidence_ref, second.step_intent)
     assert engine.resets == 1, "the second restart queries the dispatched reset; it does not run it again"
     assert (second.state, gates.state("dom")) == ("reconciling", "reconciling")
 
