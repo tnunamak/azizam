@@ -2089,8 +2089,8 @@ content=$(curl --fail --silent --show-error --max-time 60 \
   "$base/gateway/v1/media/jobs/$job_id/content" -H "Authorization: Bearer $AZIZAM_API_KEY")
 asset_url=$(printf '%s' "$content" | jq -er '.data[0].url | select(type == "string" and length > 0)')
 # Signed asset URLs are bearerless. Never save the content JSON as an MP4.
-curl --fail --silent --show-error --location --max-time 300 \
-  "$asset_url" --output interpolated.mp4
+curl --fail --silent --show-error --globoff --location --max-time 300 \
+  --url "$asset_url" --output interpolated.mp4
 ```
 
 The workflow manifest validates the multiplier. `2` is the verified setting;

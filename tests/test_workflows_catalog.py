@@ -22,6 +22,7 @@ from gateway.workflow_openapi import augment_openapi
 from tests.support.registry_provider import provider_of
 from tests.support.workflow_docs import STANDARD_FACTS
 from gateway.workflows_catalog import (
+    _curl_example,
     _workflow_description,
     build_workflows_catalog,
     create_workflows_catalog_router,
@@ -887,13 +888,15 @@ class JobRunExampleTests(unittest.TestCase):
             self.assertIn("/gateway/v1/media/jobs/", code)
             self.assertIn("/content", code)
 
-    def run_python(self, steps: list[dict], *, expired: bool = False) -> tuple[bytes | None, list[str], Exception | None]:
+    def run_python(self, steps: list[dict], *, expired: bool = False,
+                   poll_elapsed: float | None = None) -> tuple[bytes | None, list[str], Exception | None]:
         import io
         import sys
         import types
 
         calls, writes = [], {}
         queue = list(steps)
+        now = [0.0]
 
         class Response:
             def __init__(self, step):
@@ -911,6 +914,9 @@ class JobRunExampleTests(unittest.TestCase):
 
         def request(method, url, **kwargs):
             calls.append(url)
+            if poll_elapsed is not None and url.endswith("/media/jobs/job-1"):
+                self.assertEqual(kwargs["timeout"], 60)
+                now[0] = poll_elapsed  # The response arrives after time passes inside the poll.
             if url.startswith("https://assets.test/"):
                 self.assertNotIn("Authorization", kwargs.get("headers", {}))
             return Response(queue.pop(0))
@@ -926,7 +932,8 @@ class JobRunExampleTests(unittest.TestCase):
 
         requests = types.SimpleNamespace(request=request, get=lambda url, **kwargs: request("GET", url, **kwargs))
         failure = None
-        clock = patch("time.monotonic", side_effect=[0, 601]) if expired else nullcontext()
+        clock = (patch("time.monotonic", side_effect=[0, 601]) if expired else
+                 patch("time.monotonic", side_effect=lambda: now[0]) if poll_elapsed is not None else nullcontext())
         code = self.example()["python"]
         with clock, patch.dict(sys.modules, {"requests": requests}), patch("builtins.open", side_effect=open_file), \
              patch("time.sleep", return_value=None):
@@ -958,6 +965,8 @@ class JobRunExampleTests(unittest.TestCase):
                     "url = next(a for a in args if a.startswith('https://'))\n"
                     "with (root / 'calls').open('a') as f: f.write(url + '\\n')\n"
                     "if url.startswith('https://assets.test/') and any('Authorization:' in a for a in args): sys.exit(98)\n"
+                    "if url.startswith('https://assets.test/') and any(c in url for c in '[]{}'):\n"
+                    "    if '--globoff' not in args or '--url' not in args or args[args.index('--url') + 1] != url: sys.exit(97)\n"
                     "if step['status'] >= 400 and ('--fail' in args or '--fail-with-body' in args): sys.exit(22)\n"
                     "body = json.dumps(step['json']) if 'json' in step else step['text']\n"
                     "if '--output' in args: pathlib.Path(args[args.index('--output') + 1]).write_text(body)\n"
@@ -1032,6 +1041,62 @@ class JobRunExampleTests(unittest.TestCase):
         self.assertIsNone(output)
         self.assertIn("deadline", str(failure))
         self.assertEqual(len(calls), 1)
+
+
+    def test_python_success_arriving_at_or_after_deadline_is_not_downloaded(self) -> None:
+        for elapsed in (600, 601):
+            with self.subTest(poll_elapsed=elapsed):
+                output, calls, failure = self.run_python(self.steps(202), poll_elapsed=elapsed)
+                self.assertIsNone(output)
+                self.assertIsInstance(failure, TimeoutError)
+                self.assertIn("deadline", str(failure))
+                self.assertEqual(calls, [
+                    "https://gateway.test/gateway/v1/workflows/video.edit.fixture/run",
+                    "https://gateway.test/gateway/v1/media/jobs/job-1",
+                ])
+
+    def test_python_success_arriving_before_deadline_is_downloaded(self) -> None:
+        output, calls, failure = self.run_python(self.steps(202), poll_elapsed=599)
+        self.assertIsNone(failure)
+        self.assertEqual(output, b"movie-bytes")
+        self.assertEqual(len(calls), 4)
+
+    def test_generated_and_recipe_signed_url_curls_disable_globbing(self) -> None:
+        import shlex
+
+        recipe = (Path(__file__).resolve().parents[1] / "docs/LOCAL_CLIENT_RECIPES.md").read_text()
+        fence = chr(96) * 3
+        recipe = recipe.split("### RIFE video interpolation", 1)[1].split(fence + "bash", 1)[1].split(fence, 1)[0]
+        for name, code in (("generated", self.example()["curl"]), ("recipe", recipe)):
+            with self.subTest(source=name):
+                calls = [line.strip() for line in code.replace("\\\n", " ").splitlines()
+                         if line.strip().startswith("curl ") and '"$asset_url"' in line]
+                self.assertEqual(len(calls), 1)
+                self.assertIn('--url "$asset_url"', calls[0])
+                args = shlex.split(calls[0])
+                self.assertIn("--globoff", args)
+                self.assertEqual(args[args.index("--url") + 1], "$asset_url")
+                self.assertNotIn("-H", args)  # Signed URLs must remain bearerless.
+
+    def test_curl_signed_url_with_braces_and_brackets_is_passed_literally(self) -> None:
+        steps = self.steps(202)
+        asset_url = "https://assets.test/movie?sig=[fixture]{one,two}"
+        steps[2]["json"]["data"][0]["url"] = asset_url
+        output, calls, failure = self.run_process("curl", steps)
+        self.assertFalse(failure, failure)
+        self.assertEqual(output, b"movie-bytes")
+        self.assertEqual(calls[-1], asset_url)
+
+    def test_non_job_curl_example_text_is_unchanged(self) -> None:
+        self.assertEqual(
+            _curl_example("https://gateway.test/v1/images/generations",
+                          content_type="application/json", body={"prompt": "fixture"},
+                          form={}, files=[], binary_response=False),
+            "curl 'https://gateway.test/v1/images/generations' \\\n"
+            "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n"
+            "  -H 'Content-Type: application/json' \\\n"
+            "  -d '{\"prompt\":\"fixture\"}'",
+        )
 
     def test_curl_202_and_200_jobs_poll_then_download(self) -> None:
         self.check_clients("curl")

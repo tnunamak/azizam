@@ -1194,9 +1194,14 @@ def rollback_job_inventory(path: Path | None = None) -> list[dict[str, Any]]:
     It never rewrites a pin, filters tombstones, or applies a history-page limit.
     """
     with media_jobs.connection(path or media_jobs.DB_PATH) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "media_jobs" not in tables:
+            return []
+        envelope_column = "e.envelope_json" if "job_envelope" in tables else "NULL"
+        envelope_join = " LEFT JOIN job_envelope AS e ON e.job_id=j.job_id" if "job_envelope" in tables else ""
         rows = conn.execute(
-            "SELECT j.job_id, j.workflow, j.status, j.job_json, e.envelope_json "
-            "FROM media_jobs AS j LEFT JOIN job_envelope AS e ON e.job_id=j.job_id "
+            f"SELECT j.job_id, j.workflow, j.status, j.job_json, {envelope_column} "
+            f"FROM media_jobs AS j{envelope_join} "
             "WHERE j.status IN (?, ?) ORDER BY j.job_id",
             (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING),
         ).fetchall()
@@ -1232,12 +1237,17 @@ def assert_rollback_ready(path: Path | None = None) -> None:
     protocol through the rollback; this read-only snapshot is not an admission lock.
     """
     with media_jobs.connection(path or media_jobs.DB_PATH) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "media_jobs" not in tables:
+            return
         running = [row[0] for row in conn.execute(
             "SELECT job_id FROM media_jobs WHERE status=? ORDER BY job_id",
             (media_jobs.STATUS_RUNNING,),
         )]
         if running:
             raise RollbackRefused("running_jobs", running)
+        if "workflow_job_tombstone" not in tables:
+            return
         retained = [row[0] for row in conn.execute(
             "SELECT j.job_id FROM media_jobs AS j "
             "JOIN workflow_job_tombstone AS t ON t.job_id=j.job_id ORDER BY j.job_id"

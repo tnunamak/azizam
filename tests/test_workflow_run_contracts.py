@@ -540,6 +540,70 @@ def _rollback_dump(path):
         return "\n".join(conn.iterdump())
 
 
+
+@pytest.fixture(params=["empty", "media_jobs", "job_envelope"])
+def legacy_rollback_db(tmp_path, request):
+    """Historical schemas built without any application initializer."""
+    path = tmp_path / "legacy-rollback.db"
+    with sqlite3.connect(path) as conn:
+        if request.param != "empty":
+            conn.execute("CREATE TABLE media_jobs (job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)")
+            for job_id, status, workflow in [
+                ("z-queued", "queued", "saved.workflow"),
+                ("a-queued", "queued", "saved.workflow"),
+                ("finished", "succeeded", "saved.workflow"),
+                ("other-media", "queued", None),
+            ]:
+                conn.execute("INSERT INTO media_jobs VALUES (?, ?, ?, ?)",
+                             (job_id, workflow, status, json.dumps({"intent": "legacy.media"})))
+        if request.param == "job_envelope":
+            conn.execute("CREATE TABLE job_envelope (job_id TEXT PRIMARY KEY, envelope_json TEXT)")
+            conn.execute("INSERT INTO job_envelope VALUES (?, ?)",
+                         ("a-queued", json.dumps({"envelope_version": 1})))
+    return path, request.param
+
+
+def test_rollback_inventory_reads_uninitialized_and_legacy_schemas(legacy_rollback_db, monkeypatch):
+    path, schema = legacy_rollback_db
+    monkeypatch.setattr(media_jobs, "DB_PATH", path)
+    before = _rollback_dump(path)
+    expected = [] if schema == "empty" else [
+        {"job_id": job_id, "workflow": "saved.workflow", "status": "queued",
+         "envelope_version": 1 if pinned else None,
+         "reason": "v1_compatible" if pinned else "pin_not_recorded"}
+        for job_id, pinned in [("a-queued", schema == "job_envelope"), ("z-queued", False)]
+    ]
+
+    assert workflow_run.rollback_job_inventory() == expected
+    assert _rollback_dump(path) == before
+
+
+def test_rollback_ready_reads_uninitialized_and_legacy_schemas(legacy_rollback_db):
+    path, _ = legacy_rollback_db
+    before = _rollback_dump(path)
+
+    assert workflow_run.assert_rollback_ready(path) is None
+    assert _rollback_dump(path) == before
+
+
+@pytest.mark.parametrize("with_envelope", [False, True])
+def test_rollback_running_jobs_still_refuse_without_a_tombstone_table(tmp_path, with_envelope):
+    path = tmp_path / "running-legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE media_jobs (job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)")
+        conn.executemany("INSERT INTO media_jobs VALUES (?, NULL, ?, '{}')",
+                         [("z-running", "running"), ("a-running", "running"), ("queued", "queued")])
+        if with_envelope:
+            conn.execute("CREATE TABLE job_envelope (job_id TEXT PRIMARY KEY, envelope_json TEXT)")
+    before = _rollback_dump(path)
+
+    with pytest.raises(workflow_run.RollbackRefused) as refusal:
+        workflow_run.assert_rollback_ready(path)
+    assert refusal.value.code == "running_jobs"
+    assert refusal.value.job_ids == ["a-running", "z-running"]
+    assert _rollback_dump(path) == before
+
+
 def _rollback_job(path, job_id, *, status="queued", version=None, identity="intent"):
     workflow = "saved.workflow" if identity == "saved" else None
     metadata = {"mode": workflow_run.RUN_INTENT} if identity == "metadata" else {}

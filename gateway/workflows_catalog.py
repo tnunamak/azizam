@@ -719,7 +719,7 @@ def _curl_job_example(submit: str, poll_url: str, content_url: str) -> str:
         "  -H \"Authorization: Bearer $AZIZAM_API_KEY\")",
         "asset_url=$(printf '%s' \"$content\" | json_field data.0.url)",
         "# Signed asset URLs are fetched without the API bearer token.",
-        "curl --fail --silent --show-error --location --max-time 300 \"$asset_url\" --output workflow-output.bin",
+        "curl --fail --silent --show-error --globoff --location --max-time 300 --url \"$asset_url\" --output workflow-output.bin",
     ])
 
 
@@ -747,6 +747,8 @@ def _python_job_followup(poll_url: str, content_url: str) -> str:
         "    poll = requests.get(poll_url, headers=headers, timeout=min(60, remaining))",
         "    poll.raise_for_status()",
         "    job = poll.json()",
+        "    if time.monotonic() >= deadline:",
+        "        raise TimeoutError(f'Job {job_id} deadline exceeded')",
         "    time.sleep(2)",
         "content = requests.get(content_url, headers=headers, timeout=60)",
         "content.raise_for_status()",
