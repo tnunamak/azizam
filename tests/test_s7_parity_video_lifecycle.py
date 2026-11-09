@@ -825,3 +825,23 @@ def test_video_130_create_answers_queued_while_the_engine_never_answers(tmp_path
         assert body["status"] == "queued" and body["object"] == "video" and JOB_ID.match(vid)
         assert w.engine.prompt_ids == []
     run(tmp_path, exercise)
+
+
+def test_video_131_delete_waits_for_the_stop_without_holding_the_loop(tmp_path):
+    """Contract: a delete of an unfinished video asks the run to stop and waits for it by an asyncio wait whose limit is
+    the row's ``cancel_wait_s``. While it waits, other requests are answered. A run that stops in time is deleted (200);
+    one that does not is 409 ``video_cancel_failed`` and stays."""
+    async def exercise(w):
+        stopped, stuck = await w.create(), await w.create()
+        await drive(w, stopped, "running")
+        await drive(w, stuck, "running")
+        assert (await asyncio.wait_for(w.delete(stopped), timeout=5)).status_code == 200
+        w.engine.cancel_error = True
+        pending = asyncio.ensure_future(w.delete(stuck))
+        await asyncio.sleep(0.05)
+        assert not pending.done()                                     # it is waiting on the row's limit
+        assert (await asyncio.wait_for(w.status(stuck), timeout=0.2)).status_code == 200     # and the loop is free
+        answer = await asyncio.wait_for(pending, timeout=5)
+        assert answer.status_code == 409 and answer.json()["error"]["code"] == "video_cancel_failed"
+        assert not w.deleted(stuck)
+    run(tmp_path, exercise)

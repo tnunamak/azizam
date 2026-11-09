@@ -27523,10 +27523,30 @@ async def _run_workflow_open(workflow_id: str, request: Request, auth_context: A
     return _workflow_run_response(view)
 
 
+def _video_row():
+    """The frontend row that owns the video create route."""
+    return next((r for r in frontend_shapes.bundled_rows() if any(route.canonical == "/v1/videos" and "POST" in route.methods for route in r.routes)), None)
+
+
 def _video_wire_shape():
     """The wire shape that answers the create route, found by the route it owns; the lifecycle routes render job views with it."""
-    row = next((r for r in frontend_shapes.bundled_rows() if any(route.canonical == "/v1/videos" and "POST" in route.methods for route in r.routes)), None)
+    row = _video_row()
     return frontend_shapes.build_shape(row) if row is not None else None
+
+
+async def _stop_video_run(shape, video_id: str, auth_context: AuthContext) -> None:
+    """Ask the run of an unfinished video to stop and wait for it, for at most the row's ``cancel_wait_s``. The wait is an
+    asyncio wait on the job's wake-up; it holds no thread. A run that has not stopped is left for the delete to refuse."""
+    row = _video_row()
+    wait_s = row.cancel_wait_s if row is not None else 0.0
+    ledger = _video_ledger(shape)
+    hit = await asyncio.to_thread(ledger.lookup, video_id, auth_context)
+    if not isinstance(hit, JobHit) or media_jobs.is_terminal(hit.view.status) or wait_s <= 0:
+        return
+    jobs = _workflow_job_service()
+    job_id = hit.view.job_id
+    await asyncio.to_thread(jobs.cancel, job_id, auth_context)
+    await jobs.wait(job_id, auth_context, wait_s)
 
 
 def _job_wire_id(job_id: str) -> str:
@@ -27658,6 +27678,8 @@ async def videos_delete(video_id: str, request: Request):
         return policy_response
     shape = _video_wire_shape()
     try:
+        if shape is not None:
+            await _stop_video_run(shape, video_id, auth_context)
         hit = await asyncio.to_thread(_video_ledger(shape).delete, video_id, auth_context) if shape is not None else None
     except JobDeleteConflict:
         return shape.render_delete_conflict()

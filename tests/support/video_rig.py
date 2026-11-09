@@ -10,6 +10,7 @@ needs the engine prompt id asks ``engine_prompt_of``.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,8 @@ _ENGINE_WORD = {"queued": "queued", "running": "running", "completed": "complete
 # The job-store words each rig state may show.
 _JOB_WORDS = {"queued": {"queued", "running"}, "running": {"running"}, "completed": {"succeeded"},
               "failed": {"failed"}, "missing": {"failed"}}
+
+CANCEL_WAIT_S = 0.3        # the row's cancel_wait_s, cut for the rig
 
 
 class Engine:
@@ -291,6 +294,10 @@ def run(tmp_path: Path, exercise) -> None:
         # The rig's sleeps cost no time, so a runner polling an engine the test has not driven yet would spend its whole wait in
         # no real time. The wait is made so long that only a state the test sets ends a run.
         rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_TIMEOUT", 10 ** 9)
+        # A delete waits for the run to stop for the row's ``cancel_wait_s``; a run the engine cannot cancel never stops, so
+        # the wait is cut to a moment and the 409 comes at once.
+        row = proxy._video_row()
+        rig.monkeypatch.setattr(proxy, "_video_row", lambda: dataclasses.replace(row, cancel_wait_s=CANCEL_WAIT_S))
         world = World(rig, engine)
         rig.monkeypatch.setattr(time, "time", lambda: world.now)
         rig.monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", None)

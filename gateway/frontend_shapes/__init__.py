@@ -76,6 +76,13 @@ def _unconfigured(row_id: str, raw: Mapping[str, Any]) -> dict[str, Any] | None:
             or not all(isinstance(found[k], str) and found[k] for k in ("code", "message"))):
         raise RowError(f"{row_id}: unconfigured must be a mapping of status, code and message")
     return dict(found)
+def _cancel_wait_s(row_id: str, raw: Mapping[str, Any]) -> float:
+    value = raw.get("cancel_wait_s", 0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise RowError(f"{row_id}: cancel_wait_s must be a number of seconds, 0 or more")
+    return float(value)
+
+
 def _refusal_receipt(row_id: str, raw: Mapping[str, Any]) -> Any:
     value = raw.get("refusal_receipt", "failed")
     if value not in ("failed", "rejected"):
@@ -123,6 +130,7 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
                        receipt_opens=_receipt_opens(row_id, raw), receipt_closes=_receipt_closes(row_id, raw),
                        history_facts=_history_facts(row_id, raw), backend_at_run=_backend_at_run(row_id, raw), unconfigured=_unconfigured(row_id, raw),
+                       cancel_wait_s=_cancel_wait_s(row_id, raw),
                        refusal_receipt=_refusal_receipt(row_id, raw), run_receipt_path=str(raw.get("run_receipt_path") or ""))
 
 

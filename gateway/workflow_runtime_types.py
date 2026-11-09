@@ -717,6 +717,9 @@ class FrontendRow:
     # What a row answers when no workflow in the registry is selected by it (``unconfigured``): ``{status, code, message}``.
     # None: the shape's own refusal for a name that selects nothing. Row data.
     unconfigured: Mapping[str, Any] | None = None
+    # How long (seconds) a delete of an unfinished job of this row waits for the run to stop after the cancel is requested
+    # (row data: ``cancel_wait_s``). 0: no wait, so a job that does not stop at once is a delete conflict.
+    cancel_wait_s: float = 0.0
 
 
 class FrontendShape(Protocol):
