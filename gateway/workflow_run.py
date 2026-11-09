@@ -1318,22 +1318,24 @@ class WorkflowJobService:
         return RequestFacts(values, prompt=prompt, maker_person_id=maker if own else None)
 
     def list(self, caller: CallerContext, *, intents: Sequence[str], limit: int, after_id: str | None = None,
-             after_key: tuple[int, str] | None = None, order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
+             after_key: tuple[int, str] | None = None, order: str = "desc", workflows: Sequence[str] = ()) -> tuple[tuple[RunJobView, ...], bool]:
         if after_id is not None and after_key is not None:
             raise ValueError("give after_id or after_key, not both")
         wanted = tuple(dict.fromkeys(intents))
-        if not wanted:
+        by_workflow = tuple(dict.fromkeys(workflows))          # jobs of these workflows count whatever intent filed them
+        if not wanted and not by_workflow:
             return (), False
         direction = "ASC" if order == "asc" else "DESC"
         marks = ",".join("?" for _ in wanted)
-        sql = (f"SELECT job_json, created_at FROM media_jobs WHERE intent IN ({marks}) "
+        wmarks = ",".join("?" for _ in by_workflow)
+        sql = (f"SELECT job_json, created_at FROM media_jobs WHERE (intent IN ({marks}) OR workflow IN ({wmarks})) "
                "AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone) "
                f"ORDER BY created_at {direction}, job_id {direction}")
         page: list[dict[str, Any]] = []
         seen_cursor = after_id is None
         has_more = False
         with media_jobs.connection(self._path) as conn:
-            for job_json, created_at in conn.execute(sql, wanted):
+            for job_json, created_at in conn.execute(sql, wanted + by_workflow):
                 job = media_jobs.for_audience(json.loads(job_json), "internal")
                 if not is_run_job(job) or not self._port.can_read(job, caller):
                     continue

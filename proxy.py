@@ -27658,6 +27658,14 @@ def _video_intents() -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(route.runtime_policy["intent"]) for r in rows for route in r.routes if route.runtime_policy.get("intent")))
 
 
+def _video_workflow_ids() -> tuple[str, ...]:
+    """The workflows whose record declares video output (data from the record, not an intent list)."""
+    if WORKFLOW_SNAPSHOTS is None:
+        return ()
+    return tuple(entry.id for entry in WORKFLOW_SNAPSHOTS.current().workflows.values()
+                 if node_graph_runner.output_kind(entry.contract.get("outputs") or {}) == "video")
+
+
 class _LegacyVideoRecords:
     """The older video records, as the ledger reads them: only what the caller may see and that is not deleted."""
 
@@ -27669,7 +27677,8 @@ class _LegacyVideoRecords:
 
 
 def _video_ledger(shape) -> VideoLedger:
-    return VideoLedger(_workflow_job_service(), shape.job_id_of, _video_intents(), _LegacyVideoRecords(), media_jobs.is_job_id)
+    return VideoLedger(_workflow_job_service(), shape.job_id_of, _video_intents(), _LegacyVideoRecords(), media_jobs.is_job_id,
+                       _video_workflow_ids)
 
 
 async def _video_job_view(shape, video_id: str, auth_context: AuthContext):

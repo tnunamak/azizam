@@ -60,14 +60,18 @@ ENGINE_PROGRESS_FLAG = "engine_progress"     # a request's job metadata: the job
 ENGINE_PROMPT_KEY = "engine_prompt"      # the engine's id of the prompt a run submitted, kept as soon as it is known
 
 
-def output_noun(outputs: Mapping[str, Any]) -> str:
-    """The plural noun for what a run was to produce, from the first declared output's media type (``video/mp4`` -> ``videos``). A
-    workflow that declares none produces images, as before. Data, not a branch on the kind."""
+def output_kind(outputs: Mapping[str, Any]) -> str:
+    """What a workflow declares it produces, from its first declared output's media type (``video/mp4`` -> ``video``). One that
+    declares none produces images, as before. Data from the record, not a branch on a name."""
     for spec in outputs.values():
         kind = str((spec or {}).get("media_type") or "").split("/", 1)[0] if isinstance(spec, Mapping) else ""
         if kind and kind != "application":
-            return f"{kind}s"
-    return "images"
+            return kind
+    return "image"
+
+
+def output_noun(outputs: Mapping[str, Any]) -> str:
+    return f"{output_kind(outputs)}s"
 
 
 class RunFailed(Exception):
