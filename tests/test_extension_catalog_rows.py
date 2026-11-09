@@ -109,11 +109,12 @@ def test_invalid_extension_rows_refused(tmp_path, rows, message):
     ),
 ])
 def test_duplicate_extension_route_refused(tmp_path, rows, namespace, route, row_number):
+    path = write_rows(tmp_path, rows)
     with pytest.raises(ValueError) as error:
-        catalog.load_extension_routes(write_rows(tmp_path, rows))
+        catalog.load_extension_routes(path)
     assert str(error.value) == (
-        f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
-        f"record 1, row {row_number}"
+        f"{path}: record 1, row {row_number}: duplicate extension route: "
+        f"namespace {namespace!r}, route {route!r}"
     )
 
 
@@ -132,11 +133,12 @@ def test_duplicate_extension_route_refused(tmp_path, rows, namespace, route, row
 def test_one_route_spelled_two_ways_is_refused(tmp_path, rows, route, row_number):
     # A trailing slash and a path parameter's name do not make a new route; letter case does (paths are case-sensitive).
     namespace = rows[-1]["extensions"][0]
+    path = write_rows(tmp_path, rows)
     with pytest.raises(ValueError) as error:
-        catalog.load_extension_routes(write_rows(tmp_path, rows))
+        catalog.load_extension_routes(path)
     assert str(error.value) == (
-        f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
-        f"record 1, row {row_number}"
+        f"{path}: record 1, row {row_number}: duplicate extension route: "
+        f"namespace {namespace!r}, route {route!r}"
     )
 
 
@@ -161,8 +163,8 @@ def test_duplicate_extension_route_across_records_refused(tmp_path):
     with pytest.raises(ValueError) as error:
         catalog.load_extension_routes(path)
     assert str(error.value) == (
-        "duplicate extension route: namespace 'com.azizam.routing', route '/same', "
-        "record 2, row 1"
+        f"{path}: record 2, row 1: duplicate extension route: "
+        "namespace 'com.azizam.routing', route '/same'"
     )
 
 
@@ -240,21 +242,26 @@ def test_routes_with_different_path_converters_are_distinct(tmp_path):
 
 
 def test_an_implicit_and_an_explicit_str_parameter_are_one_route(tmp_path):
+    path = write_rows(tmp_path, [
+        {"canonical": "/v1/items/{a}", "extensions": ["com.azizam.chat"], "extension_order": 1},
+        {"canonical": "/v1/items/{b:str}", "extensions": ["com.azizam.chat"], "extension_order": 2},
+    ])
     with pytest.raises(ValueError) as error:
-        catalog.load_extension_routes(write_rows(tmp_path, [
-            {"canonical": "/v1/items/{a}", "extensions": ["com.azizam.chat"], "extension_order": 1},
-            {"canonical": "/v1/items/{b:str}", "extensions": ["com.azizam.chat"], "extension_order": 2},
-        ]))
+        catalog.load_extension_routes(path)
     assert str(error.value) == (
-        "duplicate extension route: namespace 'com.azizam.chat', route '/v1/items/{b:str}', record 1, row 2"
+        f"{path}: record 1, row 2: duplicate extension route: "
+        "namespace 'com.azizam.chat', route '/v1/items/{b:str}'"
     )
 
 
 @pytest.mark.parametrize("route", ["//", "/v1//items", "/v1/items//"])
 def test_a_route_with_an_empty_path_segment_is_refused(tmp_path, route):
     # The router serves "/" and "//" as two routes; a double slash is not a spelling the catalog folds, so it is refused.
+    path = write_rows(tmp_path, [
+        {"canonical": route, "extensions": ["com.azizam.chat"], "extension_order": 1},
+    ])
     with pytest.raises(ValueError) as error:
-        catalog.load_extension_routes(write_rows(tmp_path, [
-            {"canonical": route, "extensions": ["com.azizam.chat"], "extension_order": 1},
-        ]))
-    assert str(error.value) == f"extension route has an empty path segment: {route!r}"
+        catalog.load_extension_routes(path)
+    assert str(error.value) == (
+        f"{path}: record 1, row 1: extension route has an empty path segment: {route!r}"
+    )
