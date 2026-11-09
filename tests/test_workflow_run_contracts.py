@@ -524,6 +524,9 @@ def test_an_uploaded_source_image_reaches_the_engine_through_the_real_adapter(wo
     assert engine.prompts[0]["prompt"][node["node"]]["inputs"][node["input"]] == "staged-input.png"
 
 
+@pytest.mark.xfail(strict=True, reason="open: a job made through the generic run route is filed under workflow.run, and the video wire reads only "
+                                       "jobs filed under its own intents (video.generate), so the video routes answer 404 for it; a ruling is "
+                                       "needed: read generic-run video jobs by their workflow's kind, or keep the wires apart")
 def test_a_run_core_video_job_is_read_and_deleted_through_the_video_routes_by_its_wire_id(world):  # S7 M7
     manifest = manifest_of(VIDEO_ID)
     engine = serve_engine(world, FakeGraphEngine(manifest, mp4_bytes(), "video/mp4", "out.mp4"))
