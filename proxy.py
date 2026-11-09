@@ -27469,7 +27469,7 @@ def _audio_job_runs_from_pin(job_id: str, job: Mapping[str, Any]) -> bool:
     A workflow with another binding has no pin to run from."""
     if definition_store.DefinitionStore(media_jobs.DB_PATH).has_envelope(job_id):
         return True
-    recorded, intent = str(job.get("workflow") or ""), str(job.get("intent") or "audio.generate")
+    recorded, intent = str(job.get("workflow") or ""), str(job.get("intent") or "")
     name = recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded
     manifest = _load_audio_workflow_manifest(name) if name else None
     return manifest is None or _manifest_has_pin(manifest)  # no workflow to judge by: fail closed at the pin
