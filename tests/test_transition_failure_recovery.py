@@ -87,3 +87,113 @@ def test_a_reset_that_failed_with_unknown_semantics_stays_held_after_the_restart
     op_id = _crashed_wake_at(runtime, engine, effect="reset")
     done = _restart(runtime, op_id)
     assert (done.state, gates.state("dom")) == ("failed_closed", "failed_closed")
+
+
+# -- a recorded no_change whose check is unreadable reconciles; it never becomes a terminal failure ---------------------
+
+from gateway.transition_ops import EffectResult  # noqa: E402
+
+
+def _crashed_recorded(runtime: Any, engine: Any, *, kind: str, step: str, effect: str, outcome: str,
+                      evidence: str, target: Any = None) -> str:
+    """An operation that stopped after ``step`` recorded ``outcome`` and before its gate verdict was written."""
+    executor = runtime.executor()
+    begun = executor.store.begin(domain="dom", kind=kind, idempotency_key="crash-recorded", target=target,
+                                 incarnation="inc-1", config_revision=1)
+    op_id = begun.operation.op_id
+    executor.store.write_intent(op_id, StepIntent(step=step, effect_key=f"{op_id}:{effect}",
+                                                  expected_incarnation="inc-1"))
+    executor.store.write_outcome(op_id, step, EffectResult(outcome=outcome, evidence_ref=evidence))
+    return op_id
+
+
+def _unreadable(engine: Any, how: str) -> dict[str, Any]:
+    """Make the servable observation absent, foreign, stale (by the profile's bound) or too slow."""
+    if how == "absent":
+        engine.servable = None
+    elif how == "foreign":
+        engine.servable_incarnation = "inc-other"
+    elif how == "slow":
+        engine.servable_delay = 5.0
+    return {"fresh_within_s": 1e-9} if how == "stale" else {}
+
+
+UNREADABLE = ["absent", "foreign", "stale", "slow"]
+
+
+@pytest.mark.parametrize("how", UNREADABLE)
+@pytest.mark.parametrize("recorded", [False, True])
+def test_a_required_checkpoint_refusal_with_an_unreadable_servable_check_reconciles_after_the_restart(
+        tmp_path, monkeypatch, recorded, how) -> None:
+    from tests.test_transition_failure_semantics import _crashed_checkpoint
+    holder: dict[str, Any] = {}
+    wired = wire(tmp_path, monkeypatch, policy="required", checkpoint="no_change", **_unreadable_args(holder, how))
+    gates, engine, runtime, store = wired
+    _unreadable(engine, how)
+    engine.query_outcome = "failed"
+    op_id = _crashed_checkpoint(runtime, recorded=recorded)
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("reconciling", "reconciling"), (done.state, done.step_outcome)
+
+
+def _unreadable_args(holder: dict[str, Any], how: str) -> dict[str, Any]:
+    return {"fresh_within_s": 1e-9} if how == "stale" else {}
+
+
+@pytest.mark.parametrize("how", UNREADABLE)
+def test_a_recorded_unchanged_load_with_an_unreadable_servable_check_reconciles_after_the_restart(
+        tmp_path, monkeypatch, how) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, load="no_change", **_unreadable_args({}, how))
+    _unreadable(engine, how)
+    op_id = _crashed_recorded(runtime, engine, kind="select", step="load", effect="load", outcome="no_change",
+                              evidence="load_refused", target="beta")
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("reconciling", "reconciling")
+
+
+def test_a_revalidation_hold_settles_when_the_evidence_returns(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, policy="required", checkpoint="no_change")
+    engine.servable = None
+    from tests.test_transition_failure_semantics import _crashed_checkpoint
+    op_id = _crashed_checkpoint(runtime, recorded=True)
+    assert _restart(runtime, op_id).state == "reconciling"
+    engine.servable = True
+    again = _restart(runtime, op_id)
+    assert (again.state, gates.state("dom")) == ("aborted", "open")
+
+
+# -- a verified cold restore or reset survives a crash --------------------------------------------------------------------
+
+COLD = ["restore:reset:clean:serving_cold", "restore:declined:serving_cold"]
+
+
+@pytest.mark.parametrize("evidence", COLD)
+def test_a_verified_cold_start_recorded_before_a_crash_goes_on_to_open_with_the_shipped_policy(tmp_path, monkeypatch, evidence) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch)
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="reset", outcome="no_change",
+                              evidence=evidence, target="alpha")
+    engine.resident = "alpha"
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+
+
+@pytest.mark.parametrize(("resident", "clean", "state"), [("beta", True, "failed_closed"), ("alpha", False, "failed_closed"),
+                                                          ("alpha", None, "reconciling")])
+def test_a_recorded_cold_start_refreshes_the_clean_evidence_before_it_continues(tmp_path, monkeypatch, resident, clean, state) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="reset", outcome="no_change",
+                              evidence="restore:reset:clean:serving_cold", target="alpha")
+    engine.resident, engine.clean = resident, clean
+    done = _restart(runtime, op_id)
+    assert done.state == state and gates.state("dom") == state
+
+
+def test_a_restore_recorded_partial_before_a_crash_still_runs_its_declared_reset(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.reset_outcome, engine.clean = "failed", True
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="restore", outcome="partial",
+                              evidence="restore:failed:state_not_known_clean", target="alpha")
+    engine.resident = "alpha"
+    done = _restart(runtime, op_id)
+    assert engine.resets == 1, "the declared reset runs after the restart"
+    assert (done.state, gates.state("dom")) == ("succeeded", "open")

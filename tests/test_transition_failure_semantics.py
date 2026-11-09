@@ -130,11 +130,15 @@ class Engine(SnapshotEngine):
         self.query_outcome = "unknown"
         self.servable: Optional[bool] = True
         self.clean: Optional[bool] = True
+        self.servable_incarnation = "inc-1"
+        self.servable_delay = 0.0
 
     async def __call__(self, service_id: str, op: str, body: Mapping[str, Any]) -> Reply:
         if op == "transition.servable":
             self.calls.append((op, dict(body)))
-            return Reply(200, {"value": self.servable, "incarnation": "inc-1"})
+            if self.servable_delay:
+                await asyncio.sleep(self.servable_delay)
+            return Reply(200, {"value": self.servable, "incarnation": self.servable_incarnation})
         if op == "transition.clean":
             self.calls.append((op, dict(body)))
             return Reply(200, {"value": self.clean, "incarnation": "inc-1"})
@@ -152,7 +156,7 @@ class Engine(SnapshotEngine):
 
 
 def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best_effort", verify: bool = False,
-         **semantics: str):
+         fresh_within_s: Optional[float] = None, **semantics: str):
     """The shipped snapshot profile with ``semantics`` attested and a ``servable`` observation, under the shipped id."""
     shipped = yaml.safe_load((transition_profiles.PROFILE_DIR / f"{SNAPSHOT_PROFILE}.yml").read_text(encoding="utf-8"))
     for op, value in semantics.items():
@@ -164,6 +168,8 @@ def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best
     shipped["servable_check"] = "servable"
     if verify:
         shipped["restore"]["reset"]["verify"] = "clean"
+    if fresh_within_s is not None:
+        shipped["fresh_within_s"] = fresh_within_s
     directory = tmp_path / "profiles"
     directory.mkdir()
     (directory / f"{SNAPSHOT_PROFILE}.yml").write_text(yaml.safe_dump(shipped), encoding="utf-8")
