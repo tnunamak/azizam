@@ -400,3 +400,234 @@ def test_video_facts_does_not_alias_the_contract() -> None:
     with pytest.raises((TypeError, AttributeError)):
         manifest.roles["width"] = "changed"  # type: ignore[index]
     assert contract["video"] == original
+
+
+# Deletion witnesses for schema clauses and video semantic comparisons.
+# Assert the exact diagnostic so another rule cannot mask the missing one.
+
+_ROLES = (
+    "width", "height", "length", "frame_rate",
+    "image", "image_strength", "source", "last_image",
+)
+
+
+def _video_set(video, path, value):
+    if not path:
+        return copy.deepcopy(value)
+    target = video
+    for key in path[:-1]:
+        target = target.setdefault(key, {})
+    target[path[-1]] = copy.deepcopy(value)
+    return video
+
+
+def _case_id(path):
+    return ".".join(path) or "video"
+
+
+_TYPE_CASES = [
+    # Kills type=object at video and each nested object.
+    *[(p, [], "type_mismatch") for p in
+      [(), ("roles",), ("size",), ("length",), ("grid",), ("variants",)]],
+    # Kills type=string for each roles.<role>.
+    *[(("roles", role), 7, "type_mismatch") for role in _ROLES],
+    # Kills type=string at size.default; its public diagnostic is default_invalid.
+    (("size", "default"), 7, "default_invalid"),
+    # Kills type=string at size.max.
+    (("size", "max"), 7, "type_mismatch"),
+    # Kills type=integer for size.multiple and each integer grid field.
+    *[(p, 1.5, "type_mismatch") for p in
+      [("size", "multiple"), ("grid", "step"), ("grid", "offset"),
+       ("grid", "min_frames"), ("grid", "max_frames")]],
+    # Kills type=number for every length field and grid.fps.
+    *[(p, "5", "type_mismatch") for p in
+      [("length", "min_seconds"), ("length", "max_seconds"),
+       ("length", "default_seconds"), ("grid", "fps")]],
+    # Kills type=string for each variant id.
+    *[(("variants", key), 7, "type_mismatch") for key in ("image", "long")],
+    # Kills type=array for requires.
+    (("requires",), "image", "type_mismatch"),
+    # Kills type=boolean for each flag.
+    *[((key,), "true", "type_mismatch") for key in ("select_subject", "chain")],
+]
+
+
+@pytest.mark.parametrize(
+    "path,value,code",
+    [pytest.param(*case, id=_case_id(case[0])) for case in _TYPE_CASES],
+)
+def test_uncovered_video_schema_types(path, value, code):
+    video = _video_set(section(), path, value)
+    assert (("video", *path), code) in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("group", ["roles", "size", "length", "grid", "variants"])
+def test_nested_video_objects_are_closed(group):
+    # Kills additionalProperties=false for this nested object.
+    video = _video_set(section(), (group, "unlisted"), "width")
+    assert (("video", group, "unlisted"), "unknown_field") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("missing", [
+    # Kills each required member of the top-level video section.
+    ("size",), ("length",), ("grid",),
+    # Kills the remaining required grid member.
+    ("grid", "offset"),
+])
+def test_remaining_video_required_fields(missing):
+    video = section()
+    target = video
+    for key in missing[:-1]:
+        target = target[key]
+    del target[missing[-1]]
+    assert (("video", *missing), "required_missing") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("chain", [None, False], ids=["absent", "false"])
+@pytest.mark.parametrize("missing", [None, "width", "height", "length"])
+def test_non_chain_condition_requires_roles(chain, missing):
+    # Kills non-chain roles/role requirements and the first chain=true guard.
+    video = section()
+    if chain is not None:
+        video["chain"] = chain
+    if missing is None:
+        del video["roles"]
+        path = ("video", "roles")
+    else:
+        del video["roles"][missing]
+        path = ("video", "roles", missing)
+    assert (path, "required_missing") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("role", ["width", "height"])
+def test_chain_roles_if_present_require_dimensions(role):
+    # Kills the chain branch's required width or height.
+    video = section()
+    video["chain"] = True
+    del video["roles"][role]
+    assert (("video", "roles", role), "required_missing") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("role", _ROLES)
+@pytest.mark.parametrize("bad", ["", "Upper", "a-b", "a" * 65],
+                         ids=["empty", "initial-case", "alphabet", "length"])
+def test_video_role_name_patterns(role, bad):
+    # Kills this role's pattern, including its 1..64 length and naming bounds.
+    video = _video_set(section(), ("roles", role), bad)
+    assert (("video", "roles", role), "pattern_mismatch") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("key", ["image", "long"])
+@pytest.mark.parametrize("bad", ["", "Upper", "a/b", "a" * 129],
+                         ids=["empty", "initial-case", "alphabet", "length"])
+def test_video_variant_id_patterns(key, bad):
+    # Kills this variant's pattern, including its 1..128 length and naming bounds.
+    video = _video_set(section(), ("variants", key), bad)
+    assert (("video", "variants", key), "pattern_mismatch") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("key", ["default", "max"])
+@pytest.mark.parametrize("bad", [
+    "0x512", "960x0", "100000x1", "1x100000", "01x64", "64x01",
+])
+def test_size_pattern_numeric_boundaries(key, bad):
+    # Kills the positive, non-zero-prefixed 1..5-digit bounds on both dimensions.
+    video = _video_set(section(), ("size", key), bad)
+    assert (("video", "size", key), "pattern_mismatch") in codes(doc_with(video))
+
+
+_BOUND_CASES = [
+    # Kills size.multiple.maximum=1024.
+    (("size", "multiple"), 1025),
+    # Kills exclusiveMinimum=0 and maximum=86400 for each seconds field.
+    *[(("length", key), value)
+      for key in ("min_seconds", "max_seconds", "default_seconds")
+      for value in (0, 86401)],
+    # Kills grid.fps.maximum=1000.
+    (("grid", "fps"), 1001),
+    # Kills grid.step.maximum=1024.
+    (("grid", "step"), 1025),
+    # Kills grid.offset.maximum=1024.
+    (("grid", "offset"), 1025),
+    # Kills each frame bound's minimum=1 and maximum=100000.
+    *[(("grid", key), value)
+      for key in ("min_frames", "max_frames")
+      for value in (0, 100001)],
+]
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [pytest.param(*case, id=f"{_case_id(case[0])}={case[1]}")
+     for case in _BOUND_CASES],
+)
+def test_remaining_video_numeric_bounds(path, value):
+    video = _video_set(section(), path, value)
+    # Exact code avoids a semantic bounds/default error masking deletion.
+    assert (("video", *path), "limit_exceeded") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("value", [["image", "image"], ["source", "source"],
+                                  ["extensions", "extensions"]])
+def test_requires_is_unique(value):
+    # Kills requires.uniqueItems=true without breaking maxItems or the enum.
+    video = _video_set(section(), ("requires",), value)
+    assert (("video", "requires"), "limit_exceeded") in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("path,expected", [
+    # Kills redundant maxItems=3: enum cardinality plus uniqueness implies it.
+    (("properties", "requires", "maxItems"), 3),
+    # Kills the second if's const: the non-chain branch otherwise masks deletion.
+    (("allOf", 1, "if", "properties", "chain", "const"), True),
+    # Kills the second if's required: the non-chain branch otherwise masks deletion.
+    (("allOf", 1, "if", "required"), ["chain"]),
+])
+def test_redundant_video_schema_clauses_are_present(path, expected):
+    # Structural assertions, not claims of observable refusal differences.
+    value = json.loads(
+        (ROOT / "registry" / "workflow_sections" / "video.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    for key in path:
+        value = value[key]
+    assert value == expected
+
+
+@pytest.mark.parametrize("role", _ROLES)
+@pytest.mark.parametrize("declared", [False, True], ids=["undeclared", "unbound"])
+def test_every_video_role_is_declared_and_bound(role, declared):
+    # Kills skipping this role in the declared-input/binding semantic checks.
+    name = "new_role_input"
+    video = _video_set(section(), ("roles", role), name)
+    inputs = {name: {"type": "integer", "minimum": 1}} if declared else {}
+    doc = doc_with(video, inputs=inputs)
+    code = "role_input_unbound" if declared else "role_input_missing"
+    assert (("video", "roles", role), code) in codes(doc)
+
+
+@pytest.mark.parametrize("path,value,code", [
+    # Kills only the lower-side default_seconds comparison.
+    (("length", "default_seconds"), 0.5, "default_invalid"),
+    # Kills only the width side of default_over_max.
+    (("size", "default"), "1281x512", "default_over_max"),
+    # Kills only the height side of default_over_max.
+    (("size", "default"), "960x705", "default_over_max"),
+])
+def test_semantic_comparisons_have_independent_witnesses(path, value, code):
+    video = _video_set(section(), path, value)
+    assert (("video", *path), code) in codes(doc_with(video))
+
+
+@pytest.mark.parametrize("path,value,code", [
+    # Kills running video semantics despite a structural numeric-bound error.
+    (("grid", "fps"), 0, "limit_exceeded"),
+    # Kills running video semantics despite a structural type error.
+    (("size", "multiple"), "64", "type_mismatch"),
+])
+def test_broken_video_structure_suppresses_semantic_cascades(path, value, code):
+    video = _video_set(section(), path, value)
+    video["roles"]["width"] = "not_an_input"
+    found = codes(doc_with(video))
+    assert (("video", *path), code) in found
+    assert (("video", "roles", "width"), "role_input_missing") not in found
