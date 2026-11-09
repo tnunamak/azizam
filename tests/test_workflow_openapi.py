@@ -415,6 +415,47 @@ class RequestMappingTypeTests(unittest.TestCase):
                 self.assertEqual(request_mapping(record, "sync"), {"photo": {"in": "form", "field": "photo"}})
 
 
+
+
+class WorkflowResponseKindDeclarationTests(unittest.TestCase):
+    def test_every_sync_route_declares_its_response_beside_unchanged_output_text(self) -> None:
+        from types import SimpleNamespace
+        from gateway.workflow_openapi import _execution
+
+        cases = (
+            ("unfamiliar.render", "/native-fixture",
+             {"kind": "json"}, "JSON (see the route's response schema)"),
+            ("image.generate", None, {"kind": "json"}, "data[].b64_json or data[].url"),
+            ("image.edit", None, {"kind": "json"}, "data[].b64_json or data[].url"),
+            ("audio.generate", None, {"kind": "binary"}, "audio bytes (see Content-Type)"),
+            ("mesh.generate", None, {"kind": "binary", "media_type": "model/gltf-binary"},
+             "model/gltf-binary (GLB bytes)"),
+            ("video.edit", None,
+             {"kind": "media_job", "poll": "/gateway/v1/media/jobs/{job_id}",
+              "content": "/gateway/v1/media/jobs/{job_id}/content"},
+             "a media job; its content is the video"),
+        )
+        for intent, native, response, output in cases:
+            with self.subTest(intent=intent, native=native):
+                record = SimpleNamespace(
+                    id=f"{intent}.fixture", intent=intent,
+                    contract={"inputs": {}, "bindings": {"gateway": {"route": native}} if native else {}},
+                )
+                route = _execution(record, 1)["sync"]
+                self.assertEqual(route["output"], output)
+                self.assertEqual(route["response"], response)
+
+    def test_all_shipped_sync_routes_have_a_supported_response_kind(self) -> None:
+        from gateway.workflow_openapi import _execution
+
+        registry = WorkflowRegistry.from_directory(MANIFESTS)
+        self.assertEqual(registry.errors, [])
+        self.assertTrue(registry.records())
+        for record in registry.records():
+            with self.subTest(workflow=record.id):
+                route = _execution(record, 1)["sync"]
+                if route:
+                    self.assertIn(route["response"]["kind"], {"json", "binary", "media_job"})
 if __name__ == "__main__":
     unittest.main()
 

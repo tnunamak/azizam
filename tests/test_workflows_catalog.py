@@ -1163,5 +1163,486 @@ class JobRunExampleTests(unittest.TestCase):
         self.assertNotIn('content" \\\n  -H "Authorization: Bearer $AZIZAM_API_KEY" -o', recipe)
 
 
+
+
+# Frozen from 8333cbd7a2c24ca9d51492e94089dc15855476b8. This oracle has its own
+# route selection and response rendering, so a change to the live generator
+# cannot silently redefine byte-for-byte parity. Request helpers are unchanged.
+_BASE_RESPONSE_RENDERERS = r'''def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
+    """Sync and async routes for one workflow, and which to prefer."""
+    intent = record.intent
+    # Video workflows are configured as ``video-<short id>``; the rest use the short id.
+    model = f"video-{short_id(record)}" if intent.startswith("video.") else short_id(record)
+    sync: dict[str, Any] | None = None
+    async_: dict[str, Any] | None = None
+
+    def job_route(wrapped_intent: str) -> dict[str, Any]:
+        return {
+            "kind": "media_job",
+            "submit": {
+                "method": "POST",
+                "path": JOBS_SUBMIT,
+                "content_type": _JSON,
+                "body": {"intent": wrapped_intent, "request": "<the sync request body>"},
+                "model": model,
+            },
+            "poll": {"method": "GET", "path": JOB_POLL},
+            "content": {"method": "GET", "path": JOB_CONTENT},
+            "cancel": {"method": "POST", "path": JOB_CANCEL},
+            "statuses": _MEDIA_JOB_STATUSES,
+            "terminal": ["succeeded", "failed", "canceled"],
+            "fields": request_mapping(record, "async"),
+        }
+
+    native = gateway_route(record)
+    if native:
+        sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
+                "fields": request_mapping(record, "sync"),
+                "output": "JSON (see the route's response schema)"}
+        if intent == "image.edit":
+            sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
+                                 "note": "options go in extensions['com.azizam.workflow']"}
+    elif intent == "image.generate":
+        sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
+                "model": model, "fields": request_mapping(record, "sync"),
+                "output": "data[].b64_json or data[].url"}
+        async_ = job_route("image.generate")
+    elif intent == "image.edit":
+        sync = {"method": "POST", "path": "/v1/images/edits", "content_type": _MULTIPART,
+                "model": model, "fields": request_mapping(record, "sync"),
+                "extensions_field": "extensions (JSON string)",
+                "output": "data[].b64_json or data[].url"}
+    elif intent == "audio.generate":
+        sync = {"method": "POST", "path": "/v1/audio/generate", "content_type": _JSON,
+                "model": model, "fields": request_mapping(record, "sync"),
+                "output": "audio bytes (see Content-Type)"}
+        async_ = job_route("audio.generate")
+    elif intent == "mesh.generate":
+        sync = {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
+                "fields": request_mapping(record, "sync"),
+                "output": "model/gltf-binary (GLB bytes)"}
+        # The same route answers 202 with a media job when the request says ``Prefer: respond-async`` (RFC 7240). The
+        # run takes minutes under load, and a held connection that drops loses the answer; the job does not.
+        async_ = {
+            "kind": "respond_async",
+            "submit": {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
+                       "headers": {"Prefer": "respond-async"}},
+            "poll": {"method": "GET", "path": JOB_POLL},
+            "content": {"method": "GET", "path": JOB_CONTENT, "output": "model/gltf-binary (GLB bytes)"},
+            "cancel": {"method": "POST", "path": JOB_CANCEL,
+                       "note": "the engine cannot stop mid-run: the job ends as canceled when the run returns"},
+            "statuses": _MEDIA_JOB_STATUSES,
+            "terminal": ["succeeded", "failed", "canceled"],
+            "fields": request_mapping(record, "sync"),
+            "output": "202 with a media job (Location, Preference-Applied: respond-async)",
+        }
+    elif intent.startswith("video."):
+        async_ = {
+            "kind": "video",
+            "submit": {"method": "POST", "path": "/v1/videos", "content_type": _JSON,
+                       "model": model},
+            "poll": {"method": "GET", "path": "/v1/videos/{video_id}"},
+            "content": {"method": "GET", "path": "/v1/videos/{video_id}/content"},
+            "cancel": {"method": "DELETE", "path": "/v1/videos/{video_id}"},
+            "statuses": _VIDEO_STATUSES,
+            "terminal": ["completed", "failed"],
+            "fields": request_mapping(record, "async"),
+        }
+        if intent == "video.edit":
+            sync = {"method": "POST", "path": f"/gateway/v1/workflows/{record.id}/run",
+                    "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
+                    "output": "a media job; its content is the video",
+                    "response": {"kind": "media_job", "poll": JOB_POLL, "content": JOB_CONTENT}}
+    if typical_seconds is not None and typical_seconds <= SLOW_SECONDS and sync:
+        recommended = "sync"
+    elif async_:
+        recommended = "async"
+    else:
+        recommended = "sync"
+    return {"recommended": recommended, "sync": sync, "async": async_}
+
+
+# --------------------------------------------------------------------- aliases
+
+_ALIAS_OPERATION_INTENTS = {
+    "images": ("image.generate",),
+    "image_edits": ("image.edit",),
+    "videos": ("video.generate", "video.edit"),
+    "audio_generate": ("audio.generate",),
+}
+
+def _example_request(
+    record: WorkflowRecord,
+    inputs: list[Mapping[str, Any]],
+    route: Mapping[str, Any] | None,
+    base_url: str,
+) -> dict[str, Any]:
+    path = _route_path(route) or f"/gateway/v1/workflows/{record.id}/run"
+    # The wire of the request: a route that names its ``submit`` is sent as that submit says.
+    wire = {**(route or {}), **((route or {}).get("submit") or {})}
+    method = str(wire.get("method") or "POST")
+    content_type = str(wire.get("content_type") or "application/json")
+    url = _join_url(base_url, path)
+    mode = "async" if (route or {}).get("kind") == "video" else "sync"
+    selected_model = _route_model(route)
+    body = _example_body(record, inputs, mode=mode, model=selected_model)
+    form: dict[str, Any] = {}
+    files: dict[str, dict[str, Any]] = {}
+    if (route or {}).get("kind") == "media_job":
+        submit = route.get("submit") if isinstance(route, Mapping) else {}
+        wrapped_intent = _nested(submit or {}, "body", "intent") or record.intent
+        body = {
+            "intent": wrapped_intent,
+            "request": _example_body(record, inputs, mode="sync", model=_route_model(submit)),
+        }
+        content_type = "application/json"
+    elif content_type == "multipart/form-data":
+        form, files = _example_multipart_parts(record, inputs, model=selected_model)
+        body = {}
+    # Response semantics are independent of the upload format. In particular,
+    # the generic video-edit run remains multipart even though it returns a job.
+    response = wire.get("response")
+    job_urls = (
+        (_join_url(base_url, response["poll"]), _join_url(base_url, response["content"]))
+        if isinstance(response, Mapping) and response.get("kind") == "media_job"
+        else None
+    )
+    answers_job = job_urls is not None or (route or {}).get("kind") == "respond_async"
+    binary_response = ((record.intent == "audio.generate" and (route or {}).get("kind") != "media_job")
+                       or content_type == "multipart/form-data") and not answers_job
+    # Made-up local paths belong in the code examples only. The catalog's
+    # `files` says which input each file part carries, never a path, so no
+    # screen can show "./source-image.bin" as if it were helper text.
+    paths = [
+        (str(part.get("field") or name), _example_file_for(part["input"], part.get("media_type")))
+        for name, part in files.items()
+    ]
+    extra_headers = wire.get("headers")
+    curl = _curl_example(
+        url, content_type=content_type, body=body, form=form, files=paths,
+        binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
+    )
+    return {
+        "method": method,
+        "path": path,
+        "content_type": content_type,
+        "body": body,
+        "form": form,
+        "files": files,
+        "curl": curl,
+        "python": _python_example(
+            method, url, content_type=content_type, body=body, form=form, files=paths,
+            binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
+        ),
+        "javascript": _javascript_example(
+            method, url, content_type=content_type, body=body, form=form, files=paths,
+            binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
+        ),
+    }
+
+def _curl_example(
+    url: str,
+    *,
+    content_type: str,
+    body: Mapping[str, Any],
+    form: Mapping[str, Any],
+    files: Sequence[tuple[str, str]],
+    binary_response: bool,
+    headers: Mapping[str, str] | None = None,
+    job_urls: tuple[str, str] | None = None,
+) -> str:
+    if job_urls is not None:
+        submit = _curl_example(
+            url, content_type=content_type, body=body, form=form, files=files,
+            binary_response=False, headers=headers,
+        )
+        return _curl_job_example(submit, *job_urls)
+    lines = [
+        f"curl {_shell_single_quote(url)} \\",
+        "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\",
+        *[f"  -H {_shell_single_quote(f'{name}: {value}')} \\" for name, value in (headers or {}).items()],
+    ]
+    if content_type == "multipart/form-data":
+        for key, value in form.items():
+            lines.append(f"  -F {_shell_single_quote(f'{key}={value}')} \\")
+        for key, path in files:
+            lines.append(f"  -F {_shell_single_quote(f'{key}=@{path}')} \\")
+        if binary_response:
+            lines.append("  --output workflow-output.bin \\")
+        return "\n".join(lines).rstrip(" \\")
+    lines.append("  -H 'Content-Type: application/json' \\")
+    lines.append(f"  -d {_shell_single_quote(json.dumps(body, separators=(',', ':')))}" + (" \\" if binary_response else ""))
+    if binary_response:
+        lines.append("  --output workflow-output.bin")
+    return "\n".join(lines)
+
+def _python_example(
+    method: str,
+    url: str,
+    *,
+    content_type: str,
+    body: Mapping[str, Any],
+    form: Mapping[str, Any],
+    files: Sequence[tuple[str, str]],
+    binary_response: bool,
+    headers: Mapping[str, str] | None = None,
+    job_urls: tuple[str, str] | None = None,
+) -> str:
+    if job_urls is not None:
+        submit = _python_example(
+            method, url, content_type=content_type, body=body, form=form, files=files,
+            binary_response=False, headers=headers,
+        ).rsplit("\n", 1)[0]
+        return submit + "\n" + _python_job_followup(*job_urls)
+    if content_type == "multipart/form-data":
+        extra = "".join(f", {name!r}: {value!r}" for name, value in (headers or {}).items())
+        file_lines = "\n".join(
+            f"        ({key!r}, stack.enter_context(open({path!r}, 'rb'))),"
+            for key, path in files
+        )
+        return (
+            "import os\nfrom contextlib import ExitStack\nimport requests\n\n"
+            "with ExitStack() as stack:\n"
+            f"    files = [\n{file_lines}\n    ]\n"
+            f"    response = requests.request({method!r}, {url!r},\n"
+            "        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\""
+            + extra + "},\n"
+            f"        data={dict(form)!r}, files=files, timeout=300)\n"
+            "response.raise_for_status()\n"
+            + (
+                "open('workflow-output.bin', 'wb').write(response.content)\n"
+                if binary_response else
+                "print(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
+            )
+        )
+    return (
+        "import os\nimport requests\n\n"
+        f"response = requests.request({method!r}, {url!r},\n"
+        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n"
+        f"    json={dict(body)!r}, timeout=300)\n"
+        "response.raise_for_status()\n"
+        + (
+            "open('workflow-output.bin', 'wb').write(response.content)\n"
+            if binary_response else
+            "print(response.json())"
+        )
+    )
+
+def _javascript_example(
+    method: str,
+    url: str,
+    *,
+    content_type: str,
+    body: Mapping[str, Any],
+    form: Mapping[str, Any],
+    files: Sequence[tuple[str, str]],
+    binary_response: bool,
+    headers: Mapping[str, str] | None = None,
+    job_urls: tuple[str, str] | None = None,
+) -> str:
+    if job_urls is not None:
+        submit = _javascript_example(
+            method, url, content_type=content_type, body=body, form=form, files=files,
+            binary_response=False, headers=headers,
+        ).rsplit("\n", 1)[0]
+        if content_type != "multipart/form-data":
+            submit = "import { writeFile } from 'node:fs/promises';\n" + submit
+        submit = submit.replace("  body:", "  signal: AbortSignal.timeout(300000),\n  body:", 1)
+        return submit + "\n" + _javascript_job_followup(*job_urls)
+    if content_type == "multipart/form-data":
+        extra = "".join(f", {json.dumps(name)}: {json.dumps(value)}" for name, value in (headers or {}).items())
+        lines = [
+            "import { readFile, writeFile } from 'node:fs/promises';",
+            "const form = new FormData();",
+            *[f"form.append({json.dumps(key)}, {json.dumps(str(value))});" for key, value in form.items()],
+            *[
+                (
+                    f"form.append({json.dumps(key)}, "
+                    f"new Blob([await readFile({json.dumps(path)})]), "
+                    f"{json.dumps(path.rsplit('/', 1)[-1])});"
+                )
+                for key, path in files
+            ],
+            f"const response = await fetch({json.dumps(url)}, {{",
+            f"  method: {json.dumps(method)},",
+            "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`" + extra + " },",
+            "  body: form",
+            "});",
+            "if (!response.ok) throw new Error(await response.text());",
+            (
+                "await writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
+                if binary_response else
+                "console.log(await response.text());"
+            ),
+        ]
+        return "\n".join(lines)
+    result_line = (
+        "await writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));"
+        if binary_response else
+        "console.log(await response.json());"
+    )
+    import_line = "import { writeFile } from 'node:fs/promises';\n" if binary_response else ""
+    return (
+        f"{import_line}const response = await fetch({json.dumps(url)}, {{\n"
+        f"  method: {json.dumps(method)},\n"
+        "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n"
+        f"  body: JSON.stringify({json.dumps(dict(body), indent=2)}),\n"
+        f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
+    )
+'''
+
+
+class DeclaredResponseKindExampleTests(unittest.TestCase):
+    @staticmethod
+    def example(intent: str, route: dict) -> dict:
+        from types import SimpleNamespace
+        from gateway.workflows_catalog import _example_request
+
+        record = SimpleNamespace(
+            id=f"{intent}.fixture", intent=intent,
+            contract={"inputs": {}, "bindings": {}},
+        )
+        return _example_request(record, [], route, "https://gateway.test")
+
+    def assert_json_example(self, example: dict, *, multipart: bool = False,
+                            legacy_job: bool = False) -> None:
+        for language in ("curl", "python", "javascript"):
+            self.assertNotIn("workflow-output.bin", example[language], language)
+        self.assertIn("response.json()", example["python"])
+        # Existing multipart job displays remain byte-identical; an explicitly
+        # declared JSON route parses JSON rather than treating it as media bytes.
+        terminal = "response.text()" if multipart and legacy_job else "response.json()"
+        self.assertTrue(example["javascript"].endswith(f"console.log(await {terminal});"))
+
+    def assert_binary_example(self, example: dict) -> None:
+        self.assertIn("--output workflow-output.bin", example["curl"])
+        self.assertIn("write(response.content)", example["python"])
+        self.assertIn("Buffer.from(await response.arrayBuffer())", example["javascript"])
+
+    def test_sync_examples_follow_response_kind_for_every_upload_shape(self) -> None:
+        cases = (
+            ("image.generate", "application/json", {"kind": "json"}, False),
+            ("image.edit", "multipart/form-data", {"kind": "json"}, False),
+            ("mesh.generate", "multipart/form-data",
+             {"kind": "binary", "media_type": "model/gltf-binary"}, True),
+            ("audio.generate", "application/json", {"kind": "binary"}, True),
+            ("unfamiliar.render", "application/json", {"kind": "binary"}, True),
+            ("audio.generate", "application/json", {"kind": "json"}, False),
+        )
+        for intent, content_type, response, binary in cases:
+            with self.subTest(intent=intent, content_type=content_type, response=response):
+                example = self.example(intent, {
+                    "method": "POST", "path": "/fixture",
+                    "content_type": content_type, "response": response,
+                })
+                self.assertEqual(example["content_type"], content_type)
+                if binary:
+                    self.assert_binary_example(example)
+                else:
+                    self.assert_json_example(example, multipart=content_type == "multipart/form-data")
+
+    def test_native_route_json_response_is_not_inferred_from_intent(self) -> None:
+        example = self.example("unfamiliar.render", {
+            "method": "POST", "path": "/gateway/v1/native/fixture",
+            "content_type": "multipart/form-data", "response": {"kind": "json"},
+        })
+        self.assert_json_example(example, multipart=True)
+
+    def test_job_route_kinds_override_declared_binary(self) -> None:
+        for kind, content_type in (
+            ("media_job", "application/json"),
+            ("respond_async", "multipart/form-data"),
+        ):
+            with self.subTest(kind=kind):
+                example = self.example("audio.generate", {
+                    "kind": kind, "response": {"kind": "binary"},
+                    "submit": {"method": "POST", "path": "/jobs",
+                               "content_type": content_type},
+                })
+                self.assert_json_example(
+                    example, multipart=content_type == "multipart/form-data", legacy_job=True,
+                )
+
+    def test_multipart_media_job_parses_submit_then_downloads_only_the_asset(self) -> None:
+        example = self.example("video.edit", {
+            "method": "POST", "path": "/run", "content_type": "multipart/form-data",
+            "response": {"kind": "media_job", "poll": "/jobs/{job_id}",
+                         "content": "/jobs/{job_id}/content"},
+        })
+        self.assertIn("job=$(curl", example["curl"])
+        self.assertIn("job = response.json()", example["python"])
+        self.assertIn("let job = await response.json()", example["javascript"])
+        self.assertNotIn("write(response.content)", example["python"])
+        self.assertNotIn("response.arrayBuffer()", example["javascript"])
+        self.assertIn("output.write(asset.content)", example["python"])
+        self.assertIn("asset.arrayBuffer()", example["javascript"])
+
+    def test_missing_response_kind_never_infers_binary_from_multipart_or_intent(self) -> None:
+        example = self.example("audio.generate", {
+            "method": "POST", "path": "/fixture", "content_type": "multipart/form-data",
+        })
+        self.assert_json_example(example, multipart=True, legacy_job=True)
+
+    def test_every_shipped_example_matches_base_except_exact_json_output_fix(self) -> None:
+        import gateway.workflow_openapi as route_module
+        import gateway.workflows_catalog as catalog_module
+
+        namespace = {**vars(route_module), **vars(catalog_module)}
+        exec(compile(_BASE_RESPONSE_RENDERERS, "<8333cbd7 example oracle>", "exec"), namespace)
+        registry = WorkflowRegistry.from_directory(
+            Path(__file__).resolve().parents[1] / "manifests" / "workflows",
+        )
+        self.assertEqual(registry.errors, [])
+        records = registry.records()
+        self.assertTrue(records)
+        openapi_rows = {row["id"]: row for row in route_module.workflow_catalog(records)}
+        changed = set()
+        affected = set()
+        for record in records:
+            with self.subTest(workflow=record.id):
+                openapi_row = openapi_rows[record.id]
+                actual = catalog_module._workflow_row(
+                    record, capability_rows=[], openapi_row=openapi_row, aliases=None,
+                    receipts=[], jobs=[], base_url="https://gateway.test",
+                )["example_request"]
+                old_routes = namespace["_execution"](record, openapi_row["typical_seconds"])
+                old_route = (old_routes.get(old_routes["recommended"])
+                             or old_routes.get("sync") or old_routes.get("async"))
+                old = namespace["_example_request"](
+                    record, catalog_module._input_rows(record, old_routes), old_route,
+                    "https://gateway.test",
+                )
+                old_wire = {**(old_route or {}), **((old_route or {}).get("submit") or {})}
+                # Derive the exception from the frozen base's promised output,
+                # not the new kind: a wrong new declaration must fail parity.
+                is_fixed_json = (old_wire.get("content_type") == "multipart/form-data"
+                                 and old_wire.get("output") in {
+                                     "JSON (see the route's response schema)",
+                                     "data[].b64_json or data[].url",
+                                 })
+                expected = dict(old)
+                if is_fixed_json:
+                    affected.add(record.id)
+                    expected["curl"] = old["curl"].replace(
+                        "\n  --output workflow-output.bin", "",
+                    ).rstrip(" \\")
+                    expected["python"] = old["python"].replace(
+                        "open('workflow-output.bin', 'wb').write(response.content)\n",
+                        "print(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])",
+                    )
+                    expected["javascript"] = old["javascript"].replace(
+                        "await writeFile('workflow-output.bin', Buffer.from(await response.arrayBuffer()));",
+                        "console.log(await response.json());",
+                    )
+                    self.assert_json_example(actual, multipart=True)
+                    for language in ("curl", "python", "javascript"):
+                        self.assertNotEqual(actual[language], old[language], language)
+                if actual != old:
+                    changed.add(record.id)
+                # Full dictionary equality also pins method/path/content_type,
+                # body/form/files and every non-output byte of all three clients.
+                self.assertEqual(actual, expected)
+        self.assertTrue(affected, "the shipped image-edit regression must be exercised")
+        self.assertEqual(changed, affected, f"changed workflows: {sorted(changed)}")
 if __name__ == "__main__":
     unittest.main()
