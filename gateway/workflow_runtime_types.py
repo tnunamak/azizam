@@ -617,6 +617,13 @@ class FrontendRow:
     # Where the receipt opens (S7 parity M1): "before_policy" leaves a closed ``rejected`` receipt when the route policy
     # denies the request; "after_policy" (default) leaves none.
     receipt_opens: Literal["before_policy", "after_policy"] = "after_policy"
+    # When the receipt of a new job closes: "terminal" (the core closes it when the job ends, naming the workflow, its
+    # accepted inputs and its manifest) or "submit" (it closes as succeeded when the queued answer goes out and names
+    # nothing, as a route whose receipt was always a submit receipt wrote it). A later failure of the job never reopens it.
+    receipt_closes: Literal["terminal", "submit"] = "terminal"
+    # Whether the request's History entry carries the run's workflow facts (``run``); a row whose summaries never had a
+    # run block sets false, so the entry stays titled from the body model.
+    history_facts: bool = True
     # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
     job_failure_text: Literal["adapter", "category_copy"] = "adapter"
     # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits

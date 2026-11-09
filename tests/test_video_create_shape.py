@@ -537,3 +537,71 @@ def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     refused = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"bogus": 1}}}, snapshot)
     assert refused.status_code == 400
     assert json.loads(refused.body)["error"]["param"].endswith(".bogus")
+
+
+def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
+    """The row app with a core that accepts every run as a queued job; the receipt owner records what the route does to it."""
+    from fastapi import FastAPI
+    from gateway import row_routes
+
+    class Core:
+        async def submit_run(self, run_request, caller, *, snapshot):
+            return RunJobView(job_id="mj_a", status="queued", disposition=disposition, workflow_id=run_request.workflow_id,
+                              record_revision=1, binding_key="comfyui", created_at_s=1, updated_at_s=1)
+
+    class Owner:
+        def report(self, **outcome): calls["report"].append(outcome)
+        def handoff(self): calls["handoff"].append(1)
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+
+    deps = row_routes.RowRouteDeps(
+        authenticate=lambda request, path: "caller-1", enforce_policy=lambda caller, path: None,
+        core=lambda: Core(), snapshot=lambda: SNAP, jobs=lambda: None, new_spool=FakeSpool,
+        scope=lambda request, spool: __import__("contextlib").nullcontext(), refused=lambda r: Response("refused", status_code=r.http_status),
+        new_request_id=lambda: "req-1", open_receipt=lambda *a: Owner(),
+        name_receipt=lambda *a: calls["named"].append(a), pinned=lambda job_id: None, legacy={},
+        record_inputs=lambda owner, notes: calls["inputs"].append(notes), record_facts=lambda owner, facts: calls["facts"].append(facts))
+    app = FastAPI()
+    row_routes.mount_rows(app, deps, ("videos-create",))
+    return app
+
+
+def _keys() -> dict[str, list]:
+    return {key: [] for key in ("report", "handoff", "named", "inputs", "facts")}
+
+
+def test_a_queued_create_closes_its_receipt_as_succeeded_and_names_nothing() -> None:
+    """Item 2: the old create receipt was a submit receipt. It closes when the queued answer goes out and names no workflow,
+    manifest, resolved model or accepted input; the job never takes it over, so a later render failure cannot fail it."""
+    from starlette.testclient import TestClient
+    calls = _keys()
+    answer = TestClient(_submit_app(calls)).post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v"})
+    assert answer.status_code == 200 and answer.json()["status"] == "queued"
+    assert calls["report"] == [{"status": "succeeded", "reason": "http_200"}]
+    assert calls["handoff"] == [] and calls["named"] == [] and calls["inputs"] == []
+
+
+def test_a_replay_of_a_create_also_names_nothing_on_its_receipt() -> None:
+    from starlette.testclient import TestClient
+    calls = _keys()
+    TestClient(_submit_app(calls, disposition="replay")).post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v"})
+    assert calls["named"] == [] and calls["handoff"] == []
+
+
+def test_a_create_adds_no_run_facts_to_the_history_entry() -> None:
+    """Item 3: the old video summary has no run block and is titled from the body model."""
+    from fastapi import FastAPI  # noqa: F401
+    from starlette.testclient import TestClient
+    from gateway import request_history_capture
+    seen: list[Any] = []
+    app = _submit_app(_keys())
+
+    @app.middleware("http")
+    async def look(request, call_next):
+        response = await call_next(request)
+        seen.append(getattr(request.state, request_history_capture.RUN_STATE_KEY, None))
+        return response
+
+    TestClient(app).post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v"})
+    assert seen == [None]

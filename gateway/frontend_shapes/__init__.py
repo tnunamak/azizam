@@ -47,6 +47,20 @@ def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> Any:
     return value
 
 
+def _receipt_closes(row_id: str, raw: Mapping[str, Any]) -> Any:
+    value = raw.get("receipt_closes", "terminal")
+    if value not in ("terminal", "submit"):
+        raise RowError(f"{row_id}: receipt_closes must be terminal or submit")
+    return value
+
+
+def _history_facts(row_id: str, raw: Mapping[str, Any]) -> bool:
+    value = raw.get("history_facts", True)
+    if not isinstance(value, bool):
+        raise RowError(f"{row_id}: history_facts must be true or false")
+    return value
+
+
 def _unconfigured(row_id: str, raw: Mapping[str, Any]) -> dict[str, Any] | None:
     found = raw.get("unconfigured")
     if found is None:
@@ -95,7 +109,8 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_names=next(iter(names)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
-                       receipt_opens=_receipt_opens(row_id, raw), unconfigured=_unconfigured(row_id, raw))
+                       receipt_opens=_receipt_opens(row_id, raw), receipt_closes=_receipt_closes(row_id, raw),
+                       history_facts=_history_facts(row_id, raw), unconfigured=_unconfigured(row_id, raw))
 
 
 def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:

@@ -214,8 +214,9 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
             return run_request
         entry = snapshot.get(run_request.workflow_id)
         facts: dict[str, str] = {}
-        if entry is not None:
+        if entry is not None and row.receipt_closes == "terminal":
             deps.name_receipt(owner, entry.id, entry.record_revision, entry.contract_digest)
+        if entry is not None and row.history_facts:
             facts = run_facts(entry.id, entry.contract)
             setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
         run_request = dataclasses.replace(run_request, request_id=request_id, intent=intent)
@@ -228,7 +229,12 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         return refusal
     await shape.after_submit(request, outcome, caller)
     if outcome.disposition == "replay":
-        facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome)
+        facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome, row)
+    if row.receipt_closes == "submit" and outcome.disposition == "new":
+        # The receipt is a submit receipt: it closes now, as the queued answer goes out, and the job never touches it.
+        response = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
+        owner.report(status="succeeded", reason=f"http_{response.status_code}")
+        return response
     if answered.mode == "job" and outcome.disposition == "new":
         # The core closes the receipt when the job ends; nothing may await between this call and leaving the receipt.
         owner.handoff()
@@ -242,7 +248,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
     owner.report(status=status, reason=reason)
     if view is not None and view.status == "succeeded" and answered.mode != "job":
         asset = next((ref.asset_id for ref in (view.results or ()) if ref.asset_id), None)
-        if asset:
+        if asset and row.history_facts:
             setattr(request.state, request_history_capture.RUN_STATE_KEY, {**facts, "asset_id": asset})
     return response
 
@@ -257,21 +263,25 @@ def record_inputs(deps: RowRouteDeps, owner: Any, request: Request) -> None:
         deps.record_facts(owner, facts)
 
 
-def _name_pinned(deps: RowRouteDeps, owner: Any, request: Request, view: RunJobView) -> dict[str, str]:
+def _name_pinned(deps: RowRouteDeps, owner: Any, request: Request, view: RunJobView, row: FrontendRow) -> dict[str, str]:
     """A replay answers the job that was made, not the record as it is now: the receipt and the kept request name what the
     job pinned. A fact the job does not hold stays unknown."""
     try:
         pin = deps.pinned(view.job_id)
     except Exception:  # noqa: BLE001 - an unreadable pin leaves the facts unknown
         pin = None
+    named = row.receipt_closes == "terminal"
     if pin is None:
-        deps.name_receipt(owner, view.workflow_id, view.record_revision, None)
+        if named:
+            deps.name_receipt(owner, view.workflow_id, view.record_revision, None)
         facts = {"workflow": view.workflow_id}
     else:
         envelope = pin.envelope
-        deps.name_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
+        if named:
+            deps.name_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
         facts = run_facts(envelope.source_id, pin.contract)
-    setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
+    if row.history_facts:
+        setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
     return facts
 
 
