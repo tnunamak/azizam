@@ -8125,6 +8125,13 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}{binding}"
 
 
+def _job_file_urls(request: Request, asset_id: str) -> dict[str, str]:
+    """The URLs a job read gives a file: ``asset_url`` as every route signs it, and ``url`` in the form the old image job stored
+    (an image id names the image route)."""
+    signed = build_signed_asset_url(request, asset_id)
+    return {"asset_url": signed, "url": build_signed_image_url(request, asset_id) if asset_id.startswith("img_") else signed}
+
+
 def build_signed_image_url(request: Request, image_id: str, metadata_mode: str | None = None) -> str:
     """Build a signed, hostname-aware URL for an image stored in the cache.
 
@@ -15685,6 +15692,7 @@ app.include_router(
         resource_lister=_gateway_resource_lister,
         asset_url_ttl_s=image_signed_url_ttl,
         asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
+        asset_url_signer=_job_file_urls,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),

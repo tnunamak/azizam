@@ -318,3 +318,22 @@ def test_4_stored_files_of_the_same_size_and_other_bytes_differ():
     two = _obs([], [], [{"suffix": ".png", "size": 10, "sha256": "bb"}])
     assert asset_files(one) != asset_files(two)
     assert asset_files(one) == asset_files(copy.deepcopy(one))
+
+
+def test_files_get_the_urls_of_the_host_that_reads_the_job(tmp_path):
+    """Open item of I2 fix 3: a row job stores its files as ``{asset_id, media_type}``; the job read signs ``asset_url`` and
+    ``url`` for the reading request. Two hosts read the same job and each gets URLs for its own host; the stored job document
+    holds no URL."""
+    async def after(rig, job_id):
+        for host in ("one.example", "two.example"):
+            await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label=f"read as {host}", headers={"Host": host})
+
+    from tests.test_s7_parity_images import job_pair
+    _old, row = job_pair(tmp_path, job_body(), job_setup(), after=after)
+    reads = [doc(row, i) for i in (1, 2)]
+    for host, read in zip(("one.example", "two.example"), reads):
+        files = read["assets"]
+        assert files and all(f["asset_url"].startswith(f"http://{host}/v1/assets/") and f["url"].startswith(f"http://{host}/v1/images/")
+                             for f in files), files
+    stored = json.dumps([j["job_json"]["assets"] for j in row.trace["media_jobs"]["media_jobs"]])
+    assert "asset_url" not in stored and "http" not in stored, stored
