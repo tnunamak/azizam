@@ -74,9 +74,14 @@ def _run(tmp_path: Path, name: str, setup, drive) -> GatewayRig:
         return rig
 
 
+_RUNNING_QUEUE = {"queue_running": [[0, "p1", {}, {}, []]], "queue_pending": []}
+
+
 def _comfy(rig: GatewayRig, **kw) -> None:
     # Not every test reaches the engine's end (a refusal stops before it): nothing is required.
     kw.setdefault("strict", False)
+    if kw.get("running_polls"):                 # the engine reports the prompt as running: the run core reads the queue too
+        kw.setdefault("queue", _RUNNING_QUEUE)
     _video_comfy(rig, **kw)
 
 
@@ -815,7 +820,7 @@ def _comfy_with_failing_cancel(rig: GatewayRig, *, running_polls: int = 0) -> No
     from tests.test_adapter_differential import _comfy
     exchanges = comfy_exchanges(
         views=[(mp4_bytes(), "video/mp4")], history=history_done("images", "clip.mp4", node="60"),
-        running_polls=running_polls, strict=False)
+        running_polls=running_polls, queue=_RUNNING_QUEUE if running_polls else None, strict=False)
     _comfy(rig, [exchange("cancel", "POST", "/api/jobs/p1/cancel", {"status": 500, "json": {"error": "fake"}},
                           repeat=True, required=False) if item["id"] == "cancel" else item for item in exchanges])
 
