@@ -25,6 +25,7 @@ from gateway.admin_runtime import access_for_person, identity_from_access_row, p
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
 from gateway.capabilities import Capability, _derive_input_modalities, summarize_capability, capability_with_policy_view
+from gateway.capability_ids import POLICY_PROTOCOLS as _PROTOCOLS
 from gateway.model_presentation import (product_capability, capability_presentation,
                                         group_product_capabilities, product_status_summary)
 from gateway.request_source import gateway_ui_request
@@ -646,7 +647,3 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
 
     return router
 
-
-_PROTOCOLS = {"chat": "openai.chat", "embed": "openai.embeddings", "image": "openai.images",
-              "video": "openai.video", "speech": "openai.audio", "transcribe": "openai.audio", "audio": "openai.audio",
-              "music": "openai.audio", "sfx": "openai.audio", "mesh": "openai.mesh"}

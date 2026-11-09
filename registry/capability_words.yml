@@ -1,5 +1,39 @@
-# Capability words, in public table order. Route intents list only extra words.
+# Capability rows are in display order. Route intents list only extra words.
 schema_version: 1
+capabilities:
+  - id: chat
+    label: Chat
+  - id: image
+    label: Images
+    policy_protocol: openai.images
+  - id: video
+    label: Video
+    policy_protocol: openai.video
+  - id: speech
+    label: Voice
+    policy_protocol: openai.audio
+  - id: transcribe
+    label: Transcription
+    policy_protocol: openai.audio
+  - id: music
+    label: Music
+    policy_protocol: openai.audio
+  - id: sfx
+    label: Sound effects
+    policy_protocol: openai.audio
+  - id: audio
+    label: Audio
+    policy_protocol: openai.audio
+  - id: decide
+    label: Decisions
+  - id: embed
+    label: Document search
+    policy_protocol: openai.embeddings
+  - id: rerank
+    label: Reranking
+  - id: mesh
+    label: 3D models
+    policy_protocol: openai.mesh
 protocol_words:
   "llm.execution": "chat"
   "typesafe-systemone": "decide"
