@@ -314,6 +314,22 @@ _CAPABILITY_INTENT_INDEX = load_capability_intent_metadata()
 _CAPABILITY_INTENTS = _CAPABILITY_INTENT_INDEX.exact
 _CAPABILITY_INTENT_FAMILIES = _CAPABILITY_INTENT_INDEX.families
 
+
+def _capability_types_by_io() -> dict[tuple[frozenset[str], frozenset[str]], str]:
+    """Unique types of exact declared modality pairs, derived from both legacy tables."""
+    candidates: dict[tuple[frozenset[str], frozenset[str]], set[str]] = {}
+    for metadata in (
+        *_CAPABILITY_INTENTS.values(),
+        *_CAPABILITY_INTENT_FAMILIES.values(),
+    ):
+        pair = (frozenset(metadata.input_modalities), frozenset(metadata.output_modalities))
+        if all(pair) and metadata.type is not None:
+            candidates.setdefault(pair, set()).add(metadata.type)
+    return {pair: next(iter(types)) for pair, types in candidates.items() if len(types) == 1}
+
+
+_CAPABILITY_TYPES_BY_IO = _capability_types_by_io()
+
 # Major media type of a manifest output -> output modality.
 _MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio", "text": "text"}
 
@@ -354,17 +370,23 @@ def from_capability(
     input_modalities: Iterable[str] = (),
     output_modalities: Iterable[str] = (),
 ) -> ModelMetadata | None:
-    """Metadata for one gateway capability: its intent's type and its declared modalities."""
+    """Use an unambiguous declared I/O pair, else the legacy intent or modality fallback."""
+    inputs = _ordered(input_modalities, INPUT_MODALITIES)
+    outputs = _ordered(output_modalities, OUTPUT_MODALITIES)
+    type_ = _CAPABILITY_TYPES_BY_IO.get((frozenset(inputs), frozenset(outputs)))
+    if type_ is not None:
+        return ModelMetadata(type_, inputs, outputs)
     intent = str(intent or "")
     base = _CAPABILITY_INTENTS.get(intent) or next(
         (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES.items() if intent.startswith(prefix)), None
     )
     if base is None:
-        return None
+        type_ = type_of(inputs, outputs)
+        return None if type_ is None else ModelMetadata(type_, inputs, outputs)
     return replace(
         base,
-        input_modalities=_ordered(input_modalities, INPUT_MODALITIES) or base.input_modalities,
-        output_modalities=_ordered(output_modalities, OUTPUT_MODALITIES) or base.output_modalities,
+        input_modalities=inputs or base.input_modalities,
+        output_modalities=outputs or base.output_modalities,
     )
 
 
