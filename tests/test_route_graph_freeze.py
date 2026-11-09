@@ -234,8 +234,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-08 for S7 (V5a): the video workflows declare their width, height and length (and, for H3, its
         # frame rate) as inputs, so their input schemas and the route inputs the catalog lists for them moved; nothing else
         # did (tests/fixtures/headless_openapi.json shows the same changes). Before it the digest was
-        # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5.
-        assert route_graph.openapi_digest(proxy.app) == "33821a54e784de1c8076b989415d3670e85a0acbe8246a4c9d3569da5932d97f"
+        # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5. Re-captured again for S7 (V5c): POST /v1/videos and
+        # POST /openai/v1/videos are rows now, so their operation id and summary moved; nothing else did. Before it the digest
+        # was 33821a54e784de1c8076b989415d3670e85a0acbe8246a4c9d3569da5932d97f.
+        assert route_graph.openapi_digest(proxy.app) == "14ce7dfb5ffa910de2b633e42712afc201dbafde2da2a7f7517e9805932f1aae"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
