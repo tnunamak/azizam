@@ -402,7 +402,7 @@ def test_operations_of_matches_the_operation_metadata_by_type_and_inputs():
 # Pin all existing exact/family rows both with their declared I/O and with no I/O.
 _CAPABILITY_ROWS = [
     *[(intent, metadata) for intent, metadata in mm._CAPABILITY_INTENTS.items()],
-    *[(prefix + "unfamiliar", metadata) for prefix, metadata in mm._CAPABILITY_INTENT_FAMILIES],
+    *[(prefix + "unfamiliar", metadata) for prefix, metadata in mm._CAPABILITY_INTENT_FAMILIES.items()],
 ]
 
 
