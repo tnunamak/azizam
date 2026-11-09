@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store, log_scrub, secret_refs, secret_store
 from gateway.admin_api import AdminAuth, _require_admin
 from gateway.problem_report_tool import CATEGORIES, REPORT_HINT, SUMMARY_MAX, TOOL, WORKAROUND_MAX  # noqa: F401
+from gateway.session_guard import SessionEnded
 
 SETTING_KEY = "problem_report_destinations"
 TEXT_FORMAT = "plain_text"
@@ -452,8 +453,10 @@ def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dic
 
 
 def _store_secrets(checked: list[dict[str, Any]], stored: list[dict[str, Any]], *, admin_path: Path,
-                   session: Any) -> tuple[list[dict[str, Any]], list[str]]:
-    """Swap each new secret for a reference bound to its url's origin; return the references no longer used."""
+                   session: Any, made: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Swap each new secret for a reference bound to its url's origin; return the references no longer used.
+
+    Each reference stored is added to ``made`` at once, so the caller can take back what a failed save stored."""
     out = []
     for item in checked:
         item = dict(item)
@@ -462,9 +465,19 @@ def _store_secrets(checked: list[dict[str, Any]], stored: list[dict[str, Any]], 
             if value is not None:
                 item["secret_ref"] = secret_refs.store(value, db_path=admin_path, origin=secret_refs.origin_or_none(item["url"]),
                                                        session=session)
+                made.append(item["secret_ref"])
         out.append(item)
     kept = {item.get("secret_ref") for item in out}
     return out, [d["secret_ref"] for d in stored if d.get("secret_ref") and d["secret_ref"] not in kept]
+
+
+def _discard(refs: list[str], path: Path) -> None:
+    """Delete stored secrets that nothing references. No sign-in is passed: this clean-up runs even when it has ended."""
+    for ref in refs:
+        try:
+            secret_store.delete_provider_secret(ref, db_path=path)
+        except KeyError:
+            pass
 
 
 def _public_destination(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -527,13 +540,16 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports,
         except ValueError:
             return _error(400, "invalid_request", "the body must be JSON")
         session = getattr(ctx, "browser_session", None)
-        checked, unused = _store_secrets(checked, stored, admin_path=path, session=session)
-        admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=path)
-        for ref in unused:  # a replaced, cleared or moved secret is deleted, not left behind
-            try:
-                secret_store.delete_provider_secret(ref, db_path=path, session=session)
-            except KeyError:
-                pass
+        made: list[str] = []
+        try:  # all or nothing: a failure at any step takes back the secrets this request stored
+            checked, unused = _store_secrets(checked, stored, admin_path=path, session=session, made=made)
+            admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=path)
+        except BaseException as exc:
+            _discard(made, path)
+            if isinstance(exc, SessionEnded):
+                return _error(401, exc.code, exc.message)
+            raise
+        _discard(unused, path)  # a replaced, cleared or moved secret is deleted, not left behind
         return {"destinations": [_public_destination(d) for d in checked]}
 
     @router.get("/{report_id}")
