@@ -16,7 +16,7 @@ import { cn } from "@/lib/cn";
 import { kindIcon } from "@/lib/media-kind";
 import { formatDuration, sizeWords, typeWords } from "@/lib/media-pick";
 import type { MediaInput } from "./home-model";
-import { fitsMediaInput, mediaPhrase } from "./home-model";
+import { fitsMediaInput, mediaInputKey, mediaPhrase } from "./home-model";
 
 /** A preview address for a chosen picture, which is all the chip draws. */
 function usePreview(file: File | null, input: MediaInput): string | null {
@@ -28,7 +28,7 @@ export type PickedFrom = { title?: string; seconds?: number | null };
 
 /**
  * Takes a file handed to the composer from outside its controls (a paste), the way the dialog takes one: the type
- * check, the size check, and ending a Library pick still arriving. Each input registers its taker by modality.
+ * check, the size check, and ending a Library pick still arriving. Each input registers its taker by slot name, falling back to modality for old rows.
  */
 export type PasteTakers = { current: Record<string, ((file: File) => void) | undefined> };
 
@@ -41,7 +41,7 @@ function useHomePick(
   takers?: PasteTakers,
 ) {
   const pick = useMediaPick({
-    types: input.accept ? [input.accept] : undefined,
+    types: input.accept ? input.accept.split(",") : undefined,
     noun: input.word,
     accepted: mediaPhrase(input),
     current: file,
@@ -49,7 +49,7 @@ function useHomePick(
     onPendingChange,
   });
   const take = pick.take;
-  const modality = input.modality;
+  const slot = mediaInputKey(input);
   // The latest take, registered for the composer's paste handler and dropped when this input goes.
   const latestTake = useRef(take);
   useEffect(() => {
@@ -59,11 +59,11 @@ function useHomePick(
     if (!takers) return;
     const registry = takers.current;
     const taker = (pasted: File) => void latestTake.current(pasted, { moveFocus: false });
-    registry[modality] = taker;
+    registry[slot] = taker;
     return () => {
-      if (registry[modality] === taker) delete registry[modality];
+      if (registry[slot] === taker) delete registry[slot];
     };
-  }, [takers, modality]);
+  }, [takers, slot]);
   return pick;
 }
 
@@ -86,13 +86,26 @@ function PickStatus({ pick, className }: { pick: HomePick; className?: string })
   );
 }
 
-function HomeLibraryPicker({ pick }: { pick: HomePick }) {
-  if (!pick.libraryAvailable || !pick.kind) return null;
+/** Named slots filter Library by modality independently of their file extension/MIME filter. */
+function homeLibraryKind(input: MediaInput, pick: HomePick) {
+  if (input.name !== undefined && (input.modality === "image" || input.modality === "audio" || input.modality === "video"))
+    return input.modality;
+  return pick.libraryAvailable ? pick.kind : null;
+}
+
+function openHomeLibrary(input: MediaInput, pick: HomePick) {
+  if (pick.libraryAvailable) pick.openLibrary();
+  else if (homeLibraryKind(input, pick)) pick.setLibraryOpen(true);
+}
+
+function HomeLibraryPicker({ pick, input }: { pick: HomePick; input: MediaInput }) {
+  const kind = homeLibraryKind(input, pick);
+  if (!kind) return null;
   return (
     <LibraryPicker
       open={pick.libraryOpen}
       onOpenChange={pick.setLibraryOpen}
-      kind={pick.kind}
+      kind={kind}
       noun={pick.noun}
       types={pick.types}
       currentId={pick.sourceAssetId}
@@ -144,6 +157,7 @@ export function HomeMediaInput({
 
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
+    event.stopPropagation();
     setDragging(false);
     if (disabled) return;
     const dropped = Array.from(event.dataTransfer.files);
@@ -210,8 +224,8 @@ export function HomeMediaInput({
               <Upload aria-hidden="true" className="size-4" />
               Choose {mediaPhrase(input)}
             </button>
-            {pick.libraryAvailable ? (
-              <button type="button" disabled={disabled} onClick={pick.openLibrary} className={PILL}>
+            {homeLibraryKind(input, pick) ? (
+              <button type="button" disabled={disabled} onClick={() => openHomeLibrary(input, pick)} className={PILL}>
                 <Library aria-hidden="true" className="size-4" />
                 Choose from Library
               </button>
@@ -221,7 +235,7 @@ export function HomeMediaInput({
         </div>
       )}
       <PickStatus pick={pick} className="mt-2" />
-      <HomeLibraryPicker pick={pick} />
+      <HomeLibraryPicker pick={pick} input={input} />
     </div>
   );
 }
@@ -235,12 +249,15 @@ export function PickedFileChip({
   input,
   file,
   title,
+  labelled = false,
   onRemove,
 }: {
   input: MediaInput;
   file: File;
   /** What the Library calls the file, when it came from there; otherwise the file's own name shows. */
   title?: string | null;
+  /** Multiple required slots keep their label beside the chosen file. */
+  labelled?: boolean;
   onRemove: () => void;
 }) {
   const preview = usePreview(file, input);
@@ -258,6 +275,7 @@ export function PickedFileChip({
             <Icon aria-hidden="true" className="size-4" />
           </span>
         )}
+        {labelled ? <span className="text-muted-foreground">{mediaPhrase(input)}:</span> : null}
         <span className="min-w-0 truncate font-medium">{name}</span>
         <button
           type="button"
@@ -295,6 +313,7 @@ export function AttachFileButton({
   onPendingChange,
   takers,
   buttonRef,
+  labelled = false,
 }: {
   input: MediaInput;
   file: File | null;
@@ -306,6 +325,8 @@ export function AttachFileButton({
   takers?: PasteTakers;
   /** The attach button, so the composer can move focus to it when the chip is removed. */
   buttonRef?: Ref<HTMLButtonElement>;
+  /** A compact labelled chip, rather than an icon-only attachment control. */
+  labelled?: boolean;
 }) {
   const pick = useHomePick(input, file, onFile, onPendingChange, takers);
   const attachButton = useRef<HTMLButtonElement | null>(null);
@@ -315,7 +336,7 @@ export function AttachFileButton({
     if (typeof buttonRef === "function") buttonRef(node);
     else if (buttonRef) (buttonRef as { current: HTMLButtonElement | null }).current = node;
   };
-  const label = file ? `Change ${input.word}` : `Attach ${mediaPhrase(input)}`;
+  const label = file ? `Change ${labelled ? mediaPhrase(input) : input.word}` : `Attach ${mediaPhrase(input)}`;
   return (
     <>
       <input
@@ -328,11 +349,12 @@ export function AttachFileButton({
         aria-label={`Choose ${mediaPhrase(input)}`}
         onChange={pick.onFileInputChange}
       />
-      {pick.libraryAvailable ? (
+      {homeLibraryKind(input, pick) ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button ref={setButton} type="button" disabled={disabled} aria-label={label} title={label} className={ATTACH_CLASS}>
+            <button ref={setButton} type="button" disabled={disabled} aria-label={label} title={label} className={labelled ? PILL : ATTACH_CLASS}>
               <Paperclip aria-hidden="true" className="size-4" />
+              {labelled ? label : null}
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -340,19 +362,20 @@ export function AttachFileButton({
               <Upload aria-hidden="true" />
               Choose {mediaPhrase(input)}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={pick.openLibrary}>
+            <DropdownMenuItem onSelect={() => openHomeLibrary(input, pick)}>
               <Library aria-hidden="true" />
               Choose from Library
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <button ref={setButton} type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={ATTACH_CLASS}>
+        <button ref={setButton} type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={labelled ? PILL : ATTACH_CLASS}>
           <Paperclip aria-hidden="true" className="size-4" />
+          {labelled ? label : null}
         </button>
       )}
       <PickStatus pick={pick} className="basis-full" />
-      <HomeLibraryPicker pick={pick} />
+      <HomeLibraryPicker pick={pick} input={input} />
     </>
   );
 }

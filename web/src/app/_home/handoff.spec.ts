@@ -37,3 +37,18 @@ describe("the Home to Try hand-off", () => {
     expect(takeHomeHandoff("mesh")).toBeNull();
   });
 });
+
+it("keeps ordered input names with their in-memory files and consumes them once", () => {
+  const ending = new File(["e"], "end.png", { type: "image/png" });
+  storeHomeHandoff({ capability: "video", model: "m", prompt: "", files: [picture, ending], file_inputs: ["image", "last_frame"] });
+  expect(window.sessionStorage.getItem("azizam.home.handoff")).not.toContain("last_frame");
+  expect(takeHomeHandoff("video")).toMatchObject({ files: [picture, ending], file_inputs: ["image", "last_frame"] });
+  expect(takeHomeHandoff("video")).toBeNull();
+});
+
+it("never returns input names without matching files", () => {
+  storeHomeHandoff({ capability: "video", model: "m", prompt: "", file_inputs: ["image"] });
+  expect(takeHomeHandoff("video")?.file_inputs).toBeUndefined();
+  storeHomeHandoff({ capability: "video", model: "m", prompt: "", files: [picture], file_inputs: ["image", "last_frame"] });
+  expect(takeHomeHandoff("video")?.file_inputs).toBeUndefined();
+});
