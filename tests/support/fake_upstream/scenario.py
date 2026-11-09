@@ -18,7 +18,7 @@ from .protocols import PROTOCOLS, Protocol
 SCENARIO_DIR = Path(__file__).parent / "scenarios"
 _PLACEHOLDER = re.compile(r"\{\{([a-z_][a-z0-9_]*)\}\}")
 _PART_KEYS = frozenset({"text", "hex", "event", "done", "wait", "disconnect"})
-_MATCH_KEYS = frozenset({"method", "path", "query", "headers", "json"})
+_MATCH_KEYS = frozenset({"method", "path", "raw_path", "raw_query", "query", "headers", "json"})
 _RESPONSE_KEYS = frozenset({"status", "headers", "wait_before_headers", "json", "body", "disconnect_before_headers"})
 _EXCHANGE_KEYS = frozenset({"id", "match", "response", "required", "times", "repeat"})
 _SCENARIO_KEYS = frozenset({"protocol", "name", "description", "provenance", "exchanges"})
@@ -83,6 +83,14 @@ def _exchange(raw: Mapping[str, Any], protocol: Protocol, source: str) -> Exchan
     where = f"{source}: exchange {raw['id']!r}"
     match = raw["match"]
     _keys(match, _MATCH_KEYS, {"method", "path"}, where)
+    for key in ("raw_path", "raw_query"):
+        if key in match:
+            if not isinstance(match[key], str):
+                raise ScenarioError(f"{where}: {key} must be a byte-preserving string")
+            try:
+                match[key].encode("latin-1")
+            except UnicodeEncodeError as error:
+                raise ScenarioError(f"{where}: {key} must use percent-encoded wire bytes") from error
     if not protocol.allows(match["path"]):
         raise ScenarioError(f"{where}: path {match['path']!r} is not part of protocol {protocol.name!r}")
     response = raw["response"]
