@@ -473,7 +473,7 @@ def test_video_7_59_status_maps_running_to_in_progress_and_history_success_to_co
         created = await rig.call("POST", "/v1/videos", json_body=_created())
         video_id = created.json()["id"]
         seen["pending"] = (await rig.call("GET", f"/v1/videos/{video_id}")).json()
-        seen["done"] = (await rig.call("GET", f"/v1/videos/{video_id}")).json()
+        seen["done"] = await _audit_wait(rig, video_id)     # the job's runner reaches the engine's end
 
     _run(tmp_path, "r7-59", setup, drive)
     assert seen["pending"]["status"] in ("queued", "in_progress")
@@ -495,7 +495,7 @@ def test_video_7_69_failed_job_status_carries_the_error(tmp_path):
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
         video_id = created.json()["id"]
-        seen["status"] = (await rig.call("GET", f"/v1/videos/{video_id}")).json()
+        seen["status"] = await _audit_wait(rig, video_id)
 
     _run(tmp_path, "r7-69", setup, drive)
     assert seen["status"]["status"] == "failed"
@@ -540,7 +540,7 @@ def test_video_8_74_content_of_a_finished_video_is_mp4_bytes(tmp_path):
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
         video_id = created.json()["id"]
-        await rig.call("GET", f"/v1/videos/{video_id}")
+        await _audit_wait(rig, video_id)
         response = await rig.call("GET", f"/v1/videos/{video_id}/content")
         seen["status"], seen["type"], seen["bytes"] = response.status_code, response.headers.get("content-type"), \
             response.content
@@ -672,6 +672,10 @@ def test_video_10_85_deleting_a_queued_video_cancels_it_on_the_engine(tmp_path):
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
+        for _ in range(500):                        # the job's runner submits the prompt after the answer
+            if "POST /prompt" in _engine_paths(rig):
+                break
+            await asyncio.sleep(0)
         await rig.call("DELETE", f"/v1/videos/{created.json()['id']}")
         seen["engine"] = _engine_paths(rig)
 
