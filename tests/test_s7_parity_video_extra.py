@@ -868,7 +868,7 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
         # the run alive while the delete asks (the product wait is the row's 10 s).
         import dataclasses
         row = proxy._video_row()
-        rig.set(proxy, "_video_row", lambda: dataclasses.replace(row, cancel_wait_s=0.05))
+        rig.set(proxy, "_video_row", lambda: dataclasses.replace(row, cancel_wait_s=0.01))
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
@@ -880,8 +880,9 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
         seen["paths"] = _engine_paths(rig)
 
     _run(tmp_path, "s7-7-cancel-failure", setup, drive)
-    assert seen["failed_status"] == 409, (seen["failed_status"], len(seen["paths"]), [p for p in seen["paths"] if "history/p1" not in p])
+    assert seen["failed_status"] == 409, seen["failed_status"]
     assert seen["kept_after_failure"] == 200
+    assert "POST /api/jobs/p1/cancel" in seen["paths"]
 
 
 def test_video_source_owner_boundary_answers_as_an_unknown_id(tmp_path):
