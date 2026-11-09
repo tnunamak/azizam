@@ -132,12 +132,6 @@ records:
         translator: identity
         intent: assets.delete
         canonical: /openai/v1/assets/{asset_id}
-      - methods: [POST]
-        translator: identity
-        intent: videos.create
-        canonical: /v1/videos
-        alias: /openai/v1/videos
-        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [GET]
         translator: identity
         intent: videos.retrieve
