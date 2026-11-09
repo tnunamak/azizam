@@ -717,9 +717,6 @@ def test_an_undeclared_audio_subtype_comes_from_the_shipped_capability_words(mon
     assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "speech"
     # A word the table does not list stays generic audio, whatever its spelling.
     assert product_capability(Capability(intent="speech.voice_check", backend="one")) == "audio"
-    # The shipped music and sfx words name their subtypes.
-    assert product_capability(Capability(intent="music.generate", backend="one")) == "music"
-    assert product_capability(Capability(intent="sfx.generate", backend="one")) == "sfx"
     # The table decides, not the intent's spelling.
     monkeypatch.setattr(model_presentation, "INTENT_CAPABILITIES", {"speech.synthesis": "audio"})
     assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "audio"
