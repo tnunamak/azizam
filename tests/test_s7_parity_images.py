@@ -491,7 +491,7 @@ def test_images_E05_missing_image_400(tmp_path):
     _edit_compare(old, row)
 
 
-@pytest.mark.parametrize("model", ["not-a-real-model", pytest.param("image-identity", marks=NEEDS_RH)])
+@pytest.mark.parametrize("model", ["not-a-real-model", "image-identity"])
 def test_images_E06_model_resolution(tmp_path, model):
     old, row = pair(tmp_path, EDIT, edit_masked(model=model), edit_ok)
     old_has(old, "an answer", status(old))
