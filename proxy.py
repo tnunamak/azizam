@@ -27136,7 +27136,11 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             resolution = resolve_model_for_operation("videos", name)
         except ModelCompatibilityError as error:
             return model_compatibility_error(error)
-        return resolution.effective_model if resolution.is_openai_alias else name
+        effective = resolution.effective_model if resolution.is_openai_alias else name
+        candidate = str(effective).strip()
+        if candidate and candidate not in _video_workflow_table():       # the operator's ``videos.aliases``, as the old route read them
+            return VIDEO_ALIASES.get(candidate.lower(), effective)
+        return effective
 
     def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
         _begin_media_delivery(caller, _ROW_RECEIPT.get())

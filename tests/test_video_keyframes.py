@@ -335,6 +335,7 @@ class KeyframeRouteBase(unittest.TestCase):
         self.stack.enter_context(patch.object(proxy, "_WORKFLOW_JOB_SPOOL", None))        # built from the root above, at first use
         self.stack.enter_context(patch.object(proxy, "_workflow_core_cache", None))        # the core holds the job spool
         self.stack.enter_context(patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", Path(spool.name) / "payloads"))
+        self.stack.enter_context(patch.object(proxy.media_jobs, "DB_PATH", Path(spool.name) / "media.db"))   # a row job lands here, not in the shared file
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
@@ -729,8 +730,9 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
             graph[node]["inputs"].update(fields)
         return graph
 
-    # V5c: a first-picture-only create runs the row path; the manifest types frame_rate as an integer, so the graph carries
-    # 24 where the old route wrote 24.0 (the same JSON number to the engine). A named delta, not a wire change to its meaning.
+    # V5c: a first-picture-only create runs the row path. Two named deltas to the engine's graph, neither a change of meaning:
+    # the manifest types frame_rate as an integer, so a float node carries 24 where the old route wrote 24.0; and the run
+    # stages the picture under the name "input" + suffix, as every run of the job runner does, not "input_reference.png".
     def test_ltx_i2v_graph_is_the_stored_graph_with_only_the_request_values(self) -> None:
         r = self.client.post("/v1/videos", json={
             "model": "video-ltx-2.5-i2v", "prompt": "p", "seconds": 5, "seed": 3, "size": "1280x704",
@@ -738,8 +740,8 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         self.assertEqual(r.status_code, 200, r.text)
         expected = self._expected("video-ltx-2.5-i2v", {
             "5": {"text": "p"}, "20": {"value": 1280}, "21": {"value": 704}, "22": {"value": 121},
-            "23": {"value": 24}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
-            "70": {"image": "up1_input_reference.png"}, "79": {"value": 0.7},
+            "23": {"value": 24}, "24": {"value": 24}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
+            "70": {"image": "up1_input.png"}, "79": {"value": 0.7},
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
 
@@ -750,7 +752,7 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         self.assertEqual(r.status_code, 200, r.text)
         expected = self._expected("video-minimax-h3-i2v", {
             "9": {"prompt": "p"}, "6": {"value": 960}, "7": {"value": 544}, "8": {"value": 124},
-            "17": {"fps": 24}, "10": {"noise_seed": 3}, "20": {"image": "up1_input_reference.png"},
+            "17": {"fps": 24}, "10": {"noise_seed": 3}, "20": {"image": "up1_input.png"},
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
 
