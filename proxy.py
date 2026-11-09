@@ -27358,6 +27358,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
             return
         receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
         access = getattr(caller.identity, "access", None)
+        import sys; print("DBGVIS", type(caller.identity), access and access.receipt_detail, receipt.visibility, file=sys.stderr)
         if access is not None:
             receipt.visibility = access.receipt_detail
 
