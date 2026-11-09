@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlsplit
 
 from gateway import model_metadata
 from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
-from gateway.service_registry import LEGACY_RESIDENCY_KEY, is_litellm_service_record, is_remote_provider_config
+from gateway.service_registry import LEGACY_RESIDENCY_KEY, engine_base_address, is_litellm_service_record, is_remote_provider_config
 
 
 def health_base(service: Mapping[str, Any]) -> str | None:
@@ -20,7 +20,7 @@ def health_base(service: Mapping[str, Any]) -> str | None:
         return base_url
     host = str(connection.get("host") or "").strip()
     if not host:
-        return None
+        return engine_base_address(connection) or None
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     port = connection.get("port")

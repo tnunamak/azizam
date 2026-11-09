@@ -4579,6 +4579,17 @@ def latest_payload() -> Mapping[str, Any]:
     return _SNAPSHOT["payload"]
 
 
+def _rows_of_enabled_engines(rows: list, config: Mapping[str, Any]) -> list:
+    """*rows* without those of an engine the current config disables: a snapshot built before a reload must not hold one."""
+    records = (config or {}).get("backends") or {}
+
+    def disabled(row: Any) -> bool:
+        record = records.get(str(row.get("service_id") or row.get("key") or "")) if isinstance(row, Mapping) else None
+        return isinstance(record, Mapping) and not _is_enabled(record)
+
+    return [row for row in rows if not disabled(row)]
+
+
 async def get_cached_status(config: dict) -> dict:
     """The latest snapshot, for every status reader. It never waits for a probe: it returns the snapshot as it is, with
     its age, and a read after idle starts the refresh in the background.
@@ -4596,6 +4607,8 @@ async def get_cached_status(config: dict) -> dict:
     now = _now()
     age = round(now - _SNAPSHOT["built"], 2)
     data = dict(_SNAPSHOT["payload"])
+    if isinstance(data.get("backends"), list):
+        data["backends"] = _rows_of_enabled_engines(data["backends"], config)
     data["cache_age_s"] = age
     if "resource_awareness" in data:
         data["resource_awareness"] = age_resource_view(data["resource_awareness"], max(0, age))

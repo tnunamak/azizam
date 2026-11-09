@@ -29,17 +29,6 @@ RAW_PATH = b"/health%3Fready"
 RAW_QUERY = b"tag=first&tag=second&literal=%2F&empty="
 DECODED_PATH = "/health?ready"
 
-# status_endpoint._resolve_backend_targets -> model_presentation.service_health_endpoint -> health_base reads
-# base_url or host/port only, never connection.address (gateway/model_presentation.py:14-30, 40-53), so an engine
-# whose only address is connection.address gets no health target and is shown "not_configured"
-# (status_endpoint.py:497-514), although service_registry.engine_origin/engine_base_address (1914-1950) read it.
-CONNECTION_ADDRESS_HEALTH_GAP = pytest.mark.xfail(
-    strict=True,
-    reason="model_presentation.health_base (model_presentation.py:14-30) ignores connection.address: "
-           "status_endpoint._unconfigured_rows (status_endpoint.py:497-514) shows not_configured and never probes",
-)
-
-
 def _scenario(name, *, health=0, unload=0, raw=False):
     exchanges = []
     if health:
@@ -243,7 +232,7 @@ def env(monkeypatch, tmp_path, fake_upstreams):
     assert forbidden == [], forbidden
 
 
-@pytest.mark.parametrize("field", ["base_url", pytest.param("connection.address", marks=CONNECTION_ADDRESS_HEALTH_GAP)])
+@pytest.mark.parametrize("field", ["base_url", "connection.address"])
 def test_record_address_beats_bootstrap_and_reload_moves_health_and_lifecycle(env, field):
     async def case():
         a = env.serve("record-A", health=1, unload=1)
@@ -272,7 +261,7 @@ def test_record_address_beats_bootstrap_and_reload_moves_health_and_lifecycle(en
     _run(case())
 
 
-@pytest.mark.parametrize("field", ["base_url", pytest.param("connection.address", marks=CONNECTION_ADDRESS_HEALTH_GAP)])
+@pytest.mark.parametrize("field", ["base_url", "connection.address"])
 def test_declared_endpoint_keeps_raw_path_and_repeated_query_bytes(env, field):
     async def case():
         fake = env.serve("encoded-endpoint", health=1, raw=True)
@@ -298,13 +287,6 @@ def test_disabled_record_has_no_requests_status_row_or_new_history_across_reload
     _run(_disable_and_reload(env, warm, enabled, managed, check_cached_row=not warm))
 
 
-# The cached status page copies the old snapshot payload without consulting the reloaded config
-# (status_endpoint.get_cached_status, status_endpoint.py:4596-4607), so a just-disabled engine's row stays
-# visible until the next snapshot build (SNAPSHOT_INTERVAL_S=15 s while polled; the first read after the
-# refresher idled returns the old snapshot). No request or history row is produced: the other assertions pass.
-@pytest.mark.xfail(strict=True, reason=(
-    "status_endpoint.get_cached_status (status_endpoint.py:4596-4607) returns the old snapshot's backend rows "
-    "without filtering by the reloaded config, so a just-disabled engine's row stays on the status page"))
 @pytest.mark.parametrize("enabled", [False, "false", "0", "no", "off"], ids=repr)
 @pytest.mark.parametrize("managed", [False, True], ids=["http-lifecycle", "forbidden-service-manager"])
 def test_cached_status_drops_the_row_of_an_engine_disabled_by_reload(env, enabled, managed):
