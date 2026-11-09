@@ -424,6 +424,20 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
         progress=100 if status == media_jobs.STATUS_SUCCEEDED else int(job.get("progress") or 0))
 
 
+WIRE_ID_PLACEHOLDER = "{wire_id}"       # what a shape writes where the id the caller will see is not yet known
+
+
+def with_wire_id(value: Any, wire_id: str) -> Any:
+    """``value`` with the placeholder replaced by ``wire_id`` in every string it holds."""
+    if isinstance(value, str):
+        return value.replace(WIRE_ID_PLACEHOLDER, wire_id)
+    if isinstance(value, Mapping):
+        return {key: with_wire_id(item, wire_id) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [with_wire_id(item, wire_id) for item in value]
+    return value
+
+
 # The job store refuses some key names inside a job's metadata (they can hold media bytes). A fact keeps its public name in
 # ``RequestFacts`` and is stored under the name here.
 _FACT_STORED_AS = {"audio": "audio_track"}
@@ -1110,7 +1124,10 @@ class WorkflowJobService:
 
     def __init__(self, *, port: RunPort, path: Path | None = None,
                  tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time,
-                 prompt_lookup: Callable[[str, str], str | None] | None = None) -> None:
+                 prompt_lookup: Callable[[str, str], str | None] | None = None,
+                 wire_id: Callable[[str], str] | None = None) -> None:
+        # ``wire_id(job_id)`` is the id the frontend shows for a job: the placeholder in the recorded facts becomes it on read.
+        self._wire_id = wire_id
         # ``prompt_lookup(job_id, person_id)`` is the text the prompt-memory rules still keep for the maker, or None. The
         # main module gives it; without it no facts carry a prompt.
         self._prompt_lookup = prompt_lookup
@@ -1163,6 +1180,8 @@ class WorkflowJobService:
         recorded = (job.get("metadata") or {}).get(REQUEST_FACTS_KEY)
         values = ({_FACT_PUBLIC_AS.get(k, k): v for k, v in recorded.items() if _FACT_PUBLIC_AS.get(k, k) in REQUEST_FACT_KEYS}
                   if isinstance(recorded, Mapping) else {})
+        if self._wire_id is not None:
+            values = with_wire_id(values, self._wire_id(job_id))
         maker = str(job.get("maker_person_id") or "")
         own = bool(maker) and self._port.maker(caller) == maker
         prompt = None
