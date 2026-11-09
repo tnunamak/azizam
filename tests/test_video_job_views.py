@@ -296,3 +296,13 @@ def test_a_recorded_empty_set_of_facts_shows_nothing_from_the_result_metadata(sh
     older = view(status="succeeded", result_metadata={"model": "m", "size": "640x480"})
     assert "model" not in body(shape.render_status(older, RequestFacts({}, recorded=True)))
     assert body(shape.render_status(older, RequestFacts({}, recorded=False)))["model"] == "m"
+
+
+@pytest.mark.parametrize("name", [".\t.", ".\x7f.", "\t\x01", "..", "."])
+def test_a_name_that_cleans_to_a_reserved_one_is_replaced_before_the_header_and_the_library_note(shape, served, name):
+    core, jobs = served
+    done = finished(core, jobs, metadata={"filename": name})
+    told = []
+    answer = shape.render_bytes(done, jobs, None, caller_person_id="p1", on_delivered=lambda *a: told.append(a))
+    assert answer.headers["content-disposition"] == 'inline; filename="video.mp4"'
+    assert told[0][2] == "video.mp4"

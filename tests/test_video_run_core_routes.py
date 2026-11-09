@@ -177,3 +177,11 @@ def test_a_file_name_the_engine_gave_never_breaks_the_download_header(tmp_path, 
     star = f"; filename*=UTF-8''{encoded}" if encoded else ""
     assert content.headers.get_list("content-disposition") == [f'inline; filename="{fallback}"{star}']
     assert "x-evil" not in content.headers and content.headers["content-type"] == "video/mp4"
+
+
+@pytest.mark.parametrize("output_name", [".\t.", ".\x7f.", "\t\x01", "\x00.. "], ids=["tab-between-dots", "del-between-dots", "controls-only", "dots-after-cleaning"])
+def test_a_file_name_that_cleans_to_nothing_usable_is_given_a_safe_name_for_its_media_type(tmp_path, output_name):
+    content = download(tmp_path, output_name)
+    assert content.status_code == 200, content.text
+    assert content.headers.get_list("content-disposition") == ['inline; filename="video.mp4"']
+    assert content.headers["content-type"] == "video/mp4"

@@ -39,8 +39,12 @@ DeliveryNote = Callable[[str, str, str, str, RequestFacts], None]
 
 
 def download_name(filename: Any) -> str:
-    """The engine's file name as a download name: its last path part, with control characters dropped; "" when none is left."""
-    return _CONTROL.sub("", posixpath.basename(filename)) if isinstance(filename, str) else ""
+    """The engine's file name as a download name: its last path part, with control characters dropped. "" when the
+    engine gave none, or when what is left names nothing (empty, or only dots and spaces: ``.``, ``..``)."""
+    if not isinstance(filename, str):
+        return ""
+    name = _CONTROL.sub("", posixpath.basename(filename))
+    return name if name.strip(". ") else ""
 
 
 def content_disposition(name: str) -> str:
@@ -158,6 +162,8 @@ class VideoViews:
         content = self.read(view, ref, jobs, caller)
         filename = view.result_metadata.get("filename")
         name = download_name(filename)
+        if isinstance(filename, str) and filename and not name:          # a name was given but cleans to nothing usable
+            name = self.wire_name + next((ext for ext, kind in MEDIA_TYPES.items() if kind == ref.media_type), ".bin")
         suffix = posixpath.splitext(name)[1].lower()
         media_type = MEDIA_TYPES.get(suffix, FALLBACK_MEDIA_TYPE) if suffix else ref.media_type
         try:

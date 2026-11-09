@@ -23,7 +23,7 @@ from gateway.request_spool import FileRequestSpool, JobSpool
 from gateway.result_bundle import Reader, ResultLimits
 from gateway.workflow_kernel import run_identity
 from gateway.workflow_run import (
-    AdapterIdentity, BindingAvailability, RunContext, WorkflowJobService, WorkflowRunCore, queued_jobs_without_v2_envelope,
+    AdapterIdentity, REQUEST_FACTS_KEY, BindingAvailability, RunContext, WorkflowJobService, WorkflowRunCore, queued_jobs_without_v2_envelope,
 )
 from gateway.workflow_runtime_types import (
     ExecutionProfile, JobNotFound, MediaAccept, MediaRef, ResultUnavailable, RunJobView, RunRefused, RunRequest,
@@ -788,6 +788,24 @@ def test_a_job_that_recorded_no_facts_has_an_empty_mapping_and_an_unreadable_job
     assert dict(service.request_facts(view.job_id, Caller())) == {}
     assert service.request_facts(view.job_id, Caller(scope="app-2")) is None
     assert service.request_facts("mj_absent", Caller()) is None
+
+
+@pytest.mark.parametrize("facts", [{}, {"model": None}], ids=["empty", "valueless"])
+def test_a_record_of_no_facts_is_still_a_record_from_submit_to_status_and_list(db, tmp_path, facts):
+    from gateway.frontend_shapes import bundled_rows, build_shape
+    from gateway.workflow_run import RESULT_METADATA_KEY
+    _, port, view = submit_one(db, tmp_path, facts=facts)
+    assert REQUEST_FACTS_KEY in media_jobs.get(view.job_id, audience="internal", path=db)["metadata"]
+    media_jobs.update_status(view.job_id, "running", metadata_patch={RESULT_METADATA_KEY: {"model": "engine-model", "size": "1x1"}}, path=db)
+    service = WorkflowJobService(port=port, path=db)
+    kept = service.request_facts(view.job_id, Caller())
+    assert dict(kept) == {} and kept.recorded is True
+    shape = build_shape(next(r for r in bundled_rows() if any(x.canonical == "/v1/videos" and "POST" in x.methods for x in r.routes)))
+    now = service.get(view.job_id, Caller())
+    assert now.result_metadata["model"] == "engine-model"
+    status = json.loads(shape.render_status(now, kept).body)
+    item = json.loads(shape.render_listing([now], False, {now.job_id: kept}).body)["data"][0]
+    assert "model" not in status and "size" not in status and item["model"] is None and item["size"] is None
 
 
 def test_a_fact_outside_the_table_is_refused_before_any_claim_or_job(db, tmp_path):

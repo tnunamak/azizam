@@ -664,7 +664,7 @@ class WorkflowRunCore:
             api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
                       "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries,
-                      **({REQUEST_FACTS_KEY: facts} if facts else {})})
+                      REQUEST_FACTS_KEY: facts})      # always kept, even empty: it tells a record of no facts from an older job's none
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
