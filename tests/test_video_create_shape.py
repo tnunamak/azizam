@@ -208,14 +208,18 @@ class _NoFacts:
 
 
 def test_an_adjusted_duration_is_told_in_the_header_and_an_exact_one_is_not() -> None:
-    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 3})
+    run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 3.2})      # 77 frames snap to 81: 0.175 s off
     shape = frontend_shapes.build_shape(ROWS["videos-create"])
     view = RunJobView(job_id="mj_a", status="queued", disposition="new", workflow_id=run_request.workflow_id, record_revision=1,
                       binding_key="comfyui", created_at_s=1, updated_at_s=1)
     request = make_request()
     request.state.video_facts = dict(run_request.facts)
     answer = asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request))
-    assert answer.headers["X-Duration-Adjusted"].startswith("requested=3 actual=3.0417 reason=")
+    assert answer.headers["X-Duration-Adjusted"].startswith("requested=3.2 actual=3.3750 reason=")
+    close = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 3})       # 3.0417 s is within the old 0.05 s tolerance
+    request = make_request()
+    request.state.video_facts = dict(close.facts)
+    assert "X-Duration-Adjusted" not in asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request)).headers
     exact = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 5, "size": "960x512"})      # 5 s is 121 frames: exact
     request = make_request()
     request.state.video_facts = dict(exact.facts)
@@ -310,7 +314,7 @@ def test_a_request_the_shape_does_not_move_is_handed_to_the_legacy_handler_with_
                  {"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": "img_abc"}):    # an asset id the shape cannot resolve
         handoff = read(body)
         assert isinstance(handoff, _base.LegacyRoute), body
-        assert handoff.name == "videos.create" and handoff.body["prompt"] == body.get("prompt", handoff.body.get("prompt"))
+        assert handoff.name == "videos.create" and handoff.body.get("prompt") == body.get("prompt")
 
 
 def test_a_manifest_without_a_video_block_is_left_to_the_legacy_handler() -> None:
