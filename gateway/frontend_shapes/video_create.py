@@ -157,7 +157,7 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     variant = snapshot.get(manifest.variants[kind]) if reference and manifest.variants.get(kind) else None
     if variant is not None and video_grid.video_facts(variant) is not None:
         chosen, manifest = variant, video_grid.video_facts(variant)
-    if manifest.length is None or manifest.grid is None or manifest.size is None:
+    if manifest.chain or manifest.length is None or manifest.grid is None or manifest.size is None:
         return LegacyRoute(LEGACY_CREATE, body)
     name = short_name(chosen)
     if kind in manifest.requires and not reference:
@@ -176,9 +176,6 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
             or (reference is not None and _reference_bytes(reference) is None)
             or any(not _wire.declared(chosen, key) or _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
-    for missing in _wire.asset_input_names(chosen):      # a required picture the body leaves out, before any other problem
-        if missing != kind and _wire.entry_required(chosen, missing) is True and missing not in block:
-            return refuse(400, f"{missing} is required for this model", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{missing}")
     return chosen, manifest, name, public_model
 
 
@@ -236,9 +233,12 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     if body.get("size") is not None and not isinstance(body["size"], str):
         return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
     width, height = video_grid.resolve_size(body.get("size"), manifest.size)
+    block = _workflow_block(body)
+    for missing in _wire.asset_input_names(chosen):      # required pictures follow seconds and size validation
+        if missing != shapes.REFERENCE_KIND and _wire.entry_required(chosen, missing) is True and missing not in block:
+            return refuse(400, f"{missing} is required for this model", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{missing}")
     length = video_grid.frame_count(seconds_value, None, grid)
     roles = manifest.roles
-    block = _workflow_block(body)
     chosen_length = block.get(roles.get("length", "length"))
     if chosen_length is not None:                    # the manifest's own length input (frames) wins over seconds, as it always did
         try:
