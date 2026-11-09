@@ -323,11 +323,12 @@ class FakeJobService:
         return self.core.facts.get(job_id, RequestFacts({}))
 
     def list(self, caller: Any, *, intents: Any, limit: int, after_id: str | None = None,
-             after_key: tuple[int, str] | None = None, order: str = "desc"):
-        """Every live job of the fake core filed under one of the intents (it has no owners), in creation order."""
+             after_key: tuple[int, str] | None = None, order: str = "desc", workflows: Any = ()):
+        """Every live job of the fake core filed under one of the intents, or made by one of the workflows (it has no owners), in
+        creation order."""
         if after_id is not None and after_key is not None:
             raise ValueError("give after_id or after_key, not both")
-        views = sorted((v for k, v in self.core.jobs.items() if k not in self.deleted and v.intent in intents),
+        views = sorted((v for k, v in self.core.jobs.items() if k not in self.deleted and (v.intent in intents or v.workflow_id in workflows)),
                        key=lambda v: (v.created_at_s, v.job_id), reverse=order != "asc")
         ids = [v.job_id for v in views]
         if after_key is not None:

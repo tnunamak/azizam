@@ -13,8 +13,8 @@ from gateway.workflow_runtime_types import JobDeleteConflict, JobNotFound, RunJo
 from tests.workflow_runtime_fakes import FakeJobService, FakeRunCore
 
 
-def view(job_id, created_at, status="succeeded", intent="x") -> RunJobView:
-    return RunJobView(job_id=job_id, status=status, disposition="replay", workflow_id="w", record_revision=1, binding_key="b",
+def view(job_id, created_at, status="succeeded", intent="x", workflow="w") -> RunJobView:
+    return RunJobView(job_id=job_id, status=status, disposition="replay", workflow_id=workflow, record_revision=1, binding_key="b",
                       created_at_s=created_at, updated_at_s=created_at + 1, intent=intent)
 
 
@@ -33,12 +33,13 @@ def job_id_of(wire):
     return wire[len("video_"):] if wire.startswith("video_") and len(wire) > 6 else None
 
 
-def ledger(jobs=(), older=None):
+def ledger(jobs=(), older=None, video_workflows=()):
     core = FakeRunCore()
     for item in jobs:
         core.jobs[item.job_id] = item
     service = FakeJobService(core)
-    return VideoLedger(service, job_id_of, ("x", "y"), None if older is None else Older(older), lambda raw: raw.startswith("mj_")), service
+    return VideoLedger(service, job_id_of, ("x", "y"), None if older is None else Older(older), lambda raw: raw.startswith("mj_"),
+                       lambda: tuple(video_workflows)), service
 
 
 def ids(page):
@@ -149,6 +150,16 @@ def test_a_job_of_another_kind_is_not_a_cursor_even_between_two_videos(order, in
     with pytest.raises(CursorNotFound):
         book.page(None, 10, "video_mj_other", order)
     assert ids(book.page(None, 10, None, order)) == (["mj_1", "mj_3"] if order == "asc" else ["mj_3", "mj_1"])
+
+
+def test_a_job_is_a_video_when_its_workflow_declares_video_whatever_intent_filed_it():
+    jobs = [view("mj_run", 100, intent="workflow.run", workflow="clip"), view("mj_img", 200, intent="workflow.run", workflow="pic"),
+            view("mj_own", 300, intent="x", workflow="other")]
+    book, service = ledger(jobs, video_workflows=["clip"])
+    assert isinstance(book.lookup("video_mj_run", None), JobHit) and book.lookup("video_mj_img", None) is None
+    assert ids(book.page(None, 10, None, "asc")) == ["mj_run", "mj_own"]
+    assert book.delete("video_mj_run", None) is not None and "mj_run" in service.deleted
+    assert book.delete("video_mj_img", None) is None and "mj_img" not in service.deleted
 
 
 def test_both_video_intents_are_members():
