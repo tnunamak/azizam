@@ -57,12 +57,25 @@ export function useActivitySample(enabled: boolean) {
   });
 }
 
-export function requestsFromActivity(records: ActivityRecord[]): RequestSignal[] {
+/** API identity wins over legacy intent/path classification; drawings never identify work. */
+export function capabilityKeyForRequest(
+  intent: string | null | undefined,
+  path: string | null | undefined,
+  rows: ReadonlyArray<Pick<HomeSnapshot["capabilities"][number], "capability" | "intent">> = [],
+): string | null {
+  return (intent ? rows.find((row) => row.intent === intent)?.capability : undefined)
+    ?? requestCapability(intent, path);
+}
+
+export function requestsFromActivity(
+  records: ActivityRecord[],
+  rows: HomeSnapshot["capabilities"] = [],
+): RequestSignal[] {
   return records.flatMap((record) =>
     typeof record.created_at === "number"
       ? [
           {
-            capability: requestCapability(record.receipt?.intent, record.receipt?.path),
+            capability: capabilityKeyForRequest(record.receipt?.intent, record.receipt?.path, rows),
             status: String(record.receipt?.status ?? ""),
             at: record.created_at,
             remote: record.receipt?.remote ?? null,
@@ -86,7 +99,7 @@ export function requestsFromHome(home: HomeSnapshot | undefined): RequestSignal[
       ? []
       : [
           {
-            capability: requestCapability(receipt.intent, receipt.path),
+            capability: capabilityKeyForRequest(receipt.intent, receipt.path, home?.capabilities ?? []),
             status: String(receipt.status ?? ""),
             at,
             remote: raw.remote ?? null,
@@ -192,16 +205,16 @@ export function useCapabilityViews(
           checkedAt: backendChecks.get(service.service_id) ?? null,
         }))
       : undefined;
-  const requests = owner && activity.data ? requestsFromActivity(activity.data) : requestsFromHome(home);
+  const requests = owner && activity.data ? requestsFromActivity(activity.data, home?.capabilities ?? []) : requestsFromHome(home);
   // A member's summary covers what they use; embeddings and decisions are
   // what their apps use behind the scenes, so they never read "Document search down".
   const rows = (
     home ? home.capabilities : []
   ).filter(
-    (row) => owner || !appPlumbingCapabilities.has(row.icon_key ?? row.capability),
+    (row) => owner || !appPlumbingCapabilities.has(row.capability),
   );
   const views = rows.map((row) => {
-    const key = row.icon_key ?? row.capability;
+    const key = row.capability;
     return capabilityView(
       {
         key,
