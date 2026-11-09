@@ -275,7 +275,7 @@ export function PickedFileChip({
             <Icon aria-hidden="true" className="size-4" />
           </span>
         )}
-        {labelled ? <span className="text-muted-foreground">{mediaPhrase(input)}:</span> : null}
+        {labelled ? <span className="text-muted-foreground shrink-0 whitespace-nowrap">{mediaPhrase(input)}:</span> : null}
         <span className="min-w-0 truncate font-medium">{name}</span>
         <button
           type="button"

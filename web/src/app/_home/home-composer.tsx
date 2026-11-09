@@ -500,9 +500,9 @@ export function HomeComposer({
             </button>
           </div>
         ) : null}
-        <form onSubmit={startWork} className="flex items-center gap-2 px-3 pb-3">
+        <form onSubmit={startWork} className={cn("flex gap-2 px-3 pb-3", multipleFiles ? "items-end" : "items-center")}>
           {/* The model and what a run costs read as one group; on a phone the facts sit under the model. */}
-          <div className="flex min-w-0 flex-1 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <div className={cn("flex min-w-0 flex-1 flex-col items-start gap-1", !multipleFiles && "sm:flex-row sm:items-center sm:gap-3")}>
             {/* The attach button and the model chip share a line, so a phone does not give the button a row of its own. */}
             <div className={cn("flex max-w-full min-w-0 items-center gap-2 max-sm:flex-wrap", multipleFiles ? "flex-wrap" : "sm:max-w-[60%]")}>
             {filesBesideWords
@@ -548,7 +548,7 @@ export function HomeComposer({
             )}
             </div>
             {runnable && missingInput ? (
-              <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:px-1">{waitingFor}</p>
+              <p className={cn("text-muted-foreground text-meta min-w-0 max-sm:px-1", multipleFiles ? "text-pretty" : "truncate")}>{waitingFor}</p>
             ) : factsLine ? (
               <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:px-1">{factsLine}</p>
             ) : null}
