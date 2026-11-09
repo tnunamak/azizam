@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 
 import json
 
-from gateway import client_errors, image_extensions, image_output
+from gateway import client_errors, image_extensions, image_output, provenance
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
 from gateway.workflow_runtime_types import (
@@ -98,7 +98,8 @@ class OpenAIImagesJson(Shape):
         extensions = wire.get("extensions")
         block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
         if isinstance(block, Mapping):
-            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()})
+            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()
+                           if name not in provenance.RESERVED_GATEWAY_CONTROLS})
         dimensions = self.dimensions(wire.get("size"))
         if dimensions is not None and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
             inputs["width"], inputs["height"] = dimensions
@@ -136,6 +137,13 @@ class OpenAIImagesJson(Shape):
             if not isinstance(extensions, Mapping):
                 return refuse("extensions must be a JSON object string", "extensions", "invalid_json")
             fields["extensions"] = extensions
+        block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
+        for control in (provenance.RESERVED_GATEWAY_CONTROLS if isinstance(block, Mapping) else ()):
+            if control in block:                             # a gateway control belongs to no workflow: it is checked here
+                try:
+                    provenance.parse_metadata_mode(block[control])
+                except provenance.MetadataModeError as error:
+                    return refuse(str(error), f"extensions.{image_extensions.WORKFLOW_EXTENSION_NAMESPACE}.{control}", "invalid_value")
 
         refused = self.front(fields)
         if refused is not None:
@@ -239,7 +247,19 @@ class OpenAIImagesJson(Shape):
 ECHOED = ("output_format", "background", "quality", "size")
 
 
-MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response
+MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response; "post_composite": (picture, mask) -> mode | Response
+
+
+PICTURE_SIZE: dict[str, Callable[[bytes], tuple[int, int] | None]] = {}    # the deployment's picture reading: "picture": bytes -> (width, height) | None
+
+
+async def _peek(upload: Any) -> bytes:
+    """A file part's content, left readable."""
+    if isinstance(upload, _Bytes):
+        return upload.content
+    data = await upload.read()
+    await upload.seek(0)
+    return data
 
 
 class _Bytes:
@@ -249,6 +269,7 @@ class _Bytes:
 
     def __init__(self, filename: str | None, content: bytes) -> None:
         self.filename, self._content = filename, content
+        self.content = content
 
     async def read(self, size: int = -1) -> bytes:
         block, self._content = (self._content, b"") if size < 0 else (self._content[:size], self._content[size:])
@@ -293,6 +314,7 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     files = "any"                  # an edit may take several pictures (a workflow with more than one required asset)
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
     not_object_text = "The request body must be a JSON object"
+    size_from_picture: ClassVar[bool] = True   # a request that asks for no size runs, and answers with, the picture's own
 
     def dimensions(self, text: Any) -> tuple[int, int] | None:
         size = read_size(text)
@@ -322,11 +344,30 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     def check_count(self, count: int) -> Response | None:
         return None
 
-    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request, fields: dict[str, Any]
                               ) -> list[tuple[str, Any]] | Response:
+        prepared = await self._fold_mask(entry, uploads, request)
+        if isinstance(prepared, Response) or not self.size_from_picture or self.dimensions(fields.get("size")) is not None:
+            return prepared
+        first = next((upload for name, upload in prepared if name in IMAGE_PARTS), None)
+        read = PICTURE_SIZE.get("picture")
+        found = read(await _peek(first)) if first is not None and read is not None else None
+        if found is not None:                   # no size asked for: the run, and the answer, use the picture's own
+            fields["size"] = f"{found[0]}x{found[1]}"
+            answer = getattr(request.state, "answer_form", None)
+            if isinstance(answer, dict):
+                answer["size"] = fields["size"]
+        return prepared
+
+    async def _fold_mask(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+                         ) -> list[tuple[str, Any]] | Response:
         """A workflow whose binding asks for the mask in the source picture's alpha gets one picture and no mask part."""
         masks = [upload for name, upload in uploads if name == MASK_PART]
+        if masks:       # a request with a mask is not asked to make a cutout of the picture
+            request.state.run_options = {"masked": True}
         compose = MASKING.get("source_alpha")
+        if masks and not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
+            return await self._check_composite(entry, uploads, masks[0], request)
         if not masks or compose is None or not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
             return uploads
         first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
@@ -343,6 +384,27 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
             answer["image_mask_source"] = mode
         return [(name, _Bytes(first.filename, content) if upload is first else upload)
                 for name, upload in uploads if name != MASK_PART]
+
+    async def _check_composite(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], mask: Any, request: Request
+                               ) -> list[tuple[str, Any]] | Response:
+        """A workflow whose binding lists the ``post_composite_mask`` stage keeps the mask as a file of the run; the mask is
+        read here so a bad one is refused before any work, and the answer names how it will be applied."""
+        check = MASKING.get("post_composite")
+        if check is None or not any("post_composite_mask" in (b.binding.get("result_processing") or ()) for b in entry.bindings.values()):
+            return uploads
+        first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
+        if first is None:
+            return uploads
+        mode = check(await _peek(first), await _peek(mask))
+        if isinstance(mode, Response):
+            _wire.note(MASK_PART, rejected="invalid_mask")
+            return mode
+        _wire.fact("", mode, "mask_mode:post_composite")
+        answer = getattr(request.state, "answer_form", None)
+        if isinstance(answer, dict):
+            answer["image_mask"] = "post-composite"
+            answer["image_mask_source"] = mode
+        return uploads
 
     def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
                       exists: Callable[[str], bool]) -> str | None:
@@ -410,6 +472,7 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
     shape_id = "openai.images.variations"
     files = "one"
+    size_from_picture = False
     standard_fields = image_extensions.STANDARD_IMAGE_VARIATIONS_FIELDS
 
     def check_count(self, count: int) -> Response | None:

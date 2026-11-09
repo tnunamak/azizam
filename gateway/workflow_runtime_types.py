@@ -55,6 +55,7 @@ IDEMPOTENCY_CONFLICT = "idempotency_conflict"          # the key was used for a 
 IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"    # the key's first request has not finished deciding (409, retry)
 JOB_NOT_FOUND = "job_not_found"                        # absent, or not readable by this caller (the same answer)
 RESULT_UNAVAILABLE = "result_unavailable"              # erased, expired, not yet published, or not the caller's to read
+JOB_NOT_CREATED = "job_not_created"                    # the job store failed while the job was made (500, nothing stored)
 MEDIA_PATH_UNSUPPORTED = "media_path_unsupported"      # a file part addressed below a top-level input name
 # Reasons ``AdapterAvailability.binding_problem`` may return for the live state of the service behind a binding (S7 parity
 # M4). ``target_gate`` turns each into a 503 ``RunRefused`` before a job exists; ``binding_retry_after_s`` gives the delay.

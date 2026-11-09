@@ -25,7 +25,7 @@ from tests import test_adapter_differential_s7 as s7
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
 from tests.support.s7_parity_images_facts import (
-    assert_same, asset_files, data_items, doc, engine, engine_bodies, engine_without_probes, failure, header, headers_with,
+    assert_same, asset_files, data_items, doc, engine, engine_bodies, engine_without_probes, failure, prompt_bodies, header, headers_with,
     item_keys, media_jobs, old_has, origins, receipt_fields, receipt_work_fields, receipt_row, receipt_summary, receipts, retention_destinations,
     sleeps, status, submit_receipt, top_keys,
 )
@@ -139,6 +139,21 @@ def _hold_the_row_run(setup):
     return held
 
 
+def _let_the_row_run_finish(setup):
+    """A row starts its run at once, where the old route waits for the recipe's run step; the recipe's step lets the loop turn
+    until the row's run has ended."""
+    def settled(rig):
+        setup(rig)
+
+        async def finish(_rig, route):
+            if route.mode == "job":
+                for _ in range(400):
+                    await asyncio.sleep(0)
+
+        rig.set(s7, "_run_job", finish)
+    return settled
+
+
 def cell(tmp_path, code, outcome):
     """One S7 cell (the golden rig's route x outcome recipe) on the old route and on its row."""
     results = []
@@ -151,6 +166,8 @@ def cell(tmp_path, code, outcome):
             setup = _also_switch_off(setup)
         if use_row and route.mode == "job" and outcome in ("wait_timeout", "cancel_queued", "disconnect", "replay_same"):
             setup = _hold_the_row_run(setup)
+        if use_row and route.mode == "job" and outcome == "upstream_failure":
+            setup = _let_the_row_run_finish(setup)
         results.append(observe(tmp_path, route.path, drive, setup, row=use_row, name=f"{code}-{outcome}"))
     return results
 
@@ -255,11 +272,19 @@ def test_images_15_adjustment_text_is_requested_arrow_effective(tmp_path):
     assert_same(old, row, ("text", lambda o: header(o, "x-azizam-size-adjusted")), ("warnings", lambda o: receipt_fields(o, "warnings")))
 
 
-@ROW_PENDING
 def test_images_16_background_removal_headers(tmp_path):
     old, row = pair(tmp_path, GEN, {"json_body": {"prompt": "a red fox", "response_format": "b64_json", "background": "transparent"}}, ok)
     old_has(old, "the removal header", header(old, "x-image-background-removal"))
     assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image-background")), engine_without_probes)
+
+
+def test_images_16b_a_failed_cutout_is_made_again_without_it(tmp_path):
+    def refused_once(rig):
+        base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
+            exchange("prompt-fails", "POST", "/prompt", {"status": 500, "body": [{"text": "a node failed"}]}, times=1, required=False)]))
+    old, row = pair(tmp_path, GEN, {"json_body": {"prompt": "a red fox", "response_format": "b64_json", "background": "transparent"}}, refused_once)
+    old_has(old, "the fallback source", header(old, "x-image-background-removal-source") == "rmbg_fallback")
+    assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image-background")), ("pixels", _pixels), engine_without_probes)
 
 
 def test_images_17_engine_traffic_of_one_round(tmp_path):
@@ -444,7 +469,6 @@ def test_images_36_library_asset_origin(tmp_path):
     assert_same(old, row, origins, asset_files)
 
 
-@ROW_PENDING
 def test_images_37_response_headers(tmp_path):
     old, row = pair(tmp_path, GEN, body(n=2), lambda rig: ok(rig, 2))
     old_has(old, "image headers", headers_with(old, "x-image"))
@@ -512,11 +536,10 @@ def test_images_E06_model_resolution(tmp_path, model):
     _edit_compare(old, row, ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow")))
 
 
-@ROW_PENDING
 def test_images_E07_default_size_from_the_input_image(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
     old_has(old, "an answer", status(old) == 200)
-    _edit_compare(old, row, ("size", lambda o: (doc(o) or {}).get("size")), ("prompt bodies", lambda o: engine_bodies(o, "/prompt")))
+    _edit_compare(old, row, ("size", lambda o: (doc(o) or {}).get("size")), ("prompt bodies", prompt_bodies))
 
 
 def test_images_E08_missing_prompt_400(tmp_path):
@@ -618,7 +641,6 @@ def test_images_E18_post_composite_mask(tmp_path):
                 ("b64", lambda o: [i.get("b64_json") for i in data_items(o)]))
 
 
-@ROW_PENDING
 def test_images_E19_response_headers(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(size="768X512"), edit_ok)
     old_has(old, "image headers", headers_with(old, "x-image"))
@@ -632,13 +654,31 @@ def test_images_E20_round_loop_traffic(tmp_path):
     assert_same(old, row, status, engine_without_probes, sleeps)
 
 
-@NEEDS_RH
+def _e21_facts():
+    return ("receipt", lambda o: receipt_work_fields(
+        o, "accepted_inputs", "rejected_inputs", "ignored_inputs", "resolved_workflow", "requested_workflow", "manifest_id", "metadata"))
+
+
 def test_images_E21_receipt_records_inputs_and_workflow(tmp_path):
-    old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
+    """The result's origin lists the picture the caller gave as its source, kept in the Library. An edit with no mask keeps
+    the upload itself, byte for byte."""
+    old, row = pair(tmp_path, EDIT, edit_form(model="qwen-image-2.1-edit"), variation_ok)
     old_has(old, "a receipt", receipt_row(old))
-    assert_same(old, row, receipt_summary, ("receipt", lambda o: receipt_fields(
-        o, "accepted_inputs", "rejected_inputs", "ignored_inputs", "resolved_workflow", "requested_workflow", "manifest_id", "metadata")),
-                origins, asset_files)
+    old_has(old, f"a source ({origins(old)!r})", any((o or {}).get("sources") for o in origins(old)))
+    assert_same(old, row, receipt_summary, _e21_facts(), origins, asset_files)
+
+
+def test_images_E21b_masked_edit_source_is_the_picture_the_engine_got(tmp_path):
+    """DELTA ``masked_edit_source``: when the workflow reads the mask in the picture's alpha, the row folds the mask into
+    the picture before the run, and the Library keeps the folded picture as the result's source; the old route kept the
+    upload as sent. Everything else of the origin and the receipt is the same."""
+    old, row = pair(tmp_path, EDIT, edit_masked(), edit_ok)
+    old_has(old, "a source", any((o or {}).get("sources") for o in origins(old)))
+
+    def shape(o):
+        return [None if x is None else {**x, "sources": [{**s, "asset_id": "<source>"} for s in x.get("sources") or []]} for x in origins(o)]
+    assert_same(old, row, receipt_summary, _e21_facts(), ("origins", shape), asset_files)
+    assert all(s["asset_id"] for x in origins(row) if x for s in x["sources"])
 
 
 # ------------------------------------------------------------------------------------------------ 3. images.variations
@@ -672,12 +712,11 @@ def test_images_V04_exactly_one_image(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@NEEDS_RH
 def test_images_V05_delegated_prompt_workflow_and_denoise(tmp_path):
     old, row = pair(tmp_path, VAR, var_form(), variation_ok)
     old_has(old, "an answer", status(old) == 200)
-    assert_same(old, row, status, ("prompt bodies", lambda o: engine_bodies(o, "/prompt")), engine_without_probes,
-                ("receipt", lambda o: receipt_fields(o, "resolved_workflow", "requested_workflow", "metadata")))
+    assert_same(old, row, status, ("prompt bodies", prompt_bodies), engine_without_probes,
+                ("receipt", lambda o: receipt_work_fields(o, "resolved_workflow", "requested_workflow", "metadata")))
 
 
 def test_images_V06_receipt_names_the_delegated_workflow(tmp_path):
@@ -795,11 +834,20 @@ def test_images_J02_body_not_object_400(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_J03_metadata_control_is_checked(tmp_path):
-    old, row = job_pair(tmp_path, job_body(metadata="nonsense"), job_setup(), run=False)
-    old_has(old, "an answer", status(old))
+    bad = {"com.azizam.workflow": {"metadata": "nonsense"}}
+    old, row = job_pair(tmp_path, job_body(extensions=bad), job_setup(), run=False)
+    old_has(old, "a refusal", status(old) == 400)
     assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
+
+
+def test_images_J03b_unknown_top_level_field_is_refused_at_submit(tmp_path):
+    """DELTA ``job_submit_refuses_unknown_field``: the old job route accepted a field no image wire knows (202) and the
+    worker's sync handler failed the job later; the row refuses it at submit as the sync wires do (400, no job)."""
+    old, row = job_pair(tmp_path, job_body(metadata="nonsense"), job_setup(), run=False)
+    old_has(old, "an accepted job", status(old) == 202 and media_jobs(old))
+    assert (status(row), len(media_jobs(row))) == (400, 0)
+    assert failure(row)["code"] == "unknown_parameter"
 
 
 def test_images_J04_policy_then_admission(tmp_path):
@@ -809,11 +857,10 @@ def test_images_J04_policy_then_admission(tmp_path):
         assert_same(old, row, status, failure, ("retry-after", lambda o: header(o, "retry-after")), receipt_summary)
 
 
-@NEEDS_RH
 def test_images_J05_admission_refusal_writes_a_receipt(tmp_path):
     old, row = cell(tmp_path, "ij", "admission_refusal")
     old_has(old, "a rejected receipt", receipt_summary(old))
-    assert_same(old, row, receipt_summary, ("resource decision", lambda o: receipt_fields(o, "resource_decision", "metadata")))
+    assert_same(old, row, receipt_summary, ("resource decision", lambda o: receipt_work_fields(o, "resource_decision", "metadata")))
 
 
 def test_images_J06_job_row_intent_workflow_payload(tmp_path):
@@ -874,8 +921,9 @@ def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
     assert len(media_jobs(row)) == 1 and engine_without_probes(row) == engine_without_probes(old)
 
 
-@ROW_PENDING
 def test_images_J11_job_store_failure_500(tmp_path):
+    """DELTA ``job_create_failure_text``: both answer 500 ``api_error`` and store no job; the old text named the exception
+    class (``Could not create image media job: RuntimeError``), the row says a fixed sentence and logs the class."""
     from gateway import media_jobs as store
 
     def setup(rig):
@@ -886,7 +934,8 @@ def test_images_J11_job_store_failure_500(tmp_path):
         rig.set(store, "create", boom)
     old, row = pair(tmp_path, JOB, job_body(), setup)
     old_has(old, "500", status(old) == 500)
-    assert_same(old, row, status, failure)
+    assert_same(old, row, status, ("jobs", lambda o: len(media_jobs(o))), ("type", lambda o: (failure(o) or {}).get("type")))
+    assert failure(row)["message"] == "the job could not be created"
 
 
 def test_images_J12_accepted_202_with_links(tmp_path):
@@ -1218,27 +1267,25 @@ def _pixels(o, i=0):
 
 
 def _half_mask():
-    image = Image.new("L", (8, 8), 0)             # the golden input is 8 x 8
-    for x in range(4, 8):
-        for y in range(8):
+    image = Image.new("L", (64, 64), 0)           # a row refuses a picture under 64 pixels, so the input is 64 x 64
+    for x in range(32, 64):
+        for y in range(64):
             image.putpixel((x, y), 255)
     out = io.BytesIO()
     image.save(out, "PNG")
     return ("mask.png", out.getvalue(), "image/png")
 
 
-@ROW_PENDING
 def test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels(tmp_path):
     """Section 6.5: masking runs in the adapter before the bundle commits, so the delivered pictures and the stored
     Library file are the masked bytes, and equal to what the old route delivers and stores."""
-    request = form(files={"image": IMG, "mask": _half_mask()})
+    # The shipped edit workflow with no mask node: its binding keeps the mask off the engine and lists the stage.
+    big = io.BytesIO()
+    Image.new("RGB", (64, 64), (200, 40, 40)).save(big, "PNG")
+    request = form(files={"image": ("in.png", big.getvalue(), "image/png"), "mask": _half_mask()}, model="flux2-klein")
 
     def no_source_alpha(rig):
-        # No shipped edit workflow lacks a mask input, so the rig turns the manifest's mask facts off: the same data
-        # question the route asks (``_manifest_uses_source_alpha_mask``, ``_manifest_route_managed_mask_input``).
-        edit_ok(rig)
-        rig.set(proxy, "_manifest_uses_source_alpha_mask", lambda manifest: False)
-        rig.set(proxy, "_manifest_route_managed_mask_input", lambda manifest: None)
+        base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], strict=False))
     old, row = pair(tmp_path, EDIT, request, no_source_alpha)
     old_has(old, "post-composite", header(old, "x-image-mask") == "post-composite")
     old_has(old, "a picture", _pixels(old))
@@ -1260,7 +1307,6 @@ def test_s7_background_fallback_and_offset_inpaint_preserve_composition(tmp_path
                 ("tile headers", lambda o: headers_with(o, "x-image-seam")), failure)
 
 
-@ROW_PENDING
 def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_path):
     """Section 6.8: each operation keeps its own cadence. The audio route sleeps 2 s per poll, the video media job 5 s,
     and neither is the image round's 0.05 s doubling to 0.5 s."""
@@ -1273,10 +1319,12 @@ def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_
     assert set(sleeps(a_old)).isdisjoint(image_round), "the old audio route uses the image schedule?"
     assert_same(a_old, a_row, status, sleeps, engine_without_probes)
 
+    # The old video route polls nothing inside the gateway: it answers "queued" and each status read asks the engine, so its
+    # side has no sleeps at all (read at 7daa31769). The video row runs the job in the gateway and polls at its own 5 s.
     v_old, v_row = cell(tmp_path / "video", "vc", "success")
-    old_has(v_old, "video poll sleeps", sleeps(v_old))
-    assert set(sleeps(v_old)).isdisjoint(image_round)
-    assert_same(v_old, v_row, sleeps, engine_without_probes)
+    assert sleeps(v_old) == []
+    assert sleeps(v_row) and set(sleeps(v_row)) == {5.0}
+    assert set(sleeps(v_row)).isdisjoint(image_round)
 
 
 def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):

@@ -1,10 +1,28 @@
 {
-  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there.",
+  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there. I2 (the image edit workflows): the post-composite result stage of the two Klein edit workflows, and the removed feather default of the inpaint workflow.",
   "fixes": {
     "audio.generate.ace-step-1.5-xl-turbo": {
       "remove": [
         ["inputs", "prompt"],
         ["bindings", "comfyui", "map", "prompt"]
+      ]
+    },
+    "image.edit.flux2-klein": {
+      "set": [
+        {"path": ["bindings", "comfyui", "result_processing"], "value": ["post_composite_mask"]}
+      ]
+    },
+    "image.edit.flux2-klein-4b": {
+      "set": [
+        {"path": ["bindings", "comfyui", "result_processing"], "value": ["post_composite_mask"]}
+      ]
+    },
+    "image.edit.qwen-image-2.1-inpaint": {
+      "remove": [
+        ["inputs", "mask_feather", "default"]
+      ],
+      "set": [
+        {"path": ["inputs", "mask_feather", "description"], "value": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).", "was": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge."}
       ]
     }
   }

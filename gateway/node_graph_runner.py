@@ -89,13 +89,24 @@ class Batching(Protocol):
 
 
 @dataclass(frozen=True)
+class Variant:
+    """The host's choice of graph for a run. ``edit`` changes a compiled graph into the chosen one (None: the graph as
+    compiled); ``facts`` are what the run reports of the choice. When the chosen graph fails, the run is made again on the
+    graph as compiled, and reports ``fallback_facts`` instead."""
+
+    edit: Callable[[dict[str, Any]], None] | None
+    facts: Mapping[str, Any]
+    fallback_facts: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class GraphHost:
     """What the runner reads from the gateway. Tests inject fakes for each of them."""
 
     engine: Callable[[str], tuple[str, Mapping[str, Any], Any, Any] | None]    # binding key -> (service, record, protocol, adapter)
     identity: Callable[[Any, str, Any], AdapterIdentity]
     problem: Callable[[Any], str | None]
-    adapter: Callable[[Mapping[str, Any], Any, RunContext], Any]               # the adapter over the person's asset store
+    adapter: Callable[..., Any]                          # (record, protocol, ctx, sources) -> the adapter over the person's asset store
     connection: Callable[[str, Mapping[str, Any]], Any]
     limits: Callable[[], result_bundle.ResultLimits]
     max_wait_s: Callable[[], float]
@@ -106,6 +117,11 @@ class GraphHost:
     say: Callable[[str], None] = lambda text: None
     # Each media input of the run, held by the engine, as the name the engine gives it: ``(ctx, adapter, connection) -> {input: name}``.
     stage_media: Callable[..., Awaitable[Mapping[str, str]]] | None = None
+    # The files the run was given, kept in the Library: ``ctx -> [{"asset_id", "name"}]``. The results name them as their sources.
+    sources: Callable[[RunContext], Awaitable[list[dict[str, str]]]] | None = None
+    # Which graph the run submits when the workflow has a second one for a second answer to the same request (a cutout of the
+    # picture): ``ctx -> Variant | None``. None: the graph as compiled.
+    variant: Callable[[RunContext], Awaitable["Variant | None"]] | None = None
 
 
 def retry_reason_of(kind: str, binding_key: str) -> str | None:
@@ -173,7 +189,8 @@ class NodeGraphRunner:
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
         service_id, record, protocol, _ = engine
-        adapter = self.host.adapter(record, protocol, ctx)
+        sources = await self.host.sources(ctx) if self.host.sources is not None else []
+        adapter = self.host.adapter(record, protocol, ctx, sources)
         runtime = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=lambda: self.host.connection(service_id, record),
             timing=(2.0, float(self.host.max_wait_s())), jobs_path=media_jobs.DB_PATH,
@@ -192,6 +209,29 @@ class NodeGraphRunner:
         await self._rounds(ctx, adapter, runtime, op, staged)
 
     async def _rounds(self, ctx: RunContext, adapter: Any, runtime: Any, op: str, staged: Mapping[str, str]) -> None:
+        host = self.host
+        outputs = ctx.pin.contract.get("outputs") or {result_bundle.DEFAULT_NAME: {}}
+        variant = await host.variant(ctx) if host.variant is not None else None
+        facts: Mapping[str, Any] = variant.facts if variant is not None else {}
+        try:
+            made = await self._collect(ctx, adapter, runtime, op, staged, variant.edit if variant is not None else None)
+        except RunFailed:
+            if variant is None or not variant.fallback_facts:
+                raise
+            # The second graph failed: the same request is made again on the graph as compiled.
+            facts = variant.fallback_facts
+            made = await self._collect(ctx, adapter, runtime, op, staged, None)
+        collected, result_name, rounds, models_freed, plan = made
+        processed = await self._stages(ctx, collected)
+        bundle = await self._store(ctx, adapter, processed, result_name or next(iter(outputs)), host.limits())
+        freed = models_freed or bool(getattr(plan.state, "models_freed", False))
+        ctx.record_result_metadata({"rounds": rounds, "returned": len(processed), "warnings": list(plan.warnings),
+                                    **dict(facts), **({"models_freed": True} if freed else {})})
+        protocol_jobs._commit_bundle(runtime, ctx.job_id, bundle, clear_marker=True)
+
+    async def _collect(self, ctx: RunContext, adapter: Any, runtime: Any, op: str, staged: Mapping[str, str],
+                       edit: Callable[[dict[str, Any]], None] | None) -> tuple[list[bytes], str | None, int, bool, Plan]:
+        """The files of all rounds of one graph, the name the engine gave them, the rounds run, and the plan."""
         host = self.host
         poll = adapter.poll_for(op)
         manifest_inputs = (ctx.pin.contract.get("inputs") or {})
@@ -219,13 +259,13 @@ class NodeGraphRunner:
                 files = await self._one_round(
                     ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, target,
                     probe, headers, binding, outputs, limits, poll, f"round {rounds}/{plan.max_rounds} (target={target})",
-                    failure_binding, conn, retry_freed=lambda: models_freed, staged=staged)
+                    failure_binding, conn, retry_freed=lambda: models_freed, staged=staged, edit=edit)
                 if files is None:       # one retry after the engine's models were freed
                     models_freed = True
                     files = await self._one_round(
                         ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, 1,
                         None, headers, binding, outputs, limits, poll, f"round {rounds}/{plan.max_rounds} after model unload",
-                        failure_binding, conn, retry_freed=lambda: True, staged=staged)
+                        failure_binding, conn, retry_freed=lambda: True, staged=staged, edit=edit)
                 names, round_files = files
                 result_name = names or result_name
                 offset += max(1, len(round_files))
@@ -243,20 +283,15 @@ class NodeGraphRunner:
             raise RunFailed("no_result", "upstream", "No images generated", upstream_status=500)
         if len(collected) < plan.total:
             plan.warnings.append(f"requested {plan.total} but produced {len(collected)} after {rounds} round(s)")
-        processed = await self._stages(ctx, collected)
-        bundle = await self._store(ctx, adapter, processed, result_name or next(iter(outputs)), limits)
-        freed = models_freed or bool(getattr(plan.state, "models_freed", False))
-        ctx.record_result_metadata({"rounds": rounds, "returned": len(processed), "warnings": list(plan.warnings),
-                                    **({"models_freed": True} if freed else {})})
-        protocol_jobs._commit_bundle(runtime, ctx.job_id, bundle, clear_marker=True)
+        return collected, result_name, rounds, models_freed, plan
 
     async def _one_round(self, ctx, adapter, session, runtime, op, template_request, manifest_inputs, offset, batching, plan, target,
-                         probe, headers, binding, outputs, limits, poll, label, failure_binding, conn, *, retry_freed, staged):
+                         probe, headers, binding, outputs, limits, poll, label, failure_binding, conn, *, retry_freed, staged, edit=None):
         host = self.host
         values = generated_defaults.offset_values(manifest_inputs, dict(ctx.generated), offset)
         round_body = {**dict(ctx.inputs), **staged, **values, **(dict(batching.round_inputs(plan, target)) if batching is not None else {})}
         request = CanonicalRequest(op=op, body=copy.deepcopy(round_body), params=template_request.params)
-        graph, payload = adapter.compile(op, request)
+        graph, payload = adapter.compile(op, request, edit=edit)
         media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
                                  path=media_jobs.DB_PATH)
 

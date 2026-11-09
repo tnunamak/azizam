@@ -1290,3 +1290,15 @@ def test_apply_release_fixes_keeps_a_path_whose_value_changed_type(monkeypatch):
     edited = {"a": {"flag": 1}, "b": "s"}  # True became 1: equal in Python, different in JSON
     migration.apply_release_fixes("x.y", edited)
     assert edited == {"a": {"flag": 1}, "b": "s"}
+
+
+def test_apply_release_fixes_sets_a_value_the_release_lacked_and_leaves_an_owner_value(monkeypatch):
+    monkeypatch.setattr(migration, "_frozen_documents", lambda: {"x.y": {"a": {"keep": 1}}})
+    monkeypatch.setattr(migration, "_frozen_fixes", lambda: {})
+    monkeypatch.setattr(migration, "_frozen_additions", lambda: {"x.y": [(["a", "stage"], ["one"], migration._OMIT), (["a", "keep"], 2, 1)]})
+    fresh = {"a": {"keep": 1}}
+    migration.apply_release_fixes("x.y", fresh)
+    assert fresh == {"a": {"keep": 2, "stage": ["one"]}}   # a value the release held (was) is replaced as well
+    owned = {"a": {"keep": 1, "stage": ["mine"]}}  # the owner already holds a value there: nothing is set
+    migration.apply_release_fixes("x.y", owned)
+    assert owned == {"a": {"keep": 1, "stage": ["mine"]}}

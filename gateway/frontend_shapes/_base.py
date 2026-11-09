@@ -189,7 +189,7 @@ class Shape:
         refused = self.postcheck(chosen, fields, uploads)
         if refused is not None:
             return refused
-        prepared = await self.prepare_uploads(chosen, uploads, request)
+        prepared = await self.prepare_uploads(chosen, uploads, request, fields)
         if isinstance(prepared, Response):
             return prepared
         uploads = prepared
@@ -202,6 +202,7 @@ class Shape:
         inputs = {name: coerce(chosen, name, value) for name, value in fields.items() if name not in self.transport_fields}
         inputs = self.fill_inputs(chosen, inputs, fields)
         key = request.headers.get(IDEMPOTENCY_HEADER) if self.honours_idempotency_key else None
+        options = {**options, **(getattr(request.state, "run_options", None) or {})}
         return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, options=options, idempotency_key=key or None,
                           frontend_id=row.id, failure_text=row.job_failure_text, retries=row.job_retries)
 
@@ -232,7 +233,7 @@ class Shape:
         """Hook: refusals the wire made once the workflow is known."""
         return None
 
-    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request, fields: dict[str, Any]
                               ) -> list[tuple[str, Any]] | Response:
         """Hook: the file parts the run is given, once the workflow is known (a wire may fold one part into another)."""
         return uploads

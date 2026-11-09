@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Any, AsyncContextManager, Awaitable, Callable, ContextManager, Iterable, Mapping
@@ -33,7 +34,9 @@ from gateway.access_plans import capability_for_intent
 from gateway.frontend_shapes import build_shape, bundled_rows
 from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
-    FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
+    JOB_NOT_CREATED, FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
+
+log = logging.getLogger(__name__)
 
 PREFER_ASYNC = "respond-async"
 REQUEST_ID_HEADER = "x-request-id"
@@ -73,6 +76,9 @@ class RowRouteDeps:
     # record_facts(owner, facts): what the shape adjusted, each as (name, value, warning): the receipt keeps the value under
     # ``metadata[name]`` and raises the warning.
     record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
+    # record_refusal(owner, caller, refused): the receipt of a request the run core refused keeps the evidence of why the
+    # service could not take it (the resource decision), as an admission refusal would have left it.
+    record_refusal: Callable[[Any, Any, RunRefused], None] | None = None
 
 
 def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
@@ -205,8 +211,14 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         run_request = dataclasses.replace(run_request, request_id=request_id, intent=intent)
         # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
         # finished job still answers that job when its backend has become unavailable (S7 parity 6.2).
-        outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
+        try:
+            outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
+        except Exception:  # noqa: BLE001 - the store failed: nothing was kept, and the client gets a fixed sentence
+            log.exception("a run could not be stored")
+            outcome = RunRefused(500, JOB_NOT_CREATED, "the job could not be created")
     if isinstance(outcome, RunRefused):
+        if deps.record_refusal is not None:
+            deps.record_refusal(owner, caller, outcome)
         refusal = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
         owner.report(status=refusal_status(refusal.status_code), reason=outcome.code)
         return refusal

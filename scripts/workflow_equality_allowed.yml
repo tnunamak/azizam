@@ -198,3 +198,13 @@ binding_edits:
     path: [comfyui, map, prompt]
     operation: remove
     reason: "Named defect fix: prompt and tags both wrote node 5 input tags."
+  - workflow: image.edit.flux2-klein-4b
+    path: [comfyui, result_processing]
+    operation: add
+    value: [post_composite_mask]
+    reason: "The binding keeps the mask off the engine (edge_only_inputs) and now lists the stage that applies it to the result, as the route did."
+  - workflow: image.edit.flux2-klein
+    path: [comfyui, result_processing]
+    operation: add
+    value: [post_composite_mask]
+    reason: "The binding keeps the mask off the engine (edge_only_inputs) and now lists the stage that applies it to the result, as the route did."

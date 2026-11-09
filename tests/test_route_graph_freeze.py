@@ -231,7 +231,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # POST /v1/3d/generations/glb arrived (see REMOVED_PATHS and ADDED_PATHS); the mesh workflow's documented sync and
         # async paths moved to /v1/3d/generations/glb (tests/fixtures/headless_openapi.json shows the same changes).
         # Before it the digest was 501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8.
-        assert route_graph.openapi_digest(proxy.app) == "8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5"
+        assert route_graph.openapi_digest(proxy.app) == "c4a9451c273b6939ab712658a9aec1dca0778dd9d27a579b67a813c5c604640d"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
