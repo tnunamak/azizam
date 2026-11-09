@@ -738,21 +738,29 @@ class Executor:
                     await self._finish_for(operation, verdict)
                     return
             after = self._resume_point(operation)
-            if await self._opens_next(operation, adapter, after) and not await self._load_still_verified(operation, adapter, policy):
-                # The load was verified before the restart; the engine may have died since. Never open on that old evidence.
-                print(f"[transition-gate] {operation.op_id} resumes at open but the target is not resident now; holding", flush=True)
-                # The hold is recorded at the open step (a held operation needs an unknown outcome): the owner resolves it
-                # there, after looking at the engine.
-                held = StepIntent(step="open", effect_key=f"{operation.op_id}:open", expected_incarnation=None)
-                await asyncio.to_thread(self.store.write_intent, operation.op_id, held)
-                await asyncio.to_thread(self.store.write_outcome, operation.op_id, "open",
-                                        EffectResult(outcome="unknown", evidence_ref="load_unverified_at_resume"))
-                await asyncio.to_thread(self.store.finish, operation.op_id, "reconciling", "reconciling")
-                return
-        current = await asyncio.to_thread(self.store.get, operation.op_id)
+        await self._resume_from(operation.op_id, adapter, policy, after)
+
+    async def _resume_from(self, op_id: str, adapter: TransitionAdapter, policy: Mapping[str, object],
+                           after: Optional[StepName]) -> None:
+        """Every recovery that goes on runs through here, on the stored row. One that would go on at the open step first
+        looks at the load again: the target must be resident, the offering and ready now. Otherwise it holds."""
+        current = await asyncio.to_thread(self.store.get, op_id)
         assert current is not None
+        if await self._opens_next(current, adapter, after) and not await self._load_still_verified(current, adapter, policy):
+            # The load was verified before the restart; the engine may have died since. Never open on that old evidence.
+            print(f"[transition-gate] {op_id} resumes at open but the target is not resident and ready now; holding", flush=True)
+            # The hold is recorded at the open step (a held operation needs an unknown outcome): the owner resolves it
+            # there, after looking at the engine.
+            if current.state != "running":
+                current = await asyncio.to_thread(self.store.resume, op_id)
+            held = StepIntent(step="open", effect_key=f"{op_id}:open", expected_incarnation=None)
+            await asyncio.to_thread(self.store.write_intent, op_id, held)
+            await asyncio.to_thread(self.store.write_outcome, op_id, "open",
+                                    EffectResult(outcome="unknown", evidence_ref="load_unverified_at_resume"))
+            await asyncio.to_thread(self.store.finish, op_id, "reconciling", "reconciling")
+            return
         if current.state == "reconciling":
-            current = await asyncio.to_thread(self.store.resume, operation.op_id)
+            current = await asyncio.to_thread(self.store.resume, op_id)
         self._launch_resume(current, after)
 
     async def _settled_verdict(self, operation: Operation, adapter: TransitionAdapter, policy: Mapping[str, object]) -> StepVerdict:
@@ -805,11 +813,7 @@ class Executor:
         if verdict != "continue":
             await self._finish_for(operation, verdict)
             return
-        current = await asyncio.to_thread(self.store.get, operation.op_id)
-        assert current is not None
-        if current.state == "reconciling":
-            current = await asyncio.to_thread(self.store.resume, operation.op_id)
-        self._launch_resume(current, step)
+        await self._resume_from(operation.op_id, adapter, policy, step)
 
     async def _opens_next(self, operation: Operation, adapter: TransitionAdapter, after: Optional[StepName]) -> bool:
         """True when a select or wake goes on at the open step: it would open the gate on what the load once showed."""
