@@ -121,7 +121,7 @@ class ProblemReports:
                  now: Callable[[], float] = time.time, hourly_limit: int = HOURLY_LIMIT) -> None:
         # A callable path is read at first use, so building the store at import reads no setting and touches no disk.
         self._path_source = path
-        self._schema_ready = False
+        self._schema_path: Path | None = None  # the database whose tables this store has made
         self._destinations, self._post, self._job_lookup, self._now = destinations, post, job_lookup, now
         self._hourly_limit = hourly_limit
         self._failures: dict[str, deque[tuple[float, dict[str, Any]]]] = {}
@@ -141,9 +141,9 @@ class ProblemReports:
         conn = sqlite3.connect(path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
-        if not self._schema_ready:
+        if self._schema_path != path:
             conn.executescript(_SCHEMA)
-            self._schema_ready = True
+            self._schema_path = path
         return conn
 
     # -- failures the gateway saw ---------------------------------------------------
