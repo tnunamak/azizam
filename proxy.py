@@ -27244,10 +27244,17 @@ def _row_receipt_owner(auth: AuthContext, request_id: str, path: str, row: Any, 
     declared_at = declared_at or path
     # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
     # activity read their capability from it. A route that declares none records the generic run intent.
-    owner = _RunReceiptOwner(RouteReceipt(
+    receipt = RouteReceipt(
         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, declared_at), path=path, request_id=request_id,
         backend=None if row.backend_at_run else row_routes.route_backend(row, declared_at), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
-        api_key_name=identity.name if identity else None))
+        api_key_name=identity.name if identity else None)
+    if row.receipt_allowed:
+        # The route's policy allowed the request before this receipt opened (as the removed media routes' receipts said, with
+        # the plan's detail level); the receipt is opened with that, since its visibility cannot change once it is begun.
+        receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
+        if identity is not None:
+            receipt.visibility = identity.access.receipt_detail
+    owner = _RunReceiptOwner(receipt)
     owner.short_names = row.receipt_names == "short"
     _ROW_RECEIPT.set(owner.receipt)
     return owner
@@ -27349,18 +27356,6 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         if candidate and candidate not in _video_workflow_table():       # the operator's ``videos.aliases``, as the old route read them
             return VIDEO_ALIASES.get(candidate.lower(), effective)
         return effective
-
-    def note_policy(self, caller: Any) -> None:
-        """The route's policy allowed this request (it was enforced before the receipt opened); the receipt says so, with the
-        detail level of the plan, as the old media receipts did."""
-        receipt = _ROW_RECEIPT.get()
-        if receipt is None or not isinstance(caller, AuthContext):
-            return
-        receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
-        access = getattr(caller.identity, "access", None)
-        import sys; print("DBGVIS", type(caller.identity), access and access.receipt_detail, receipt.visibility, file=sys.stderr)
-        if access is not None:
-            receipt.visibility = access.receipt_detail
 
     def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
         _begin_media_delivery(caller, _ROW_RECEIPT.get())

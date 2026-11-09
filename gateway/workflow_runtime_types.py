@@ -722,6 +722,8 @@ class FrontendRow:
     # How long (seconds) a delete of an unfinished job of this row waits for the run to stop after the cancel is requested
     # (row data: ``cancel_wait_s``). 0: no wait, so a job that does not stop at once is a delete conflict.
     cancel_wait_s: float = 0.0
+    # The row's receipt opens with the route policy's allowed decision and the plan's detail level (the removed media routes' receipts).
+    receipt_allowed: bool = False
 
 
 class FrontendShape(Protocol):
