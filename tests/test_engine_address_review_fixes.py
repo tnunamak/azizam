@@ -225,3 +225,60 @@ def test_a_disabled_required_service_with_a_failed_unit_makes_no_call_and_no_row
     assert calls == [] and probed == []
     assert [r for r in rows if r.get("key") == "svc"] == []
     assert not [r for r in rows if r.get("role") == "required" and r.get("live_status") == "down"]
+
+
+# --- recheck 3: a disabled backend with an HTTP health check -----------------------------------------------------------
+
+HEALTH_FORMS = {"relative": "/health", "absolute": "http://203.0.113.9:9999/ready"}
+
+
+@pytest.mark.parametrize("managed", [False, True], ids=["http-only", "lifecycle-and-health"])
+@pytest.mark.parametrize("health", HEALTH_FORMS.values(), ids=HEALTH_FORMS.keys())
+@pytest.mark.parametrize("enabled", OFF_FORMS, ids=[repr(f) for f in OFF_FORMS])
+def test_a_disabled_backend_with_a_health_check_is_not_probed_shown_or_sampled(enabled, health, managed, probed, monkeypatch):
+    from gateway import lifecycle_drivers
+    calls = []
+
+    async def failed(*a, **k):
+        calls.append(a)
+        return "failed"
+
+    for name in ("statuses", "status", "preflight"):
+        monkeypatch.setattr(lifecycle_drivers.SystemdDriver, name, failed)
+    written = []
+
+    async def capture(rows):
+        written.extend(rows)
+
+    monkeypatch.setattr(status_endpoint, "_write_backend_samples", capture)
+    record = {**COMPLETE, "enabled": enabled, "role": "required", "health_endpoint": health}
+    if managed:
+        record["lifecycle"] = {"driver": "systemd"}
+    config = {"backends": {"svc": record}}
+    assert status_endpoint._resolve_backend_targets(config) == []
+    rows = asyncio.run(status_endpoint._backend_grid(config))
+    asyncio.run(status_endpoint._sample_backend_health(config))
+    assert probed == [] and calls == [] and written == []
+    assert rows == [] or not [r for r in rows if r.get("key") == "svc"]
+    assert not [r for r in rows if r.get("role") == "required" and r.get("live_status") == "down"]
+
+
+def test_an_enabled_backend_with_a_health_check_is_still_a_target():
+    config = {"backends": {"svc": {**COMPLETE, "role": "required", "health_endpoint": "/health"}}}
+    assert [t["url"] for t in status_endpoint._resolve_backend_targets(config)] == ["http://203.0.113.9:9999/health"]
+
+
+# --- recheck 4: the endpoint's own query ---------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("base,endpoint,expected", [
+    ("https://h/p?tenant=a", "/health?ready=1", "https://h/p/health?tenant=a&ready=1"),
+    ("https://h/p?tenant=a", "/health#frag", "https://h/p/health?tenant=a"),
+    ("https://h/p?tenant=a", "/health?ready=1#frag", "https://h/p/health?tenant=a&ready=1"),
+    ("https://h/p?tenant=a&x=1", "/health?x=2", "https://h/p/health?tenant=a&x=2"),
+    ("https://h/p?dir=x/", "health?k=v/", "https://h/p/health?dir=x/&k=v/"),
+    ("http://[2001:db8::1]:9/p/?a=1", "/q?b=2", "http://[2001:db8::1]:9/p/q?a=1&b=2"),
+    ("https://h/p", "/health", "https://h/p/health"),
+], ids=["both", "fragment", "both-and-fragment", "collision-endpoint-wins", "no-reencode", "ipv6", "plain"])
+def test_join_base_path_merges_the_two_queries(base, endpoint, expected):
+    from gateway import service_registry
+    assert service_registry.join_base_path(base, endpoint) == expected

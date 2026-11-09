@@ -1953,10 +1953,19 @@ def _trim_path_slash(url: str) -> str:
 
 
 def join_base_path(base: str, endpoint: str) -> str:
-    """*endpoint* appended to the path of *base*; the base's query stays a query, after the joined path."""
+    """*endpoint* appended to the path of *base*; the two queries are merged, not stacked.
+
+    The endpoint is parsed on its own: only its path joins the base path. Both queries survive as written (no
+    re-encoding). A name in both queries keeps the endpoint's value: the endpoint is the more specific request.
+    The endpoint's fragment is dropped on purpose, and so is the base's: neither is sent to a server.
+    """
     parts = urlsplit(base)
-    path = parts.path.rstrip("/") + "/" + endpoint.lstrip("/")
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+    ep = urlsplit(endpoint)
+    path = parts.path.rstrip("/") + "/" + ep.path.lstrip("/")
+    own = {item.split("=", 1)[0] for item in ep.query.split("&") if item}
+    kept = [item for item in parts.query.split("&") if item and item.split("=", 1)[0] not in own]
+    query = "&".join([*kept, *(item for item in ep.query.split("&") if item)])
+    return urlunsplit((parts.scheme, parts.netloc, path, query, ""))
 
 
 NOT_CONFIGURED_REASON = "its service record names no address (host and port)"

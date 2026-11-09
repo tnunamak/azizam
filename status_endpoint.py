@@ -338,7 +338,7 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
     backends = config.get("backends", {}) or {}
     targets: list[dict[str, Any]] = []
     for key, cfg in backends.items():
-        if not isinstance(cfg, dict):
+        if not isinstance(cfg, dict) or not _is_enabled(cfg):
             continue
         url = service_health_endpoint(cfg)
         if not url:
