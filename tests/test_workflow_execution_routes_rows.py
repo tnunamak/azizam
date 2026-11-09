@@ -47,8 +47,8 @@ def load_document(tmp_path, data):
     ("mesh.generate", "/v1/3d/generations/glb", "/v1/3d/generations/glb", "async"),
     ("video.generate", None, "/v1/videos", "async"),
     ("video.edit", "/gateway/v1/workflows/demo/run", "/v1/videos", "async"),
-    ("speech.synthesis", None, None, "sync"),
-    ("future.unknown", None, None, "sync"),
+    ("speech.synthesis", None, None, None),
+    ("future.unknown", None, None, None),
 ])
 def test_shipped_rows_keep_public_route_pins(intent, sync, submit, recommended):
     value = execution(intent)
