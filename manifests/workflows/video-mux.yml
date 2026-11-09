@@ -13,7 +13,7 @@ description: Join a song or sound to a video. The picture and its frame rate sta
 typical_seconds: 5
 inputs:
   source_video:
-    label: a video to add sound to
+    label: a video
     help: The video that gets the new sound.
     type: asset
     accepts:

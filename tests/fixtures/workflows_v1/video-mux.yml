@@ -11,7 +11,7 @@ trusted: true
 typical_seconds: 5
 inputs:
   source_video:
-    label: a video to add sound to
+    label: a video
     help: The video that gets the new sound.
     type: asset
     media_type: video/*

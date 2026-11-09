@@ -4010,7 +4010,7 @@
     },
     "source_video": {
      "help": "The video that gets the new sound.",
-     "label": "a video to add sound to",
+     "label": "a video",
      "media_type": "video/*",
      "required": true,
      "type": "asset"
