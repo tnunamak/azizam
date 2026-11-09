@@ -11,8 +11,8 @@ of an entry (LLM catalog, current-loaded, decision runtime), and the
 capabilities a service-registry record declares. Operator declarations under
 the `model_metadata` key are DATA and always win over derived values.
 
-Operation metadata is read once from the shipped protocol-frontend rows. Other
-lookups are injected; this module reads no owner config and makes no network calls.
+Operation and service-capability metadata are read once from shipped registry rows.
+Other lookups are injected; this module reads no owner config and makes no network calls.
 """
 
 from __future__ import annotations
@@ -144,15 +144,91 @@ OPERATION_METADATA = load_operation_metadata()
 _LANGUAGE = OPERATION_METADATA["chat"]
 _DECISION = OPERATION_METADATA["decisions"]
 
-# Service-registry capability -> metadata, first match wins. These are the
-# gateway's own capability names (`backends.<id>.capabilities`), not engines.
-_SERVICE_CAPABILITIES: tuple[tuple[str, ModelMetadata], ...] = (
-    ("chat", _LANGUAGE),
-    ("completions", _LANGUAGE),
-    ("embeddings", OPERATION_METADATA["embeddings"]),
-    ("rerank", OPERATION_METADATA["rerank"]),
-    ("decisions", _DECISION),
-)
+# Service-registry capabilities map to operation metadata in release-file order.
+_SERVICE_CAPABILITY_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "service_capability_metadata.yml"
+
+
+@dataclass(frozen=True)
+class ServiceCapabilityAugmentation:
+    capability: str
+    match_type: str
+    input_modalities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ServiceCapabilityIndex:
+    rows: Mapping[str, ModelMetadata]
+    augmentation: ServiceCapabilityAugmentation
+
+
+def load_service_capability_metadata(
+    path: str | Path = _SERVICE_CAPABILITY_ROWS_PATH,
+) -> ServiceCapabilityIndex:
+    """Load an immutable first-match index; malformed release data is never ignored."""
+    path = Path(path)
+
+    def invalid(at: str, reason: str) -> ValueError:
+        return ValueError(f"{path}: {at}: {reason}")
+
+    def mapping(value: Any, at: str, keys: set[str]) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise invalid(at, "must be a mapping")
+        unknown = set(value) - keys
+        if unknown:
+            raise invalid(at, f"unknown keys: {', '.join(sorted(map(str, unknown)))}")
+        return value
+
+    def name(value: Any, at: str, seen: Mapping[str, Any]) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise invalid(at, "must be a nonempty string")
+        normalized = value.strip().lower()
+        if normalized in seen:
+            raise invalid(at, f"duplicate capability after normalization: {normalized!r}")
+        if value != normalized:
+            raise invalid(at, "must already be stripped and lowercase")
+        return value
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise invalid("document", f"cannot read service capability metadata: {exc}") from exc
+    document = mapping(document, "document", {"schema_version", "capabilities", "augmentation"})
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise invalid("schema_version", "must be 1")
+    rows = document.get("capabilities")
+    if not isinstance(rows, list) or not rows:
+        raise invalid("capabilities", "must be a nonempty ordered list")
+    found: dict[str, ModelMetadata] = {}
+    for index, row in enumerate(rows):
+        at = f"capabilities[{index}]"
+        row = mapping(row, at, {"capability", "operation"})
+        capability = name(row.get("capability"), f"{at}.capability", found)
+        operation = row.get("operation")
+        if not isinstance(operation, str) or operation not in OPERATION_METADATA:
+            raise invalid(f"{at}.operation", f"unknown operation: {operation!r}")
+        found[capability] = OPERATION_METADATA[operation]
+
+    augmentation = mapping(
+        document.get("augmentation"), "augmentation", {"capability", "match_type", "input_modalities"},
+    )
+    capability = name(augmentation.get("capability"), "augmentation.capability", {})
+    if capability in found:
+        raise invalid("augmentation.capability", "must not also be a matching row")
+    match_type = augmentation.get("match_type")
+    if not isinstance(match_type, str) or match_type not in MODEL_TYPES:
+        raise invalid("augmentation.match_type", f"unknown model type: {match_type!r}")
+    inputs = augmentation.get("input_modalities")
+    if (not isinstance(inputs, list) or not inputs
+            or any(not isinstance(item, str) or item not in INPUT_MODALITIES for item in inputs)):
+        raise invalid("augmentation.input_modalities", "must be a nonempty list of known input modalities")
+    return ServiceCapabilityIndex(
+        MappingProxyType(found),
+        ServiceCapabilityAugmentation(capability, match_type, _ordered(inputs, INPUT_MODALITIES)),
+    )
+
+
+# Loaded once, like OPERATION_METADATA; owner configuration cannot replace release data.
+SERVICE_CAPABILITY_METADATA = load_service_capability_metadata()
 
 # Gateway capability intents (gateway/capabilities.Capability.intent). Capabilities are produced by services and carry
 # an intent word and sometimes no modalities, so these defaults stay until the capability producers declare them (the
@@ -275,10 +351,12 @@ def operations_of(type_: Any, input_modalities: Any = None, among: Iterable[str]
 
 def from_service_capabilities(capabilities: Iterable[str] | None) -> ModelMetadata | None:
     caps = {str(c).strip().lower() for c in (capabilities or ()) if isinstance(c, str)}
-    for capability, metadata in _SERVICE_CAPABILITIES:
+    index = SERVICE_CAPABILITY_METADATA
+    for capability, metadata in index.rows.items():
         if capability in caps:
-            if metadata.type == "language" and "vision" in caps:
-                return _with_inputs(metadata, ("image",))
+            augmentation = index.augmentation
+            if metadata.type == augmentation.match_type and augmentation.capability in caps:
+                return _with_inputs(metadata, augmentation.input_modalities)
             return metadata
     return None
 

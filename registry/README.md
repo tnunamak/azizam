@@ -102,6 +102,29 @@ from route intent: the rerank row declares `type: reranking` even though its
 runtime policy shares the embeddings intent. Changing these rows requires a
 process restart; they are not owner-config metadata overrides.
 
+## Service capability model metadata
+
+`service_capability_metadata.yml` maps service-registry capability names to
+operation metadata from `protocol_frontends.yml`. Its `schema_version` is 1.
+`capabilities` is a nonempty ordered list of `capability` / `operation` rows:
+the first matching row wins, independently of the caller's capability order.
+Operation references must be keys of `gateway.model_metadata.OPERATION_METADATA`.
+
+The single `augmentation` declares a capability name, a `match_type` from
+`MODEL_TYPES`, and a nonempty `input_modalities` list from `INPUT_MODALITIES`.
+It adds inputs only after a row matches that model type. The shipped rule makes
+vision add image input to language; vision alone gives no metadata and does not
+change an embeddings match. This is first-match selection, not a shared-type or
+intersection rule.
+
+`gateway.model_metadata.load_service_capability_metadata(path)` rejects unknown
+keys/operations, empty or malformed files, non-string or noncanonical names,
+duplicates after normalization, and augmentation names also used by matching
+rows. Names in the file must already be stripped and lowercase; caller names
+retain their existing strip/lower normalization. Errors name the file and row.
+The index and its nested values are read-only and loaded once at import.
+Changes require a process restart; the file is release data, not owner config.
+
 ## Extension catalog route facts
 
 Serving `registered_routes` rows in `protocol_frontends.yml` may declare:
