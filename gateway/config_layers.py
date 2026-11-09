@@ -126,10 +126,15 @@ def same_value(left: Any, right: Any) -> bool:
     return canonical_json(left) == canonical_json(right)
 
 
+_BAD_ESCAPE = re.compile(r"~(?![01])")
+
+
 def split_pointer(pointer: Any) -> list[str]:
     """The segments of an RFC 6901 pointer. The empty pointer (the whole document) is never an entry."""
     if not isinstance(pointer, str) or not pointer.startswith("/"):
         raise PointerError(f"{pointer!r} is not a JSON Pointer that starts with '/'")
+    if _BAD_ESCAPE.search(pointer):
+        raise PointerError(f"{pointer!r} has an invalid escape; only ~0 and ~1 are allowed")
     return [segment.replace("~1", "/").replace("~0", "~") for segment in pointer[1:].split("/")]
 
 
@@ -663,9 +668,6 @@ def build_section(
     return _greedy(section, ordered, usable, shape_rejected, context, merge)
 
 
-_BAD_ESCAPE = re.compile(r"~(?![01])")
-
-
 def _retired_delete(section: Section, override: Override, faults: Sequence[Problem]) -> bool:
     """A delete whose only fault is that its pointer is no longer an entry, and that names nothing in the release.
 
@@ -675,8 +677,6 @@ def _retired_delete(section: Section, override: Override, faults: Sequence[Probl
     container the release still holds, or a malformed pointer stays a rejected override.
     """
     if override.op != OP_DELETE or not all(fault.code == "not_an_entry" for fault in faults):
-        return False
-    if _BAD_ESCAPE.search(override.pointer):
         return False
     try:
         segments = split_pointer(override.pointer)
