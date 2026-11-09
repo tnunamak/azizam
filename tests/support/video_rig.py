@@ -202,9 +202,9 @@ class World:
         return {p.name: p.read_bytes() for p in self.rig.cache.glob("*.mp4")}
 
     async def sleep(self, delay: float = 0, result=None):
-        """The runner's injected sleep: the test clock moves by the delay; nothing waits."""
-        self.now += float(delay or 0)
-        await asyncio.sleep(0)
+        """The runner's injected sleep. The test clock does not move: a runner that polls an engine the test has not driven yet
+        must not run out its wait in no real time. ``drive`` moves the clock itself where a state needs it (``missing``)."""
+        await asyncio.sleep(0.002)
         return result
 
 
