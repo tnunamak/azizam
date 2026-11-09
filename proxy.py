@@ -26948,7 +26948,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True),
         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
-        wire_id=_job_wire_id)
+        wire_id=lambda job_id: _job_wire_id(job_id))
 
 
 def _register_graph_runner() -> None:
