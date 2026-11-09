@@ -122,7 +122,8 @@ def parse_profile(raw: Any, *, source: str) -> Profile:
     for where, block in (("release", declared.get("release")), ("load", declared.get("load")),
                          ("checkpoint", declared.get("checkpoint")), ("restore", restore_block),
                          ("restore.reset", reset_block)):
-        if isinstance(block, Mapping) and block.get("failure_semantics", "unknown") not in FAILURE_SEMANTICS:
+        value = block.get("failure_semantics", "unknown") if isinstance(block, Mapping) else "unknown"
+        if not isinstance(value, str) or value not in FAILURE_SEMANTICS:  # a string first: a list or dict is unhashable
             raise ProfileError(f"{source}: {where}.failure_semantics is one of {', '.join(sorted(FAILURE_SEMANTICS))}")
     named = {}
     if "servable_check" in raw:
