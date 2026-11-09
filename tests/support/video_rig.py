@@ -155,7 +155,14 @@ class World:
         response = await self.call("POST", "/v1/videos", owner=owner,
                                    json_body={"prompt": prompt, "model": MODEL, **body})
         assert response.status_code == 200, response.text
-        return self.track(response.json()["id"], owner=owner)
+        video_id = self.track(response.json()["id"], owner=owner)
+        # A create answers once the job is queued; the runner submits its prompt a moment later. Wait for that submission, so
+        # the engine's prompts are in creation order (``engine_prompt_of`` maps by order).
+        deadline = time.monotonic() + 5.0
+        while len(self.engine.prompt_ids) < len(self.created):
+            assert time.monotonic() < deadline, f"the runner of {video_id} never submitted its prompt"
+            await asyncio.sleep(0.002)
+        return video_id
 
     def track(self, video_id: str, *, owner=ALICE) -> str:
         """Remember a job-backed video from a response, for ``engine_prompt_of``. Old-record ids pass through."""

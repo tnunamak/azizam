@@ -171,8 +171,10 @@ async def run_round(
         unseen = 0
         while remaining > 0 and (cadence.max_polls is None or polls < cadence.max_polls):
             if await is_disconnected():
-                await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="client disconnect", timeout=control_timeout, say=say)
-                raise RoundFailure(DISCONNECTED, prompt_id=prompt_id)
+                # The round ends as canceled only once the engine has dropped the prompt. A cancel the engine did not accept
+                # leaves the prompt running there, so the round keeps its place and asks again at the next look.
+                if await cancel(adapter, cancel_connection, session, prompt_id, headers, reason="client disconnect", timeout=control_timeout, say=say):
+                    raise RoundFailure(DISCONNECTED, prompt_id=prompt_id)
             delay = min(cadence.ramp_s[polls] if polls < len(cadence.ramp_s) else cadence.interval_s, remaining)
             polls += 1
             if delay:
