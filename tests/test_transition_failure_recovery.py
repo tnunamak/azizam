@@ -201,3 +201,37 @@ def test_a_restore_recorded_partial_before_a_crash_still_runs_its_declared_reset
     done = _restart(runtime, op_id)
     assert engine.resets == 1, "the declared reset runs after the restart"
     assert (done.state, gates.state("dom")) == ("succeeded", "open")
+
+
+# -- the matrix: every effect, every declared word, every attestation, direct and by query ----------------------------------
+
+import itertools  # noqa: E402
+
+from tests.test_transition_failure_semantics import EFFECTS, _invoke_op  # noqa: E402
+
+WORDS = {"failed": None, "partial": "partial", "no_change": "no_change", "success": "success",
+         "succeeded": "unknown", "missing": "unknown"}  # an unlisted word and a missing one read as unknown
+ATTEST = ["absent", "unknown", "no_change"]
+CELLS = list(itertools.product(EFFECTS, WORDS, ATTEST, ["direct", "query"]))
+
+
+def _expected(word: str, attest: str) -> str:
+    if word == "failed":
+        return "no_change" if attest == "no_change" else "partial"
+    return WORDS[word]  # type: ignore[return-value]
+
+
+@pytest.mark.parametrize(("op", "word", "attest", "via"), CELLS,
+                         ids=[f"{op}-{word}-{attest}-{via}" for op, word, attest, via in CELLS])
+def test_the_adapter_maps_every_declared_word_by_the_profile_for_every_effect(tmp_path, op, word, attest, via) -> None:
+    body: dict[str, Any] = {"bytes": 1, "evidence_ref": "e"}
+    if word != "missing":
+        body["outcome"] = word
+    key = "transition.query" if via == "query" else f"transition.{op}"
+    profile = snapshot_profile() if attest == "absent" else attesting(**{op: attest})
+    adapter = adapter_for(profile, FakeInvoke({key: Reply(200, body)}), tmp_path)
+    if via == "direct":
+        got = run(_invoke_op(adapter, op))
+    else:
+        got = run(adapter.query("dom", reset_intent() if op == "reset" else intent(op)))
+    assert got.outcome == _expected(word, attest)
