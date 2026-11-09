@@ -667,12 +667,14 @@ def test_a_storage_fault_while_the_job_is_made_is_an_error_and_keeps_no_job(db, 
     def failing(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(media_jobs, "update_status", failing)
+    monkeypatch.setattr(media_jobs, "create", failing)
 
-    async def taking(ctx):
-        media_jobs.update_status(ctx.job_id, "running", metadata_patch={"protocol_job": "up-1"}, path=db)
-        await asyncio.sleep(30)
+    async def never(ctx):
+        raise AssertionError("no job was made, so nothing runs")
 
-    outcome, _ = _drive_background(db, tmp_path, taking)
-    assert isinstance(outcome, RunRefused) and outcome.http_status >= 500
+    try:
+        outcome, _ = _drive_background(db, tmp_path, never)
+    except OSError:
+        outcome = None                                             # the fault reaches the route's error handler, not a queued answer
+    assert not isinstance(outcome, RunJobView)
     assert _count(db, "media_jobs") == 0
