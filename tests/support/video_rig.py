@@ -305,6 +305,10 @@ def run(tmp_path: Path, exercise) -> None:
         # the wait is cut to a moment and the 409 comes at once.
         row = proxy._video_row()
         rig.monkeypatch.setattr(proxy, "_video_row", lambda: dataclasses.replace(row, cancel_wait_s=CANCEL_WAIT_S))
+        # The run core holds one run at a time (``images.media_jobs.concurrency``, 1); the old video route handed every request to
+        # the engine at once. The parity files keep several videos in flight, so the rig opens the slots (reported as a
+        # difference of the move, not asserted away here).
+        rig.monkeypatch.setattr(proxy, "_workflow_run_semaphore", asyncio.Semaphore(16))
         world = World(rig, engine)
         rig.monkeypatch.setattr(time, "time", lambda: world.now)
         rig.monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", None)
