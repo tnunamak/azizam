@@ -1,0 +1,13 @@
+diff --git a/tests/fixtures/route_graph_frozen.json b/tests/fixtures/route_graph_frozen.json
+index 92f291374..41398659b 100644
+--- a/tests/fixtures/route_graph_frozen.json
++++ b/tests/fixtures/route_graph_frozen.json
+@@ -3682,7 +3682,7 @@
+    "PUT": "/{path:path} unmatched_route"
+   }
+  },
+- "openapi_sha256": "31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1",
++ "openapi_sha256": "76930caaf71c809c1e758c0886bbb7eabf2818d717ee2cd6711624a163e6c04b",
+  "policy": {
+   "aliases": [
+    {

@@ -1,0 +1,22 @@
+diff --git a/tests/fixtures/adapter_differential/s7_ie_replay_conflict.json b/tests/fixtures/adapter_differential/s7_ie_replay_conflict.json
+index 94cf30d63..1d0a2b82e 100644
+--- a/tests/fixtures/adapter_differential/s7_ie_replay_conflict.json
++++ b/tests/fixtures/adapter_differential/s7_ie_replay_conflict.json
+@@ -1128,7 +1128,7 @@
+           "intent": "image.edit",
+           "job_id": "<job:1>",
+           "latency_ms": "<duration>",
+-          "manifest_hash": "da091f4d339dd0146453c642d74646c9d286613b230743fccbf2ae81e62712de",
++          "manifest_hash": "8b5c2cfdc8e7c4ee6160223074cde864124f70edccb79f2449c856e96f8ec0b7",
+           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
+           "manifest_version": "0.1.0",
+           "metadata": {},
+@@ -1223,7 +1223,7 @@
+           "intent": "image.edit",
+           "job_id": "<job:2>",
+           "latency_ms": "<duration>",
+-          "manifest_hash": "da091f4d339dd0146453c642d74646c9d286613b230743fccbf2ae81e62712de",
++          "manifest_hash": "8b5c2cfdc8e7c4ee6160223074cde864124f70edccb79f2449c856e96f8ec0b7",
+           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
+           "manifest_version": "0.1.0",
+           "metadata": {},

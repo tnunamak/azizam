@@ -1,0 +1,14 @@
+diff --git a/tests/fixtures/headless_openapi.json b/tests/fixtures/headless_openapi.json
+index db896f37a..518efaf38 100644
+--- a/tests/fixtures/headless_openapi.json
++++ b/tests/fixtures/headless_openapi.json
+@@ -2077,8 +2077,7 @@
+             "type": "integer"
+           },
+           "mask_feather": {
+-            "default": 48,
+-            "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.",
++            "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
+             "maximum": 256,
+             "minimum": 0,
+             "type": "integer"

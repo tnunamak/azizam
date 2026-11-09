@@ -1,0 +1,13 @@
+diff --git a/tests/support/adapter_differential_deltas.py b/tests/support/adapter_differential_deltas.py
+index 9f1edfba4..7a59ef221 100644
+--- a/tests/support/adapter_differential_deltas.py
++++ b/tests/support/adapter_differential_deltas.py
+@@ -21,7 +21,7 @@ from typing import Any, Mapping, Sequence
+ KINDS = frozenset({
+     "sync_workflow_lifecycle", "envelope_v2", "workflow_run_metadata", "graph_template_meta",
+     "mesh_route_replacement", "idempotency_acceptance", "terminal_cancel_noop", "bounded_wait", "receipt_status_words",
+-    "job_row_metadata", "receipt_closes_with_job_outcome", "job_one_receipt", "remove",
++    "job_row_metadata", "job_submit_refuses_unknown_field", "job_create_failure_text", "receipt_closes_with_job_outcome", "job_one_receipt", "remove",
+ })
+ #: Places a moved route keeps identical (golden design section 4): engine requests, every header, the receipt's
+ #: accepted inputs and resolved workflow, and the stored asset rows. No kind may name a path through one of them.

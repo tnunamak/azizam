@@ -1,0 +1,663 @@
+diff --git a/proxy.py b/proxy.py
+index 037daeed6..d2141768d 100755
+--- a/proxy.py
++++ b/proxy.py
+@@ -103,51 +103,51 @@ from gateway import (
+     route_registry,
+     service_registry,
+     session_policy,
+     speech_voices,
+     step_up,
+     video_inputs,
+     video_media_job_http,
+     video_media_jobs,
+     voice_design,
+ )
+ from gateway import secret_store, runtime_secrets, projection
+ from gateway import directory_index, loop_watchdog, request_connections, video_extend
+ from gateway import request_history, request_history_api, request_history_capture, request_history_slot
+ from gateway.http_tls import tls_context
+ from gateway import asset_types, media_delivery, media_fetch, media_metadata, provenance
+ from gateway import video_subject, thumbnails, output_availability
+ from gateway import video_job_records, prompt_metadata_migration
+ from gateway import realtime_proxy
+ from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
+ from gateway import pinned_runtime, request_spool, workflow_run
+ from gateway.engine_protocol import graph_round
+ from gateway import frontend_shapes
+ from gateway.frontend_shapes import shapes as frontend_wire_shapes
+ from gateway.engine_protocol.types import ResultContext
+ from gateway.workflow_runtime_types import (
+-    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
++    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, SERVICE_REASONS, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
+ from gateway import media_input_assets, media_input_leases, media_inputs
+ from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
+ from gateway import decisions_api, decision_provider_execution
+ from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, node_graph_runner, row_routes, workflow_adapters
+ from gateway.decision_routing import DecisionRuntime
+ from gateway import rerank as rerank_api
+ from gateway import stable_aliases
+ from gateway import model_metadata
+ from gateway import engine_check
+ from gateway.engine_connection import InferenceConnectionError, inference_connection
+ from gateway import speech_stream
+ from gateway.engine_protocol import inline_tts as tts_adapter
+ from gateway.engine_protocol import audio_graph, node_graph
+ from gateway.engine_protocol import reviewed as reviewed_adapters
+ from gateway.engine_protocol.types import JobRef, JobState
+ from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError,
+     MalformedResponse as ProtocolMalformedResponse, UpstreamError as ProtocolUpstreamError)
+ from gateway.engine_protocol.types import StreamReply as ProtocolStreamReply
+ from gateway.engine_switch import SwitchUnavailable as ProtocolSwitchUnavailable
+ from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
+ from gateway.engine_protocol.types import Connection as AdapterConnection
+ from gateway.engine_protocol.types import Reply as AdapterReply
+ from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
+ from gateway.engine_protocol.errors import UnsupportedByAdapter as ProtocolUnsupportedByAdapter
+ from gateway.engine_protocol import node_info
+@@ -16510,71 +16510,78 @@ _mesh_workflow_cache: tuple[Any, Any] | None = None
+ 
+ 
+ def current_mesh_workflow() -> "mesh_api.MeshWorkflow":
+     """The mesh workflow for the registry's record now, else for the bundled record. Called on every request and listing
+     (never captured at import), so a record the owner changes is used by the next one."""
+     global _mesh_workflow_cache
+     record = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) or _BUNDLED_MESH_RECORD
+     cached = _mesh_workflow_cache
+     if cached is not None and cached[0] is record:
+         return cached[1]
+     workflow = mesh_api.mesh_workflow_from_record(record)
+     _mesh_workflow_cache = (record, workflow)
+     return workflow
+ 
+ 
+ MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
+ 
+ 
+ def _live_service_registry() -> dict | None:
+     try:
+         return ADMIN_STORE.get_service_registry()
+     except Exception:  # noqa: BLE001 - an unreadable registry fails the route closed, not the gateway
+         return None
+ 
+ 
++def _store_workflow_sources(inputs: Iterable[asset_types.OutputInput], owner: Any, maker: Any) -> list[dict[str, str]]:
++    """The Library notes (``asset_id`` and the file's stem) of the files a workflow was given. They keep no prompt. A file
++    that cannot be stored is left out: a missing source note never costs the caller a finished output."""
++    sources: list[dict[str, str]] = []
++    for item in inputs:
++        try:
++            source_id = store_asset_bytes(
++                item.data, kind=asset_types.asset_prefix_for_media_type(item.media_type),
++                suffix=asset_types.suffix_for_media_type(item.media_type),
++                owner_key_hash=owner, maker_person_id=maker, keep_prompt=False)
++        except Exception:  # noqa: BLE001
++            logging.getLogger("gateway.assets").exception("a workflow input was not stored")
++            continue
++        sources.append({"asset_id": source_id, "name": Path(item.name).stem or "source"})
++    return sources
++
++
+ def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
+     """Store a file a workflow made, and the files it was given, with what made it (``origin`` in its sidecar).
+ 
+     Every workflow route that keeps a result calls this: the 3D route and the image routes alike. The inputs are
+     stored first so the output can name them; they keep no prompt, which belongs to the result. An input that cannot
+     be stored is left out; the output is still kept. Which workflow made the file never changes what is stored."""
+     context = auth if isinstance(auth, AuthContext) else None
+     owner = _asset_owner_key(context)
+     # Without a signed-in person the run's own maker (the media delivery) stands.
+     maker = _auth_person_id(context) or _CURRENT_MAKER
+-    sources: list[dict[str, str]] = []
+-    for item in output.inputs:
+-        try:
+-            source_id = store_asset_bytes(
+-                item.data, kind=asset_types.asset_prefix_for_media_type(item.media_type),
+-                suffix=asset_types.suffix_for_media_type(item.media_type),
+-                owner_key_hash=owner, maker_person_id=maker, keep_prompt=False)
+-        except Exception:  # noqa: BLE001 - a missing source note never costs the caller a finished output
+-            logging.getLogger("gateway.assets").exception("a workflow input was not stored")
+-            continue
+-        sources.append({"asset_id": source_id, "name": Path(item.name).stem or "source"})
++    sources = _store_workflow_sources(output.inputs, owner, maker)
+     origin = {"workflow_name": output.workflow_name, "request_id": output.request_id, "sources": sources,
+               "takes_text": output.takes_text}
+     return store_asset_bytes(
+         output.data, kind=asset_types.asset_prefix_for_media_type(asset_types.media_type_for_suffix(output.suffix)),
+         suffix=output.suffix, owner_key_hash=owner, maker_person_id=maker,
+         origin={key: value for key, value in origin.items() if value or key == "takes_text"})
+ 
+ 
+ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput:
+     """A file a caller uploaded to a workflow, as the store keeps it: its name and the media type it was sent with,
+     else the one its suffix gives, else a picture (what an image route is given)."""
+     name = str(getattr(upload, "filename", None) or "input")
+     sent = str(getattr(upload, "content_type", None) or "").split(";")[0].strip().lower()
+     if asset_types.kind_for_media_type(sent) == asset_types.UNKNOWN_KIND:
+         sent = asset_types.media_type_for_suffix(Path(name).suffix)
+     if asset_types.kind_for_media_type(sent) == asset_types.UNKNOWN_KIND:
+         sent = "image/png"
+     return asset_types.OutputInput(data, name, sent)
+ 
+ 
+ MESH_DEPS = mesh_api.MeshApiDeps(
+     current_manifest=current_mesh_workflow,
+     workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
+     frontend_records=lambda: route_registry.protocol_frontend_records(
+         registry=_live_service_registry(), proxy_config=runtime().config),
+@@ -26672,51 +26679,52 @@ class _WorkflowRunPort:
+         from gateway.record_ownership import owns_record
+         return owns_record("media_job", job, viewer=viewer_from_auth(caller, owner_keys=()),
+                            apps=content_makers.Apps(ADMIN_STORE.path))
+ 
+     def can_cancel(self, job: Mapping[str, Any], caller: AuthContext) -> bool:
+         return self.can_read(job, caller) or self.is_owner(caller)
+ 
+     def job_owner(self, caller: AuthContext) -> tuple[str | None, str | None, str | None]:
+         identity = caller.identity
+         return (getattr(identity, "key_hash", None), getattr(identity, "app_id", None), getattr(identity, "name", None))
+ 
+     # policy and admission
+     def target_refusal(self, entry: Any, caller: AuthContext) -> RunRefused | None:
+         decision = _workflow_policy_denial(entry, caller)
+         if decision is None:
+             return None
+         reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+         return RunRefused(403, decision.code or "policy_denied", reason)
+ 
+     def dispatch_target_problem(self, entry: Any, caller: AuthContext) -> str | None:
+         decision = _workflow_policy_denial(entry, caller)
+         return None if decision is None else (decision.code or "policy_denied")
+ 
+     def admission_refusal(self, resource_class: str, caller: AuthContext, *, count_queue: bool) -> RunRefused | None:
+         response = _media_job_admission_response(
+-            workflow_run.RUN_INTENT, count_queue=count_queue, auth_context=caller, resource_class=resource_class)
++            workflow_run.RUN_INTENT, count_queue=count_queue, auth_context=caller, resource_class=resource_class,
++            receipt=_ROW_REQUEST_RECEIPT.get())
+         return None if response is None else _refused_from_response(response)
+ 
+     def result_limits(self) -> result_bundle.ResultLimits:
+         return result_bundle.limits_from_config(runtime().config)
+ 
+     # what the job pins
+     def adapter_identity(self, entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+         runner = workflow_adapters.for_binding(binding_key)
+         if runner is not None:
+             return runner.identity(entry, binding_key, binding)
+         engine = _workflow_engine(binding.adapter_id)
+         if engine is None:
+             raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+         service_id, record, protocol, adapter = engine
+         return workflow_run.AdapterIdentity(
+             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+             interface_version=adapter.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+ 
+     def template_bytes(self, binding: Any) -> bytes | None:
+         ref = binding.template
+         if ref is None:
+             return None
+         if ref.inline is not None:
+             return job_envelope.canonical_bytes(workflow_run.plain(ref.inline))
+         return _resolve_workflow_artifact_path(None, ref.path).read_bytes() if ref.path else None
+@@ -26769,70 +26777,77 @@ class _WorkflowRunPort:
+                                      origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
+ 
+         def connection() -> AdapterConnection:
+             return _graph_service_connection(service_id, record)
+ 
+         runtime_ = pinned_runtime.PinnedRuntime(
+             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
+             timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
+             context=ResultContext(self.result_limits()))
+         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
+         # it. No operation of the protocol is picked by position.
+         op = str(ctx.pin.contract["intent"])
+         # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
+         body = {**dict(ctx.inputs), **dict(ctx.generated)}
+         if ctx.media:
+             body.update(await self._stage_media(ctx, adapter, connection))
+         await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+ 
+     async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
+         """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with
+         the job (staged in its spool, or named from the Library); an adapter that cannot take one refuses the run."""
+         stage = getattr(adapter, "stage_input", None)
+         if stage is None:
+             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
+         staged: dict[str, str] = {}
++        kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
+         for name, refs in ctx.media.items():
++            if name in kept_off_engine:
++                continue
+             if len(refs) != 1:
+                 raise ProtocolError("The adapter for this job takes one file for an input.", code="media_input_unsupported")
+             ref = refs[0]
+-            if ref.spool_key is not None:
+-                data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
+-            else:
+-                data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
+-                if data is None:
+-                    raise ProtocolError("An input file is no longer available.", code="input_unavailable")
++            data = await self.read_media(ctx, ref)
+             suffix = asset_types.suffix_for_media_type(ref.media_type)
+             try:
+                 staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                                            media_type=ref.wire_media_type or ref.media_type)
+             except (TransportFailure, ProtocolUpstreamError) as exc:
+                 # An engine that answered 200 without a name for the file is told apart from one that refused it.
+                 reason = "upload_no_name" if getattr(exc, "status", None) == 200 else "upload_failed"
+                 raise node_graph_runner.RunFailed(reason, "upstream", client_errors.REASONS[reason], upstream_status=502) from exc
+         return staged
+ 
++    async def read_media(self, ctx: workflow_run.RunContext, ref: Any) -> bytes:
++        """The bytes of one file the run was given (held in its spool, or named from the Library)."""
++        if ref.spool_key is not None:
++            return await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
++        data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
++        if data is None:
++            raise ProtocolError("An input file is no longer available.", code="input_unavailable")
++        return data
++
+     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
+         path = asset_cache_path(asset_id)
+         if path is None or not path.exists():
+             return None
+         owners = {str(o) for o in _read_asset_metadata(asset_id).get("owner_key_hashes") or [] if isinstance(o, str)}
+         from gateway.content_access import decide_own
+         if not owners or not decide_own(_asset_content_viewer(caller), owners):
+             return None
+         return path.read_bytes()
+ 
+ 
+     def close_recovered_receipt(self, request_id: str, status: str, reason: str) -> None:
+         """Startup recovery settled a run from its committed result: close the receipt a stopped gateway left open, unless
+         this process opened it after recovery began."""
+         receipt_store.close_recovered(request_id, status, reason, opened_before_ms=_RECOVERY_FENCE_MS)
+ 
+     async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
+         """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
+         handed off (a sync request closes its own) is not held here, and nothing is done."""
+         owner = _RUN_RECEIPT_OWNERS.pop(request_id, None)
+         if owner is not None:
+             owner.report(status=status, reason=reason)
+             await owner.settle()
+ 
+ 
+@@ -26915,112 +26930,222 @@ class _AdaptiveBatching:
+                 workflow_name=name, width=width, height=height)
+ 
+ 
+ def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):
+     """Rounds are sized from free memory for a workflow that takes a count of pictures or answers with pictures; any other run
+     is one round."""
+     spec = ctx.pin.contract.get("inputs") or {}
+     pictures = any(str((out or {}).get("media_type") or "").startswith("image/") for out in (ctx.pin.contract.get("outputs") or {}).values())
+     return _AdaptiveBatching() if "batch_size" in spec or pictures else None
+ 
+ 
+ def _graph_binding_problem(binding: Any) -> str | None:
+     """Why the graph service behind ``binding`` cannot take a run: not configured, switched off, or held out by the operator."""
+     found = _workflow_engine(binding.adapter_id)
+     if found is None:
+         return workflow_run.BINDING_UNAVAILABLE
+     service_id, record, _, _ = found
+     held = str(_operator_service_availability_overrides().get(service_id, {}).get("state") or "").strip().lower()
+     if record.get("enabled", True) is False or held == "disabled":
+         return SERVICE_DISABLED
+     if held in {"maintenance", "draining"}:
+         return SERVICE_NOT_ADMITTING
+     return None
+ 
+ 
++def _binding_ui_twin(binding: Mapping[str, Any]) -> dict | None:
++    """The hand-authored UI twin that sits next to the binding's graph file, or None (the fallback when none can be derived)."""
++    artifact = binding.get("workflow")
++    if not artifact:
++        return None
++    try:
++        return _load_ui_workflow(_resolve_workflow_artifact_path(None, str(artifact)))
++    except Exception:  # noqa: BLE001 - a twin is only a fallback
++        return None
++
++
++# The stages a binding's ``result_processing`` may name, by name: ``(ctx, files) -> files``. Each is added where its code is.
++_RESULT_STAGES: dict[str, Callable[..., Awaitable[list[bytes]]]] = {}
++
++
+ def _graph_runner_host() -> node_graph_runner.GraphHost:
+-    def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext) -> Any:
++    def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext, sources: Sequence[Mapping[str, str]] = ()) -> Any:
+         from gateway.engine_protocol.media import GatewayAssetStore
+         owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+-        return reviewed_adapters.adapter_for_backend(
++        origin = workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)
++        built = reviewed_adapters.adapter_for_backend(
+             record, next(iter(protocol.serves), ""),
+             assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
+-                                     origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
++                                     origin={**origin, "sources": [dict(item) for item in sources]} if sources else origin))
++        embed = getattr(built, "embed_workflow_with", None)
++        if embed is not None:       # the output carries the graph that made it, as the first-party routes' outputs do
++            twin = _binding_ui_twin(ctx.pin.binding)
++            embed(lambda graph: _derive_ui_workflow(graph) or twin)
++        return built
++
++    async def run_sources(ctx: workflow_run.RunContext) -> list[dict[str, str]]:
++        """The files the run was given, kept in the Library so each result can say what it was made from."""
++        if ctx.caller is None:
++            return []
++        given: list[asset_types.OutputInput] = []
++        kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())   # a mask is not a source of the result
++        for name, refs in ctx.media.items():
++            if name in kept_off_engine:
++                continue
++            for ref in refs:
++                if ref.spool_key is not None:
++                    data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
++                else:
++                    data = await asyncio.to_thread(_WORKFLOW_RUN_PORT.read_asset, str(ref.asset_id), ctx.caller)
++                if data:
++                    given.append(asset_types.OutputInput(data, ref.filename or "input", ref.media_type))
++        context = ctx.caller if isinstance(ctx.caller, AuthContext) else None
++        return await asyncio.to_thread(_store_workflow_sources, given, _asset_owner_key(context), _auth_person_id(context))
+ 
+     def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+         return _graph_service_connection(service_id, record)
+ 
+     def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+         found = _workflow_engine(binding.adapter_id)
+         if found is None:
+             raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+         service_id, record, protocol, adapter_ = found
+         return workflow_run.AdapterIdentity(
+             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+             interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+ 
+     return node_graph_runner.GraphHost(
+         engine=_workflow_engine, identity=identity,
+         problem=_graph_binding_problem,
+         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
+         max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
+-        batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True),
++        batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
++        sources=run_sources,
+         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect))
+ 
+ 
+ def _register_graph_runner() -> None:
+     """One runner for the bindings of each protocol description the node-graph adapter serves."""
+     from gateway.engine_protocol import description as protocol_description
+     for doc in protocol_description.load_registry().values():
+         if doc.executor == f"adapter:{node_graph.ADAPTER_ID}":
+             workflow_adapters.register(node_graph_runner.NodeGraphRunner(
+                 doc.binding, pinned_runtime.adapter_identity(doc), _graph_runner_host()))
+ 
+ 
+ _register_graph_runner()
+ 
+ # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.ImageJobs.shape_id] = _image_default_model
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipart.shape_id] = image_edit_default_model
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[
+     frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+ def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
+     """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
+     # A picture that is no readable file is refused as the upload check refuses it, before the mask is read.
+     if not _is_readable_picture(image):
+         return _refuse_edit_image(None, media_inputs.MediaInputError(
+             media_inputs.UNSUPPORTED, "the input is not a file type this model accepts"))
+     context, error = _prepare_image_edit_mask_context(source_image_content=image, mask_content=mask)
+     if error is not None:
+         return error
+     return _apply_edit_mask_as_source_alpha(context), context.mask_mode
+ 
+ 
++def _mask_mode(picture: bytes, mask: bytes) -> Any:
++    """How an edit mask reads against its picture (the mode), or the refusal of a bad picture or mask."""
++    context, error = _prepare_image_edit_mask_context(source_image_content=picture, mask_content=mask)
++    return error if error is not None else context.mask_mode
++
++
++async def _stage_post_composite_mask(ctx: workflow_run.RunContext, files: list[bytes]) -> list[bytes]:
++    """Each result file with the given picture kept where the mask preserves it. The mask is the run's file for an input
++    the binding keeps off the engine; the picture is the run's other file."""
++    kept = set(ctx.pin.binding.get("edge_only_inputs") or ())
++    mask_ref = next((refs[0] for name, refs in ctx.media.items() if name in kept and refs), None)
++    source_ref = next((refs[0] for name, refs in ctx.media.items() if name not in kept and refs), None)
++    if mask_ref is None or source_ref is None:
++        return files
++    picture = await _WORKFLOW_RUN_PORT.read_media(ctx, source_ref)
++    mask = await _WORKFLOW_RUN_PORT.read_media(ctx, mask_ref)
++    context, error = _prepare_image_edit_mask_context(source_image_content=picture, mask_content=mask)
++    if error is not None:
++        raise node_graph_runner.RunFailed("mask_unreadable", "internal", "The mask of this run can no longer be read.")
++    return [await asyncio.to_thread(_apply_image_edit_mask_composite, context, raw) for raw in files]
++
++
++_RESULT_STAGES["post_composite_mask"] = _stage_post_composite_mask
++
++
++async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Variant | None:
++    """Which graph a run of a picture workflow submits: the one with the cutout step, or the one without. The caller's
++    ``background`` choice (or the language model's answer when it left the choice open) decides; a request with a mask never
++    asks for a cutout. A workflow whose template has no second graph reports that, and runs the one it has."""
++    media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
++    if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
++        return None
++    options = (ctx.payload.get("body") or {}).get("options") or {}
++    decision = await resolve_image_background_decision(
++        options.get("background") or "auto", str(ctx.inputs.get("prompt") or ""),
++        auth_context=ctx.caller or NO_AUTH_CONTEXT, force_bypass=bool(options.get("masked")))
++    template = ctx.pin.graph()
++    meta = template.get("_meta") if isinstance(template, Mapping) else None
++    meta = meta if isinstance(meta, dict) else {}
++
++    def on(graph: dict[str, Any]) -> None:
++        set_workflow_background_removal(graph, meta, True)
++
++    def off(graph: dict[str, Any]) -> None:
++        set_workflow_background_removal(graph, meta, False)
++
++    removed = decision.remove_background
++    source = decision.source
++    if removed and not set_workflow_background_removal(copy.deepcopy(dict(template)), meta, True):
++        firehose_metrics.record_event("image_background_removal_fallback", "workflow has no RMBG wiring")
++        removed, source = False, "workflow_unsupported"
++    if removed:
++        return node_graph_runner.Variant(
++            on, {"background_removal": True, "background_removal_source": source},
++            {"background_removal": False, "background_removal_source": "rmbg_fallback"})
++    return node_graph_runner.Variant(off, {"background_removal": False, "background_removal_source": source})
++
++
++def _picture_size(data: bytes) -> tuple[int, int] | None:
++    try:
++        from PIL import Image
++        with Image.open(io.BytesIO(data)) as picture:
++            return picture.size
++    except Exception:  # noqa: BLE001 - a file that is no picture has no size; the upload check refuses it
++        return None
++
++
+ frontend_wire_shapes.MASKING["source_alpha"] = _mask_into_source_alpha
++frontend_wire_shapes.MASKING["post_composite"] = _mask_mode
++frontend_wire_shapes.PICTURE_SIZE["picture"] = _picture_size
+ frontend_wire_shapes.JOB_DOCUMENT["job"] = lambda job_id: (
+     _image_media_job_client_payload(job, None) if (job := media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)) else None)
+ # What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
+ frontend_wire_shapes.FIXED_INPUTS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = lambda: {
+     "prompt": IMAGE_VARIATIONS_PROMPT, "denoise": _image_variations_denoise()}
+ 
+ 
+ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
+     """The production run core over the injected snapshot provider and projections, or None until both are set."""
+     global _workflow_core_cache
+     if WORKFLOW_SNAPSHOTS is None or WORKFLOW_PROJECTIONS is None:
+         return None
+     cached = _workflow_core_cache
+     if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
+         core = workflow_run.WorkflowRunCore(
+             snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
+             spool=_workflow_job_spool(), path=media_jobs.DB_PATH)
+         cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
+     return cached[2]
+ 
+ 
+ def _workflow_job_service() -> workflow_run.WorkflowJobService:
+     return workflow_run.WorkflowJobService(port=_WORKFLOW_RUN_PORT, path=media_jobs.DB_PATH)
+ 
+ 
+@@ -27078,84 +27203,97 @@ def _workflow_run_response(result: Any, *, status_code: int | None = None) -> Re
+     if isinstance(result, RunRefused):
+         seconds = client_errors.retry_after(str(result.retry_after_s))  # None when the core names no time
+         headers = {"Retry-After": seconds} if seconds else {}
+         return Response(content=json.dumps(workflow_run.refusal_body(result)), status_code=result.http_status,
+                         media_type="application/json", headers=headers)
+     created = result.disposition == "new" and result.status in ("queued", "running")
+     return Response(
+         content=json.dumps(workflow_run.view_body(result)),
+         status_code=status_code or (202 if created or result.status in ("queued", "running") else 200),
+         media_type="application/json",
+         headers={"Location": f"/gateway/v1/media/jobs/{result.job_id}"})
+ 
+ 
+ def _new_row_spool() -> request_spool.FileRequestSpool:
+     limits = _WORKFLOW_RUN_PORT.result_limits()
+     # The bytes decide a file's type, as for every other upload: the declared type never makes a file something it is not.
+     return request_spool.FileRequestSpool(
+         _workflow_run_spool_root(), max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
+         measure=lambda head, _declared: media_inputs.measure(head).media_type)
+ 
+ 
+ # Receipts that a row handed off to the run core, by request id, until the core closes them at the job's end.
+ _RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
+ 
+ 
++# The receipt of the row request being served, so admission files its decision on the receipt the request already has.
++_ROW_REQUEST_RECEIPT: contextvars.ContextVar[RouteReceipt | None] = contextvars.ContextVar("row_request_receipt", default=None)
++
++
+ class _RunReceiptOwner(ReceiptLifecycleOwner):
+     """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
+ 
+     short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
+ 
+     def handoff(self) -> "_RunReceiptOwner":
+         super().handoff()
+         _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
+         return self
+ 
+ 
+ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
+     """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
+     (``_name_row_receipt``)."""
+     identity = auth.identity
+     # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
+     # activity read their capability from it. A route that declares none records the generic run intent.
+     owner = _RunReceiptOwner(RouteReceipt(
+         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
+         backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+         api_key_name=identity.name if identity else None))
+     owner.short_names = row.receipt_names == "short"
++    _ROW_REQUEST_RECEIPT.set(owner.receipt)
+     return owner
+ 
+ 
+ def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
+     for name, kind, reason in notes:
+         _record_image_input(owner.receipt, name, rejected_reason=(reason or kind) if kind == "rejected" else None,
+                             ignored_reason=(reason or kind) if kind == "ignored" else None)
+ 
+ 
++def _record_row_refusal(owner: _RunReceiptOwner, caller: AuthContext, refused: RunRefused) -> None:
++    """A run refused because the service behind it cannot take work: the receipt keeps the resource decision the route's
++    admission would have recorded."""
++    if refused.code in SERVICE_REASONS:
++        _media_job_admission_response(owner.receipt.intent, count_queue=False, receipt=owner.receipt, auth_context=caller)
++
++
+ def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
+     for name, value, warning in facts:
+-        owner.receipt.metadata[name] = value
++        if name:
++            owner.receipt.metadata[name] = value
+         if warning:
+             owner.receipt.add_warning(warning)
+ 
+ 
+ def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
+                       contract_digest: str | None) -> None:
+     receipt = owner.receipt
+     version = None if record_revision is None else str(record_revision)
+     name = workflow_id
+     if owner.short_names:
+         # The image routes named the workflow by what follows its intent, and its version was the contract's own.
+         name = workflow_id.removeprefix(f"{receipt.intent}.")
+         receipt.requested_workflow = name
+         entry = WORKFLOW_SNAPSHOTS.current().get(workflow_id) if WORKFLOW_SNAPSHOTS is not None else None
+         version = str(entry.contract.get("version")) if entry is not None and entry.contract.get("version") else version
+     receipt.resolved_workflow = name
+     receipt.attach_manifest(manifest_id=workflow_id, manifest_version=version, manifest_hash=contract_digest)
+ 
+ 
+ def _pinned_of_job(job_id: str) -> Any:
+     """What the job pinned, or None when it holds no definitions."""
+     try:
+         return pinned_definitions.load(job_id, media_jobs.DB_PATH)
+     except definition_store.DefinitionUnavailable:
+         return None
+@@ -27172,50 +27310,51 @@ def _row_route_policy(path: str) -> dict[str, Any] | None:
+                 return fields if fields else None
+     return None
+ 
+ 
+ frontend_wire_shapes.ASSET_URLS.update({
+     "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
+     "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
+ })
+ 
+ # What the mounted frontend rows read from this module (gateway/row_routes.py).
+ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
+     authenticate=lambda request, path: authenticate_request(request, path),
+     enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path, policy=DERIVED._RUNTIME_ROUTE_POLICY.get(path) or _row_route_policy(path)),
+     core=_workflow_run_core,
+     snapshot=lambda: WORKFLOW_SNAPSHOTS.current(),
+     jobs=_workflow_job_service,
+     new_spool=_new_row_spool,
+     scope=lambda request, spool: request_spool.request_scope(request, spool),
+     refused=_workflow_run_response,
+     new_request_id=new_request_id,
+     open_receipt=_open_row_receipt,
+     name_receipt=_name_row_receipt,
+     pinned=_pinned_of_job,
+     record_inputs=_record_row_inputs,
+     record_facts=_record_row_facts,
++    record_refusal=_record_row_refusal,
+ )
+ 
+ 
+ async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthContext, **shape_options: Any) -> Response:
+     """Answer one request on a frontend row (section 8): the row's shape reads the wire into a run request, the core runs
+     it (``submit_run``), and the shape renders the answer in its own vocabulary. Nothing here depends on what the row
+     serves."""
+     row = next((candidate for candidate in frontend_shapes.bundled_rows() if candidate.id == row_id), None)
+     core = _workflow_run_core()
+     if row is None or core is None or WORKFLOW_SNAPSHOTS is None:
+         return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+     shape = frontend_shapes.build_shape(row, **shape_options)
+     snapshot = WORKFLOW_SNAPSHOTS.current()
+     result_limits = _WORKFLOW_RUN_PORT.result_limits()
+     spool = request_spool.FileRequestSpool(
+         _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+     with request_spool.request_scope(request, spool):
+         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
+         if isinstance(run_request, Response):
+             return run_request
+         view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
+     return await shape.to_response(view, row, jobs=_workflow_job_service(), caller=auth_context, request=request)
+ 
+ 
+ @app.post("/gateway/v1/workflows/{workflow_id}/run")

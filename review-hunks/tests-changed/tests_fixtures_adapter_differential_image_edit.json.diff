@@ -1,0 +1,13 @@
+diff --git a/tests/fixtures/adapter_differential/image_edit.json b/tests/fixtures/adapter_differential/image_edit.json
+index ccf3da307..e00e83d2d 100644
+--- a/tests/fixtures/adapter_differential/image_edit.json
++++ b/tests/fixtures/adapter_differential/image_edit.json
+@@ -677,7 +677,7 @@
+           "intent": "image.edit",
+           "job_id": "<job:1>",
+           "latency_ms": "<duration>",
+-          "manifest_hash": "da091f4d339dd0146453c642d74646c9d286613b230743fccbf2ae81e62712de",
++          "manifest_hash": "8b5c2cfdc8e7c4ee6160223074cde864124f70edccb79f2449c856e96f8ec0b7",
+           "manifest_id": "image.edit.qwen-image-2.1-inpaint",
+           "manifest_version": "0.1.0",
+           "metadata": {},
