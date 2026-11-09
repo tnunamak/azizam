@@ -22,6 +22,9 @@ from dataclasses import replace
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any
+from types import MappingProxyType
+
+import yaml
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, Response
@@ -43,6 +46,125 @@ CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[M
 MODEL_DISPLAY_NAMES: Mapping[str, str] = json.loads(
     Path(__file__).with_name("model_display_names.json").read_text(encoding="utf-8")
 )
+
+
+MODELS_CATALOG_OPERATIONS_PATH = (
+    Path(__file__).resolve().parent.parent / "registry" / "models_catalog_operations.yml"
+)
+
+
+def load_models_catalog_operations(
+    path: Path = MODELS_CATALOG_OPERATIONS_PATH,
+) -> tuple[Mapping[str, tuple[str, ...]], Mapping[str, Mapping[str, Any]], str]:
+    """Validate shipped catalog facts before publishing read-only maps."""
+    def invalid(row: object, reason: str) -> ValueError:
+        return ValueError(f"{path.name}: row {row!r} {reason}")
+
+    def keys(value: Mapping[str, Any], allowed: set[str], row: object) -> None:
+        for key in value:
+            if key not in allowed:
+                raise invalid(row, f"has unknown key {key!r}")
+
+    def nonempty_string(value: Any, field: str, row: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise invalid(row, f"{field} must be a non-empty string")
+        return value
+
+    def strings(value: Any, field: str, row: object, *, allow_empty: bool = False) -> tuple[str, ...]:
+        if not isinstance(value, list) or (not value and not allow_empty):
+            raise invalid(row, f"{field} must be a {'possibly empty' if allow_empty else 'non-empty'} list")
+        return tuple(nonempty_string(item, field, row) for item in value)
+
+    def freeze(value: Any, row: object) -> Any:
+        if isinstance(value, dict):
+            if any(not isinstance(key, str) for key in value):
+                raise invalid(row, "body keys must be strings")
+            return MappingProxyType({key: freeze(item, row) for key, item in value.items()})
+        if isinstance(value, list):
+            return tuple(freeze(item, row) for item in value)
+        return value
+
+    def has_placeholder(value: Any, placeholder: str) -> bool:
+        if isinstance(value, dict):
+            return any(has_placeholder(item, placeholder) for item in value.values())
+        if isinstance(value, list):
+            return any(has_placeholder(item, placeholder) for item in value)
+        return value == placeholder
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise invalid("<document>", f"could not be loaded: {error}") from error
+    if not isinstance(document, dict):
+        raise invalid("<document>", "must be a mapping")
+    keys(document, {"schema_version", "row_id_placeholder", "operations"}, "<document>")
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise invalid("<document>", "schema_version must be the integer 1")
+    placeholder = nonempty_string(document.get("row_id_placeholder"), "row_id_placeholder", "<document>")
+    rows = document.get("operations")
+    if not isinstance(rows, list):
+        raise invalid("<document>", "operations must be a list")
+
+    prefixes: dict[str, tuple[str, ...]] = {}
+    intents: dict[str, Mapping[str, Any]] = {}
+    row_ids: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise invalid(index, "must be a mapping")
+        row_id = nonempty_string(row.get("id"), "id", index)
+        keys(row, {"id", "words", "intent_prefixes", "examples"}, row_id)
+        if row_id in row_ids:
+            raise invalid(row_id, "has a duplicate operation id")
+        row_ids.add(row_id)
+        row_prefixes = strings(row.get("intent_prefixes"), "intent_prefixes", row_id)
+        for word in strings(row.get("words"), "words", row_id):
+            normalized = word.strip().lower().replace("_", ".")
+            if normalized in prefixes:
+                raise invalid(row_id, f"has duplicate synonym {word!r}")
+            prefixes[normalized] = row_prefixes
+        examples = row.get("examples", [])
+        if not isinstance(examples, list):
+            raise invalid(row_id, "examples must be a list")
+        for example in examples:
+            if not isinstance(example, dict):
+                raise invalid(row_id, "example must be a mapping")
+            keys(example, {"intent", "kind", "body", "files", "path"}, row_id)
+            intent = nonempty_string(example.get("intent"), "intent", row_id)
+            if intent in intents:
+                raise invalid(row_id, f"has duplicate example intent {intent!r}")
+            kind = nonempty_string(example.get("kind"), "kind", row_id)
+            route = nonempty_string(example.get("path"), "path", row_id)
+            if not route.startswith("/"):
+                raise invalid(row_id, "path must start with a slash")
+            body = example.get("body")
+            if not isinstance(body, dict):
+                raise invalid(row_id, "body must be a mapping")
+            try:
+                json.dumps(body, allow_nan=False)
+            except (TypeError, ValueError) as error:
+                raise invalid(row_id, f"body must contain JSON values: {error}") from error
+            if not has_placeholder(body, placeholder):
+                raise invalid(row_id, "body must contain the declared row_id_placeholder")
+            entry = {"kind": kind, "body": freeze(body, row_id), "path": route}
+            if "files" in example:
+                entry["files"] = strings(example["files"], "files", row_id, allow_empty=True)
+            intents[intent] = MappingProxyType(entry)
+    return MappingProxyType(prefixes), MappingProxyType(intents), placeholder
+
+
+(
+    _CATALOG_OPERATION_PREFIXES,
+    _CATALOG_INTENT_ROWS,
+    _CATALOG_ROW_ID_PLACEHOLDER,
+) = load_models_catalog_operations()
+
+
+def _render_catalog_template(value: Any, row_id: str) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _render_catalog_template(item, row_id) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_render_catalog_template(item, row_id) for item in value]
+    return row_id if value == _CATALOG_ROW_ID_PLACEHOLDER else value
 
 
 def create_models_catalog_router(
@@ -494,36 +616,7 @@ def _capabilities_for_operation(capabilities: Sequence[Capability] | None, opera
 
 def _intent_prefixes_for_operation(operation: str) -> tuple[str, ...]:
     op = operation.strip().lower().replace("_", ".")
-    if op in {"chat", "chat.completions"}:
-        return ("chat.",)
-    if op in {"completions", "completion", "text", "text.completions"}:
-        return ("text.completions",)
-    if op in {"embeddings", "embedding", "text.embeddings"}:
-        return ("text.embeddings",)
-    if op in {"images", "image", "image.generate", "image.generations"}:
-        return ("image.generate",)
-    if op in {"image.edit", "image.edits", "images.edit", "edits"}:
-        return ("image.edit",)
-    if op in {"audio", "audio.generate"}:
-        return ("audio.generate",)
-    if op in {"speech", "speech.synthesis", "tts"}:
-        return ("speech.synthesis",)
-    if op in {"transcription", "transcriptions", "speech.transcription", "stt"}:
-        return ("speech.transcription",)
-    if op in {"translation", "translations", "speech.translation"}:
-        return ("speech.translation",)
-    if op in {"video", "videos"}:
-        # The /v1/videos operation serves both generation and editing (remix, extend).
-        return ("video.generate", "video.edit")
-    if op == "video.generate":
-        return ("video.generate",)
-    if op in {"video.edit", "videos.edit"}:
-        return ("video.edit",)
-    if op in {"rerank", "reranking", "text.rerank"}:
-        return ("text.rerank",)
-    if op in {"decision", "decisions"}:
-        return ("decision.",)
-    return ()
+    return _CATALOG_OPERATION_PREFIXES.get(op, ())
 
 
 def _model_rows(
@@ -764,29 +857,13 @@ def _examples(row_id: str, capabilities: Sequence[Capability]) -> list[dict[str,
     if not capabilities:
         return []
     intent = capabilities[0].intent
-    if intent == "chat.completions":
-        return [{"kind": "chat", "body": {"model": row_id, "messages": [{"role": "user", "content": "Hello"}]}}]
-    if intent == "text.completions":
-        return [{"kind": "completion", "body": {"model": row_id, "prompt": "Hello"}}]
-    if intent == "text.embeddings":
-        return [{"kind": "embeddings", "body": {"model": row_id, "input": "Hello"}}]
-    if intent == "image.generate":
-        return [{"kind": "image", "body": {"model": row_id, "prompt": "A small red cabin"}}]
-    if intent == "image.edit":
-        return [{"kind": "image_edit", "body": {"model": row_id, "prompt": "Replace the sky"}, "files": ["image"]}]
-    if intent == "speech.synthesis":
-        return [{"kind": "speech", "body": {"model": row_id, "input": "Hello", "voice": "alloy"}}]
-    if intent == "speech.transcription":
-        return [{"kind": "transcription", "body": {"model": row_id}, "files": ["file"]}]
-    if intent == "speech.translation":
-        return [{"kind": "translation", "body": {"model": row_id}, "files": ["file"]}]
-    if intent == "audio.generate":
-        return [{"kind": "audio", "body": {"model": row_id, "prompt": "Gentle piano loop"}}]
-    if intent == "video.generate":
-        return [{"kind": "video", "body": {"model": row_id, "prompt": "A kite above a beach"}}]
-    if intent == "text.rerank":
-        return [{"kind": "rerank", "body": {"model": row_id, "query": "capital of France", "documents": ["Paris is the capital of France.", "Berlin is in Germany."]}}]
-    return [{"kind": intent, "body": None}]
+    entry = _CATALOG_INTENT_ROWS.get(intent)
+    if entry is None:
+        return [{"kind": intent, "body": None}]
+    example = {"kind": entry["kind"], "body": _render_catalog_template(entry["body"], row_id)}
+    if "files" in entry:
+        example["files"] = list(entry["files"])
+    return [example]
 
 
 def _use_snippets(row_id: str, capabilities: Sequence[Capability]) -> dict[str, Any]:
@@ -809,29 +886,8 @@ def _use_snippets(row_id: str, capabilities: Sequence[Capability]) -> dict[str, 
 
 
 def _path_for_capability(capability: Capability) -> str | None:
-    if capability.intent == "chat.completions":
-        return "/v1/chat/completions"
-    if capability.intent == "text.completions":
-        return "/v1/completions"
-    if capability.intent == "text.embeddings":
-        return "/v1/embeddings"
-    if capability.intent == "image.generate":
-        return "/v1/images/generations"
-    if capability.intent == "image.edit":
-        return "/v1/images/edits"
-    if capability.intent == "speech.synthesis":
-        return "/v1/audio/speech"
-    if capability.intent == "speech.transcription":
-        return "/v1/audio/transcriptions"
-    if capability.intent == "speech.translation":
-        return "/v1/audio/translations"
-    if capability.intent == "audio.generate":
-        return "/v1/audio/generate"
-    if capability.intent == "video.generate":
-        return "/v1/videos"
-    if capability.intent == "text.rerank":
-        return "/v1/rerank"
-    return None
+    entry = _CATALOG_INTENT_ROWS.get(capability.intent)
+    return entry["path"] if entry is not None else None
 
 
 def _service_record(records: Mapping[str, Any], service_id: str | None) -> Mapping[str, Any]:

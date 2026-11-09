@@ -17,6 +17,16 @@ state, and note remain editable.
 
 `capability_words.yml` defines ordered `capabilities` rows (`id`, `label`, and optional `policy_protocol`), followed by protocol words and extra route intents referring to those ids. Row order is display/access-plan order. Home defaults an omitted policy protocol to `openai.chat`, including decide and rerank; embed explicitly keeps `openai.embeddings`. `gateway/capability_ids.py` validates schema version 1 and the rows before the word maps, naming the file and row for malformed rows, duplicate ids, unknown row keys, empty/non-string labels or non-string protocols. It loads read-only ordered tables once at import. Add a row and any word mappings to extend the catalog without a code table edit; this does not add a registered model kind. Restart after editing it.
 
+`models_catalog_operations.yml` holds the catalog's operation synonyms, ordered
+intent prefixes, and exact example/path templates. `gateway/models_catalog.py`
+validates schema version 1 and loads deeply read-only maps once at import. Each
+operation row has an `id`, `words`, `intent_prefixes`, and optional `examples`;
+example rows declare `intent`, `kind`, mapping `body`, `path`, and optional `files`.
+The one top-level `row_id_placeholder` replaces matching whole body values with
+the requested model ID. Synonyms normalize strip/lower/underscore-to-dot; intent
+matching stays exact. Duplicate synonyms/IDs/intents and malformed rows fail with
+file/row diagnostics. Add data rows for new operations; restart after edits.
+
 ## Protocol descriptions
 
 `registry/protocols/*.yml` hold protocol descriptions: data that says how
