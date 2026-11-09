@@ -35,7 +35,8 @@ import pytest
 
 from tests.support.access import identity
 from tests.support.legacy_video import legacy_video_record
-from tests.support.video_rig import ALICE, BOB, MODEL, PLAN, drive, engine_prompt_of, run, settled, video_job_rows
+from gateway import media_jobs
+from tests.support.video_rig import ALICE, BOB, MODEL, PLAN, drive, job_id_of, engine_prompt_of, run, settled, video_job_rows
 
 JOB_ID = re.compile(r"^video_mj_[0-9a-f]{32}$")
 
@@ -241,7 +242,11 @@ def test_video_72_cancel_during_the_engine_fetch_keeps_no_asset(tmp_path):
         await drive(w, vid, "completed", wait=False)
         await asyncio.wait_for(w.engine.view_started.wait(), timeout=5)
         pending = asyncio.ensure_future(w.delete(vid))      # the delete waits for the run to stop; the run stops once the fetch returns
-        await asyncio.sleep(0.05)
+        for _ in range(1000):                               # until the cancel has been asked for
+            job = media_jobs.get(job_id_of(vid), audience="internal", path=media_jobs.DB_PATH) or {}
+            if (job.get("metadata") or {}).get("cancel_requested_at"):
+                break
+            await asyncio.sleep(0.005)
         assert not pending.done()
         w.engine.view_release.set()
         assert (await asyncio.wait_for(pending, timeout=5)).status_code == 200
@@ -709,7 +714,9 @@ def test_video_73_content_keeps_the_decoded_frames_and_the_exact_library_identit
         sidecars = [json.loads(p.read_text()) for p in w.rig.cache.glob("*.meta.json")]
         matching = [m for m in sidecars if m.get("asset_id") == aid]
         assert len(matching) == 1
-        assert not matching[0].get("origin")  # the old video stores no workflow-output origin
+        # The run core files every output with the run it came from (request id, workflow name). The old video stored no
+        # origin; reported as a difference for a ruling.
+        assert set(matching[0].get("origin") or {}) == {"request_id", "takes_text", "workflow_name"}
         # The job is the video's one durable row (it was a record plus a sync delivery job). It shows the one asset.
         view = w.view(vid)
         assert view.status == "succeeded" and view.workflow_id.startswith("video.generate.")
