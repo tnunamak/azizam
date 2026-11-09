@@ -13141,11 +13141,14 @@ async def proxy_graph_video_content(
     *,
     metadata_mode: str = provenance.METADATA_FULL,
     index_library: bool = True,
+    full_required: bool = True,
 ) -> Response:
     """GET /v1/videos/{video_id}/content — return mp4 bytes.
 
-    Full delivery requires a retained maker prompt record. Cached asset bytes
-    are stripped before storage.
+    Full delivery requires a retained maker prompt record. When full comes only
+    from the plan's default (``full_required`` false) and no prompt is
+    available, the video is delivered without metadata instead of refused.
+    Cached asset bytes are stripped before storage.
     """
     await _warm_video_owner_keys(auth_context)
     if not DERIVED.COMFY_ENABLED:
@@ -13272,7 +13275,11 @@ async def proxy_graph_video_content(
                 person_id != _auth_person_id(auth_context) or saved_prompt is None
                 or household["never_keep"]
             ):
-                return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
+                if full_required:
+                    return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
+                # Full was only the plan's default, not the caller's choice: deliver the video without metadata
+                # rather than refuse a finished render because no prompt was kept.
+                metadata_mode = provenance.METADATA_NONE
             try:
                 # Internal asynchronous delivery strips the bytes before the
                 # runner stores them. Capture the original workflow into its
@@ -27362,8 +27369,10 @@ async def videos_content(video_id: str, request: Request):
     delivery = media_delivery.current()
     if delivery is not None and delivery.requested_mode is None and record:
         delivery.requested_mode = record.get("metadata_mode")  # the submit-time choice
+    # Only a caller's own choice (this GET or the submit) makes full metadata a condition of delivery.
+    full_required = delivery is not None and delivery.requested_mode == provenance.METADATA_FULL
     return await proxy_graph_video_content(
-        video_id, auth_context, metadata_mode=media_delivery.current_mode()
+        video_id, auth_context, metadata_mode=media_delivery.current_mode(), full_required=full_required
     )
 
 
