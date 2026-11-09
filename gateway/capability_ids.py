@@ -7,6 +7,7 @@ evaluator (``access_plans``) both read it, so neither imports the other.
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 import yaml
 
@@ -17,14 +18,18 @@ CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "c
 
 def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
-    Mapping[str, str], Mapping[str, str], Mapping[str, str]
+    Mapping[str, str], Mapping[str, str], Mapping[str, str],
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
 ]:
-    """Validate capability rows before resolving the two word maps."""
+    """Validate capability, presentation and classification rows together."""
     def invalid(word: object, reason: str) -> ValueError:
         return ValueError(f"{path.name}: word {word!r} {reason}")
 
     def invalid_row(row: object, reason: str) -> ValueError:
         return ValueError(f"{path.name}: row {row!r} in capabilities {reason}")
+
+    def invalid_table(section: str, row: object, reason: str) -> ValueError:
+        return ValueError(f"{path.name}: row {row!r} in {section} {reason}")
 
     try:
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -33,8 +38,8 @@ def _load_capability_tables(path: Path) -> tuple[
     if not isinstance(document, dict):
         raise invalid("<document>", "must be a mapping")
     for key in document:
-        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents"}:
-            raise invalid(key, "is an unknown top-level key")
+        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule"}:
+            raise invalid_table("document", key, "is an unknown top-level key")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be the integer 1")
 
@@ -46,11 +51,12 @@ def _load_capability_tables(path: Path) -> tuple[
     icons: dict[str, str] = {}
     aliases: dict[str, str] = {}
     summaries: dict[str, str] = {}
+    hidden_by: dict[str, tuple[str, ...]] = {}
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -74,11 +80,56 @@ def _load_capability_tables(path: Path) -> tuple[
             aliases[capability] = row["recommended_alias"]
         if "summary" in row:
             summaries[capability] = row["summary"]
+        if "hidden_by" in row:
+            hidden = row["hidden_by"]
+            if not isinstance(hidden, list):
+                raise invalid_row(index, "hidden_by must be a list of capability ids")
+            hidden_by[capability] = tuple(hidden)
 
     # References may point forward to a capability declared later in the file.
     for index, icon in enumerate(icons.values(), start=1):
         if icon not in labels:
             raise invalid_row(index, f"icon names unknown capability {icon!r}")
+
+    for index, row in enumerate(rows, start=1):
+        for capability in hidden_by.get(row["id"], ()):
+            if not isinstance(capability, str) or capability not in labels:
+                raise invalid_row(index, f"hidden_by names unknown capability {capability!r}")
+
+    types = document.get("type_capabilities", {})
+    if not isinstance(types, dict):
+        raise invalid_table("type_capabilities", 0, "must be a mapping")
+    for kind, capability in types.items():
+        if not isinstance(kind, str) or not kind.strip():
+            raise invalid_table("type_capabilities", kind, "type must be a non-empty string")
+        if not isinstance(capability, str) or capability not in labels:
+            raise invalid_table("type_capabilities", kind, f"names unknown capability {capability!r}")
+
+    audio = {}
+    if "audio_rule" in document:
+        rule = document["audio_rule"]
+        if not isinstance(rule, dict):
+            raise invalid_table("audio_rule", 0, "must be a mapping")
+        required = {"type", "input", "absent_output", "result", "subtypes", "fallback"}
+        missing, unknown = required - rule.keys(), rule.keys() - required
+        if missing:
+            raise invalid_table("audio_rule", 0, f"missing fields: {', '.join(sorted(missing))}")
+        if unknown:
+            raise invalid_table("audio_rule", 0, f"unknown fields: {', '.join(sorted(map(str, unknown)))}")
+        for field in ("type", "input", "absent_output", "result", "fallback"):
+            value = rule[field]
+            if not isinstance(value, str) or not value.strip():
+                raise invalid_table("audio_rule", field, "must be a non-empty string")
+            if field in {"result", "fallback"} and value not in labels:
+                raise invalid_table("audio_rule", field, f"names unknown capability {value!r}")
+            audio[field] = value
+        subtypes = rule["subtypes"]
+        if not isinstance(subtypes, list) or not subtypes:
+            raise invalid_table("audio_rule", "subtypes", "must be a non-empty list of capability ids")
+        for capability in subtypes:
+            if not isinstance(capability, str) or capability not in labels:
+                raise invalid_table("audio_rule", "subtypes", f"names unknown capability {capability!r}")
+        audio["subtypes"] = tuple(subtypes)
 
     tables: list[dict[str, str]] = []
     for section in ("protocol_words", "route_intents"):
@@ -99,7 +150,8 @@ def _load_capability_tables(path: Path) -> tuple[
             raise invalid(word, "has conflicting capabilities in protocol_words and route_intents")
     return (MappingProxyType(labels), MappingProxyType(policy_protocols),
             MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
-            MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries))
+            MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
+            MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by))
 
 
 def _load_capability_data(path: Path) -> tuple[
@@ -113,7 +165,14 @@ def load_capability_presentation(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str]
 ]:
     """Read immutable icon, recommended-alias and summary maps from capability rows."""
-    return _load_capability_tables(path)[4:]
+    return _load_capability_tables(path)[4:7]
+
+
+def load_capability_classification(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
+]:
+    """Read immutable type, audio and suppression decisions; omitted sections are empty."""
+    return _load_capability_tables(path)[7:]
 
 
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
@@ -123,7 +182,8 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 
 
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
- CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+ CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
+ TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY) = _load_capability_tables(CAPABILITY_WORDS_PATH)
 
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's

@@ -10,6 +10,7 @@ from gateway import model_metadata
 from gateway.capability_ids import (
     CAPABILITY_DESCRIPTIONS, CAPABILITY_ICON_KEYS, CAPABILITY_LABELS, INTENT_CAPABILITIES,
     PROTOCOL_CAPABILITIES, RECOMMENDED_ALIASES,
+    TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY,
 )
 from gateway.service_registry import LEGACY_RESIDENCY_KEY, is_litellm_service_record, is_remote_provider_config
 
@@ -165,8 +166,7 @@ def service_capability_labels(service: Mapping[str, Any]) -> list[str]:
         capabilities = (capabilities,)
     keys = list(dict.fromkeys(PROTOCOL_CAPABILITIES[str(cap)] for cap in capabilities
                               if str(cap) in PROTOCOL_CAPABILITIES))
-    if "audio" in keys and any(key in keys for key in ("speech", "transcribe", "music", "sfx")):
-        keys.remove("audio")
+    keys = [key for key in keys if not any(other in keys for other in CAPABILITY_HIDDEN_BY.get(key, ()))]
     return [CAPABILITY_LABELS[key] for key in keys]
 
 
@@ -183,12 +183,6 @@ def service_presentation(service: Mapping[str, Any], service_id: str) -> dict[st
 # Presentation-metadata key holding a row's `/v1/models` contract fields
 # (`type`, `architecture`, ...). When present it decides the classification.
 LISTED_METADATA_KEY = "listed_model_metadata"
-# `/v1/models` type -> product capability. `audio` is split below.
-_TYPE_CAPABILITIES = {
-    "language": "chat", "image": "image", "video": "video", "embedding": "embed",
-    "reranking": "rerank", "decision": "decide",
-}
-_AUDIO_SUBTYPES = ("music", "sfx", "speech")
 # The wire value for a capability no contract classifies. It is not a product
 # capability (not in CAPABILITY_LABELS), so it takes the generic label and icon,
 # and no intent word leaks into the catalog.
@@ -216,19 +210,19 @@ def product_capability(capability: Any, metadata: Mapping[str, Any] | None = Non
     if contract is None:
         declared = metadata.get("capability") or getattr(capability, "capability", None)
         return declared if isinstance(declared, str) and declared in CAPABILITY_LABELS else UNCLASSIFIED_CAPABILITY
-    if contract.type != "audio":
-        return _TYPE_CAPABILITIES[contract.type]
-    if "audio" in contract.input_modalities and "audio" not in contract.output_modalities:
-        return "transcribe"
+    if contract.type != AUDIO_RULE.get("type"):
+        return TYPE_CAPABILITIES[contract.type]
+    if AUDIO_RULE["input"] in contract.input_modalities and AUDIO_RULE["absent_output"] not in contract.output_modalities:
+        return AUDIO_RULE["result"]
     tags = tuple(metadata.get("tags") or ()) + tuple(getattr(capability, "tags", ()))
     hints = (metadata.get("capability"), getattr(capability, "capability", None),
              *(str(tag).removeprefix("capability:") for tag in tags))
-    subtype = next((hint for hint in hints if hint in _AUDIO_SUBTYPES), None)
+    subtype = next((hint for hint in hints if hint in AUDIO_RULE["subtypes"]), None)
     if subtype:
         return subtype
     # No declared subtype: the shipped capability words (registry/capability_words.yml) name it.
     word = INTENT_CAPABILITIES.get(intent)
-    return word if word in _AUDIO_SUBTYPES else "audio"
+    return word if word in AUDIO_RULE["subtypes"] else AUDIO_RULE["fallback"]
 
 
 def friendly_name(value: str) -> str:

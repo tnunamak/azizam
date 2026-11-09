@@ -36,6 +36,7 @@ capabilities:
     policy_protocol: openai.audio
   - id: audio
     label: Audio
+    hidden_by: [speech, transcribe, music, sfx]
     icon: sfx
     summary: Generate audio from your prompts.
     policy_protocol: openai.audio
@@ -114,3 +115,18 @@ route_intents:
   "audio.transcribe": "transcribe"
   "audio.translations": "transcribe"
   "videos.generate": "video"
+
+type_capabilities:
+  language: chat
+  image: image
+  video: video
+  embedding: embed
+  reranking: rerank
+  decision: decide
+audio_rule:
+  type: audio
+  input: audio
+  absent_output: audio
+  result: transcribe
+  subtypes: [music, sfx, speech]
+  fallback: audio

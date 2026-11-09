@@ -19,6 +19,19 @@ state, and note remain editable.
 - `icon`: optional non-empty capability id, including a later row; defaults to this row’s `id` (audio declares `sfx`).
 - `recommended_alias`: optional non-empty stable caller name; omission adds no recommended alias.
 - `summary`: optional non-empty presentation sentence; omission adds no summary. Presentation maps follow row order and are read-only.
+- `hidden_by`: optional list of capability ids, including later rows. A service hides this label when any listed capability is also present; audio names speech, transcribe, music and sfx.
+
+Top-level `type_capabilities` maps parsed metadata types to declared capability
+ids. `audio_rule` declares the special type, required input modality, absent
+output modality, result capability, allowed subtypes and fallback capability.
+The loader rejects unknown fields and undeclared capability references with
+file/row diagnostics. Classification tables and nested lists are immutable and
+load once. Existing word/presentation loader return shapes remain supported;
+older files may omit the two new sections, which then yield empty tables.
+Parsing and normalization remain code. Listed contracts precede inferred
+contracts, then declared capability; the audio direction rule precedes metadata
+subtype, capability subtype, tags, intent mapping and fallback. Adding a mapping
+does not expand the upstream metadata parser's accepted type vocabulary.
 
 `models_catalog_operations.yml` holds the catalog's operation synonyms, ordered
 intent prefixes, and exact example/path templates. `gateway/models_catalog.py`
