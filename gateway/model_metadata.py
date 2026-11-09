@@ -11,7 +11,7 @@ of an entry (LLM catalog, current-loaded, decision runtime), and the
 capabilities a service-registry record declares. Operator declarations under
 the `model_metadata` key are DATA and always win over derived values.
 
-Operation and service-capability metadata are read once from shipped registry rows.
+Operation, service-capability and capability-intent metadata are read once from shipped registry rows.
 Other lookups are injected; this module reads no owner config and makes no network calls.
 """
 
@@ -230,34 +230,89 @@ def load_service_capability_metadata(
 # Loaded once, like OPERATION_METADATA; owner configuration cannot replace release data.
 SERVICE_CAPABILITY_METADATA = load_service_capability_metadata()
 
-# Gateway capability intents (gateway/capabilities.Capability.intent). Capabilities are produced by services and carry
-# an intent word and sometimes no modalities, so these defaults stay until the capability producers declare them (the
-# workflow side is computed from the contract: ``from_contract``). Families match by prefix when no exact intent does;
-# the capability's own declared modalities then refine the defaults.
-_CAPABILITY_INTENTS: dict[str, ModelMetadata] = {
-    "image.generate": _md("image", ["text"], ["image"]),
-    "image.edit": _md("image", ["text", "image"], ["image"]),
-    "image.analyze": _md("image", ["image"], ["text"]),
-    "video.generate": _md("video", ["text"], ["video"]),
-    "video.edit": _md("video", ["text", "video"], ["video"]),
-    "audio.generate": _md("audio", ["text"], ["audio"]),
-    "text.embeddings": _md("embedding", ["text"], ["embedding"]),
-    "chat.completions": _LANGUAGE,
-    "text.completions": _LANGUAGE,
-    "text.rerank": OPERATION_METADATA["rerank"],
-    "speech.synthesis": OPERATION_METADATA["speech"],
-    "speech.transcription": OPERATION_METADATA["transcriptions"],
-    "speech.translation": OPERATION_METADATA["transcriptions"],
-}
-_CAPABILITY_INTENT_FAMILIES: tuple[tuple[str, ModelMetadata], ...] = (
-    ("chat.", _LANGUAGE),
-    ("responses.", _LANGUAGE),
-    ("decision.", _DECISION),
-    ("image.", _CAPABILITY_INTENTS["image.generate"]),
-    ("video.", _CAPABILITY_INTENTS["video.generate"]),
-    ("speech.", OPERATION_METADATA["speech"]),
-    ("audio.", _CAPABILITY_INTENTS["audio.generate"]),
-)
+# Capability intents and ordered prefix families are immutable release data.
+_CAPABILITY_INTENT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
+
+
+@dataclass(frozen=True)
+class CapabilityIntentIndex:
+    exact: Mapping[str, ModelMetadata]
+    families: Mapping[str, ModelMetadata]
+
+
+def load_capability_intent_metadata(
+    path: str | Path = _CAPABILITY_INTENT_ROWS_PATH,
+) -> CapabilityIntentIndex:
+    """Load exact matches and first-match families once, without intent-specific code."""
+    path = Path(path)
+
+    def invalid(at: str, reason: str) -> ValueError:
+        return ValueError(f"{path}: {at}: {reason}")
+
+    def mapping(value: Any, at: str, keys: set[str]) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise invalid(at, "must be a mapping")
+        unknown = set(value) - keys
+        if unknown:
+            raise invalid(at, f"unknown keys: {', '.join(sorted(map(str, unknown)))}")
+        return value
+
+    def metadata(row: Mapping[str, Any], at: str) -> ModelMetadata:
+        if ("operation" in row) == ("model_metadata" in row):
+            raise invalid(at, "needs exactly one of operation or model_metadata")
+        if "operation" in row:
+            operation = row["operation"]
+            if not isinstance(operation, str) or operation not in OPERATION_METADATA:
+                raise invalid(f"{at}.operation", f"unknown operation: {operation!r}")
+            return OPERATION_METADATA[operation]
+        literal = mapping(
+            row["model_metadata"], f"{at}.model_metadata",
+            {"type", "input_modalities", "output_modalities"},
+        )
+        type_ = literal.get("type")
+        if not isinstance(type_, str) or type_ not in MODEL_TYPES:
+            raise invalid(f"{at}.model_metadata.type", f"unknown type: {type_!r}")
+        modalities: dict[str, list[str]] = {}
+        for key, vocabulary in (("input_modalities", INPUT_MODALITIES),
+                                ("output_modalities", OUTPUT_MODALITIES)):
+            values = literal.get(key)
+            if (not isinstance(values, list)
+                    or any(not isinstance(value, str) or value not in vocabulary for value in values)):
+                raise invalid(f"{at}.model_metadata.{key}", "must be a list of known modalities")
+            modalities[key] = values
+        return _md(type_, modalities["input_modalities"], modalities["output_modalities"])
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise invalid("document", f"cannot read capability intent metadata: {exc}") from exc
+    document = mapping(document, "document", {"schema_version", "exact", "families"})
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise invalid("schema_version", "must be 1")
+
+    def rows(section: str, name_key: str) -> Mapping[str, ModelMetadata]:
+        entries = document.get(section)
+        if not isinstance(entries, list):
+            raise invalid(section, "must be an ordered list")
+        found: dict[str, ModelMetadata] = {}
+        for index, row in enumerate(entries):
+            at = f"{section}[{index}]"
+            row = mapping(row, at, {name_key, "operation", "model_metadata"})
+            name = row.get(name_key)
+            if not isinstance(name, str) or not name.strip():
+                raise invalid(f"{at}.{name_key}", "must be a nonempty string")
+            if name in found:
+                raise invalid(f"{at}.{name_key}", f"duplicate {name_key}: {name!r}")
+            found[name] = metadata(row, at)
+        return MappingProxyType(found)
+
+    return CapabilityIntentIndex(rows("exact", "intent"), rows("families", "prefix"))
+
+
+# Loaded once; mapping insertion order preserves first-match family precedence.
+_CAPABILITY_INTENT_INDEX = load_capability_intent_metadata()
+_CAPABILITY_INTENTS = _CAPABILITY_INTENT_INDEX.exact
+_CAPABILITY_INTENT_FAMILIES = _CAPABILITY_INTENT_INDEX.families
 
 # Major media type of a manifest output -> output modality.
 _MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio", "text": "text"}
@@ -302,7 +357,7 @@ def from_capability(
     """Metadata for one gateway capability: its intent's type and its declared modalities."""
     intent = str(intent or "")
     base = _CAPABILITY_INTENTS.get(intent) or next(
-        (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES if intent.startswith(prefix)), None
+        (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES.items() if intent.startswith(prefix)), None
     )
     if base is None:
         return None

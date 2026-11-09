@@ -125,6 +125,23 @@ retain their existing strip/lower normalization. Errors name the file and row.
 The index and its nested values are read-only and loaded once at import.
 Changes require a process restart; the file is release data, not owner config.
 
+## Capability intent model metadata
+
+`capability_intent_metadata.yml` supplies gateway capability defaults with
+`schema_version: 1`, an `exact` list of `intent` rows and an ordered
+`families` list of `prefix` rows. Each row gives exactly one of an
+`operation` name from `OPERATION_METADATA`, or literal `model_metadata`
+with `type`, `input_modalities` and `output_modalities` from the shared
+vocabularies. Exact intent matches win; otherwise the first matching prefix
+wins in file order. Declared capability modalities still refine those defaults.
+
+`gateway.model_metadata.load_capability_intent_metadata(path)` rejects unknown
+keys, duplicate intents or prefixes, unknown operation/type/modality values,
+and both/neither metadata representations with file-and-row errors. Names are
+nonempty strings and matching remains case-sensitive. Its maps and metadata
+are read-only, loaded once at import from release data, not owner config.
+Changing the file requires a process restart; new families need only rows.
+
 ## Extension catalog route facts
 
 Serving `registered_routes` rows in `protocol_frontends.yml` may declare:
