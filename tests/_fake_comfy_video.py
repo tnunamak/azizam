@@ -76,7 +76,9 @@ class FakeComfy:
                         return FakeResponse(200, content=outer.view_bytes[name])
                     return FakeResponse(404)
                 if url.endswith("/queue"):
-                    return FakeResponse(200, {"queue_running": [], "queue_pending": []})
+                    # A prompt the engine accepted and has not finished waits in its queue, as a real engine lists it.
+                    waiting = bool(outer.submitted) and NEW_PROMPT_ID not in outer.history
+                    return FakeResponse(200, {"queue_running": [], "queue_pending": [[1, NEW_PROMPT_ID, {}]] if waiting else []})
                 raise AssertionError(f"unexpected GET {url}")
 
             @asynccontextmanager
