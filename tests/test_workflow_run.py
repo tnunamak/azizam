@@ -622,3 +622,32 @@ def test_run_limits_lower_the_code_ceiling_and_ignore_values_that_raise_it_or_ar
     garbage = {CONFIG_SECTION: {"max_wait_s": "9", "history_depth": True, "bounds": [1, 2]}}
     assert run_limits_from_config(garbage) == ceiling
     assert run_limits_from_config({CONFIG_SECTION: {"max_wait_s": -1, "history_depth": 0}}) == ceiling
+
+
+def test_a_waiter_wakes_on_the_terminal_write_without_a_poll_sleep(db, tmp_path, monkeypatch):
+    """I2 decision 2: the writer that ends a job wakes its waiters; the wait holds no 0.1 s poll."""
+    core, port, view, _ = submitted(db, tmp_path)
+    service = WorkflowJobService(port=port, path=db)
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def spy(delay=0, result=None):
+        slept.append(float(delay))
+        return await real_sleep(delay, result)
+
+    monkeypatch.setattr(asyncio, "sleep", spy)
+
+    async def scenario():
+        waiter = asyncio.ensure_future(service.wait(view.job_id, Caller(), 30))
+        for _ in range(5):
+            await real_sleep(0)                      # the waiter is parked
+        assert not waiter.done()
+        media_jobs.update_status(view.job_id, media_jobs.STATUS_RUNNING, path=db)
+        media_jobs.update_status(view.job_id, media_jobs.STATUS_FAILED, error="x", path=db)
+        for _ in range(3):                           # a few loop turns, far below any poll interval
+            await real_sleep(0)
+        return waiter.done(), (await waiter).status
+
+    done_quickly, status = run(scenario())
+    assert done_quickly and status == "failed"
+    assert slept == [0.0] * len(slept) and all(d == 0.0 for d in slept), slept     # only the test's own turns
