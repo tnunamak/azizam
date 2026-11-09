@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
@@ -230,21 +231,34 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         seconds_value = float(seconds) if seconds is not None else min(limits.default_seconds or DEFAULT_SECONDS, limits.max_seconds)
     except (TypeError, ValueError):
         return refuse(400, "seconds must be a number")
+    if not math.isfinite(seconds_value):
+        return refuse(400, "seconds must be a number")
     if seconds_value < limits.min_seconds or seconds_value > limits.max_seconds:
         return refuse(400, f"seconds must be between {float(limits.min_seconds)} and {float(limits.max_seconds)} for model {name}")
     if body.get("size") is not None and not isinstance(body["size"], str):
         return refuse(400, "size must be a string like 1280x720", param="size")      # the old route answered 500 with no body
     width, height = video_grid.resolve_size(body.get("size"), manifest.size)
-    length = video_grid.frame_count(seconds_value, None, grid)
     roles = manifest.roles
     block = _workflow_block(body)
+    # The frame rate the run uses is resolved once: the workflow's own, or the typed one the caller sent as an extension. The
+    # frame count, the recorded duration, the engine input, the facts and the options all take this one value.
+    rate_key = roles.get("frame_rate", "frame_rate")
+    frame_rate = float(grid.fps)
+    if block.get(rate_key) is not None:
+        try:
+            frame_rate = float(coerce(chosen, rate_key, block[rate_key]))
+        except (TypeError, ValueError):
+            frame_rate = math.nan
+        if not math.isfinite(frame_rate) or frame_rate <= 0:
+            return refuse(400, f"{rate_key} must be a positive number", param=rate_key)
+    length = video_grid.frame_count(seconds_value, frame_rate, grid)
     chosen_length = block.get(roles.get("length", "length"))
     if chosen_length is not None:                    # the manifest's own length input (frames) wins over seconds, as it always did
         try:
             length = int(chosen_length)
         except (TypeError, ValueError):
             return refuse(400, f"{roles['length']} must be an integer", param=roles["length"])
-    actual_seconds = round(length / grid.fps, 4)
+    actual_seconds = round(length / frame_rate, 4)
     # An omitted seed stays out of the request: the core draws it once, inside the claimed transaction, so two requests that
     # differ only by a missing seed are one request for the idempotency key. The drawn value reaches the facts by a ref.
     seed: int | None = None
@@ -269,9 +283,9 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     put("width", width)
     put("height", height)
     put("length", length)
-    put("frame_rate", int(grid.fps) if float(grid.fps).is_integer() else grid.fps)
+    put("frame_rate", int(frame_rate) if frame_rate.is_integer() else frame_rate)
     for key, value in block.items():
-        if _wire.declared(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height")):
+        if _wire.declared(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height"), rate_key):
             inputs[key] = coerce(chosen, key, value)
     if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
         inputs["negative_prompt"] = body["negative_prompt"]
@@ -295,7 +309,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
                   "actual_seconds": actual_seconds, "length_frames": length}
     facts: dict[str, Any] = {
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
-        "length_frames": length, "frame_rate": grid.fps,
+        "length_frames": length, "frame_rate": frame_rate,
         "provenance": provenance.build_provenance_record(
             kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=f"{chosen.contract.get('intent')}.{name}",
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
@@ -309,7 +323,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         facts[video_controls.AUDIO_CONTROL] = False
     if context is not None and context.requested_mode:
         facts["metadata_mode"] = context.requested_mode
-    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": grid.fps}
+    options: dict[str, Any] = {"size": size, "seconds_frames": length, "frame_rate": frame_rate}
     if audio_off:
         options[video_controls.AUDIO_CONTROL] = False
     request.state.video_facts = facts

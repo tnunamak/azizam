@@ -845,3 +845,15 @@ def test_video_131_delete_waits_for_the_stop_without_holding_the_loop(tmp_path):
         assert answer.status_code == 409 and answer.json()["error"]["code"] == "video_cancel_failed"
         assert not w.deleted(stuck)
     run(tmp_path, exercise)
+
+
+@pytest.mark.parametrize("path", ["/v1/videos", "/openai/v1/videos"])
+@pytest.mark.parametrize("seconds", ["NaN", "nan", "inf", "-inf"])
+def test_video_132_seconds_that_is_not_a_finite_number_is_the_seconds_400(tmp_path, path, seconds):
+    async def exercise(w):
+        response = await w.call("POST", path, owner=ALICE, json_body={"prompt": "x", "model": MODEL, "seconds": seconds})
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "seconds must be a number"
+        assert video_job_rows(w.rig) == []
+        assert not w.engine.requests
+    run(tmp_path, exercise)

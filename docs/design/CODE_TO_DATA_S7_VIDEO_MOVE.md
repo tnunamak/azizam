@@ -179,8 +179,9 @@ This is `_seconds_to_length` (`proxy.py:10936`) exactly, with Python's `round` (
 there is no second copy: `_seconds_to_length` moves to `gateway/video_grid.py` (V5a owns it), and `proxy.py` imports it until the
 old create is deleted (V5c). `actual_seconds = length / fps`; the wire shows `X-Duration-Adjusted` exactly when the old code did
 (`length / fps != seconds`; V5c keeps the header from `result_headers` data, V5d pins it). LTX: step 8, offset 1. MiniMax H3: step 17,
-offset 5 (`videos.yml:50`). SCAIL-2: step 4, offset 1, max_frames 81. Size: `WxH`, each side `max(64, floor(side / multiple) *
-multiple)`, then clamped to `max`; `parse_size("auto" or empty)` falls to `default`; the used size is recorded in `size` and the
+offset 5 (`videos.yml:50`). SCAIL-2: step 4, offset 1, max_frames 81. Size: `WxH` (anything else, `auto` included, reads as 1024x1024, as `parse_size` always did), each side cut to `max` first, then
+`max(64, floor(side / multiple) * multiple)`, so a `max` that is not a multiple is floored too (`_parse_size_clamped`, main
+proxy.py:10913; pinned by `test_size_auto_reads_as_the_old_route_read_it_and_the_clamp_comes_before_the_floor`); the used size is recorded in `size` and the
 adjusted note `size_adjusted` is a result header as for images (`result_headers: {size_adjusted: X-Azizam-Size-Adjusted}`).
 
 Loader checks (V5a, `gateway/workflow_loader`/kernel, the `template_role_at_load` delta): every `roles.*` input exists; `width`,

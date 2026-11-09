@@ -175,6 +175,37 @@ def test_an_unreadable_size_is_cut_to_the_maximum_and_not_refused() -> None:
     assert run_request.facts["size"] == "1024x704"
 
 
+def _with_rate(fps: int | None, seconds: float = 3) -> Any:
+    body: dict[str, Any] = {"prompt": "x", "model": "ltx-2.5-t2v", "seconds": seconds}
+    if fps is not None:
+        body["extensions"] = {"com.azizam.workflow": {"frame_rate": fps}}
+    return read(body)
+
+
+@pytest.mark.parametrize("fps,frames", [(12, 33), (24, 73), (30, 89)])
+def test_a_frame_rate_extension_sets_the_frame_count_the_duration_the_inputs_the_facts_and_the_options(fps: int, frames: int) -> None:
+    run_request = _with_rate(fps)
+    assert run_request.inputs["length"] == frames and run_request.inputs["frame_rate"] == fps
+    assert run_request.facts["length_frames"] == frames and run_request.facts["frame_rate"] == fps
+    assert run_request.facts["actual_seconds"] == round(frames / fps, 4)
+    assert run_request.options == {"size": "960x512", "seconds_frames": frames, "frame_rate": fps}
+
+
+def test_a_frame_rate_that_is_not_a_positive_number_is_refused() -> None:
+    for bad in (0, -5, "fast", float("nan")):
+        refused = error(_with_rate(bad))
+        assert refused["param"] == "frame_rate"
+
+
+def test_size_auto_reads_as_the_old_route_read_it_and_the_clamp_comes_before_the_floor() -> None:
+    """Pin of main's ``parse_size`` + ``_parse_size_clamped``: "auto" (any text that is not WxH) is 1024x1024, not the
+    manifest default; the side is cut to the maximum first and floored to the multiple after, so an unaligned maximum is
+    floored too."""
+    assert read({"prompt": "x", "model": "ltx-2.5-t2v", "size": "auto"}).facts["size"] == "1024x704"
+    unaligned = snap(video_contract("odd", size={"default": "960x512", "max": "1280x700", "multiple": 64}))
+    assert read({"prompt": "x", "model": "odd", "size": "1920x1080"}, unaligned).facts["size"] == "1280x640"
+
+
 def test_the_seconds_string_is_the_old_one_and_the_frame_count_follows_the_grid_bounds() -> None:
     capped = snap(video_contract("cap", grid={"fps": 24, "step": 4, "offset": 1, "max_frames": 81}))
     run_request = read({"prompt": "x", "model": "cap", "seconds": 8}, capped)

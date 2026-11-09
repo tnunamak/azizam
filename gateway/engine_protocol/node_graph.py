@@ -646,6 +646,8 @@ class NodeGraphAdapter:
         if reply.status != 200:
             raise UpstreamError(reply.status, f"The history answered HTTP {reply.status}.")
         history = reply.json()
+        if not isinstance(history, Mapping):      # an answer of another shape says nothing about the prompt: it is not "not there yet"
+            raise ValueError("the history answer is not an object")
         if ref.id not in history:
             return JobStatus(ref, JobState.pending)
         job = history[ref.id]
