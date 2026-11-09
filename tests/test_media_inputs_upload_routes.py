@@ -139,6 +139,10 @@ def edit_rig(rig):
     from tests._fake_comfy_video import FakeComfy
     comfy = FakeComfy()
     stack = ExitStack()
+    # The engine is declared as a deployment declares one: a service record that names its protocol, which the run core finds.
+    service = rig.registry["services"][proxy._GRAPH_BACKEND_ID]["config"]
+    service["connection"] = {"protocol": "node-graph", "base_url": service["base_url"]}
+    service["enabled"] = True
     for p in comfy.patches():
         stack.enter_context(p)
     generate = AsyncMock(return_value=proxy.Response(status_code=200))
