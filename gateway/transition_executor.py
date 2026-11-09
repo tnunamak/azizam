@@ -694,16 +694,22 @@ class Executor:
         (the drain counts its deadline from its first intent). The gate of every such domain is already
         ``closed`` or ``reconciling`` in the table, so nothing is admitted while this runs.
         """
-        leftover = await asyncio.to_thread(self.store.unfinished)  # unreadable: raises, the pending flag stays as it was
-        self._recovery_pending = False  # a hold that cannot be written sets it again
-        for operation in leftover:
-            if operation.op_id in self._tasks:
-                continue  # a task of this process drives it; only an operation nothing drives is recovered
-            try:
-                await self._recover(operation)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[transition-gate] cannot recover {operation.op_id}: {log_scrub.describe_error(exc)}", flush=True)
-                await self._hold(operation)
+        self._ready = False  # no admission may observe a partially completed reconciliation
+        try:
+            leftover = await asyncio.to_thread(self.store.unfinished)
+            self._recovery_pending = False  # a hold that cannot be written sets it again
+            for operation in leftover:
+                if operation.op_id in self._tasks:
+                    continue  # a task of this process drives it; only an operation nothing drives is recovered
+                try:
+                    await self._recover(operation)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[transition-gate] cannot recover {operation.op_id}: {log_scrub.describe_error(exc)}", flush=True)
+                    await self._hold(operation)
+        except BaseException:
+            # Cancellation (or an error escaping recovery) did not finish the pass.
+            self._recovery_pending = True
+            raise
         self._ready = True
 
     async def _recover(self, operation: Operation) -> None:
