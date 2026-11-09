@@ -15,6 +15,8 @@ The managed LiteLLM substrate is the sole exception. Its gateway-derived
 endpoint/protocol fields are locked and it cannot be removed; its name, enabled
 state, and note remain editable.
 
+`schema1_capability_prefixes.yml` holds the versioned, ordered capability backfill rules read by the one-time schema 1 converter.
+
 ## Protocol descriptions
 
 `registry/protocols/*.yml` hold protocol descriptions: data that says how
