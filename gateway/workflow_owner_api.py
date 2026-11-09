@@ -5,6 +5,7 @@ path. A workflow contract holds no secret, so the bodies are plain JSON of the `
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 from collections.abc import Callable, Mapping
@@ -118,9 +119,11 @@ def entry_view(entry: WorkflowEntry, problems: list[dict[str, Any]]) -> dict[str
 def register_workflow_owner_routes(
     router: APIRouter, *, store: WorkflowRegistryStore, guard: Callable[[Request], Any],
     read_json: Callable[[Request], Any], entry_problems: EntryProblems | None = None,
+    listing_scope: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
 ) -> None:
     """``entry_problems(entry)`` is the projection layer's list of what keeps an entry from running (I3); without it an
-    entry reports only that it needs configuration."""
+    entry reports only that it needs configuration. ``listing_scope()`` wraps the list of every entry's problems, so the
+    live settings those checks read are read once per list, not once per entry."""
 
     def problems_of(entry: WorkflowEntry) -> list[dict[str, Any]]:
         if entry_problems is not None:
@@ -194,8 +197,11 @@ def register_workflow_owner_routes(
             return ctx
         snapshot = await asyncio.to_thread(store.snapshot)
         # A workflow's problems can read the live service registry (an adapter's binding check), so off the loop.
-        rows = await asyncio.to_thread(
-            lambda: [entry_view(entry, problems_of(entry)) for _id, entry in sorted(snapshot.workflows.items())])
+        def views() -> list[dict[str, Any]]:
+            with listing_scope() if listing_scope is not None else contextlib.nullcontext():
+                return [entry_view(entry, problems_of(entry)) for _id, entry in sorted(snapshot.workflows.items())]
+
+        rows = await asyncio.to_thread(views)
         # Stored workflows that do not serve because their names clash with names the registry already held.
         held_out = [{"id": wid, "problems": [_with_clean(problem.as_dict()) for problem in problems]}
                     for wid, problems in snapshot.held_out.items()]

@@ -1790,6 +1790,7 @@ def create_admin_router(
     transitions: Callable[[], Any] | None = None,
     workflow_registry: Any = None,
     workflow_entry_problems: Callable[[Any], list[dict[str, Any]]] | None = None,
+    workflow_listing_scope: Callable[[], Any] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1838,7 +1839,7 @@ def create_admin_router(
                 raise BodyRefused(error.as_response()) from error
 
         register_workflow_owner_routes(router, store=workflow_registry, guard=_guard, read_json=_owner_read_json,
-                                       entry_problems=workflow_entry_problems)
+                                       entry_problems=workflow_entry_problems, listing_scope=workflow_listing_scope)
     from gateway.retention_fact_api import register_routes as register_retention_fact_routes
     register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)
     from gateway.engine_protocol_admin import register_engine_protocol_routes

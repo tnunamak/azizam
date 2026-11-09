@@ -17551,6 +17551,7 @@ app.include_router(
         transitions=lambda: TRANSITION_RUNTIME,
         workflow_registry=WORKFLOW_REGISTRY_STORE,
         workflow_entry_problems=_workflow_owner_entry_problems,
+        workflow_listing_scope=lambda: _one_operator_override_read(),
     )
 )
 
@@ -18763,7 +18764,25 @@ def _admin_oidc_config_snapshot() -> Mapping[str, Any] | None:
     }
 
 
+# Set while a listing checks many entries at once: the operator overrides read once for the whole list.
+_OPERATOR_OVERRIDE_SNAPSHOT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "operator_override_snapshot", default=None)
+
+
+@contextlib.contextmanager
+def _one_operator_override_read():
+    """Inside this block, ``_operator_override_docs`` answers from one read taken when the block starts."""
+    token = _OPERATOR_OVERRIDE_SNAPSHOT.set(_operator_override_docs())
+    try:
+        yield
+    finally:
+        _OPERATOR_OVERRIDE_SNAPSHOT.reset(token)
+
+
 def _operator_override_docs() -> dict[str, Any]:
+    held = _OPERATOR_OVERRIDE_SNAPSHOT.get()
+    if held is not None:
+        return held
     try:
         overrides = ADMIN_STORE.operator_overrides()
     except Exception as exc:  # noqa: BLE001
