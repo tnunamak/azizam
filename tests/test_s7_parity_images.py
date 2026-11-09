@@ -246,7 +246,6 @@ def test_images_17_engine_traffic_of_one_round(tmp_path):
     assert_same(old, row, status, engine)
 
 
-@ROW_PENDING
 def test_images_18_poll_schedule(tmp_path):
     old, row = pair(tmp_path, GEN, body(), lambda rig: ok(rig, running_polls=3))
     old_has(old, "a poll schedule", len(sleeps(old)) >= 3)
@@ -269,7 +268,6 @@ def test_images_20_an_empty_round_ends_the_batch(tmp_path):
     assert_same(old, row, status, failure, ("returned", lambda o: len(data_items(o))), engine_without_probes, ("warning", lambda o: header(o, "x-proxy-warning")))
 
 
-@ROW_PENDING
 def test_images_21_generation_timeout_504_with_queue_position(tmp_path):
     old, row = pair(tmp_path, GEN, body(), timeout)
     old_has(old, "504", status(old) == 504)
@@ -314,7 +312,6 @@ def test_images_23_execution_error_502(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_24_transient_history_errors_are_retried(tmp_path):
     def setup(rig):
         ok(rig, extra=[exchange("h-503", "GET", "/history/p1", {"status": 503, "json": {}}, times=2)])
@@ -363,7 +360,6 @@ def test_images_28_no_health_probe_before_submit(tmp_path):
     assert_same(old, row, engine)
 
 
-@NEEDS_RH
 def test_images_29_receipt_opens_before_the_route_policy(tmp_path):
     old, row = pair(tmp_path, GEN, body(), denied)
     old_has(old, "a rejected receipt", receipt_summary(old))
@@ -376,7 +372,6 @@ def test_images_30_failure_texts(tmp_path):
         assert_same(old, row, status, failure)
 
 
-@NEEDS_RH
 def test_images_31_receipt_closes_with_the_outcome(tmp_path):
     ok_pair = pair(tmp_path / "ok", GEN, body(), ok)
     bad_pair = pair(tmp_path / "bad", GEN, raw_json(b"{"), ok)
@@ -404,7 +399,6 @@ def test_images_32_idempotency_key_replays_the_first_answer(tmp_path):
     assert doc(row, 0)["data"] == doc(row, 1)["data"]
 
 
-@NEEDS_RH
 def test_images_33_cancel_of_queued_and_of_finished(tmp_path):
     queued = cell(tmp_path / "q", "ig", "cancel_queued")
     finished = cell(tmp_path / "f", "ig", "cancel_finished")
@@ -412,7 +406,6 @@ def test_images_33_cancel_of_queued_and_of_finished(tmp_path):
     assert_same(*finished, engine_without_probes, receipt_summary, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]))
 
 
-@NEEDS_RH
 def test_images_34_wait_timeout_answers_and_closes_the_receipt(tmp_path):
     old, row = cell(tmp_path, "ig", "wait_timeout")
     assert_same(old, row, status, failure, sleeps, engine_without_probes, receipt_summary)
@@ -532,7 +525,6 @@ def test_images_E11_mask_required_and_missing(tmp_path):
     _edit_compare(old, row, ("headers", lambda o: headers_with(o, "x-image")))
 
 
-@NEEDS_RH
 def test_images_E12_policy_and_admission_cells(tmp_path):
     for outcome in ("policy_refusal", "admission_refusal"):
         old, row = cell(tmp_path / outcome, "ie", outcome)
@@ -540,7 +532,22 @@ def test_images_E12_policy_and_admission_cells(tmp_path):
         assert_same(old, row, status, failure, engine, receipt_summary, ("retention", retention_destinations))
 
 
-@NEEDS_RH
+def test_images_receipt_status_words_refusal_is_rejected_service_state_is_failed(tmp_path):
+    """Allowed delta ``receipt_status_words`` (I2 decision 1): a row receipt says succeeded/failed where the old route said
+    ok/error, but a refusal of the request still says ``rejected``: a refused policy, a refused body, a model that is no
+    image workflow. A service that is switched off is a 5xx, so the receipt says failed (the old route said error)."""
+    def row_summary(path, request, setup):
+        return receipt_summary(observe(tmp_path / f"w{abs(hash((path, str(setup))))}", path, request, setup, row=True))
+
+    for outcome in ("policy_refusal", "validation_refusal"):
+        _old, row = cell(tmp_path / outcome, "ig", outcome)
+        assert [r[0] for r in receipt_summary(row)] == ["rejected"], outcome
+    unknown = row_summary(GEN, body(model="no-such-image-model"), ok)
+    assert [r[0] for r in unknown] == ["rejected"]
+    _old, off = cell(tmp_path / "off", "ig", "admission_refusal")
+    assert [r[0] for r in receipt_summary(off)] == ["failed"]
+
+
 def test_images_E13_refused_image(tmp_path):
     old, row = cell(tmp_path / "v", "ie", "validation_refusal")
     assert_same(old, row, status, failure, engine, receipt_summary)
@@ -597,7 +604,6 @@ def test_images_E19_response_headers(tmp_path):
     assert_same(old, row, ("headers", lambda o: headers_with(o, "x-image", "x-azizam", "x-proxy", "x-comfyui")))
 
 
-@ROW_PENDING
 def test_images_E20_round_loop_traffic(tmp_path):
     old, row = pair(tmp_path, EDIT, edit_masked(), lambda rig: base._comfy(rig, comfy_exchanges(
         views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), running_polls=3, strict=False)))
@@ -770,7 +776,6 @@ def test_images_J03_metadata_control_is_checked(tmp_path):
     assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))))
 
 
-@NEEDS_RH
 def test_images_J04_policy_then_admission(tmp_path):
     for outcome in ("policy_refusal", "admission_refusal"):
         old, row = cell(tmp_path / outcome, "ij", outcome)
@@ -866,14 +871,12 @@ def test_images_J13_a_queued_event_then_scheduling(tmp_path):
     assert_same(old, row, ("first event", lambda o: doc(o, 1)["events"][0]), ("scheduled", lambda o: len(o.trace["notes"])))
 
 
-@NEEDS_RH
 def test_images_J14_refusals_leave_no_job(tmp_path):
     for outcome in ("validation_refusal", "policy_refusal"):
         old, row = cell(tmp_path / outcome, "ij", outcome)
         assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))), receipt_summary)
 
 
-@NEEDS_RH
 def test_images_J15_admission_refusal_leaves_no_job(tmp_path):
     old, row = cell(tmp_path, "ij", "admission_refusal")
     assert_same(old, row, status, failure, ("jobs", lambda o: len(media_jobs(o))), receipt_summary)
@@ -1128,7 +1131,6 @@ def test_images_F04_execution_error(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_F05_timeout(tmp_path):
     old, row = pair(tmp_path, GEN, body(), timeout)
     old_has(old, "504", status(old) == 504)
