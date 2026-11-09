@@ -80,6 +80,13 @@ class StepIntent:
     """Stable per operation and step, so a recovery query can find the effect."""
     expected_incarnation: Optional[str]
 
+    @property
+    def effect(self) -> str:
+        """The effect this intent stands for. A reset is recorded under the step ``restore`` with an effect key ending in
+        ``:reset``; its identity decides which profile block speaks for it, so a query and a restart never read a reset
+        by the restore's failure semantics."""
+        return "reset" if self.step == "restore" and self.effect_key.endswith(":reset") else self.step
+
 
 @dataclass(frozen=True)
 class Operation:

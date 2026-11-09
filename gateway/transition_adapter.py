@@ -146,7 +146,7 @@ class DeclaredOperationAdapter:
 
     async def query(self, domain: str, intent: StepIntent) -> EffectResult:
         return await self._effect(domain, "query", self._body(intent, step=intent.step), attests=intent.step == "release",
-                                  block=intent.step)
+                                  block="restore.reset" if intent.effect == "reset" else intent.step)
 
     def _path(self, domain: str, handle: str) -> Optional[Path]:
         """The snapshot store's path for ``handle``, or None when the store refuses it."""

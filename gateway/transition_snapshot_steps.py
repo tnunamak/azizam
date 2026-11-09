@@ -469,6 +469,12 @@ class RestoreStep:
         result = await _effect(adapter.reset(domain, intent), sp.deadline("reset"), "reset")
         if result.outcome == "unknown" and sp.reset_query:
             result = await _effect(adapter.query(domain, intent), sp.deadline("query"), "query")
+        return await self._after_reset(ctx, sp, adapter, result)
+
+    async def _after_reset(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter,
+                           result: EffectResult) -> StepVerdict:
+        """Judge a reset's outcome: the live path and the startup reconcile share it. Only a clean verification serves cold."""
+        operation, domain = ctx.operation, ctx.operation.domain
         if result.outcome == "unknown":
             await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
                             EffectResult(outcome="unknown", evidence_ref="reset:unknown"))
@@ -493,6 +499,29 @@ class RestoreStep:
         await _blocking(ctx.store.write_outcome, operation.op_id, "restore", EffectResult(
             outcome="unknown" if clean is None else "partial", evidence_ref="reset:target_not_verified_clean"))
         return "reconcile" if clean is None else "fail_closed"
+
+    async def settle(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> StepVerdict:
+        """Settle a restore or reset outcome the executor learned outside ``run`` (the startup reconcile asked ``query``).
+        It is the live path's own settlement, keyed by the effect's identity: a reset is judged by the reset block and its
+        clean verification (a dirty or unreachable target never reopens); a restore by the restore block."""
+        sp = parse_policy(ctx.policy)
+        adapter: SnapshotAdapter = ctx.adapter  # type: ignore[assignment]
+        if intent.effect == "reset":
+            return await self._after_reset(ctx, sp, adapter, result)
+        operation, domain = ctx.operation, ctx.operation.domain
+        if result.outcome == "success":
+            await _blocking(ctx.store.write_outcome, operation.op_id, "restore", EffectResult(
+                outcome="success", evidence_ref=f"restore:{result.evidence_ref or 'recovered'}",
+                correlation_id=result.correlation_id))
+            return "continue"
+        await _blocking(self._snapshots.retire_published, domain)  # a failed restore: the snapshot is not offered again
+        if result.outcome == "no_change" and sp.restore_no_change:
+            await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
+                            EffectResult(outcome="no_change", evidence_ref="restore:declined:serving_cold"))
+            return "continue"
+        await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
+                        EffectResult(outcome="partial", evidence_ref="restore:failed:state_not_known_clean"))
+        return await self._reset(ctx, sp, adapter)
 
     async def _clean(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter) -> Optional[bool]:
         """Is the target clean and serving? The profile's reset ``verify`` observation, else (only
