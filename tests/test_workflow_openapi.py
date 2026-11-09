@@ -142,6 +142,21 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 if spec["type"] == "asset":
                     self.assertEqual(form["properties"][name]["format"], "binary")
 
+    def test_video_edit_sync_declares_a_job_without_rewriting_the_upload(self) -> None:
+        edits = [row for row in self.catalog.values() if row["intent"] == "video.edit"
+                 and row["execution"]["sync"]["path"] == f"/gateway/v1/workflows/{row['id']}/run"]
+        self.assertTrue(edits)
+        for row in edits:
+            with self.subTest(workflow=row["id"]):
+                route = row["execution"]["sync"]
+                self.assertEqual(route["content_type"], "multipart/form-data")
+                self.assertNotEqual(route.get("kind"), "media_job")
+                self.assertEqual(route["response"], {
+                    "kind": "media_job",
+                    "poll": "/gateway/v1/media/jobs/{job_id}",
+                    "content": "/gateway/v1/media/jobs/{job_id}/content",
+                })
+
     def test_other_native_routes_are_typed(self) -> None:
         paths = self.spec["paths"]
         submit = paths["/gateway/v1/media/jobs"]["post"]
