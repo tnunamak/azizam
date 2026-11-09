@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401
+
 ORACLE = Path(__file__).parent / "support" / "fresh_gateway_oracle.py"
 PATHS = ("stt-direct", "stt-chunked", "grid", "history")
 STATES = ("absent", "disabled", "partial", "enabled")
@@ -77,3 +79,31 @@ def test_scoped_engine_path_has_no_egress_without_an_enabled_complete_row(tmp_pa
 
     if path == "history":
         assert report["ticks"] == [[1000.0, 60.0], [1060.0, 60.0]]
+
+
+def test_voice_reference_transcription_does_not_dial_a_disabled_stt_row(tmp_path, fake_upstreams):
+    """The real reference-transcript path: a disabled STT row is refused before any request is sent."""
+    import asyncio
+    from unittest.mock import patch
+
+    import httpx
+
+    import proxy
+    from gateway import custom_voices
+    from tests.support.fake_upstream import HandlerTransport
+
+    source = tmp_path / "reference.wav"
+    source.write_bytes(b"fixture audio")
+    sent = []
+
+    def handler(request):
+        sent.append(str(request.url))
+        return httpx.Response(200, json={"text": "words"})
+
+    fake_upstreams.router.add_transport("disabled-stt.fk.test:9876", HandlerTransport(handler))
+    service = {"host": "disabled-stt.fk.test", "port": 9876, "enabled": False, "default_model": "test"}
+    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"):
+        with pytest.raises(custom_voices.VoiceError) as caught:
+            asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
+    assert caught.value.status == 503
+    assert sent == []
