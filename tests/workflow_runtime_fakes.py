@@ -311,6 +311,17 @@ class FakeJobService:
     def get(self, job_id: str, caller: Any) -> RunJobView | None:
         return None if job_id in self.deleted else self.core.jobs.get(job_id)
 
+    def list(self, caller: Any, *, intent: str, limit: int, after_id: str | None = None, order: str = "desc"):
+        """Every live job of the fake core (it has no owners or intents), in creation order."""
+        views = sorted((v for k, v in self.core.jobs.items() if k not in self.deleted),
+                       key=lambda v: (v.created_at_s, v.job_id), reverse=order != "asc")
+        ids = [v.job_id for v in views]
+        if after_id is not None:
+            if after_id not in ids:
+                raise JobNotFound(after_id)
+            views = views[ids.index(after_id) + 1:]
+        return tuple(views[:limit]), len(views) > limit
+
     def delete(self, job_id: str, caller: Any) -> None:
         view = self._view(job_id)
         if view.status in ("queued", "running"):
