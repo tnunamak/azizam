@@ -228,6 +228,13 @@ def directory_state(path):
     }
 
 
+def store_state(path):
+    """directory_state without the SHM bytes. Any SQLite reader of a live WAL store may write its read marks or
+    rebuild the shared index in the SHM file; the store's data is the DB and WAL bytes, and the file set."""
+    mtime, files = directory_state(path)
+    return mtime, {name: (True if name.endswith("-shm") else state) for name, state in files.items()}
+
+
 def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tmp_path):
     source_directory = tmp_path / "locked-source"
     source_directory.mkdir()
@@ -252,7 +259,7 @@ def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tm
         connection.execute("UPDATE media_jobs SET workflow = 'held'")
         connection.commit()
         assert Path(str(path) + "-shm").exists()
-        before = directory_state(source_directory)
+        before = store_state(source_directory)
         # run_path returns a namespace copy; patch the function's actual globals.
         wrapper = (
             "import runpy, sys\n"
@@ -270,7 +277,7 @@ def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tm
             )
         finally:
             # The parent still holds the exclusive lock at every assertion.
-            assert directory_state(source_directory) == before
+            assert store_state(source_directory) == before
             assert list(temporary.iterdir()) == []
         assert result.returncode == 3, result.stdout
         assert result.stdout.splitlines() == ["REFUSED store_unreadable"]
