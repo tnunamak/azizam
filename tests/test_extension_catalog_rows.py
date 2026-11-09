@@ -117,6 +117,37 @@ def test_duplicate_extension_route_refused(tmp_path, rows, namespace, route, row
     )
 
 
+@pytest.mark.parametrize("rows, route, row_number", [
+    pytest.param(
+        [{"canonical": "/v1/videos", "extensions": ["com.azizam.chat"], "extension_order": 1},
+         {"canonical": "/v1/videos/", "extensions": ["com.azizam.chat"], "extension_order": 2}],
+        "/v1/videos/", 2, id="trailing-slash",
+    ),
+    pytest.param(
+        [{"canonical": "/v1/videos/workflows/{id}",
+          "extensions": ["com.azizam.prompts"], "extension_order": 51}],
+        "/v1/videos/workflows/{id}", 1, id="parameter-name-against-residual",
+    ),
+])
+def test_one_route_spelled_two_ways_is_refused(tmp_path, rows, route, row_number):
+    # A trailing slash and a path parameter's name do not make a new route; letter case does (paths are case-sensitive).
+    namespace = rows[-1]["extensions"][0]
+    with pytest.raises(ValueError) as error:
+        catalog.load_extension_routes(write_rows(tmp_path, rows))
+    assert str(error.value) == (
+        f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
+        f"record 1, row {row_number}"
+    )
+
+
+def test_routes_that_differ_in_letter_case_are_distinct(tmp_path):
+    index = catalog.load_extension_routes(write_rows(tmp_path, [
+        {"canonical": "/v1/videos", "extensions": ["com.azizam.chat"], "extension_order": 1},
+        {"canonical": "/V1/Videos", "extensions": ["com.azizam.chat"], "extension_order": 2},
+    ]))
+    assert [row.route for row in index["com.azizam.chat"]] == ["/v1/videos", "/V1/Videos"]
+
+
 def test_duplicate_extension_route_across_records_refused(tmp_path):
     path = tmp_path / "rows.yml"
     path.write_text(yaml.safe_dump({"records": [
