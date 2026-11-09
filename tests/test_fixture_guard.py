@@ -253,9 +253,9 @@ def test_anonymous_media_guard_allows_the_metadata_file_embed_for_a_large_tag(tm
 
     monkeypatch.setattr(subprocess, "run", guarded_run)
     big = "x" * 140_000
-    stamped = media_metadata.embed_media_tags(audio.getvalue(), ".flac", {"title": big})
+    stamped = media_metadata.embed_media_tags(audio.getvalue(), ".wav", {"title": big})
     assert commands == ["ffprobe", "ffmpeg"]
-    assert media_metadata.read_media_tags(stamped, ".flac").get("title") == big
+    assert media_metadata.read_media_tags(stamped, ".wav").get("comment") == "title=" + big
 
 
 def test_anonymous_media_guard_rejects_other_inputs_and_commands(tmp_path):
