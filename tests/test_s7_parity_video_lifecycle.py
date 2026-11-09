@@ -816,11 +816,12 @@ def test_video_130_create_answers_queued_while_the_engine_never_answers(tmp_path
     async def exercise(w):
         w.engine.prompt_gate = asyncio.Event()           # never set: the engine holds the submission for good
         started = asyncio.get_running_loop().time()
-        vid = await asyncio.wait_for(w.create(), timeout=1.0)
+        response = await asyncio.wait_for(
+            w.call("POST", "/v1/videos", owner=ALICE, json_body={"prompt": "never answered", "model": MODEL}), timeout=1.0)
         assert asyncio.get_running_loop().time() - started < 1.0
-        view = await w.status(vid)
-        assert view.status_code == 200
-        body = view.json()
-        assert body["status"] == "queued" and body["object"] == "video" and body["id"] == vid
+        assert response.status_code == 200, response.text
+        body = response.json()
+        vid = w.track(body["id"])
+        assert body["status"] == "queued" and body["object"] == "video" and JOB_ID.match(vid)
         assert w.engine.prompt_ids == []
     run(tmp_path, exercise)
