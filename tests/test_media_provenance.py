@@ -617,7 +617,8 @@ class AvDeliveryTests(unittest.TestCase):
 class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
     """GET /v1/videos/{id}/content: query control, submit-time choice, the plans' bound."""
 
-    async def _fetch(self, *, query: str, record_mode: str | None, auth) -> bytes:
+    async def _fetch(self, *, query: str, record_mode: str | None, auth, keep_prompt: bool = True,
+                     expect_status: int = 200) -> Any:
         if not FFMPEG:
             self.skipTest("ffmpeg is required")
         tmp = tempfile.TemporaryDirectory()
@@ -638,7 +639,9 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             "metadata_mode": record_mode,
             "provenance": provenance.build_provenance_record(kind="video", seed=3, request_id="video_x"),
         }
-        prompt_memory.put(f"video_{prompt_id}", maker["id"], "video test prompt", kept_until=None, admin_path=admin_db)
+        if keep_prompt:
+            prompt_memory.put(f"video_{prompt_id}", maker["id"], "video test prompt", kept_until=None,
+                              admin_path=admin_db)
 
         class View:
             status_code = 200
@@ -677,8 +680,8 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             proxy, "_enforce_runtime_route_policy", lambda *_a, **_k: None
         ):
             response = await proxy.videos_content("video_x", Req())  # type: ignore[arg-type]
-        self.assertEqual(response.status_code, 200, response.body)
-        return response.body
+        self.assertEqual(response.status_code, expect_status, response.body)
+        return response.body if expect_status == 200 else json.loads(response.body)
 
     def _has_metadata(self, content: bytes) -> bool:
         return "KSampler" in json.dumps(media_metadata.read_media_tags(content, ".mp4"))
@@ -705,6 +708,25 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         blob = json.dumps(media_metadata.read_media_tags(
             await self._fetch(query="", record_mode=None, auth=full_auth), ".mp4"))
         self.assertIn("azizam_provenance", blob)
+
+    async def test_default_full_without_a_kept_prompt_delivers_the_video_without_metadata(self) -> None:
+        # An App whose plan allows full metadata but whose prompt was not kept (the person or the App keeps no
+        # prompts) asked for nothing: the video is delivered, prompt-free, instead of a 403 after the render.
+        full_auth = proxy.AuthContext(identity=auth_identity(
+            name="f", key_hash="sha256:f", access=access(plan_for("owner", metadata="full"))))
+        content = await self._fetch(query="", record_mode=None, auth=full_auth, keep_prompt=False)
+        self.assertTrue(content.startswith(b"\x00\x00\x00") and b"ftyp" in content[:16], content[:16])
+        self.assertFalse(self._has_metadata(content))
+        self.assertNotIn("video test prompt", json.dumps(media_metadata.read_media_tags(content, ".mp4")))
+
+    async def test_explicit_full_without_a_kept_prompt_is_still_refused(self) -> None:
+        full_auth = proxy.AuthContext(identity=auth_identity(
+            name="f", key_hash="sha256:f", access=access(plan_for("owner", metadata="full"))))
+        for query, record_mode in (("metadata=full", None), ("", "full")):
+            with self.subTest(query=query, record_mode=record_mode):
+                body = await self._fetch(query=query, record_mode=record_mode, auth=full_auth, keep_prompt=False,
+                                         expect_status=403)
+                self.assertEqual(body["error"]["code"], "prompt_not_accessible")
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")
