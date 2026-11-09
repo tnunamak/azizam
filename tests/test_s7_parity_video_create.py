@@ -2,8 +2,7 @@
 
 The real app runs over GatewayRig and a HandlerTransport engine. No route,
 scheduler, runner, graph-builder or ownership function is called or patched here.
-The one strict xfail is the section-4 idempotency_acceptance delta: it asserts the
-new deduplicated contract and is expected red on the old direct route.
+The section-4 idempotency_acceptance delta (the same key deduplicates) holds on the row path, so its test is a plain pass.
 
 Rewritten for the video move (docs/design/CODE_TO_DATA_S7_VIDEO_MOVE.md section 5.1): a video made by create is a job,
 ``video_mj_<hex>``. Ids are read from responses; the engine prompt id is ``p<n>`` in submit order, and a create waits
@@ -273,7 +272,6 @@ def test_video_04_access_plan_refuses_before_engine(world):
     run(drive())
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="idempotency_acceptance: section 4 now permits video-create deduplication")
 def test_video_05_same_key_deduplicates_under_the_allowed_delta(world):
     async def drive():
         responses = []
@@ -585,6 +583,7 @@ def test_video_50_cancel_of_the_goldens_missing_job_does_not_cancel_a_video(worl
     async def drive():
         world.engine.pending = True
         await create(world)
+        await submitted(world, 1)
         # The job's runner polls the engine's history while the render is held; a cancel is what must add no engine call.
         def acting():
             return [call for call in world.engine.calls if not (call[0] == "GET" and call[1].startswith(("/history", "/queue")))]

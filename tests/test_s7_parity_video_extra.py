@@ -381,8 +381,6 @@ def test_video_1_02_non_string_prompt_is_refused_before_the_engine(tmp_path):
     assert "POST /prompt" not in seen["engine"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="delta idempotency_acceptance: lands with the videos.create move")
 def test_video_1_05_same_idempotency_key_twice_submits_once(tmp_path):
     """video-05 (decided: the `idempotency_acceptance` delta, S7 parity section 4): the old direct route ignored the key
     and sent two engine prompts. The row path dedupes: one engine prompt, and the replay answers the same video id.
