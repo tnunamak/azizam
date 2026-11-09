@@ -34,6 +34,7 @@ from tests.support.access import authenticated, everything, identity, plan_for
 from tests.support.adapter_differential_rig import GatewayRig
 from tests.support.config_snapshot import publish_section
 from tests.support.fake_upstream import HandlerTransport
+from tests.support import video_rig
 from tests.support.video_rig import video_job_rows
 
 HOST = "comfy.fk.test"
@@ -232,7 +233,7 @@ async def terminal_job(world, job_id):
 
 def test_video_01_disabled_capability_refuses_before_engine(world):
     async def drive():
-        world.rig.set(proxy, "COMFY_ENABLED", False)
+        video_rig.disable_service(world.rig)         # the service record is off, as an operator turns it off
         response = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
         assert response.status_code == 503
         assert response.json()["error"] == {"message": "Video generation not enabled", "type": "service_unavailable"}

@@ -295,6 +295,13 @@ def install_runner_clock(world: World) -> None:
     world.rig.monkeypatch.setattr(proxy, "_workflow_core_cache", (proxy.WORKFLOW_SNAPSHOTS, proxy.WORKFLOW_PROJECTIONS, core))
 
 
+def disable_service(rig) -> None:
+    """Switch the video service off as an operator does: the service record says so, and the flag derived from it follows."""
+    record = dict(proxy.config["backends"]["comfy"], enabled=False)
+    rig.monkeypatch.setitem(proxy.config, "backends", {**proxy.config["backends"], "comfy": record})
+    rig.set(proxy, "COMFY_ENABLED", False)
+
+
 def run(tmp_path: Path, exercise) -> None:
     with GatewayRig(exercise.__name__, tmp_path) as rig:
         engine = Engine()
