@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from gateway import video_inputs
+from gateway.frontend_shapes.video_views import WIRE_STATUS
 
 
 @dataclass(frozen=True)
@@ -32,8 +33,8 @@ class VideoSource:
 class SourceRefused:
     http_status: int
     message: str
-    kind: str = "invalid_request_error"
     param: str | None = None
+    code: str | None = None
 
 
 def probe_asset(body: bytes) -> Mapping[str, Any]:
@@ -47,16 +48,18 @@ def probe_asset(body: bytes) -> Mapping[str, Any]:
 
 async def resolve_source(job_id: str, wire_id: str, caller: Any, jobs: Any, *,
                          probe: Callable[[bytes], Mapping[str, Any]] = probe_asset) -> VideoSource | SourceRefused:
-    """The source a finished job holds. Unknown, or not the caller's: 404 (the job store answers both alike). Not finished: 404
-    with the word of its status, as the content route says it. A finished job with no stored clip is 404 too."""
+    """The source a finished job holds, refused as the old source loader refused it: unknown or not the caller's, 404
+    ``video_id not found``; not finished, 400 ``Source video is not completed (status=<word>)`` with code ``video_not_ready``;
+    a finished job with no stored clip, 404. The param of each is ``video``."""
     view = await asyncio.to_thread(jobs.get, job_id, caller)
     if view is None:
-        return SourceRefused(404, "video_id not found", kind="not_found")
+        return SourceRefused(404, "video_id not found", param="video")
     if view.status != "succeeded":
-        return SourceRefused(404, f"Video content is not ready yet (status={view.status})")
+        return SourceRefused(400, f"Source video is not completed (status={WIRE_STATUS.get(view.status, 'queued')})",
+                             param="video", code="video_not_ready")
     ref = next((r for r in (view.results or ()) if r.asset_id and r.media_type != "application/json"), None)
     if ref is None:
-        return SourceRefused(404, "video_id not found", kind="not_found")
+        return SourceRefused(404, "video_id not found", param="video")
     facts_of = getattr(jobs, "request_facts", None)
     facts = await asyncio.to_thread(facts_of, job_id, caller) if facts_of is not None else None
     asked = getattr(facts, "facts", None) or {}

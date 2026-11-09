@@ -154,11 +154,6 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
             or (reference is not None and _reference_bytes(reference) is None)
             or any(_wire.declared(chosen, key) and _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
-    undeclared = next((key for key in block if not _wire.declared(chosen, key)), None)
-    if undeclared is not None:
-        # A name the manifest does not declare is not a workflow input; a declared one is never refused, even when it fills a role.
-        return refuse(400, f"extensions.workflow.{undeclared} is not an input of model {name}",
-                      param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{undeclared}", code="invalid_workflow_extension")
     return chosen, manifest, name, public_model
 
 
@@ -252,7 +247,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
     put("length", length)
     put("frame_rate", int(grid.fps) if float(grid.fps).is_integer() else grid.fps)
     for key, value in block.items():
-        if key not in (roles.get("length"), roles.get("width"), roles.get("height")):
+        if _wire.declared(chosen, key) and key not in (roles.get("length"), roles.get("width"), roles.get("height")):
             inputs[key] = coerce(chosen, key, value)
     if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
         inputs["negative_prompt"] = body["negative_prompt"]

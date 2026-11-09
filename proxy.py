@@ -118,7 +118,7 @@ from gateway import request_history, request_history_api, request_history_captur
 from gateway.http_tls import tls_context
 from gateway import asset_types, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
-from gateway import video_grid
+from gateway import video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
@@ -27140,6 +27140,9 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
 
     def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> str:
         return _workflow_run_prompt_retention(caller, body.get("extensions") if isinstance(body.get("extensions"), Mapping) else {})
+
+    async def source(self, job_id: str, wire_id: str, caller: Any) -> Any:
+        return await video_source.resolve_source(job_id, wire_id, caller, _workflow_job_service())
 
     def keep_prompt(self, caller: Any, key: str, prompt: str) -> bool:
         context = media_delivery.current()

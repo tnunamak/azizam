@@ -495,6 +495,11 @@ class VideoHooks:
         """Remember the prompt of a new job under ``key``; True when it was kept."""
         return False
 
+    async def source(self, job_id: str, wire_id: str, caller: Any) -> Any:
+        """The stored clip a wire id names, read from its file (a ``VideoSource``), or the refusal to give (a ``SourceRefused``).
+        None: this deployment cannot read a source, and the request is refused as an unreadable one."""
+        return None
+
 
 VIDEO_HOOKS: VideoHooks | None = None
 EXPIRY_S = 86400                    # how long the answer to a create says a video stays: the old route's day
@@ -587,8 +592,23 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         targets = _wire.asset_input_names(entry) if entry is not None else []
         if not targets:
             return _wire.error_response(400, "This workflow edits no video", param=self.wire_name)
+        job_id = self.job_id_of(source)
+        if job_id is None:
+            return _wire.error_response(400, f"invalid {self.wire_name}_id", param=self.wire_name)
+        found = await (VIDEO_HOOKS or VideoHooks()).source(job_id, source, getattr(request.state, "caller", None))
+        if found is None:
+            return _wire.error_response(404, f"{self.wire_name}_id not found", param=self.wire_name)
+        if hasattr(found, "http_status"):
+            return _wire.error_response(found.http_status, found.message, param=found.param, code=found.code)
         inputs = {name: value for name, value in run.inputs.items() if name != self.wire_name}
-        ref = MediaRef(digest="", media_type="application/octet-stream", size=0, asset_id=source)
+        # The clip is what its file shows: the run keeps the source's own frame rate, and cannot ask for more seconds than it holds.
+        if found.fps and _wire.declared(entry, "frame_rate"):
+            inputs["frame_rate"] = int(found.fps) if float(found.fps).is_integer() else found.fps
+        wanted = inputs.get("seconds")
+        if isinstance(wanted, (int, float)) and found.seconds is not None and wanted > found.seconds + 0.05:
+            return _wire.error_response(400, f"seconds ({wanted:g}) is longer than the source video ({found.seconds:.2f} s)",
+                                        param="seconds")
+        ref = MediaRef(digest="", media_type="application/octet-stream", size=0, asset_id=found.asset_id)
         from dataclasses import replace
         return replace(run, inputs=inputs, media={targets[0]: (ref,)})
 

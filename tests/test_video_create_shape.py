@@ -525,7 +525,7 @@ def test_a_plain_create_is_never_handed_to_the_old_handler_and_opens_the_row_rec
 
 def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     """An input the manifest declares is never refused as an extension, even when it fills a role: ``frames`` is the keyframes
-    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is refused."""
+    length role and callers send it today. It wins over ``seconds``; a name the manifest does not declare is ignored."""
     key = video_contract("ltx-2.5-keyframes", requires=["extensions"], image=False)
     key["inputs"]["frames"] = {"type": "integer", "minimum": 9, "maximum": 241}
     key["video"]["roles"]["length"] = "frames"
@@ -535,9 +535,9 @@ def test_keyframes_create_sends_frames_and_is_accepted() -> None:
     run_request = read({"model": "ltx-2.5-keyframes", "prompt": "p", "seconds": 5, "extensions": block}, snapshot)
     assert isinstance(run_request, RunRequest), run_request
     assert run_request.inputs["frames"] == 49
-    refused = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"bogus": 1}}}, snapshot)
-    assert refused.status_code == 400
-    assert json.loads(refused.body)["error"]["param"].endswith(".bogus")
+    # A name the manifest does not declare is ignored, as the old route ignored it: accepted, and it never reaches the engine.
+    ignored = read({"model": "ltx-2.5-keyframes", "prompt": "p", "extensions": {"com.azizam.workflow": {"frames": 49, "bogus": 1}}}, snapshot)
+    assert isinstance(ignored, RunRequest) and "bogus" not in ignored.inputs and ignored.inputs["frames"] == 49
 
 
 def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
@@ -679,3 +679,41 @@ def test_a_storage_fault_while_the_job_is_made_is_an_error_and_keeps_no_job(db, 
         outcome = None                                             # the fault reaches the route's error handler, not a queued answer
     assert not isinstance(outcome, RunJobView)
     assert _count(db, "media_jobs") == 0
+
+
+def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_not_from_the_request_facts() -> None:
+    """Review item 7. The source job asked for 24 fps; its stored file is 30 fps and 4.2 s. The run keeps 30 fps, and a request for
+    more seconds than the file holds is refused with the old words."""
+    from gateway.video_source import SourceRefused, VideoSource
+
+    class Hooks(shapes.VideoHooks):
+        async def source(self, job_id, wire_id, caller):
+            if job_id == "mj_open":
+                return SourceRefused(400, "Source video is not completed (status=queued)", param="video", code="video_not_ready")
+            return VideoSource(wire_id=wire_id, asset_id="asset-1", model="m", resolved_model="video-m", fps=30.0, size="1280x704",
+                               seconds=4.2, has_audio=True)
+
+    edit = video_contract("ltx-2.5-edit", image=False)
+    edit["inputs"]["video"] = {"type": "asset", "accepts": ["video/*"], "required": True}
+    edit["inputs"]["seconds"] = {"type": "number"}
+    edit["intent"] = "video.edit"
+    snapshot = snap(edit)
+    row = "videos-edit"
+    shapes.VIDEO_HOOKS = Hooks()
+
+    def edit_request(extra: dict) -> Any:
+        return read({"model": "ltx-2.5-edit", "prompt": "p", "video": {"id": "video_mj_done"}, **extra}, snapshot, row=row)
+
+    try:
+        made = edit_request({})
+        assert isinstance(made, RunRequest), made
+        assert made.inputs["frame_rate"] == 30 and tuple(made.media) == ("video",)
+        too_long = edit_request({"seconds": 6})
+        assert too_long.status_code == 400
+        assert json.loads(too_long.body)["error"]["message"] == "seconds (6) is longer than the source video (4.20 s)"
+        open_job = read({"model": "ltx-2.5-edit", "prompt": "p", "video": {"id": "video_mj_open"}}, snapshot, row=row)
+        body = json.loads(open_job.body)["error"]
+        assert (open_job.status_code, body["message"], body["code"], body["param"]) == (
+            400, "Source video is not completed (status=queued)", "video_not_ready", "video")
+    finally:
+        shapes.VIDEO_HOOKS = None
