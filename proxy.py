@@ -27157,7 +27157,8 @@ async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapp
     """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline on the body
     already read. It enforces the route policy and opens its one receipt itself, as the removed route did, because the row has
     opened none. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
-    policy_response = await asyncio.to_thread(_enforce_runtime_route_policy, caller, "/v1/videos")
+    policy_response = await asyncio.to_thread(
+        lambda: _enforce_runtime_route_policy(caller, "/v1/videos", policy=DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/videos") or _row_route_policy("/v1/videos")))
     if policy_response is not None:
         return policy_response
     return await proxy_graph_video_create(request, caller, body_override=body)

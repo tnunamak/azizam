@@ -3915,13 +3915,6 @@
     ]
    },
    {
-    "alias": "/openai/v1/videos",
-    "canonical": "/v1/videos",
-    "methods": [
-     "POST"
-    ]
-   },
-   {
     "alias": "/openai/v1/videos/{video_id}",
     "canonical": "/v1/videos/{video_id}",
     "methods": [
@@ -4166,14 +4159,6 @@
    "/v1/systemone": {
     "intent": "decision.systemone",
     "protocol": "typesafe.systemone"
-   },
-   "/v1/videos": {
-    "backend": "comfyui",
-    "capability_exposure": "default",
-    "capability_resource_tier": "expensive",
-    "capability_trust_tier": "stable",
-    "intent": "video.generate",
-    "protocol": "openai.video"
    },
    "/v1/videos/edits": {
     "backend": "comfyui",
@@ -9274,7 +9259,7 @@
    "methods": [
     "POST"
    ],
-   "name": "serve",
+   "name": "row:videos-create:/openai/v1/videos",
    "openapi_extra": "95fcc8a88718ccf1df75e6b55974e5a53f867d1a3cfc630702da32a905bb3b8f",
    "path": "/openai/v1/videos",
    "response_class": null,
@@ -9287,7 +9272,7 @@
    "methods": [
     "POST"
    ],
-   "name": "serve",
+   "name": "row:videos-create:/v1/videos",
    "openapi_extra": "95fcc8a88718ccf1df75e6b55974e5a53f867d1a3cfc630702da32a905bb3b8f",
    "path": "/v1/videos",
    "response_class": null,

@@ -321,14 +321,16 @@ def test_a_manifest_without_a_video_block_is_left_to_the_legacy_handler() -> Non
     assert isinstance(read({"prompt": "x", "model": "bare"}, snap(plain)), _base.LegacyRoute)
 
 
-def test_a_model_past_its_native_length_with_no_long_variant_is_refused_in_the_old_status_and_code() -> None:
+def test_a_model_with_no_long_variant_refuses_shots_by_code_and_a_long_clip_by_its_range() -> None:
+    """The old route named ``long_video_not_supported`` only for shots, or for a clip past the length of a model that names a
+    chain it cannot reach; a model that names none answers a clip past its length with the plain range text."""
     lone = snap(video_contract("lone"))
     refused = read({"prompt": "x", "model": "lone", "seconds": 20}, lone)
     body = error(refused)
-    assert refused.status_code == 400 and body["code"] == "long_video_not_supported" and body["param"] == "seconds"
-    assert "10 s" in body["message"]
-    shots = error(read({"model": "lone", "shots": [{"prompt": "a"}]}, lone))
-    assert shots["param"] == "shots"
+    assert refused.status_code == 400 and "code" not in body and body["message"].startswith("seconds must be between")
+    shots = read({"model": "lone", "shots": [{"prompt": "a"}]}, lone)
+    assert shots.status_code == 400 and error(shots)["param"] == "shots" and error(shots)["code"] == "long_video_not_supported"
+    assert "10 s" in error(shots)["message"]
 
 
 def test_the_prompt_is_kept_in_prompt_memory_after_a_new_job_and_not_for_a_replay() -> None:
@@ -717,3 +719,23 @@ def test_a_remix_or_edit_takes_the_frame_rate_and_length_from_the_stored_file_no
             400, "Source video is not completed (status=queued)", "video_not_ready", "video")
     finally:
         shapes.VIDEO_HOOKS = None
+
+
+def test_a_legacy_hand_off_enforces_the_row_routes_policy_before_the_old_pipeline_runs(monkeypatch) -> None:
+    """The create route leaves the registered routes, so the route policy for its path is the row's own data. The hand-off
+    must still ask for it, or a chain create would skip the plan check the row path makes."""
+    import proxy
+    seen: dict[str, Any] = {}
+
+    def deny(caller, path, *, policy=None):
+        seen.update(path=path, policy=policy)
+        return Response(status_code=403)
+
+    async def never(*args, **kwargs):
+        raise AssertionError("the old pipeline ran after a denial")
+
+    monkeypatch.setattr(proxy, "_enforce_runtime_route_policy", deny)
+    monkeypatch.setattr(proxy, "proxy_graph_video_create", never)
+    response = asyncio.run(proxy._legacy_video_create(None, object(), {"prompt": "x"}))
+    assert response.status_code == 403 and seen["path"] == "/v1/videos"
+    assert seen["policy"] and seen["policy"]["intent"] == "video.generate" and seen["policy"]["protocol"] == "openai.video"
