@@ -403,9 +403,11 @@ def test_the_hold_shows_on_the_owner_routes_without_a_retry_loop(tmp_path, monke
 # -- the owner's continuation, a skipped restore and a crash after a settled hold (dot recheck 2299) --------------------------
 
 
-def _settled(runtime: Any, op_id: str) -> Any:
+def _resolve(runtime: Any, op_id: str, step: str) -> Any:
+    """Resolve and wait for the resumed task in one loop (a task dies with the loop that started it)."""
     async def go() -> Any:
         executor = runtime.executor()
+        await executor.resolve(op_id, step=step, outcome="success", evidence_ref="owner")
         for _ in range(200):
             done = await asyncio.to_thread(executor.store.get, op_id)
             if done.state != "running":
@@ -414,11 +416,6 @@ def _settled(runtime: Any, op_id: str) -> Any:
         return done
 
     return run(go())
-
-
-def _resolve(runtime: Any, op_id: str, step: str) -> Any:
-    run(runtime.executor().resolve(op_id, step=step, outcome="success", evidence_ref="owner"))
-    return _settled(runtime, op_id)
 
 
 def _held_at(runtime: Any, engine: Any, kind: str, step: str) -> str:
