@@ -11795,6 +11795,7 @@ async def _submit_video_graph(
                         # Delivery control from the submit request (None = use profile default).
                         "metadata_mode": (media_delivery.current().requested_mode if media_delivery.current() else None),
                         "provenance": provenance.build_provenance_record(
+                            receipt=media_delivery.current().receipt if media_delivery.current() else None,
                             kind="video",
                             requested_model=public_model,
                             resolved_model=workflow_name,
@@ -11808,7 +11809,6 @@ async def _submit_video_graph(
                                 "actual_seconds": round(actual_seconds, 4),
                                 "length_frames": length,
                             },
-                            request_id=video_id,
                             created_at=now,
                         ),
                         **(record_extra or {}),
@@ -27912,6 +27912,7 @@ async def proxy_audio_generate(
                                         audio_bytes,
                                         audio_suffix,
                                         provenance.build_provenance_record(
+                                            receipt=media_delivery.current().receipt,
                                             kind="audio",
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
@@ -27923,7 +27924,6 @@ async def proxy_audio_generate(
                                                 "type": audio_type,
                                                 "duration": duration_value,
                                             },
-                                            request_id=audio_id,
                                         ),
                                     )
                             except media_metadata.MediaMetadataError as exc:
