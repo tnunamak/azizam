@@ -393,17 +393,24 @@ class _Semantic:
                 self._ranges((name, group_name), group)
 
     def _finite(self, value: Any, at: tuple[PathPart, ...]) -> bool:
-        """Report every non-finite number in a section (YAML ``.nan`` and ``.inf``); True when there was one."""
-        if isinstance(value, float) and not math.isfinite(value):
-            self.errors.add(at, "number_not_finite", f"{at[-1]} must be a finite number")
-            return True
+        """Report every non-finite number in a section (YAML ``.nan`` and ``.inf``); True when there was one.
+
+        Walks with a stack, not recursion, and skips a container it has already seen: a YAML alias can make a section
+        hold itself, and a document may nest deeper than the interpreter recurses. Neither may raise."""
         found = False
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                found = self._finite(child, at + (key,)) or found
-        elif isinstance(value, (list, tuple)):
-            for index, child in enumerate(value):
-                found = self._finite(child, at + (index,)) or found
+        seen: set[int] = set()
+        stack: list[tuple[Any, tuple[PathPart, ...]]] = [(value, at)]
+        while stack:
+            item, here = stack.pop()
+            if isinstance(item, float) and not math.isfinite(item):
+                self.errors.add(here, "number_not_finite", f"{here[-1]} must be a finite number")
+                found = True
+            elif isinstance(item, (Mapping, list, tuple)):
+                if id(item) in seen:
+                    continue
+                seen.add(id(item))
+                children = item.items() if isinstance(item, Mapping) else enumerate(item)
+                stack.extend((child, here + (key,)) for key, child in reversed(list(children)))
         return found
 
     def _ranges(self, at: tuple[PathPart, ...], group: Mapping[str, Any]) -> None:
