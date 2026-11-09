@@ -62,16 +62,18 @@ def load_extension_routes(
         raise ValueError("extension routes require a records list")
     found: dict[str, list[ExtensionRoute]] = {namespace: [] for namespace in _EXTENSION_NAMESPACES}
     orders: set[int] = set()
+    identities: set[tuple[str, str]] = set()
     for namespace, residual in _RESIDUAL_EXTENSION_ROUTES:
         found[namespace].append(residual)
         orders.add(residual.order)
-    for record in document["records"]:
+        identities.add((namespace, residual.route))
+    for record_number, record in enumerate(document["records"], start=1):
         if not isinstance(record, Mapping):
             raise ValueError("extension route record must be a mapping")
         rows = record.get("registered_routes", [])
         if not isinstance(rows, list):
             raise ValueError("registered_routes must be a list")
-        for row in rows:
+        for row_number, row in enumerate(rows, start=1):
             if not isinstance(row, Mapping):
                 raise ValueError("registered route must be a mapping")
             if not any(key in row for key in (
@@ -114,6 +116,13 @@ def load_extension_routes(
                 raise ValueError("workflow_targets and route_inputs need the workflow extension")
             entry = ExtensionRoute(route, order, route_inputs, prefixes, route_intent)
             for namespace in namespaces:
+                identity = (namespace, route)
+                if identity in identities:
+                    raise ValueError(
+                        f"duplicate extension route: namespace {namespace!r}, route {route!r}, "
+                        f"record {record_number}, row {row_number}"
+                    )
+                identities.add(identity)
                 found[namespace].append(entry)
     return MappingProxyType({
         namespace: tuple(sorted(rows, key=lambda row: row.order))
