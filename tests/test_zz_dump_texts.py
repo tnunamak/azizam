@@ -75,4 +75,4 @@ def test_dump(tmp_path):
         await rec("disabled", await post(C))
         proxy.runtime().derived["COMFY_ENABLED"] = True
     run(tmp_path, exercise)
-    json.dump(rows, open(OUT, "w"), indent=1, sort_keys=True)
+    print("DUMP" + json.dumps(rows, sort_keys=True)); assert 0
