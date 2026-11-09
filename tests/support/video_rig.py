@@ -285,6 +285,9 @@ def run(tmp_path: Path, exercise) -> None:
         rig.set(proxy, "COMFY_HOST", f"http://{HOST}")
         rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
             "enabled": True, "host": HOST, "port": 80, "protocol": "node-graph"}})
+        # The rig's sleeps cost no time, so a runner polling an engine the test has not driven yet would spend its whole wait in
+        # no real time. The wait is made so long that only a state the test sets ends a run.
+        rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_TIMEOUT", 10 ** 9)
         world = World(rig, engine)
         rig.monkeypatch.setattr(time, "time", lambda: world.now)
         rig.monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", None)
