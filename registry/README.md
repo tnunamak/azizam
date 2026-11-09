@@ -56,6 +56,7 @@ The one top-level `row_id_placeholder` replaces matching whole body values with
 the requested model ID. Synonyms normalize strip/lower/underscore-to-dot; intent
 matching stays exact. Duplicate synonyms/IDs/intents and malformed rows fail with
 file/row diagnostics. Add data rows for new operations; restart after edits.
+`schema1_capability_prefixes.yml` holds the versioned, ordered capability backfill rules read by the one-time schema 1 converter.
 
 ## Protocol descriptions
 

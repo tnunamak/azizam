@@ -5,8 +5,8 @@ bundled files were rewritten with this converter (S3.5a), and the stored owner r
 (S3.5b). A package author or an owner runs it through ``scripts/workflow_contract.py convert``. It may name the keys of the
 old shape (``trusted``, ``seed``, ``transport``), which the permanent contract module (``workflow_contract``) must not.
 
-``convert_1_to_2`` is pure: it returns a new document and the list of edits it made. It does not decide whether the result
-is valid; ``check_contract`` does. A document it cannot improve passes through unchanged, so the check shows what is wrong.
+``convert_1_to_2`` returns a new document and the list of edits it made. A capability backfill reads its versioned rules;
+it never writes files. It does not decide whether the result is valid; ``check_contract`` does. A document it cannot improve passes through unchanged, so the check shows what is wrong.
 ``v1_policy_facts`` and ``v1_provenance`` read what a schema 1 document said beside its contract, for the one who writes the
 policy file or the stored record's facts; the converter itself drops those keys.
 """
@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
+
+import yaml
 
 from gateway.manifests import MEDIA_INPUT_TYPES, ContractError
 from gateway.workflow_contract import Report, check_contract
@@ -28,6 +31,7 @@ SEED_GENERATOR = {"generator": "random_integer", "minimum": 0, "maximum": 429496
 BACKFILL_NOTE = {"capability": "intent-prefix rule, schema 1 to 2"}
 BACKFILL_KEY = "azizam.dev/backfill"
 POLICY_KEYS = ("exposure", "trust_tier", "resource_tier", "tags")
+SCHEMA1_CAPABILITY_PREFIXES_PATH = Path(__file__).resolve().parent.parent / "registry" / "schema1_capability_prefixes.yml"
 
 
 def v1_policy_facts(manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -93,13 +97,63 @@ def convert_1_to_2(doc: Mapping[str, Any]) -> tuple[dict[str, Any], list[Convers
     return out, notes
 
 
+def _load_capability_prefixes() -> tuple[list[tuple[str, str]], str]:
+    """Read and validate the complete ordered backfill table, without caching it."""
+    path = SCHEMA1_CAPABILITY_PREFIXES_PATH
+
+    def invalid(reason: str) -> ValueError:
+        return ValueError(f"{path}: {reason}")
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise invalid(f"cannot read capability prefixes: {exc}") from exc
+    if not isinstance(document, dict):
+        raise invalid("capability prefixes must be a mapping")
+    unknown = set(document) - {"schema_version", "prefixes", "default"}
+    if unknown:
+        raise invalid(f"unknown keys: {', '.join(sorted(map(str, unknown)))}")
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise invalid("schema_version must be 1")
+    default = document.get("default")
+    if not isinstance(default, str) or not default.strip() or default != default.strip():
+        raise invalid("default must be a nonempty string without surrounding spaces")
+    if any(control in default for control in "\t\r\n"):
+        raise invalid("default must not contain tab, CR or LF")
+    rows = document.get("prefixes")
+    if not isinstance(rows, list):
+        raise invalid("prefixes must be an ordered list")
+    prefixes: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise invalid(f"prefixes[{index}] must be a mapping")
+        unknown = set(row) - {"prefix", "capability"}
+        if unknown:
+            raise invalid(f"prefixes[{index}] has unknown keys: {', '.join(sorted(map(str, unknown)))}")
+        prefix, capability = row.get("prefix"), row.get("capability")
+        if not isinstance(prefix, str) or not prefix.strip() or prefix != prefix.strip():
+            raise invalid(f"prefixes[{index}].prefix must be a nonempty string without surrounding spaces")
+        if any(control in prefix for control in "\t\r\n"):
+            raise invalid(f"prefixes[{index}].prefix must not contain tab, CR or LF")
+        if prefix in seen:
+            raise invalid(f"prefixes[{index}] has duplicate prefix: {prefix!r}")
+        if not isinstance(capability, str) or not capability.strip() or capability != capability.strip():
+            raise invalid(f"prefixes[{index}].capability must be a nonempty string without surrounding spaces")
+        if any(control in capability for control in "\t\r\n"):
+            raise invalid(f"prefixes[{index}].capability must not contain tab, CR or LF")
+        seen.add(prefix)
+        prefixes.append((prefix, capability))
+    return prefixes, default
+
+
 def _infer_capability(intent: str) -> str:
-    """The rule the catalog used to infer a capability from an intent prefix. It runs here, once, at conversion; nothing at
-    load or at request time infers a capability any more (D10)."""
-    for prefix, capability in (("image.", "image"), ("video.", "video"), ("mesh.", "mesh"), ("audio.", "audio"), ("speech.", "audio")):
+    """The catalog's backfill rule, used only by this one-time conversion."""
+    prefixes, default = _load_capability_prefixes()
+    for prefix, capability in prefixes:
         if intent.startswith(prefix):
             return capability
-    return "workflow"
+    return default
 
 
 def _insert_after(mapping: dict[str, Any], after: str, key: str, value: Any) -> None:
