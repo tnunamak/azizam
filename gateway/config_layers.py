@@ -641,7 +641,7 @@ def build_section(
     usable: list[Override] = []
     for override in ordered:
         faults = check_override(section, override)
-        if faults and _retired_delete(override, faults):
+        if faults and _retired_delete(section, override, faults):
             # A stored delete of an entry the release no longer has asks for an absence that already holds: it is
             # inert, never a boot problem (a retired setting's owner delete, train 35's compile_from_pin).
             continue
@@ -663,9 +663,28 @@ def build_section(
     return _greedy(section, ordered, usable, shape_rejected, context, merge)
 
 
-def _retired_delete(override: Override, faults: Sequence[Problem]) -> bool:
-    """A delete whose only fault is that its pointer is no longer an entry of the section."""
-    return override.op == OP_DELETE and all(fault.code == "not_an_entry" for fault in faults)
+def _retired_delete(section: Section, override: Override, faults: Sequence[Problem]) -> bool:
+    """A delete whose only fault is that its pointer is no longer an entry, and that names nothing in the release.
+
+    Only a plain key path counts: every segment non-empty, walked through objects alone. A pointer into a list, a
+    container the release still holds, or a malformed pointer stays a rejected override.
+    """
+    if override.op != OP_DELETE or not all(fault.code == "not_an_entry" for fault in faults):
+        return False
+    try:
+        segments = split_pointer(override.pointer)
+    except PointerError:
+        return False
+    if any(segment == "" for segment in segments):
+        return False
+    node: Any = section.defaults
+    for segment in segments:
+        if not isinstance(node, Mapping):
+            return False
+        if segment not in node:
+            return True
+        node = node[segment]
+    return False
 
 
 def _fail_closed(section: Section, pointer: str) -> bool:
