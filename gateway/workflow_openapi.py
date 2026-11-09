@@ -34,7 +34,11 @@ from __future__ import annotations
 
 import copy
 import re
+from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
+
+import yaml
 
 from gateway.workflow_view import settable_inputs
 from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
@@ -43,6 +47,173 @@ from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
 from gateway.manifests import media_bearing
 from gateway.video_extensions import ROUTE_MANAGED_VIDEO_INPUTS
 from gateway.video_limits import limits_for_workflow
+
+# Route descriptors are package data, never a runtime registry or a request input.
+_EXECUTION_ROUTES_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow_execution_routes.yml"
+_PROTOCOL_FRONTENDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "protocol_frontends.yml"
+
+
+def _freeze_execution(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_execution(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_execution(item) for item in value)
+    return value
+
+
+def load_execution_routes(path: str | Path = _EXECUTION_ROUTES_PATH) -> Mapping[str, Any]:
+    """Validate and freeze execution descriptors; errors identify the file and row."""
+    path = Path(path)
+
+    def fail(row: str, message: str) -> None:
+        raise ValueError(f"{path}: row {row}: {message}")
+
+    def keys(value: Any, allowed: set[str], required: set[str], row: str) -> None:
+        if not isinstance(value, dict):
+            fail(row, "expected an object")
+        unknown = set(value) - allowed
+        missing = required - set(value)
+        if unknown:
+            fail(row, f"unknown key(s): {sorted(map(str, unknown))}")
+        if missing:
+            fail(row, f"missing key(s): {sorted(missing)}")
+
+    def word(value: Any, row: str, field: str) -> None:
+        if not isinstance(value, str) or not value.strip():
+            fail(row, f"{field} must be a nonempty string")
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        frontends = yaml.safe_load(_PROTOCOL_FRONTENDS_PATH.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        fail("<root>", f"cannot read catalog: {exc}")
+    keys(data, {"schema_version", "rows", "lifecycles"}, {"schema_version", "rows", "lifecycles"}, "<root>")
+    if type(data["schema_version"]) is not int or data["schema_version"] != 1:
+        fail("<root>", "schema_version must be 1")
+    if not isinstance(frontends, dict):
+        fail("<root>", f"invalid route registry {_PROTOCOL_FRONTENDS_PATH}")
+    known_paths: set[str] = set()
+    for group, route_key in (("records", "registered_routes"), ("frontends", "routes")):
+        for frontend in frontends.get(group, []):
+            for route in frontend.get(route_key, []):
+                for field in ("canonical", "path", "alias"):
+                    if isinstance(route.get(field), str):
+                        known_paths.add(route[field])
+                known_paths.update(alias for alias in route.get("aliases", []) if isinstance(alias, str))
+
+    endpoint_keys = {"method", "path", "output", "note", "discovery_only"}
+    model_bindings = {"short_id", "video_prefixed", "none"}
+
+    def endpoint(value: Any, row: str, allowed: set[str] = endpoint_keys,
+                 required: set[str] | None = None) -> None:
+        keys(value, allowed, required or {"method", "path"}, row)
+        if not isinstance(value["method"], str) or value["method"] not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+            fail(row, "unknown method")
+        word(value["path"], row, "path")
+        if not value["path"].startswith("/") or value["path"].startswith("//"):
+            fail(row, "path must be a local route")
+        if "discovery_only" in value and type(value["discovery_only"]) is not bool:
+            fail(row, "discovery_only must be boolean")
+        if value["path"] not in known_paths and value.get("discovery_only") is not True:
+            fail(row, f"path {value['path']!r} is not a canonical/alias route; declare discovery_only: true")
+        for field in ("output", "note"):
+            if field in value:
+                word(value[field], row, field)
+
+    def model(value: Any, row: str) -> None:
+        if not isinstance(value, str) or value not in model_bindings:
+            fail(row, f"unknown model binding {value!r}")
+
+    def alternate(value: Any, row: str) -> None:
+        endpoint(value, row, endpoint_keys | {"model_binding"}, {"method", "path", "model_binding"})
+        model(value["model_binding"], row)
+
+    lifecycles = data["lifecycles"]
+    if not isinstance(lifecycles, dict):
+        fail("<root>", "lifecycles must be an object")
+    for name, lifecycle in lifecycles.items():
+        origin = f"lifecycle {name}"
+        word(name, origin, "id")
+        keys(lifecycle, {"kind", "submit_body", "poll", "content", "cancel", "statuses", "terminal"},
+             {"kind", "poll", "content", "cancel", "statuses", "terminal"}, origin)
+        word(lifecycle["kind"], origin, "kind")
+        for field in ("poll", "content", "cancel"):
+            endpoint(lifecycle[field], f"{origin}.{field}")
+        for field in ("statuses", "terminal"):
+            if not isinstance(lifecycle[field], list) or not lifecycle[field]:
+                fail(origin, f"{field} must be a nonempty list")
+            for item in lifecycle[field]:
+                word(item, origin, field)
+        if not set(lifecycle["terminal"]) <= set(lifecycle["statuses"]):
+            fail(origin, "terminal states must belong to statuses")
+        if "submit_body" in lifecycle:
+            if not isinstance(lifecycle["submit_body"], dict):
+                fail(origin, "submit_body must be an object of strings")
+            for key, value in lifecycle["submit_body"].items():
+                word(key, origin, "submit_body key")
+                word(value, origin, "submit_body value")
+
+    def descriptor(value: Any, row: str, *, asynchronous: bool) -> None:
+        allowed = {"method", "path", "content_type", "model_binding", "mapping", "output", "headers",
+                   "alternate", "extensions_field", "discovery_only"}
+        required = {"method", "path", "content_type", "model_binding", "mapping"}
+        if asynchronous:
+            allowed.add("lifecycle")
+            required.add("lifecycle")
+        endpoint(value, row, allowed, required)
+        word(value["content_type"], row, "content_type")
+        model(value["model_binding"], row)
+        if value["mapping"] not in ("sync", "async"):
+            fail(row, "mapping must be sync or async")
+        if asynchronous:
+            if not isinstance(value["lifecycle"], str) or value["lifecycle"] not in lifecycles:
+                fail(row, f"unknown lifecycle {value['lifecycle']!r}")
+        if "extensions_field" in value:
+            word(value["extensions_field"], row, "extensions_field")
+        if "headers" in value:
+            if not isinstance(value["headers"], dict):
+                fail(row, "headers must be an object")
+            for key, header in value["headers"].items():
+                word(key, row, "header name")
+                word(header, row, "header value")
+        if "alternate" in value:
+            alternate(value["alternate"], f"{row}.alternate")
+
+    if not isinstance(data["rows"], list):
+        fail("<root>", "rows must be a list")
+    exact: dict[str, Any] = {}
+    prefixes: dict[str, Any] = {}
+    ids: set[str] = set()
+    for index, row in enumerate(data["rows"]):
+        origin = str(row.get("id", index)) if isinstance(row, dict) else str(index)
+        keys(row, {"id", "intent", "intent_prefix", "sync", "async", "native_alternate"}, {"id"}, origin)
+        word(row["id"], origin, "id")
+        if row["id"] in ids:
+            fail(origin, "duplicate row id")
+        ids.add(row["id"])
+        selectors = [key for key in ("intent", "intent_prefix") if key in row]
+        if len(selectors) != 1:
+            fail(origin, "exactly one intent or intent_prefix is required")
+        selector = selectors[0]
+        word(row[selector], origin, selector)
+        target = exact if selector == "intent" else prefixes
+        if row[selector] in target:
+            fail(origin, f"duplicate {selector} {row[selector]!r}; first row {target[row[selector]]['id']}")
+        target[row[selector]] = row
+        for mode in ("sync", "async"):
+            if mode in row and row[mode] is not None:
+                descriptor(row[mode], f"{origin}.{mode}", asynchronous=mode == "async")
+        if "native_alternate" in row:
+            alternate(row["native_alternate"], f"{origin}.native_alternate")
+    return _freeze_execution({
+        "exact": exact,
+        "prefixes": [prefixes[key] for key in sorted(prefixes, key=lambda key: (-len(key), key))],
+        "lifecycles": lifecycles,
+    })
+
+
+_EXECUTION_ROUTES = load_execution_routes()
+
 
 # Component names use only letters, digits and underscores: a dot in a name
 # makes code generators (datamodel-code-generator) treat it as a module path.
@@ -61,8 +232,8 @@ RUN_ROUTE = "/gateway/v1/workflows/{workflow_id}/run"
 _JSON = "application/json"
 _MULTIPART = "multipart/form-data"
 
-_MEDIA_JOB_STATUSES = ["queued", "running", "succeeded", "failed", "canceled"]
-_VIDEO_STATUSES = ["queued", "in_progress", "completed", "failed"]
+_MEDIA_JOB_STATUSES = list(_EXECUTION_ROUTES["lifecycles"]["media-job"]["statuses"])
+_VIDEO_STATUSES = list(_EXECUTION_ROUTES["lifecycles"]["video"]["statuses"])
 
 # Inputs the image routes own at the top level (mirrors
 # gateway.extension_catalog._ROUTE_MANAGED_WORKFLOW_INPUTS).
@@ -75,7 +246,6 @@ _IMAGE_EDIT_MANAGED = frozenset(
 _IMAGE_EDIT_IMAGE_PART = "image[]"
 # The contract input a video request's ``input_reference`` fills. The projection and the route read it from here.
 VIDEO_REFERENCE_INPUT = "image"
-_MESH_PATH = "/v1/3d/generations/glb"
 
 _JSON_TYPES = {
     "string": "string",
@@ -441,90 +611,81 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     return out
 
 
+def _execution_row(intent: str) -> Mapping[str, Any]:
+    exact = _EXECUTION_ROUTES["exact"].get(intent)
+    if exact is not None:
+        return exact
+    return next((row for row in _EXECUTION_ROUTES["prefixes"] if intent.startswith(row["intent_prefix"])), {})
+
+
+def _execution_fill(value: Any, record: WorkflowRecord) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _execution_fill(item, record) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_execution_fill(item, record) for item in value]
+    if isinstance(value, str):
+        return value.replace("{short_id}", short_id(record)).replace("{intent}", record.intent)
+    return value
+
+
+def _execution_model(binding: str, record: WorkflowRecord) -> str | None:
+    if binding == "short_id":
+        return short_id(record)
+    if binding == "video_prefixed":
+        return f"video-{short_id(record)}"
+    return None
+
+
+def _execution_endpoint(value: Mapping[str, Any], record: WorkflowRecord) -> dict[str, Any]:
+    out = {key: _execution_fill(value[key], record)
+           for key in ("method", "path", "content_type", "headers", "output", "note") if key in value}
+    if "model_binding" in value:
+        model = _execution_model(value["model_binding"], record)
+        if model is not None:
+            out["model"] = model
+    return out
+
+
+def _execution_descriptor(record: WorkflowRecord, descriptor: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if descriptor is None:
+        return None
+    wire = _execution_endpoint(descriptor, record)
+    # Output describes the answer, not the submit request.
+    output = wire.pop("output", None)
+    fields = request_mapping(record, descriptor["mapping"])
+    if "lifecycle" in descriptor:
+        lifecycle = _EXECUTION_ROUTES["lifecycles"][descriptor["lifecycle"]]
+        out = {key: _execution_fill(lifecycle[key], record) for key in ("kind", "statuses", "terminal")}
+        out.update({key: _execution_endpoint(lifecycle[key], record) for key in ("poll", "content", "cancel")})
+        if "submit_body" in lifecycle:
+            wire["body"] = _execution_fill(lifecycle["submit_body"], record)
+        out["submit"] = wire
+        out["fields"] = fields
+    else:
+        out = {**wire, "fields": fields}
+    if output is not None:
+        out["output"] = output
+    if "extensions_field" in descriptor:
+        out["extensions_field"] = descriptor["extensions_field"]
+    if "alternate" in descriptor:
+        out["alternate"] = _execution_endpoint(descriptor["alternate"], record)
+    return out
+
+
 def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
-    """Sync and async routes for one workflow, and which to prefer."""
-    intent = record.intent
-    # Video workflows are configured as ``video-<short id>``; the rest use the short id.
-    model = f"video-{short_id(record)}" if intent.startswith("video.") else short_id(record)
-    sync: dict[str, Any] | None = None
-    async_: dict[str, Any] | None = None
-
-    def job_route(wrapped_intent: str) -> dict[str, Any]:
-        return {
-            "kind": "media_job",
-            "submit": {
-                "method": "POST",
-                "path": JOBS_SUBMIT,
-                "content_type": _JSON,
-                "body": {"intent": wrapped_intent, "request": "<the sync request body>"},
-                "model": model,
-            },
-            "poll": {"method": "GET", "path": JOB_POLL},
-            "content": {"method": "GET", "path": JOB_CONTENT},
-            "cancel": {"method": "POST", "path": JOB_CANCEL},
-            "statuses": _MEDIA_JOB_STATUSES,
-            "terminal": ["succeeded", "failed", "canceled"],
-            "fields": request_mapping(record, "async"),
-        }
-
+    """Sync and async descriptors from rows, with the native manifest override."""
+    row = _execution_row(record.intent)
     native = gateway_route(record)
     if native:
         sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
                 "output": "JSON (see the route's response schema)"}
-        if intent == "image.edit":
-            sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
-                                 "note": "options go in extensions['com.azizam.workflow']"}
-    elif intent == "image.generate":
-        sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
-                "model": model, "fields": request_mapping(record, "sync"),
-                "output": "data[].b64_json or data[].url"}
-        async_ = job_route("image.generate")
-    elif intent == "image.edit":
-        sync = {"method": "POST", "path": "/v1/images/edits", "content_type": _MULTIPART,
-                "model": model, "fields": request_mapping(record, "sync"),
-                "extensions_field": "extensions (JSON string)",
-                "output": "data[].b64_json or data[].url"}
-    elif intent == "audio.generate":
-        sync = {"method": "POST", "path": "/v1/audio/generate", "content_type": _JSON,
-                "model": model, "fields": request_mapping(record, "sync"),
-                "output": "audio bytes (see Content-Type)"}
-        async_ = job_route("audio.generate")
-    elif intent == "mesh.generate":
-        sync = {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
-                "fields": request_mapping(record, "sync"),
-                "output": "model/gltf-binary (GLB bytes)"}
-        # The same route answers 202 with a media job when the request says ``Prefer: respond-async`` (RFC 7240). The
-        # run takes minutes under load, and a held connection that drops loses the answer; the job does not.
-        async_ = {
-            "kind": "respond_async",
-            "submit": {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
-                       "headers": {"Prefer": "respond-async"}},
-            "poll": {"method": "GET", "path": JOB_POLL},
-            "content": {"method": "GET", "path": JOB_CONTENT, "output": "model/gltf-binary (GLB bytes)"},
-            "cancel": {"method": "POST", "path": JOB_CANCEL,
-                       "note": "the engine cannot stop mid-run: the job ends as canceled when the run returns"},
-            "statuses": _MEDIA_JOB_STATUSES,
-            "terminal": ["succeeded", "failed", "canceled"],
-            "fields": request_mapping(record, "sync"),
-            "output": "202 with a media job (Location, Preference-Applied: respond-async)",
-        }
-    elif intent.startswith("video."):
-        async_ = {
-            "kind": "video",
-            "submit": {"method": "POST", "path": "/v1/videos", "content_type": _JSON,
-                       "model": model},
-            "poll": {"method": "GET", "path": "/v1/videos/{video_id}"},
-            "content": {"method": "GET", "path": "/v1/videos/{video_id}/content"},
-            "cancel": {"method": "DELETE", "path": "/v1/videos/{video_id}"},
-            "statuses": _VIDEO_STATUSES,
-            "terminal": ["completed", "failed"],
-            "fields": request_mapping(record, "async"),
-        }
-        if intent == "video.edit":
-            sync = {"method": "POST", "path": f"/gateway/v1/workflows/{short_id(record)}/run",
-                    "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
-                    "output": "video bytes (blocks until rendered)"}
+        if "native_alternate" in row:
+            sync["alternate"] = _execution_endpoint(row["native_alternate"], record)
+        async_ = None
+    else:
+        sync = _execution_descriptor(record, row.get("sync"))
+        async_ = _execution_descriptor(record, row.get("async"))
     if typical_seconds is not None and typical_seconds <= SLOW_SECONDS and sync:
         recommended = "sync"
     elif async_:

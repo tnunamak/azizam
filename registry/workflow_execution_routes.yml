@@ -1,0 +1,124 @@
+schema_version: 1
+
+lifecycles:
+  media-job:
+    kind: media_job
+    submit_body: {intent: "{intent}", request: "<the sync request body>"}
+    poll: {method: GET, path: "/gateway/v1/media/jobs/{job_id}", discovery_only: true}
+    content: {method: GET, path: "/gateway/v1/media/jobs/{job_id}/content"}
+    cancel: {method: POST, path: "/gateway/v1/media/jobs/{job_id}/cancel", discovery_only: true}
+    statuses: [queued, running, succeeded, failed, canceled]
+    terminal: [succeeded, failed, canceled]
+  respond-async:
+    kind: respond_async
+    poll: {method: GET, path: "/gateway/v1/media/jobs/{job_id}", discovery_only: true}
+    content: {method: GET, path: "/gateway/v1/media/jobs/{job_id}/content", output: "model/gltf-binary (GLB bytes)"}
+    cancel:
+      method: POST
+      path: "/gateway/v1/media/jobs/{job_id}/cancel"
+      discovery_only: true
+      note: "the engine cannot stop mid-run: the job ends as canceled when the run returns"
+    statuses: [queued, running, succeeded, failed, canceled]
+    terminal: [succeeded, failed, canceled]
+  video:
+    kind: video
+    poll: {method: GET, path: "/v1/videos/{video_id}"}
+    content: {method: GET, path: "/v1/videos/{video_id}/content"}
+    cancel: {method: DELETE, path: "/v1/videos/{video_id}"}
+    statuses: [queued, in_progress, completed, failed]
+    terminal: [completed, failed]
+
+rows:
+  - id: generate-image
+    intent: image.generate
+    sync:
+      method: POST
+      path: /v1/images/generations
+      content_type: application/json
+      model_binding: short_id
+      mapping: sync
+      output: "data[].b64_json or data[].url"
+    async:
+      lifecycle: media-job
+      method: POST
+      path: /gateway/v1/media/jobs
+      discovery_only: true
+      content_type: application/json
+      model_binding: short_id
+      mapping: async
+  - id: edit-image
+    intent: image.edit
+    sync:
+      method: POST
+      path: /v1/images/edits
+      content_type: multipart/form-data
+      model_binding: short_id
+      mapping: sync
+      extensions_field: "extensions (JSON string)"
+      output: "data[].b64_json or data[].url"
+    native_alternate:
+      method: POST
+      path: /v1/images/edits
+      model_binding: short_id
+      note: "options go in extensions['com.azizam.workflow']"
+  - id: generate-audio
+    intent: audio.generate
+    sync:
+      method: POST
+      path: /v1/audio/generate
+      content_type: application/json
+      model_binding: short_id
+      mapping: sync
+      output: "audio bytes (see Content-Type)"
+    async:
+      lifecycle: media-job
+      method: POST
+      path: /gateway/v1/media/jobs
+      discovery_only: true
+      content_type: application/json
+      model_binding: short_id
+      mapping: async
+  - id: generate-mesh
+    intent: mesh.generate
+    sync:
+      method: POST
+      path: /v1/3d/generations/glb
+      content_type: multipart/form-data
+      model_binding: none
+      mapping: sync
+      output: "model/gltf-binary (GLB bytes)"
+    async:
+      lifecycle: respond-async
+      method: POST
+      path: /v1/3d/generations/glb
+      content_type: multipart/form-data
+      model_binding: none
+      mapping: sync
+      headers: {Prefer: respond-async}
+      output: "202 with a media job (Location, Preference-Applied: respond-async)"
+  - id: edit-video
+    intent: video.edit
+    sync:
+      method: POST
+      path: "/gateway/v1/workflows/{short_id}/run"
+      discovery_only: true
+      content_type: multipart/form-data
+      model_binding: none
+      mapping: sync
+      output: "video bytes (blocks until rendered)"
+    async:
+      lifecycle: video
+      method: POST
+      path: /v1/videos
+      content_type: application/json
+      model_binding: video_prefixed
+      mapping: async
+  - id: video-family
+    intent_prefix: video.
+    async:
+      lifecycle: video
+      method: POST
+      path: /v1/videos
+      content_type: application/json
+      model_binding: video_prefixed
+      mapping: async

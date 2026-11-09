@@ -15,6 +15,29 @@ The managed LiteLLM substrate is the sole exception. Its gateway-derived
 endpoint/protocol fields are locked and it cannot be removed; its name, enabled
 state, and note remain editable.
 
+## Workflow execution routes
+
+`workflow_execution_routes.yml` (schema_version 1) owns the workflow catalog's
+sync/async descriptors and three shared lifecycle contracts. It is immutable
+package data, not an admin.db seed or a route-mount list. The loader in
+`gateway/workflow_openapi.py` reads it once at import, validates it against
+canonical and alias paths in `protocol_frontends.yml`, and freezes nested data.
+Errors name the file and row. Unknown keys, lifecycles, model bindings and
+duplicate intent selectors are refused.
+
+Each row selects one exact `intent` or `intent_prefix`; exact wins, then the
+longest prefix. Optional sync/async descriptors declare method, path,
+content_type, model_binding (short_id, video_prefixed or none), mapping mode and
+answer text. Async descriptors reference a lifecycle. Paths may interpolate
+`{short_id}`; lifecycle submit bodies may interpolate `{intent}`. Headers,
+alternates and extensions_field retain the declared wire contract. An explicit
+`discovery_only: true` permits an otherwise undeclared path; it never mounts
+or authorizes a route, and is not exposed in the generated descriptor.
+The manifest's native binding still overrides row routes; a row may declare
+its native_alternate. Request mapping and the sync-wait recommendation remain
+code. Add a compatible intent by adding data, then run the execution-row and
+route-word tests; a new wire mapping still needs reviewed code.
+
 ## Protocol descriptions
 
 `registry/protocols/*.yml` hold protocol descriptions: data that says how
