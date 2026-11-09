@@ -15,7 +15,6 @@ from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sqlite3
 import stat
 import sys
@@ -26,7 +25,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-# Bound SQLite backup retries, including an otherwise endless SQLITE_BUSY loop.
+# One budget covers private copying, verification and SQLite backup retries.
 BACKUP_TIMEOUT_SECONDS = 5.0
 
 
@@ -34,6 +33,24 @@ class StoreRefused(Exception):
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(reason)
+
+
+def _check_snapshot_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise StoreRefused("store_unreadable")
+
+
+def _copy_file(source: Path, destination: Path, deadline: float) -> None:
+    """Copy bounded chunks without giving the private-copy path a fresh budget."""
+    _check_snapshot_deadline(deadline)
+    with open(source, "rb") as reader, open(destination, "wb") as writer:
+        while True:
+            _check_snapshot_deadline(deadline)
+            block = reader.read(1 << 20)
+            _check_snapshot_deadline(deadline)
+            if not block:
+                return
+            writer.write(block)
 
 
 def fingerprint(path: Path) -> tuple[object, ...]:
@@ -76,6 +93,7 @@ def refused(reason: str) -> tuple[int, dict]:
 
 
 def inspect_store(store: str) -> tuple[int, dict]:
+    deadline = time.monotonic() + BACKUP_TIMEOUT_SECONDS
     try:
         source = Path(store).resolve(strict=True)
         before = fingerprint(source)
@@ -85,6 +103,7 @@ def inspect_store(store: str) -> tuple[int, dict]:
         return refused("store_unreadable")
 
     try:
+        _check_snapshot_deadline(deadline)
         require_no_hot_journal(source)
         live_wal = has_live_wal(source)
         with tempfile.TemporaryDirectory(prefix="rollback-readiness-") as directory:
@@ -97,15 +116,15 @@ def inspect_store(store: str) -> tuple[int, dict]:
                 # beside this private copy, never beside the original store.
                 copied_wal_before = fingerprint(wal)
                 read_source = Path(directory) / "source.sqlite"
-                shutil.copyfile(source, read_source)
-                shutil.copyfile(wal, Path(str(read_source) + "-wal"))
+                _copy_file(source, read_source, deadline)
+                _copy_file(wal, Path(str(read_source) + "-wal"), deadline)
                 require_no_hot_journal(source)
                 if fingerprint(source) != before or fingerprint(wal) != copied_wal_before:
                     raise StoreRefused("store_unreadable")
+            _check_snapshot_deadline(deadline)
             # Existing WAL+SHM keeps its live, consistent SQLite backup path.
             # A WAL copy must not be immutable: its committed frames matter.
             uri = read_source.as_uri() + ("?mode=ro" if live_wal else "?mode=ro&immutable=1")
-            deadline = time.monotonic() + BACKUP_TIMEOUT_SECONDS
 
             def check_deadline(_status: int, _remaining: int, _total: int) -> None:
                 # SQLite also calls progress for BUSY/LOCKED retries.
@@ -121,6 +140,7 @@ def inspect_store(store: str) -> tuple[int, dict]:
                     raise StoreRefused("store_unreadable")
             elif not live_wal and (has_live_wal(source) or fingerprint(source) != before):
                 raise StoreRefused("store_unreadable")
+            _check_snapshot_deadline(deadline)
             # A store with no job table (a 0-byte file, a wrong database)
             # proves nothing about running jobs; the helpers would call it empty.
             with closing(sqlite3.connect(str(snapshot))) as copy:
@@ -138,6 +158,7 @@ def inspect_store(store: str) -> tuple[int, dict]:
                 rollback_job_inventory,
             )
 
+            _check_snapshot_deadline(deadline)
             inventory = rollback_job_inventory(snapshot)
             try:
                 assert_rollback_ready(snapshot)
