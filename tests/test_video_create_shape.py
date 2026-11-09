@@ -87,7 +87,7 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 80
 @pytest.fixture(autouse=True)
 def no_deployment_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shapes, "DEFAULT_WORKFLOWS", {})
-    monkeypatch.setattr(shapes, "VIDEO_HOOKS", None)
+    monkeypatch.setattr(shapes, "VIDEO_HOOKS", None, raising=False)
 
 
 def read(body: Any, snapshot: FakeSnapshot = SNAP, *, row: str = "videos-create", spool: FakeSpool | None = None, **headers: str):
