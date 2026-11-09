@@ -300,7 +300,7 @@ def asset_origin(contract: Mapping[str, Any], request_id: str | None) -> dict[st
     the workflow takes words from the caller. An empty value is left out, except ``takes_text``."""
     takes_text = any(isinstance(spec, Mapping) and spec.get("type") == "string"
                      for spec in (contract.get("inputs") or {}).values())
-    origin = {"workflow_name": contract.get("display_name"), "request_id": request_id, "takes_text": takes_text, "text": "a very particular prompt about lighthouses"}
+    origin = {"workflow_name": contract.get("display_name"), "request_id": request_id, "takes_text": takes_text}
     return {key: value for key, value in origin.items() if value or key == "takes_text"}
 
 
