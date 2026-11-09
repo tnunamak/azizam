@@ -132,3 +132,92 @@ it succeeds. A transient database lock defers the stored-ID check to repair;
 it does not by itself invalidate the retention file.
 Slice 1 refuses `household.never_keep: true` in this file; the owner setting
 performs the required erasure when that switch is enabled.
+
+## Operation model metadata
+
+Each stable-alias operation is declared once on the `registered_routes` row in
+`protocol_frontends.yml` that serves it. `operation` is an exact member of
+`gateway.stable_aliases.OPERATIONS`; `model_metadata` holds `type`,
+`input_modalities` and `output_modalities`. The type must be in
+`gateway.model_metadata.MODEL_TYPES`; both modality fields are lists using the
+corresponding `INPUT_MODALITIES` and `OUTPUT_MODALITIES` vocabularies.
+Routes that do not declare an operation omit both keys. An operation declaration
+without metadata, or metadata without an operation, is invalid.
+
+The loader rejects duplicates, unknown operation/type/modality values and a
+missing roster operation at module load. It builds a read-only operation index
+once from release data, in stable-alias roster order. Metadata is not inferred
+from route intent: the rerank row declares `type: reranking` even though its
+runtime policy shares the embeddings intent. Changing these rows requires a
+process restart; they are not owner-config metadata overrides.
+
+## Service capability model metadata
+
+`service_capability_metadata.yml` maps service-registry capability names to
+operation metadata from `protocol_frontends.yml`. Its `schema_version` is 1.
+`capabilities` is a nonempty ordered list of `capability` / `operation` rows:
+the first matching row wins, independently of the caller's capability order.
+Operation references must be keys of `gateway.model_metadata.OPERATION_METADATA`.
+
+The single `augmentation` declares a capability name, a `match_type` from
+`MODEL_TYPES`, and a nonempty `input_modalities` list from `INPUT_MODALITIES`.
+It adds inputs only after a row matches that model type. The shipped rule makes
+vision add image input to language; vision alone gives no metadata and does not
+change an embeddings match. This is first-match selection, not a shared-type or
+intersection rule.
+
+`gateway.model_metadata.load_service_capability_metadata(path)` rejects unknown
+keys/operations, empty or malformed files, non-string or noncanonical names,
+duplicates after normalization, and augmentation names also used by matching
+rows. Names in the file must already be stripped and lowercase; caller names
+retain their existing strip/lower normalization. Errors name the file and row.
+The index and its nested values are read-only and loaded once at import.
+Changes require a process restart; the file is release data, not owner config.
+
+## Capability intent model metadata
+
+`capability_intent_metadata.yml` supplies gateway capability defaults with
+`schema_version: 1`, an `exact` list of `intent` rows and an ordered
+`families` list of `prefix` rows. Each row gives exactly one of an
+`operation` name from `OPERATION_METADATA`, or literal `model_metadata`
+with `type`, `input_modalities` and `output_modalities` from the shared
+vocabularies. Exact intent matches win; otherwise the first matching prefix
+wins in file order. Declared capability modalities still refine those defaults.
+
+`gateway.model_metadata.load_capability_intent_metadata(path)` rejects unknown
+keys, duplicate intents or prefixes, unknown operation/type/modality values,
+and both/neither metadata representations with file-and-row errors. Names are
+nonempty strings and matching remains case-sensitive. Its maps and metadata
+are read-only, loaded once at import from release data, not owner config.
+Changing the file requires a process restart; new families need only rows.
+
+## Extension catalog route facts
+
+Serving `registered_routes` rows in `protocol_frontends.yml` may declare:
+
+- `extensions`: a nonempty list of known namespaces: `com.azizam.prompts`,
+  `com.azizam.workflow`, `com.azizam.chat`, `com.azizam.routing`.
+- `extension_order`: a globally unique integer that fixes public catalog order
+  independently of YAML row order. A row shared by namespaces has one position.
+- `route_inputs`: string input names owned by the route, excluded from workflow
+  extension controls. Required with the workflow extension.
+- `workflow_targets`: required with the workflow extension; `intent_prefixes`
+  is a nonempty string list and `route_intent` is a nonempty string. These are
+  discovery facts, not changes to runtime route policy.
+
+Rows without extension facts omit these keys. The loader rejects unknown
+namespaces, non-string inputs, missing route intents and duplicate order values
+(including residual positions), as well as malformed containers. Workflow-only
+keys require the workflow namespace. Audio/video inputs remain equal to their
+binder constants, enforced by `tests/test_extension_catalog_rows.py`.
+
+`gateway.extension_catalog.load_extension_routes(path)` reads only shipped
+`records[].registered_routes`, not `frontends` or owner configuration. The module
+builds its index once at import; the mapping, row tuples and row fields are
+read-only. Changes require a process restart.
+
+Two routes have no registered row: the dynamic workflow-video route and the
+media-jobs image-generations frontend. They remain in the named
+`_RESIDUAL_EXTENSION_ROUTES` tuple at orders 50 and 90 respectively; no registry
+rows are invented for them. Every other extension route fact belongs on its
+serving registered row.

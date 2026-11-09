@@ -26,6 +26,7 @@ from tests.support import c2d_parity  # noqa: E402
 from tests.support.c2d_snapshots import (  # noqa: E402
     capture_capability_ids,
     capture_extensions,
+    assert_sized_rows,
     capture_models_catalog,
 )
 
@@ -78,11 +79,23 @@ def test_models_catalog_fixture_and_counts_match_golden():
 
 @pytest.mark.parametrize("section", ["catalog_aliases", "catalog_models"])
 def test_models_catalog_rows_match_golden(section):
-    actual, golden = _actual_models()[section], MODELS_GOLDEN[section]
-    assert [row["id"] for row in actual] == [row["id"] for row in golden], "row ids or their order changed"
-    for got, want in zip(actual, golden):
-        for field in sorted(set(got) | set(want)):
-            assert got.get(field) == want.get(field), f"row {want['id']} field {field}"
+    assert_sized_rows(_actual_models()[section], MODELS_GOLDEN[section], section)
+
+
+def test_registered_model_capabilities_match_golden():
+    assert _actual_models()["registered_model_capabilities"] == MODELS_GOLDEN["registered_model_capabilities"]
+
+
+def test_second_catalog_envelope_matches_golden():
+    actual, golden = _actual_models()["second_catalog"], MODELS_GOLDEN["second_catalog"]
+    assert actual["inputs"] == golden["inputs"]
+    assert actual["envelope"] == golden["envelope"]
+
+
+@pytest.mark.parametrize("section", ["aliases", "models"])
+def test_second_catalog_rows_match_golden(section):
+    actual, golden = _actual_models()["second_catalog"], MODELS_GOLDEN["second_catalog"]
+    assert_sized_rows(actual[section], golden[section], f"second catalog {section}")
 
 
 @pytest.mark.parametrize("audience", EXTENSIONS_GOLDEN["audiences"])
@@ -94,3 +107,18 @@ def test_summarize_extensions_matches_golden(audience):
         for field in sorted(set(got) | set(want)):
             assert got.get(field) == want.get(field), f"{want['namespace']} field {field}"
     assert {k: v for k, v in actual.items() if k != "extensions"} == {k: v for k, v in golden.items() if k != "extensions"}
+
+
+_ACTUAL_EXTENSIONS: dict[str, Any] = {}
+
+
+@pytest.mark.parametrize("key", sorted(EXTENSIONS_GOLDEN["model_capabilities"]))
+def test_summarize_model_capabilities_matches_golden(key):
+    if not _ACTUAL_EXTENSIONS:
+        _ACTUAL_EXTENSIONS.update(capture_extensions())
+    assert _ACTUAL_EXTENSIONS["model_capability_names"] == EXTENSIONS_GOLDEN["model_capability_names"]
+    got, want = _ACTUAL_EXTENSIONS["model_capabilities"][key], EXTENSIONS_GOLDEN["model_capabilities"][key]
+    if got["sha256"] != want["sha256"] and "full" in got and "full" in want:
+        for field in sorted(set(got["full"]) | set(want["full"])):
+            assert got["full"].get(field) == want["full"].get(field), f"{key}: field {field}"
+    assert got["sha256"] == want["sha256"], f"{key}: canonical JSON differs"

@@ -2,7 +2,9 @@
 
 For every shipped workflow: the OpenAPI fragment that ``augment_openapi`` adds (its component schemas,
 its ``x-azizam-workflows`` entry, the routes whose extension schema carries it, its run path) and the
-catalog row and examples that ``build_workflows_catalog`` produces. The inputs (base URL, aliases, video
+catalog row and examples that ``build_workflows_catalog`` produces. Every other path operation of the
+augmented spec (typed generation routes with the video ``x-azizam-async`` extension, media-jobs submit, poll and
+content, remix bodies, the generic run-route template) is compared per path. The inputs (base URL, aliases, video
 limits, capability rows, policy facts) are fixed in tests/support/c2d_snapshots.py.
 
 Each golden item holds the SHA-256 of its canonical JSON and, when under 20 KB, the full JSON. The test
@@ -48,6 +50,15 @@ def test_openapi_fragment_matches_golden(workflow_id):
 
 def test_openapi_shared_parts_match_golden():
     _assert_item(OPENAPI["shared"], OPENAPI_GOLDEN["shared"], "shared (info, non-workflow components, catalog order)")
+
+
+def test_openapi_path_set_matches_golden():
+    assert sorted(OPENAPI["path_operations"]) == sorted(OPENAPI_GOLDEN["path_operations"])
+
+
+@pytest.mark.parametrize("path", sorted(OPENAPI_GOLDEN["path_operations"]))
+def test_openapi_path_operation_matches_golden(path):
+    _assert_item(OPENAPI["path_operations"][path], OPENAPI_GOLDEN["path_operations"][path], f"path {path}")
 
 
 def test_catalog_workflow_set_and_order_match_golden():

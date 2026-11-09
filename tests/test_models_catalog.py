@@ -1065,7 +1065,7 @@ class ModelsCatalogHealthProbeTests(unittest.TestCase):
 
 
 class OperationIntentMappingTests(unittest.TestCase):
-    """Every canonical alias operation (gateway/model_metadata.py _OPERATIONS) selects the right capabilities."""
+    """Every canonical alias operation (gateway/model_metadata.py OPERATION_METADATA) selects the right capabilities."""
 
     @staticmethod
     def _caps(*intents: str) -> list[Capability]:
@@ -1084,10 +1084,10 @@ class OperationIntentMappingTests(unittest.TestCase):
         self.assertEqual(self._selected("videos", "video.generate", "video.edit"), ["video.generate", "video.edit"])
 
     def test_every_canonical_operation_is_recognized(self) -> None:
-        from gateway.model_metadata import _OPERATIONS
+        from gateway.model_metadata import OPERATION_METADATA
         from gateway.models_catalog import _intent_prefixes_for_operation
 
-        unmapped = [op for op in _OPERATIONS if not _intent_prefixes_for_operation(op)]
+        unmapped = [op for op in OPERATION_METADATA if not _intent_prefixes_for_operation(op)]
         self.assertEqual(unmapped, [])
 
 
