@@ -22,5 +22,6 @@ uploaded video, any generated or uploaded audio, both passed as asset inputs on 
 
 - The new sound always replaces the old. A "keep or mix the old sound" switch needs a mixing node; core ComfyUI has none,
   so the workflow does not offer one.
-- When the track is longer than the video, the result follows `CreateVideo`'s own rule. Check the result length with a
-  real run before relying on a given case.
+- The result is as long as the video. On a real engine run (2026-11-09, a 2 s clip and a 3 s sine track) the output had one
+  video stream and one audio stream, both 2 s: a longer track is cut at the end of the video. A shorter track leaves the
+  end of the video silent or short; that case was not run.
