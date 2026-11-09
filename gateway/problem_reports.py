@@ -106,7 +106,7 @@ _LONG_ID = re.compile(r"\b[0-9a-f]{8,}\b")
 def clean_text(value: Any, limit: int) -> str:
     """Inert plain text: control characters removed, registered secrets scrubbed, cut to ``limit``."""
     text = _CONTROL.sub("", str(value))
-    return log_scrub.scrub(text, limit=limit)
+    return log_scrub.scrub(text, limit=limit)[:limit]
 
 
 def _normal(value: Any, limit: int = 200) -> str:

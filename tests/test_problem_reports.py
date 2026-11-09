@@ -146,10 +146,10 @@ def test_bad_input_is_refused(tmp_path):
 
 def test_rate_limit_is_per_app(tmp_path):
     svc, _ = make(tmp_path, destinations=(), limit=2)
-    for n in range(2):
-        run(svc.submit(A1, {"category": "failure", "summary": f"s{n}"}))
+    for word in ("alpha", "beta"):
+        run(svc.submit(A1, {"category": "failure", "summary": f"{word} is broken"}))
     with pytest.raises(ProblemReportError) as err:
-        run(svc.submit(A1, {"category": "failure", "summary": "s3"}))
+        run(svc.submit(A1, {"category": "failure", "summary": "gamma is broken"}))
     assert err.value.code == "rate_limited"
     assert len(svc.list()) == 2
     run(svc.submit(A2, {"category": "failure", "summary": "other app is fine"}))
