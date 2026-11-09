@@ -46,7 +46,17 @@ def _install_guards() -> None:
 
     # A child would not inherit these Python guards. Reject launches before the
     # application can import an alias; media subprocess seams are replaced below.
-    subprocess.Popen = forbid("subprocess.Popen")
+    refuse_launch = forbid("subprocess.Popen")
+
+    def guarded_popen(*args, **kwargs):
+        # The status module reads its own git revision at import and swallows a failure. That is a local read
+        # with no network reach, so refuse it without counting it; any other launch is an attempt.
+        argv = args[0] if args else kwargs.get("args")
+        if isinstance(argv, (list, tuple)) and argv[:1] == ["git"] and "rev-parse" in argv:
+            raise OSError("child launch refused: local revision read")
+        return refuse_launch(*args, **kwargs)
+
+    subprocess.Popen = guarded_popen
     for function in (
         "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe",
         "posix_spawn", "posix_spawnp",
