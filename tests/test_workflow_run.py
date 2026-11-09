@@ -663,8 +663,8 @@ def test_list_shows_only_the_intent_and_the_jobs_the_caller_may_read(db, tmp_pat
     assert {v.job_id for v in views} == set(mine) and more is False
     stranger, _ = service.list(Caller(scope="app-2"), intent="demo.listing", limit=10)
     assert {v.job_id for v in stranger} == set(others)
-    assert {v.job_id for v in service.list(Caller(), intent="demo.other", limit=10)[0]} == set()
-    assert elsewhere and not set(elsewhere) & {v.job_id for v in views}
+    assert {v.job_id for v in service.list(Caller(), intent="demo.other", limit=10)[0]} == set(elsewhere)
+    assert not set(elsewhere) & {v.job_id for v in views}
 
 
 def test_list_leaves_out_a_deleted_job_at_once_and_after_a_restart(db, tmp_path):
