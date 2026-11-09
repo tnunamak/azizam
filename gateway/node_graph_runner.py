@@ -280,6 +280,8 @@ class NodeGraphRunner:
             if (batching is not None and failed.out_of_memory and not retry_freed()
                     and await batching.free_after_refusal(plan, session)):
                 return None
+            if failed.queue_position is not None:       # a timed-out caller is told where its job stood in the engine's queue
+                ctx.record_result_metadata({"queue_position": failed.queue_position})
             raise failure_of(failed, adapter, conn, failure_binding) from failed
         finally:
             if probe is not None:

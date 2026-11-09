@@ -52,7 +52,8 @@ class OpenAIImagesJson(Shape):
     output_prefix = "image/"
     timeout_code = "image_generation_timeout"
     wire_codes = frozenset({timeout_code, "image_client_disconnected"})
-    null_keyed_codes = frozenset({"upload_failed", "mask_upload_failed"})
+    null_keyed_codes = frozenset({"upload_failed", "mask_upload_failed", "upstream_refused", "upstream_out_of_memory"})
+    failure_fields = ("queue_position",)
     answer_forms = frozenset(ANSWER_FORMS)
     answer_field = "response_format"
     # Wire fields that shape the picture or its encoding, not the workflow's inputs: the answer's encoding and size are

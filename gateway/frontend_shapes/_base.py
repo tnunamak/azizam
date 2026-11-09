@@ -59,7 +59,8 @@ def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
 
 
 def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s: int | None = None,
-                     wire_codes: frozenset[str] | None = None, null_keyed: frozenset[str] = frozenset()) -> Response:
+                     wire_codes: frozenset[str] | None = None, null_keyed: frozenset[str] = frozenset(),
+                     extra: Mapping[str, Any] | None = None) -> Response:
     if failure is None:
         return _wire.error_response(500, fallback, kind="api_error")
     status = failure.upstream_status if failure.category == "upstream" and failure.upstream_status else \
@@ -67,7 +68,8 @@ def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s
     response = _wire.error_response(status if status >= 400 else 502, failure.message,
                                     kind="invalid_request_error" if status < 500 else "api_error",
                                     code=failure.code if wire_codes is None or failure.code in wire_codes else None,
-                                    null_code=failure.code in null_keyed, **({"param": None} if failure.code in null_keyed else {}))
+                                    null_code=failure.code in null_keyed,
+                                    **({"param": None} if failure.code in null_keyed else {}), **(extra or {}))
     if retry_after_s is not None and failure.retryable:
         seconds = client_errors.retry_after(str(retry_after_s))
         if seconds:
@@ -102,6 +104,8 @@ class Shape:
     wire_codes: ClassVar[frozenset[str] | None] = None
     # Failure codes whose answer carries ``"code": null`` and ``"param": null`` (the wire's clients saw those keys).
     null_keyed_codes: ClassVar[frozenset[str]] = frozenset()
+    # Result facts a failed job's answer repeats as fields of its error (the wire's clients read them there).
+    failure_fields: ClassVar[tuple[str, ...]] = ()
     # Whether a workflow this shape refuses is refused at save, when no other row serves it (a single-purpose wire).
     save_gate: ClassVar[bool] = False
     # The answer forms the wire lets a caller ask for, and the wire field that carries the choice. None: no choice.
@@ -254,7 +258,8 @@ class Shape:
         if view.status == "failed":
             return failure_response(view.failure, fallback="The job failed",
                                     retry_after_s=self.retry_after(view, jobs, caller), wire_codes=self.wire_codes,
-                                    null_keyed=self.null_keyed_codes)
+                                    null_keyed=self.null_keyed_codes,
+                                    extra={name: view.result_metadata[name] for name in self.failure_fields if name in view.result_metadata})
         if view.status == "canceled":
             return _wire.error_response(409, "The job was canceled", code="job_canceled")
         if view.status != "succeeded":
