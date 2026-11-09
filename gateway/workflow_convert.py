@@ -116,8 +116,8 @@ def _load_capability_prefixes() -> tuple[list[tuple[str, str]], str]:
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version must be 1")
     default = document.get("default")
-    if not isinstance(default, str) or not default.strip():
-        raise invalid("default must be a nonempty string")
+    if not isinstance(default, str) or not default.strip() or default != default.strip():
+        raise invalid("default must be a nonempty string without surrounding spaces")
     rows = document.get("prefixes")
     if not isinstance(rows, list):
         raise invalid("prefixes must be an ordered list")
@@ -130,12 +130,12 @@ def _load_capability_prefixes() -> tuple[list[tuple[str, str]], str]:
         if unknown:
             raise invalid(f"prefixes[{index}] has unknown keys: {', '.join(sorted(map(str, unknown)))}")
         prefix, capability = row.get("prefix"), row.get("capability")
-        if not isinstance(prefix, str) or not prefix.strip():
-            raise invalid(f"prefixes[{index}].prefix must be a nonempty string")
+        if not isinstance(prefix, str) or not prefix.strip() or prefix != prefix.strip():
+            raise invalid(f"prefixes[{index}].prefix must be a nonempty string without surrounding spaces")
         if prefix in seen:
             raise invalid(f"prefixes[{index}] has duplicate prefix: {prefix!r}")
-        if not isinstance(capability, str) or not capability.strip():
-            raise invalid(f"prefixes[{index}].capability must be a nonempty string")
+        if not isinstance(capability, str) or not capability.strip() or capability != capability.strip():
+            raise invalid(f"prefixes[{index}].capability must be a nonempty string without surrounding spaces")
         seen.add(prefix)
         prefixes.append((prefix, capability))
     return prefixes, default
