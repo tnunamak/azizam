@@ -15,7 +15,7 @@ I5 FrontendRow / FrontendShape / RouteSpec                          routes are r
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -418,6 +418,43 @@ class RunRequest:
     # The intent the job row is filed under: the one the matched route declares (``runtime_policy.intent``), the same value
     # the request receipt records. Empty: the generic run intent. Not part of run identity.
     intent: str = ""
+    # The facts of the request a wire object shows later (``REQUEST_FACT_KEYS``): JSON-safe, no prompt text, no person id.
+    # Written once with the job row, read back through ``JobService.request_facts``. Not part of run identity.
+    facts: Mapping[str, Any] = field(default_factory=dict)
+
+
+# The keys a job's request facts may hold (video move design 1.2). A key outside this set is refused at write; a key with
+# no value is absent. The prompt and the person id are never stored here (see ``RequestFacts``).
+REQUEST_FACT_KEYS = frozenset({
+    "model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate", "seed", "audio",
+    "metadata_mode", "provenance", "remixed_from_video_id", "extended_from_video_id", "source_asset_id", "total_seconds",
+    "warnings"})
+
+
+class RequestFacts(Mapping[str, Any]):
+    """The facts recorded on a job at create, as a read-only mapping over ``REQUEST_FACT_KEYS``.
+
+    ``prompt`` is filled only for the job's maker, and only while the prompt-memory rules still keep the text.
+    ``maker_person_id`` is the maker's own id for the maker, and None for any other reader."""
+
+    __slots__ = ("_values", "prompt", "maker_person_id")
+
+    def __init__(self, values: Mapping[str, Any], *, prompt: str | None = None, maker_person_id: str | None = None) -> None:
+        self._values = dict(values)
+        self.prompt = prompt
+        self.maker_person_id = maker_person_id
+
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __repr__(self) -> str:
+        return f"RequestFacts({self._values!r})"
 
 
 @dataclass(frozen=True)
@@ -492,6 +529,8 @@ class RunJobView:
     # Facts the adapter returned with its result (S7 parity M5): a plain mapping the core stores on the job and never
     # interprets. Shapes render headers from it and the receipt writer copies fields from it. Empty until the job succeeds.
     result_metadata: Mapping[str, Any] = field(default_factory=dict)
+    # How far the run is, 0 to 100, from the job row. It never goes down; a succeeded job shows 100.
+    progress: int = 0
 
 
 @dataclass(frozen=True)
@@ -548,13 +587,19 @@ class JobService(Protocol):
     def open_result(self, job_id: str, ref: ResultRef, caller: CallerContext) -> ResultContent:
         """The content under the result-reader rule. JobNotFound, ResultUnavailable."""
         ...
-    def list(self, caller: CallerContext, *, intent: str, limit: int, after_id: str | None = None,
-             order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
-        """One page of the caller's jobs filed under ``intent`` (the intent a row's route declares), as ``(views, has_more)``.
-        Only jobs the caller may read are listed (the same rule as ``get``); a deleted job is not. ``order`` is ``"asc"`` or
-        ``"desc"`` by creation time, ties by job id. ``after_id`` is the last job of the previous page: the page starts after
-        it. A cursor that is not one of the caller's listed jobs (absent, deleted, or not theirs) raises JobNotFound, so a
-        client never restarts from page one by mistake."""
+    def list(self, caller: CallerContext, *, intents: Sequence[str], limit: int, after_id: str | None = None,
+             after_key: tuple[int, str] | None = None, order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
+        """One page of the caller's jobs filed under any of ``intents`` (the intents a row's routes declare), as
+        ``(views, has_more)``. Only jobs the caller may read are listed (the same rule as ``get``); a deleted job is not.
+        ``order`` is ``"asc"`` or ``"desc"`` by creation time, ties by job id. ``after_id`` is the last job of the previous
+        page: the page starts after it, and a cursor that is not one of the caller's listed jobs (absent, deleted, or not
+        theirs) raises JobNotFound, so a client never restarts from page one by mistake. ``after_key`` is a
+        ``(created_at, job_id)`` position instead: the page starts strictly after it in the requested order, and no job
+        has to exist at that position (a boundary taken from another store). Giving both raises ValueError."""
+        ...
+    def request_facts(self, job_id: str, caller: CallerContext) -> RequestFacts | None:
+        """The facts recorded when the job was created; None when the job is absent, deleted or not the caller's, and an
+        empty mapping when the job recorded none. Immutable."""
         ...
     def delete(self, job_id: str, caller: CallerContext) -> None:
         """Delete one job (S7 parity 6.7). The caller who may cancel it may delete it. Cancels first; when the cancel is

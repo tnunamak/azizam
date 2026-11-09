@@ -22,8 +22,8 @@ from gateway.workflow_kernel import (
 from gateway.workflow_runtime_types import (
     IDEMPOTENCY_CONFLICT, KEEP, Actor, BindingDef, Commit, EntryState, FrontendRow, HistoryEntry, JobEvent,
     JobDeleteConflict, JobNotFound, Keep, NameKind, NameOwner, RecoveryReport, RegistryConflict, RegistryRefused, ResultContent,
-    ResultRef, ResultUnavailable, RunJobView, RunRefused, RunRequest, WorkflowEntry, WorkflowFacts, WORKFLOW_EXISTS,
-    WORKFLOW_NOT_FOUND,
+    REQUEST_FACT_KEYS, RequestFacts, ResultRef, ResultUnavailable, RunJobView, RunRefused, RunRequest, WorkflowEntry, WorkflowFacts,
+    WORKFLOW_EXISTS, WORKFLOW_NOT_FOUND,
 )
 
 log = logging.getLogger(__name__)
@@ -259,6 +259,8 @@ class FakeRunCore:
         self.contents: dict[tuple[str, str, int], ResultContent] = {}
         # What execute_run puts on a job's ``result_metadata`` (S7 parity M5), by workflow id.
         self.result_metadata: dict[str, Mapping[str, Any]] = {}
+        # The request facts of each job (video move 1.2): what the submit carried, or what a test sets.
+        self.facts: dict[str, RequestFacts] = {}
         self._keys: dict[tuple[str, str], tuple[str, str]] = {}
 
     async def submit_run(self, req: RunRequest, caller: Any, *, snapshot: Any) -> RunJobView | RunRefused:
@@ -273,8 +275,12 @@ class FakeRunCore:
         e = snapshot.get(req.workflow_id)
         if e is None:
             return RunRefused(404, WORKFLOW_NOT_FOUND, f"no workflow {req.workflow_id}")
+        unknown = sorted(set(req.facts) - REQUEST_FACT_KEYS)
+        if unknown:
+            raise ValueError(f"request facts hold only the listed keys, not {unknown}")
         self.submitted.append(req)
         job_id = f"job-{len(self.submitted)}"
+        self.facts[job_id] = RequestFacts({k: v for k, v in req.facts.items() if v is not None})
         view = RunJobView(job_id, "queued", "new", req.workflow_id, e.record_revision,
                           req.binding_key or next(iter(e.bindings), None), 0, 0)
         self.jobs[job_id] = view
@@ -311,12 +317,23 @@ class FakeJobService:
     def get(self, job_id: str, caller: Any) -> RunJobView | None:
         return None if job_id in self.deleted else self.core.jobs.get(job_id)
 
-    def list(self, caller: Any, *, intent: str, limit: int, after_id: str | None = None, order: str = "desc"):
+    def request_facts(self, job_id: str, caller: Any) -> RequestFacts | None:
+        if job_id not in self.core.jobs or job_id in self.deleted:
+            return None
+        return self.core.facts.get(job_id, RequestFacts({}))
+
+    def list(self, caller: Any, *, intents: Any, limit: int, after_id: str | None = None,
+             after_key: tuple[int, str] | None = None, order: str = "desc"):
         """Every live job of the fake core (it has no owners or intents), in creation order."""
+        if after_id is not None and after_key is not None:
+            raise ValueError("give after_id or after_key, not both")
         views = sorted((v for k, v in self.core.jobs.items() if k not in self.deleted),
                        key=lambda v: (v.created_at_s, v.job_id), reverse=order != "asc")
         ids = [v.job_id for v in views]
-        if after_id is not None:
+        if after_key is not None:
+            views = [v for v in views if ((v.created_at_s, v.job_id) > after_key if order == "asc"
+                                          else (v.created_at_s, v.job_id) < after_key)]
+        elif after_id is not None:
             if after_id not in ids:
                 raise JobNotFound(after_id)
             views = views[ids.index(after_id) + 1:]
