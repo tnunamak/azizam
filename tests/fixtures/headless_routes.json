@@ -73,6 +73,46 @@
   },
   {
     "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.problem_reports.list_reports",
+    "method": "GET",
+    "path": "/admin/api/problem-reports",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.problem_reports.get_destinations",
+    "method": "GET",
+    "path": "/admin/api/problem-reports/destinations",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.problem_reports.put_destinations",
+    "method": "PUT",
+    "path": "/admin/api/problem-reports/destinations",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.problem_reports.get_report",
+    "method": "GET",
+    "path": "/admin/api/problem-reports/{report_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.problem_reports.patch_report",
+    "method": "PATCH",
+    "path": "/admin/api/problem-reports/{report_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it",
     "handler": "gateway.admin_api.create_admin_key",
     "method": "POST",

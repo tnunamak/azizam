@@ -12670,6 +12670,481 @@
         ]
       }
     },
+    "/admin/api/problem-reports": {
+      "get": {
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_problem_reports",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "List Reports",
+        "tags": [
+          "usage and receipts",
+          "Owner only"
+        ]
+      }
+    },
+    "/admin/api/problem-reports/destinations": {
+      "get": {
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_problem_reports_destinations",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Get Destinations",
+        "tags": [
+          "usage and receipts",
+          "Owner only"
+        ]
+      },
+      "put": {
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_put_admin_api_problem_reports_destinations",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Put Destinations",
+        "tags": [
+          "usage and receipts",
+          "Owner only"
+        ]
+      }
+    },
+    "/admin/api/problem-reports/{report_id}": {
+      "get": {
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_get_admin_api_problem_reports_report_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Get Report",
+        "tags": [
+          "usage and receipts",
+          "Owner only"
+        ]
+      },
+      "patch": {
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "operationId": "owner_patch_admin_api_problem_reports_report_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "report_id",
+            "required": true,
+            "schema": {
+              "title": "Report Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Authentication or role denied"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
+          }
+        ],
+        "summary": "Patch Report",
+        "tags": [
+          "usage and receipts",
+          "Owner only"
+        ]
+      }
+    },
     "/admin/api/providers": {
       "get": {
         "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",

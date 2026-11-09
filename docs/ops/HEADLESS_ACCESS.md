@@ -299,6 +299,11 @@ Selected successful workflows are exercised separately.
 | Method and path | Auth class | App key | Handler / auth call | Schema |
 | --- | --- | --- | --- | --- |
 | `GET /admin/api/activity/requests` | owner-bearer | denied | `gateway.activity_api.requests`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/problem-reports` | owner-bearer | denied | `gateway.problem_reports.list_reports`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/problem-reports/destinations` | owner-bearer | denied | `gateway.problem_reports.get_destinations`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/problem-reports/destinations` | owner-bearer | denied | `gateway.problem_reports.put_destinations`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/problem-reports/{report_id}` | owner-bearer | denied | `gateway.problem_reports.get_report`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PATCH /admin/api/problem-reports/{report_id}` | owner-bearer | denied | `gateway.problem_reports.patch_report`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/admin-keys` | owner-bearer | denied | `gateway.admin_api.create_admin_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it | owner |
 | `GET /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.list_apps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.create_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

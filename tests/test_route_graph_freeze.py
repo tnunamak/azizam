@@ -20,6 +20,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/admin/api/problem-reports": "owner-only list, read and edit of agent problem reports and their webhook destinations "
+                                  "(docs/design/MCP_PROBLEM_REPORTS.md); tests/test_problem_reports.py covers auth, scrubbing and the round trip",
     "/admin/api/workflows": "the owner's workflow registry (CODE_TO_DATA_S4_S8 I6): list, check, create, read, replace, delete, state, publish and restore, each with the os-N ETag; admin guard; tests/test_workflow_owner_api.py covers it",
     "/v1/assets/{asset_id}": "an App key deletes an asset its accountable person made (DELETE; owner-scoped, a signed content URL is no "
                              "right to delete); tests/test_app_asset_delete.py covers it",
