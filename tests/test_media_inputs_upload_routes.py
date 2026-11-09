@@ -19,6 +19,7 @@ from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -241,18 +242,29 @@ def video_rig(rig, isolated_receipts, monkeypatch):
 VIDEO_MODEL = "video-minimax-h3-i2v"
 
 
-def post_video(rig, reference=None, *, files=None):
+def post_video(rig, reference=None, *, files=None, settle: bool = True):
+    """Create a video and, unless ``settle`` is off, let the run core stage the file: the create answers at once and the run
+    goes on in the app's own loop, so the request and the wait share one loop."""
     body = {"model": VIDEO_MODEL, "prompt": "a lighthouse", "seconds": 5, "seed": 7}
-    if files is not None:
-        return rig.client.post("/v1/videos", data={k: str(v) for k, v in body.items()}, files=files)
-    return rig.client.post("/v1/videos", json={**body, "input_reference": reference})
+
+    async def go():
+        transport = httpx.ASGITransport(app=proxy.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            if files is not None:
+                response = await client.post("/v1/videos", data={k: str(v) for k, v in body.items()}, files=files)
+            else:
+                response = await client.post("/v1/videos", json={**body, "input_reference": reference})
+            if settle and response.status_code == 200:
+                await settled_uploads(rig)
+            return response
+    return asyncio.run(go())
 
 
-def settled_uploads(rig, count: int = 1, *, wait_s: float = 5.0) -> list:
-    """The files the engine was sent. The create answers at once and the run core stages the file a moment later."""
+async def settled_uploads(rig, count: int = 1, *, wait_s: float = 5.0) -> list:
+    """The files the engine was sent: the run core stages the file a moment after the create answered."""
     deadline = time.monotonic() + wait_s
     while len(rig.comfy.uploads) < count and time.monotonic() < deadline:
-        time.sleep(0.02)
+        await asyncio.sleep(0.02)
     return rig.comfy.uploads
 
 
@@ -267,7 +279,7 @@ def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt):
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
     # Delta video_reference_declared_type: the engine is told the type the caller declared, not a fixed image/png.
-    assert settled_uploads(video_rig) == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
+    assert video_rig.comfy.uploads == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
     assert ended(video_rig)
 
 
@@ -278,7 +290,7 @@ def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt):
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
     # Delta video_reference_declared_type: the engine is told the type the caller declared, not a fixed image/png.
-    assert settled_uploads(video_rig) == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
+    assert video_rig.comfy.uploads == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
     assert ended(video_rig)
 
 
