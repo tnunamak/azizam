@@ -367,3 +367,73 @@ def test_the_deployment_hooks_resolve_the_model_name_and_can_refuse_the_body() -
     assert run_request.workflow_id == "video.generate.ltx-2.5-t2v" and run_request.facts["model"] == "sora-2"
     refused = shapes.VIDEO_HOOKS.begin_delivery(CALLER, {"metadata_bad": 1})
     assert refused.status_code == 400
+
+
+# --------------------------------------------------------- the engine must take the job before the queued answer (review 1)
+
+
+def _count(db, table: str) -> int:
+    from gateway import media_jobs
+    with media_jobs.connection(db) as conn:
+        return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+def _drive(db, tmp_path, adapter, **request_fields):
+    """Submit one waiting run whose scheduled job really runs through ``adapter`` on the same loop."""
+    snap = core_snapshot()
+    core, port, _ = make_core(db, tmp_path, snap)
+    port.run_adapter = adapter
+    tasks: list[asyncio.Task] = []
+    port.schedule = lambda job_id: tasks.append(asyncio.get_running_loop().create_task(core.execute_run(job_id)))
+
+    async def go():
+        import dataclasses
+        outcome = await core.submit_run(dataclasses.replace(core_request(), submit_wait_s=5.0, **request_fields), Caller(),
+                                        snapshot=core._snapshots.current())
+        await asyncio.gather(*tasks)
+        return outcome
+
+    return asyncio.run(go()), port
+
+
+def test_a_submit_the_engine_refuses_is_a_502_and_no_job_is_kept_though_the_health_probe_passed(db, tmp_path) -> None:
+    class Refused(Exception):
+        code, category, retryable = "upstream_refused", "upstream", False
+
+    async def refusing(ctx):
+        raise Refused("the engine refused the prompt")
+
+    outcome, port = _drive(db, tmp_path, refusing)
+    assert port.problem is None                                   # the health preflight said the service is fine
+    assert isinstance(outcome, RunRefused) and outcome.http_status == 502 and outcome.code == "upstream_refused"
+    assert _count(db, "media_jobs") == 0 and _count(db, "media_job_events") == 0
+
+
+def test_a_submit_the_engine_took_answers_queued_without_waiting_for_the_render(db, tmp_path) -> None:
+    from gateway import media_jobs
+
+    async def taking(ctx):
+        media_jobs.update_status(ctx.job_id, "running", metadata_patch={"protocol_job": "up-1"}, path=db)
+        await asyncio.sleep(30)                                   # the render goes on; the answer must not wait for it
+
+    outcome, _ = _drive_background(db, tmp_path, taking)
+    assert not isinstance(outcome, RunRefused) and outcome.disposition == "new" and _count(db, "media_jobs") == 1
+
+
+def _drive_background(db, tmp_path, adapter):
+    snap = core_snapshot()
+    core, port, _ = make_core(db, tmp_path, snap)
+    port.run_adapter = adapter
+
+    async def go():
+        import dataclasses
+        tasks: list[asyncio.Task] = []
+        port.schedule = lambda job_id: tasks.append(asyncio.get_running_loop().create_task(core.execute_run(job_id)))
+        outcome = await core.submit_run(dataclasses.replace(core_request(), submit_wait_s=5.0), Caller(),
+                                        snapshot=core._snapshots.current())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return outcome
+
+    return asyncio.run(go()), port

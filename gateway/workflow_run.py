@@ -65,6 +65,7 @@ RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metada
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
 CLAIM_POLL_S = 0.05
+SUBMIT_POLL_S = 0.02
 RETRY_AFTER_S = 2
 WAIT_POLL_S = 0.1
 TOMBSTONE_RETENTION_S = 24 * 3600     # a deleted job is hidden at once and removed after this long
@@ -486,7 +487,30 @@ class WorkflowRunCore:
             port.schedule(created["job_id"])
         except Exception:  # noqa: BLE001 - the job stays queued; recovery schedules it and a retry replays it
             log.exception("job %s was created but not scheduled", created["job_id"])
+        if req.submit_wait_s > 0:
+            refused = await self._await_submit(created["job_id"], req.submit_wait_s)
+            if refused is not None:
+                return refused
         return job_view(created, self._path, disposition="new")
+
+    async def _await_submit(self, job_id: str, wait_s: float) -> RunRefused | None:
+        """Wait until the engine has taken the job (its upstream job id is kept) or the job has ended. A job that failed before
+        the engine took it is discarded and refused with 502, so a caller never holds a job the engine does not know. A health
+        probe cannot prove this: only the engine's own reply to the submission can. After ``wait_s`` the queued job is the answer."""
+        deadline = time.monotonic() + wait_s
+        while True:
+            job = media_jobs.get(job_id, audience="internal", path=self._path) or {}
+            status = str(job.get("status") or "")
+            if status == media_jobs.STATUS_FAILED:
+                if media_jobs.discard_failed(job_id, path=self._path):
+                    code = str(job.get("error_code") or SERVICE_UNREACHABLE)
+                    return RunRefused(502, code, str(job.get("error") or "The engine did not take the job."))
+                return None
+            if media_jobs.is_terminal(status) or (job.get("metadata") or {}).get("protocol_job"):
+                return None
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(SUBMIT_POLL_S)
 
     async def _claim(self, fence: media_jobs.RunClaimFence, identity: str) -> RunJobView | RunRefused | None:
         """Step 1. None means this request holds the claim."""

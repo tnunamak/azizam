@@ -405,6 +405,10 @@ class RunRequest:
     # household policy are combined. Part of run identity: a changed decision on a key is a different request, never a
     # replay of a run that was remembered. Empty: the caller took no decision, and identity is what it was.
     prompt_retention: str = ""
+    # How long ``submit_run`` waits, after it schedules a new job, for the engine to take the job (the upstream job id is kept)
+    # or for the job to end. A job the engine refused is then discarded and the call answers 502; no job is kept. 0: do not
+    # wait, the queued job is the answer. Not part of run identity (it changes when the answer is sent, not what runs).
+    submit_wait_s: float = 0.0
     frontend_id: str = "workflows"
     # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
     request_id: str | None = None

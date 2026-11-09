@@ -1210,6 +1210,22 @@ def delete_succeeded_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> int
     return deleted
 
 
+def discard_failed(job_id: str, *, path: Path = DB_PATH) -> bool:
+    """Delete one failed job, its events, envelope, results and idempotency claim. A job that did not fail stays. For a job
+    whose engine never took it (the caller was told 502): nothing of it may be kept or replayed."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        found = conn.execute("SELECT 1 FROM media_jobs WHERE job_id=? AND status=?", (job_id, STATUS_FAILED)).fetchone()
+        if found is None:
+            conn.commit()
+            return False
+        conn.execute("DELETE FROM media_job_events WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM media_jobs WHERE job_id=?", (job_id,))
+        _release_envelopes_in(conn, [job_id])
+        conn.commit()
+    return True
+
+
 def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> None:
     """Release each deleted job's envelope, references and results, in the transaction that deleted the job row.
 
