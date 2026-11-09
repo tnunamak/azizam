@@ -423,6 +423,7 @@ class WorkflowRunCore:
         self._port = port
         self._spool = spool
         self._path = path or media_jobs.DB_PATH
+        self._refusal_words: dict[str, str] = {}      # job id -> the row's word a refused run's receipt closes with (until it closes)
         self._generate = generate
         self._lease_s = claim_lease_s
         self._wait_s = claim_wait_s
@@ -713,9 +714,9 @@ class WorkflowRunCore:
         status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
         if status == "failed":
             reason = str(job.get("error_code") or reason)
-            # A run refused as invalid input is a refusal of the request, as its sync route would have closed it.
-            if metadata.get("run_receipt_path") and job.get("error_category") == "invalid_input":
-                status = "rejected"
+            # A run refused with a 4xx closes with the row's word for a refused request (``refusal_receipt``, carried with the
+            # run); any other failure, and a refusal by the service (5xx), is a failure.
+            status = self._refusal_words.pop(job_id, status)
         return str(receipt_id), status, reason
 
     def _close_recovered_receipt(self, job_id: str) -> None:
@@ -879,6 +880,9 @@ class WorkflowRunCore:
         with contextlib.suppress(ValueError):
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
                                      metadata_patch={"last_http_status": int(refusal.get("status") or 400)})
+        # The row's word for a refused request applies to a 4xx refusal only; the receipt closes in ``_fail`` below.
+        if str(refusal.get("receipt") or "failed") == "rejected" and 400 <= int(refusal.get("status") or 400) < 500:
+            self._refusal_words[job_id] = "rejected"
         self._fail(job_id, str(refusal.get("code") or INTERNAL_ERROR), category, text)
 
     async def _open_run_receipt(self, job_id: str, job: Mapping[str, Any], caller: CallerContext | None) -> str | None:
@@ -941,6 +945,8 @@ class WorkflowRunCore:
         try:
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
+                metadata_patch=({"last_http_status": last_status} if (last_status := upstream_status if upstream_status is not None
+                                                                        else 504 if category == "timeout" else None) is not None else None),
                 error_info={"error_code": code, "error_category": category, "retryable": retryable,
                             "upstream_http_status": upstream_status})
         except ValueError:

@@ -176,7 +176,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_fail",
-      "source_sha256": "c42aa953767c6e3e06c0a033c5f659b0f1ffe6674d86396990c99ff66057e805",
+      "source_sha256": "66ff6f0f8b43df092aa47a5d263fd8efa92f4d1f1571d385b6fdd296ed920c6b",
       "call": "append_event",
       "event": "'failed'",
       "access": "content:job:read"

@@ -216,6 +216,9 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         if row.run_receipt_path and deps.job_record is not None:
             run_request = dataclasses.replace(run_request, run_receipt_path=row.run_receipt_path,
                                               job_record=await deps.job_record(request, caller, request_id))
+            if run_request.run_refusal:
+                # The refusal is made when the job runs: it takes the row's words for a refused request then.
+                run_request = dataclasses.replace(run_request, run_refusal={**run_request.run_refusal, "receipt": row.refusal_receipt})
         # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
         # finished job still answers that job when its backend has become unavailable (S7 parity 6.2).
         try:
@@ -231,11 +234,12 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         return refusal
     if outcome.disposition == "replay":
         facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome)
+    if answered.mode == "job" and row.run_receipt_path:
+        # The run files a receipt of its own. This one is the submit's: it closes with the answer to the submit, on a replay too,
+        # and never with the outcome of the job a replay names (that stays on the run's receipt).
+        owner.report(status="succeeded", reason="accepted")
+        return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
     if answered.mode == "job" and outcome.disposition == "new":
-        if row.run_receipt_path:
-            # The run files a receipt of its own: this one is the submit's and closes with the 202 (the old job route did).
-            owner.report(status="succeeded", reason="accepted")
-            return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
         # The core closes the receipt when the job ends; nothing may await between this call and leaving the receipt.
         owner.handoff()
         return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)

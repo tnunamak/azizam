@@ -109,12 +109,14 @@ async def run_round(
     limits: Any,
     cadence: Poll,
     say: Callable[[str], None] = lambda _text: None,
+    resume_prompt_id: str | None = None,
 ) -> RoundResult:
-    """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first."""
+    """Submit ``payload`` and wait for its files. Raises ``RoundFailure``; a cancelled task cancels the engine's prompt first.
+    With ``resume_prompt_id`` nothing is submitted: the prompt a restarted run saved is waited for and harvested."""
     prompt_id: Optional[str] = None
     try:
         try:
-            ref = await adapter.submit(session.conn, "graph.submit",
+            ref = JobRef("graph.submit", resume_prompt_id) if resume_prompt_id else await adapter.submit(session.conn, "graph.submit",
                                        CanonicalRequest(op="graph.submit", body=dict(payload), headers=dict(headers), params={"session": session}))
         except TransportFailure as error:
             kind = {"timeout": SUBMIT_TIMEOUT, "unreachable": UNREACHABLE}.get(error.kind, DROPPED)
@@ -124,7 +126,7 @@ async def run_round(
         except MalformedResponse as error:
             raise RoundFailure(NO_PROMPT_ID) from error
         prompt_id = ref.id
-        say(f"{adapter.label} {label} submitted: {prompt_id}")
+        say(f"{adapter.label} {label} {'resumed' if resume_prompt_id else 'submitted'}: {prompt_id}")
 
         remaining = float(max_wait_s)
         finished = None

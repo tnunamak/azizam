@@ -27128,7 +27128,8 @@ async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Vari
     if removed:
         return node_graph_runner.Variant(
             on, {"background_removal": True, "background_removal_source": source},
-            {"background_removal": False, "background_removal_source": "rmbg_fallback"})
+            {"background_removal": False, "background_removal_source": "rmbg_fallback"}, fallback_edit=off,
+            cutout_required=str(options.get("background") or "") == "transparent")
     return node_graph_runner.Variant(off, {"background_removal": False, "background_removal_source": source})
 
 

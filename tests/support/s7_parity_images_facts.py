@@ -117,6 +117,60 @@ def media_jobs(obs: Obs) -> list[dict[str, Any]]:
     return list((obs.trace["media_jobs"] or {}).get("media_jobs") or [])
 
 
+def job_ids(obs: Obs) -> list[str]:
+    return [str(j["job_id"]) for j in media_jobs(obs)]
+
+
+def canon_jobs(obs: Obs, value: Any) -> Any:
+    """``value`` with each job id of this observation replaced by its place (``<job:1>``, ``<job:2>``, in store order), in every
+    string it appears in. A job id is random, so two observations are compared by where an id is used, not by its text: an id
+    that differs from the stored job's anywhere (the column, the job document, an answer that names it) stays raw text here and
+    makes the observations differ."""
+    text = json.dumps(value, sort_keys=True, default=str)
+    for position, job_id in sorted(enumerate(job_ids(obs), 1), key=lambda pair: -len(pair[1])):
+        text = text.replace(job_id, f"<job:{position}>")
+    return json.loads(text)
+
+
+def job_rows(obs: Obs) -> list[dict[str, Any]]:
+    """Every stored job row in full, ids mapped (``canon_jobs``)."""
+    return canon_jobs(obs, media_jobs(obs))
+
+
+# The run core's own bookkeeping on a job it runs (allowed delta ``job_row_metadata``, J07), with the exact values every image
+# job document carries. ``mode`` names the run core where the old routes named the route. ``run_receipt_id`` and
+# ``protocol_submitting`` are the run core's receipt link and its submit marker. Nothing else is left out of a job document.
+RUN_CORE_METADATA = {
+    "binding_key": "comfyui", "failure_text": "category_copy", "frontend": "image-jobs", "resource_class": "image",
+    "retries": "binding", "run_receipt_path": "/v1/images/generations", "protocol_submitting": False,
+}
+
+
+def _without_run_core(value: Any) -> Any:
+    """``value`` with the run core's bookkeeping leaves of every job document metadata removed, each only when it holds its exact
+    value (a different value stays and makes the observations differ); the run-core mode becomes the old routes' mode."""
+    if isinstance(value, list):
+        return [_without_run_core(v) for v in value]
+    if not isinstance(value, dict):
+        return value
+    out = {k: _without_run_core(v) for k, v in value.items()}
+    meta = out.get("metadata")
+    if isinstance(meta, dict) and meta.get("mode") == "workflow.run":
+        meta = {k: v for k, v in meta.items() if not (k in RUN_CORE_METADATA and v == RUN_CORE_METADATA[k])}
+        for key, kind in (("run_receipt_id", str), ("protocol_job", str), ("result_metadata", dict)):   # the run core's link, its adapter pointer, the graph runner's result facts
+            if isinstance(meta.get(key), kind):
+                del meta[key]
+        meta["mode"] = "async_image_generation"
+        out["metadata"] = meta
+    return out
+
+
+def job_document(obs: Obs, i: int = 1) -> Any:
+    """The whole body of answer ``i`` (a job document, results or events), ids mapped, the run core's bookkeeping leaves
+    (``RUN_CORE_METADATA``) left out when they hold their exact values."""
+    return _without_run_core(canon_jobs(obs, doc(obs, i)))
+
+
 def retention_destinations(obs: Obs) -> int:
     return len((obs.trace["media_jobs"] or {}).get("retention_fact_destinations") or [])
 
@@ -125,8 +179,9 @@ def origins(obs: Obs) -> list[Any]:
     return [a["json"].get("origin") for a in obs.trace["assets"] if isinstance(a.get("json"), dict)]
 
 
-def asset_files(obs: Obs) -> list[tuple[str, int]]:
-    return [(a["suffix"], a.get("size")) for a in obs.trace["assets"] if a["suffix"] != ".json"]
+def asset_files(obs: Obs) -> list[tuple[str, int, str | None]]:
+    """The stored files by suffix, size and the sha256 of their bytes: same-size wrong bytes differ."""
+    return [(a["suffix"], a.get("size"), a.get("sha256")) for a in obs.trace["assets"] if a["suffix"] != ".json"]
 
 
 def data_items(obs: Obs, i: int = 0) -> list[dict[str, Any]]:
