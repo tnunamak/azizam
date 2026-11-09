@@ -167,7 +167,8 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
     if kind == graph_round.SUBMIT_TIMEOUT:
         return RunFailed("upstream_timeout", "timeout", f"{engine} request timeout", upstream_status=504, retryable=True, retry_reason=reason)
     if kind == graph_round.UNREACHABLE:
-        return RunFailed("upstream_unavailable", "upstream", adapter.unavailable_message(conn), upstream_status=502, retryable=True,
+        # The job keeps the engine's name and never its address: a job's text reaches every caller who can read the job.
+        return RunFailed("upstream_unavailable", "upstream", f"{engine} unavailable", upstream_status=502, retryable=True,
                          retry_reason=reason)
     if kind == graph_round.DROPPED:
         return RunFailed("upstream_dropped", "upstream", "Image backend connection dropped", upstream_status=502)
