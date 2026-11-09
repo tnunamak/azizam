@@ -228,3 +228,33 @@ def test_summary_uses_loaded_row_facts(tmp_path, monkeypatch):
     summary = catalog.summarize_extensions(registry, next(iter(catalog.VALID_AUDIENCES)))
     chat = next(item for item in summary["extensions"] if item["namespace"] == "com.azizam.chat")
     assert [row["route"] for row in chat["routes"]] == ["/row-owned"]
+
+
+def test_routes_with_different_path_converters_are_distinct(tmp_path):
+    # The router serves {n:int} and {u:uuid} as two routes, so the guard keeps the converter and drops only the name.
+    index = catalog.load_extension_routes(write_rows(tmp_path, [
+        {"canonical": "/v1/items/{n:int}", "extensions": ["com.azizam.chat"], "extension_order": 1},
+        {"canonical": "/v1/items/{u:uuid}", "extensions": ["com.azizam.chat"], "extension_order": 2},
+    ]))
+    assert [row.route for row in index["com.azizam.chat"]] == ["/v1/items/{n:int}", "/v1/items/{u:uuid}"]
+
+
+def test_an_implicit_and_an_explicit_str_parameter_are_one_route(tmp_path):
+    with pytest.raises(ValueError) as error:
+        catalog.load_extension_routes(write_rows(tmp_path, [
+            {"canonical": "/v1/items/{a}", "extensions": ["com.azizam.chat"], "extension_order": 1},
+            {"canonical": "/v1/items/{b:str}", "extensions": ["com.azizam.chat"], "extension_order": 2},
+        ]))
+    assert str(error.value) == (
+        "duplicate extension route: namespace 'com.azizam.chat', route '/v1/items/{b:str}', record 1, row 2"
+    )
+
+
+@pytest.mark.parametrize("route", ["//", "/v1//items", "/v1/items//"])
+def test_a_route_with_an_empty_path_segment_is_refused(tmp_path, route):
+    # The router serves "/" and "//" as two routes; a double slash is not a spelling the catalog folds, so it is refused.
+    with pytest.raises(ValueError) as error:
+        catalog.load_extension_routes(write_rows(tmp_path, [
+            {"canonical": route, "extensions": ["com.azizam.chat"], "extension_order": 1},
+        ]))
+    assert str(error.value) == f"extension route has an empty path segment: {route!r}"
