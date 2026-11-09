@@ -341,7 +341,7 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
         if not isinstance(cfg, dict) or not _is_enabled(cfg):
             continue
         try:
-            service_registry.engine_base_address(cfg)
+            service_registry.checked_engine_base_address(cfg)
             url = service_health_endpoint(cfg)
         except service_registry.EngineAddressError:
             continue  # _unconfigured_rows reports the refusal without dialing another address.
@@ -364,7 +364,7 @@ def _lifecycle_backend_targets(config: dict) -> list[dict[str, Any]]:
         if not isinstance(cfg, dict) or not _is_enabled(cfg):
             continue
         try:
-            service_registry.engine_base_address(cfg)
+            service_registry.checked_engine_base_address(cfg)
         except service_registry.EngineAddressError:
             continue
         lifecycle = cfg.get("lifecycle")
@@ -512,7 +512,7 @@ def _unconfigured_rows(config: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(cfg, Mapping) or not _is_enabled(cfg):
             continue
         try:
-            service_registry.engine_base_address(cfg)
+            service_registry.checked_engine_base_address(cfg)
             if not cfg.get("health_endpoint") or service_health_endpoint(cfg):
                 continue
             reason = service_registry.NOT_CONFIGURED_REASON
@@ -603,7 +603,7 @@ def _configured_engine_base(record: Mapping[str, Any]) -> str:
     if not _is_enabled(record):
         return ""
     try:
-        return service_registry.engine_base_address(record)
+        return service_registry.checked_engine_base_address(record)
     except service_registry.EngineAddressError:
         return ""  # The grid reports the field-level configuration refusal.
 

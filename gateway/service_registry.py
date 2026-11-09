@@ -1929,6 +1929,19 @@ class EngineAddressError(ValueError):
 
 
 def engine_base_address(config: Mapping[str, Any]) -> str:
+    """The full base URL an engine's record names, or ``""`` when it names none or names an invalid one.
+
+    Never raises: startup, derived config and dispatch read every record through it, so one malformed record leaves
+    that engine not configured instead of stopping the gateway. A named invalid URL never falls through to a
+    lower-priority address. Pages that show why use ``checked_engine_base_address``.
+    """
+    try:
+        return checked_engine_base_address(config)
+    except EngineAddressError:
+        return ""
+
+
+def checked_engine_base_address(config: Mapping[str, Any]) -> str:
     """The full base URL an engine's record names, keeping the scheme, the port and any path prefix; ``""`` when none.
 
     For dispatch and for probes written relative to that base. Host and port name a bare ``scheme://host:port``. A

@@ -91,7 +91,9 @@ def test_invalid_primary_is_a_visible_refusal_without_any_probe(lower, invalid, 
     calls, samples, lifecycle = observed
     record = {**lower, "base_url": invalid, "health_endpoint": "/health"}
     with pytest.raises(ValueError, match="base_url") as failure:
-        service_registry.engine_base_address(record)
+        service_registry.checked_engine_base_address(record)
+    # The reader startup and dispatch use never raises and never falls through to the lower address.
+    assert service_registry.engine_base_address(record) == ""
     assert invalid not in str(failure.value)
     with pytest.raises(stt_chunking.SttNotConfigured, match="base_url"):
         stt_chunking.SttExecutionConfig.from_service(
@@ -118,7 +120,8 @@ def test_invalid_primary_is_a_visible_refusal_without_any_probe(lower, invalid, 
 ])
 def test_other_invalid_higher_priority_urls_do_not_fall_through(higher, lower):
     with pytest.raises(ValueError, match=higher):
-        service_registry.engine_base_address({higher: "not a url", **lower})
+        service_registry.checked_engine_base_address({higher: "not a url", **lower})
+    assert service_registry.engine_base_address({higher: "not a url", **lower}) == ""
 
 
 @pytest.mark.parametrize("record,expected", [
@@ -145,3 +148,15 @@ def test_disabled_invalid_record_remains_unprobed_and_unlisted(observed):
     asyncio.run(status_endpoint._sample_backend_health(config))
     assert asyncio.run(status_endpoint._enriched_aux_health(config)) == {"voxtral": None, "parakeet": None}
     assert calls == [] and samples == [] and lifecycle == []
+
+
+def test_a_malformed_engine_address_leaves_that_engine_off_and_the_gateway_up():
+    # Startup derives every engine's address; one malformed record must not stop the rest. It reads as not configured,
+    # never as the lower-priority address the record also names.
+    effective = {"backends": {
+        "stt": {"base_url": "not a url", "default_base_url": "http://203.0.113.10:9999/fallback"},
+        "tts": {"base_url": "http://203.0.113.9:9999/v1"},
+    }}
+    derived = proxy._derive_backend_constants(effective)
+    assert derived["STT_HOST"] == "" and derived["STT_ENABLED"] is False
+    assert derived["TTS_HOST"] == "http://203.0.113.9:9999/v1" and derived["TTS_ENABLED"] is True

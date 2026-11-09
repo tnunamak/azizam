@@ -283,7 +283,7 @@ class SttExecutionConfig:
             return result
 
         try:
-            origin = service_registry.engine_base_address(raw)  # No address: the request path refuses.
+            origin = service_registry.checked_engine_base_address(raw)  # No address: the request path refuses.
         except service_registry.EngineAddressError as error:
             raise SttNotConfigured(str(error)) from error
 
