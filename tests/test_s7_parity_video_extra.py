@@ -877,9 +877,10 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
         failed = await rig.call("DELETE", f"/v1/videos/{video_id}", label="delete with a failing cancel")
         seen["failed_status"] = failed.status_code
         seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code
+        seen["paths"] = _engine_paths(rig)
 
     _run(tmp_path, "s7-7-cancel-failure", setup, drive)
-    assert seen["failed_status"] == 409
+    assert seen["failed_status"] == 409, (seen, [k for k, _ in __import__("itertools").groupby(seen["paths"])])
     assert seen["kept_after_failure"] == 200
 
 
