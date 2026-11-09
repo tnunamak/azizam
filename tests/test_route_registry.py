@@ -74,7 +74,7 @@ def test_route_aliases_and_policies_are_projected_from_catalog() -> None:
         ("POST", "/api/chat", "/ollama/api/chat"),
     }
     assert runtime_policy["/v1/audio/generate"]["intent"] == "audio.generate"
-    assert runtime_policy["/v1/videos"]["capability_resource_tier"] == "expensive"
+    assert "/v1/videos" not in runtime_policy        # V5c: the create is a frontend row, whose policy comes from the row, not an identity entry
     assert openai_policy["/v1/embeddings"] == (
         "openai.embeddings",
         "text.embeddings",
