@@ -626,6 +626,9 @@ def embed_image_metadata(content: bytes, suffix_or_mime: str,
 _MP4_LIKE = {".mp4", ".m4v", ".m4a", ".mov"}
 _WAV_INFO_FALLBACK_KEY = "comment"
 _ARG_LIMIT = 100_000  # bytes in one ``-metadata key=value`` argument; the kernel allows 131072
+# Leave headroom below Linux's usual 2 MiB argv + environment limit for the
+# environment, argument pointers, media paths, and the fixed ffmpeg options.
+_TOTAL_ARG_LIMIT = 1_000_000
 
 
 def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str],
@@ -653,7 +656,14 @@ def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str
         flags = ["-movflags", "+use_metadata_tags"]
     else:
         flags = []
-    if all(len(f"{k}={v}".encode("utf-8")) <= _ARG_LIMIT for k, v in tags.items()):
+    # NUL cannot be passed through execve either; never leak ValueError from
+    # subprocess or silently truncate it in an ffmetadata file.
+    if any("\x00" in k or "\x00" in v for k, v in tags.items()):
+        raise MediaMetadataError("NUL cannot be preserved in media metadata")
+    sizes = [len(f"{k}={v}".encode("utf-8")) for k, v in tags.items()]
+    # Include each -metadata flag and both argument terminators.
+    if (all(size <= _ARG_LIMIT for size in sizes)
+            and sum(size + len("-metadata") + 2 for size in sizes) <= _TOTAL_ARG_LIMIT):
         extra = [arg for k, v in tags.items() for arg in ("-metadata", f"{k}={v}")]
         return _ffmpeg_rewrite(content, suffix_or_mime, workdir, [*extra, *flags])
     # Linux caps one command-line argument at 128 KiB, and a chained clip's
@@ -667,6 +677,12 @@ def embed_media_tags(content: bytes, suffix_or_mime: str, tags: Mapping[str, str
 
 def _ffmetadata(tags: Mapping[str, str]) -> bytes:
     """FFMETADATA1 text: ``=``, ``;``, ``#``, ``\\`` and newline are escaped with a backslash."""
+    # The reader terminates at CR/NUL even when escaped. Check merged tags,
+    # including existing container tags and the joined WAV comment.
+    for control, cause in (("\r", "carriage return"), ("\x00", "NUL")):
+        if any(control in k or control in v for k, v in tags.items()):
+            raise MediaMetadataError(
+                f"{cause} cannot be preserved in ffmetadata; metadata exceeds command-line limits")
     def esc(text: str) -> str:
         return "".join("\\" + c if c in "=;#\\\n" else c for c in text)
     return (";FFMETADATA1\n" + "".join(f"{esc(k)}={esc(v)}\n" for k, v in tags.items())).encode("utf-8")
