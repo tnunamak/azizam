@@ -61,17 +61,19 @@ ENGINE_PROMPT_KEY = "engine_prompt"      # the engine's id of the prompt a run s
 
 
 def output_kind(outputs: Mapping[str, Any]) -> str:
-    """What a workflow declares it produces, from its first declared output's media type (``video/mp4`` -> ``video``). One that
-    declares none produces images, as before. Data from the record, not a branch on a name."""
+    """What a workflow declares it produces, from its first declared output's media type (``video/mp4`` -> ``video``); empty when it
+    declares none. Data from the record, not a branch on a name."""
     for spec in outputs.values():
         kind = str((spec or {}).get("media_type") or "").split("/", 1)[0] if isinstance(spec, Mapping) else ""
         if kind and kind != "application":
             return kind
-    return "image"
+    return ""
 
 
 def output_noun(outputs: Mapping[str, Any]) -> str:
-    return f"{output_kind(outputs)}s"
+    """The plural of ``output_kind`` for a no-result message; a workflow that declares none produces images, as before."""
+    kind = output_kind(outputs)
+    return f"{kind}s" if kind else "images"
 
 
 class RunFailed(Exception):

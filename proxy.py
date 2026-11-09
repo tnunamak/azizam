@@ -27662,12 +27662,13 @@ def _video_intents() -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(route.runtime_policy["intent"]) for r in rows for route in r.routes if route.runtime_policy.get("intent")))
 
 
-def _video_workflow_ids() -> tuple[str, ...]:
-    """The workflows whose record declares video output (data from the record, not an intent list)."""
+def _video_workflow_ids(shape) -> tuple[str, ...]:
+    """The workflows whose record declares an output of the wire's media family (``shape.output_prefix``): data from the record."""
     if WORKFLOW_SNAPSHOTS is None:
         return ()
     return tuple(entry.id for entry in WORKFLOW_SNAPSHOTS.current().workflows.values()
-                 if node_graph_runner.output_kind(entry.contract.get("outputs") or {}) == "video")
+                 if any(str((spec or {}).get("media_type") or "").startswith(shape.output_prefix)
+                        for spec in (entry.contract.get("outputs") or {}).values() if isinstance(spec, Mapping)))
 
 
 class _LegacyVideoRecords:
@@ -27682,7 +27683,7 @@ class _LegacyVideoRecords:
 
 def _video_ledger(shape) -> VideoLedger:
     return VideoLedger(_workflow_job_service(), shape.job_id_of, _video_intents(), _LegacyVideoRecords(), media_jobs.is_job_id,
-                       _video_workflow_ids)
+                       lambda: _video_workflow_ids(shape))
 
 
 async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
