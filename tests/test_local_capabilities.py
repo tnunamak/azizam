@@ -419,5 +419,127 @@ def test_image_family_requires_comfyui_control():
     ]
 
 
+@pytest.mark.parametrize("family", ["videos", "audio", "images"])
+@pytest.mark.parametrize("backend", [None, "", ["other"]])
+def test_family_backend_rejects_malformed_declared_value(family, backend):
+    config = {
+        "backends": {"comfyui": {"default_model": "image-model"}},
+        family: {
+            "backend": backend,
+            "workflows": {"sample": {"file": "sample.json"}},
+        },
+    }
+
+    with pytest.raises(ValueError) as error:
+        build_local_capabilities(config)
+
+    assert str(error.value) == (
+        f"{family}.backend must be a non-empty string; got {backend!r}"
+    )
+
+
+def test_image_family_uses_declared_backend_and_model_defaults():
+    config = {
+        "backends": {"other": {"name": "Other workflow backend"}},
+        "images": {"backend": "other"},
+        "model_compatibility": {
+            "defaults": {"images": "image-model", "image_edits": "edit-model"},
+        },
+    }
+
+    caps = build_local_capabilities(config)
+
+    assert [(cap.intent, cap.backend, cap.model) for cap in caps] == [
+        ("image.generate", "other", "image-model"),
+        ("image.edit", "other", "edit-model"),
+    ]
+
+
+def test_image_family_reads_metadata_from_selected_backend():
+    config = {
+        "backends": {
+            "comfyui": {"default_model": "wrong-backend-model"},
+            "other": {
+                "default_model": "selected-model",
+                "workflows_dir": "./selected-workflows",
+            },
+        },
+        "images": {"backend": "other"},
+        "model_compatibility": {
+            "defaults": {"images": "fallback-model", "image_edits": "edit-model"},
+        },
+    }
+
+    caps = build_local_capabilities(config)
+
+    assert [(cap.intent, cap.backend, cap.model, cap.caveats) for cap in caps] == [
+        ("image.generate", "other", "selected-model", ()),
+        ("image.edit", "other", "edit-model", ()),
+    ]
+
+
+def test_image_family_default_backend_preserves_rows():
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    assert "images" not in config
+    caps = [
+        cap for cap in build_local_capabilities(config)
+        if cap.intent in ("image.generate", "image.edit")
+    ]
+
+    assert [
+        (
+            cap.intent, cap.backend, cap.model, cap.input_modalities,
+            cap.output_modalities, cap.execution, cap.streaming,
+            cap.resource_tier, cap.resources.gpu_required, cap.caveats,
+        )
+        for cap in caps
+    ] == [
+        (
+            "image.generate", "comfyui", "flux2-klein-4b", ("text",),
+            ("image",), "job", False, "batch", True, (),
+        ),
+        (
+            "image.edit", "comfyui", "flux2-klein-4b-edit", ("text", "image"),
+            ("image",), "job", False, "batch", True, (),
+        ),
+    ]
+
+    # Preserve the existing default behavior for an empty backend record too.
+    config["backends"]["comfyui"] = {}
+    assert _by_intent(build_local_capabilities(config), "image.generate") == []
+    assert _by_intent(build_local_capabilities(config), "image.edit") == []
+
+
+def test_image_family_missing_declared_backend_does_not_fall_back():
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    config["images"] = {"backend": "missing"}
+
+    caps = build_local_capabilities(config)
+
+    assert _by_intent(caps, "image.generate") == []
+    assert _by_intent(caps, "image.edit") == []
+
+
+def test_image_family_uses_effective_backend_override():
+    config = {
+        "backends": {"other": {"default_model": "frozen-model"}},
+        "images": {"backend": "other"},
+        "model_compatibility": {
+            "defaults": {"images": "image-model", "image_edits": "edit-model"},
+        },
+    }
+
+    caps = build_local_capabilities(
+        config, backends={"other": {"name": "Live workflow backend"}}
+    )
+
+    assert [(cap.intent, cap.backend, cap.model) for cap in caps] == [
+        ("image.generate", "other", "image-model"),
+        ("image.edit", "other", "edit-model"),
+    ]
+    assert build_local_capabilities(config, backends={}) == []
+    assert config["backends"] == {"other": {"default_model": "frozen-model"}}
+
+
 if __name__ == "__main__":
     unittest.main()
