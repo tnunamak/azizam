@@ -534,13 +534,21 @@ class RestoreStep:
         recorded ``partial`` still owes its declared reset, which runs now. Anything else stays held."""
         sp = parse_policy(ctx.policy)
         adapter: SnapshotAdapter = ctx.adapter  # type: ignore[assignment]
-        recorded = (ctx.operation.evidence_ref or "").removeprefix("revalidate:")
+        recorded = ctx.operation.evidence_ref or ""
         if ctx.operation.step_outcome == "partial" and recorded == "restore:failed:state_not_known_clean":
             return await self._reset(ctx, sp, adapter)
         if ctx.operation.step_outcome == "no_change" and recorded in _COLD_SETTLEMENTS:
             clean = await self._clean(ctx, sp, adapter)
             return "continue" if clean is True else "fail_closed" if clean is False else "reconcile"
         return "fail_closed"
+
+    @staticmethod
+    def revalidation_owed(row: Operation) -> Optional[EffectResult]:
+        """What a held recovery still owes. A reset that ran but whose clean check could not be read owes only that check,
+        judged as a recorded cold settlement: the reset must not run again. Anything else keeps the recorded outcome."""
+        if row.step_outcome == "unknown" and row.evidence_ref == "reset:target_not_verified_clean":
+            return EffectResult(outcome="no_change", evidence_ref="restore:reset:clean:serving_cold")
+        return None
 
     async def _clean(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter) -> Optional[bool]:
         """Is the target clean and serving? The profile's reset ``verify`` observation, else (only

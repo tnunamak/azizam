@@ -805,26 +805,36 @@ class Executor:
                                        policy: Mapping[str, object]) -> StepVerdict:
         verdict = await self._settled_verdict(operation, adapter, policy)
         if verdict == "reconcile":
-            await self._hold_revalidation(operation)
+            # The step's own recovery may have gone further (a restore that ran its declared reset): hold what is owed now,
+            # never the outcome it started from, or the effect would run again on the next restart.
+            now = await asyncio.to_thread(self.store.get, operation.op_id)
+            owed = getattr(self._steps.get(operation.step), "revalidation_owed", None)  # type: ignore[arg-type]
+            judged = owed(now) if owed is not None and now is not None else None
+            await self._hold_revalidation(operation, judged)
         return verdict
 
-    async def _hold_revalidation(self, operation: Operation) -> None:
+    async def _hold_revalidation(self, operation: Operation, judged: Optional[EffectResult] = None) -> None:
         """Hold ``reconciling`` over a recorded outcome whose servability could not be read. A settled outcome is never
         overwritten: a revalidation intent for the same step, with an unknown outcome, carries the hold. The recorded
-        evidence is kept in the new record, so a later restart judges the same outcome again."""
+        outcome and evidence are kept in the new record (``revalidate:<outcome>:<evidence>``), so a later restart judges
+        the same outcome again under the same rule. ``judged`` replaces the recorded pair when the step owes a different one."""
         assert operation.step_intent is not None
         revalidate = StepIntent(step=operation.step_intent.step,  # type: ignore[arg-type]
                                 effect_key=f"{operation.op_id}:{operation.step_intent.step}:revalidate",
                                 expected_incarnation=operation.step_intent.expected_incarnation)
         # One transaction: a crash between two writes would lose the recorded evidence the next judgment needs.
+        outcome = judged.outcome if judged is not None else (operation.step_outcome or "no_change")
+        evidence = judged.evidence_ref if judged is not None else operation.evidence_ref
         await asyncio.to_thread(self.store.write_intent, operation.op_id, revalidate, EffectResult(
-            outcome="unknown", evidence_ref=f"{REVALIDATE}{operation.evidence_ref or ''}"))
+            outcome="unknown", evidence_ref=f"{REVALIDATE}{outcome}:{evidence or ''}"))
 
     async def _revalidate(self, operation: Operation, adapter: TransitionAdapter, policy: Mapping[str, object]) -> None:
         """Judge a recorded outcome again after a restart. Fresh evidence settles it as the live path would have; an
         unreadable check keeps the hold."""
-        recorded = (operation.evidence_ref or "").removeprefix(REVALIDATE)
-        kept = dataclasses.replace(operation, step_outcome="no_change", evidence_ref=recorded)
+        held_outcome, _, recorded = (operation.evidence_ref or "").removeprefix(REVALIDATE).partition(":")
+        if held_outcome not in ("no_change", "partial"):
+            held_outcome, recorded = "no_change", (operation.evidence_ref or "").removeprefix(REVALIDATE)
+        kept = dataclasses.replace(operation, step_outcome=held_outcome, evidence_ref=recorded)
         verdict = await self._settled_verdict(kept, adapter, policy)
         if verdict == "reconcile":
             if operation.state == "running":
@@ -832,7 +842,7 @@ class Executor:
             return
         step = operation.step_intent.step  # type: ignore[union-attr]
         await asyncio.to_thread(self.store.write_outcome, operation.op_id, step,
-                                EffectResult(outcome="no_change", evidence_ref=recorded or None))
+                                EffectResult(outcome=held_outcome, evidence_ref=recorded or None))  # type: ignore[arg-type]
         if verdict != "continue":
             await self._finish_for(operation, verdict)
             return

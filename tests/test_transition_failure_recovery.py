@@ -397,7 +397,7 @@ def test_the_hold_shows_on_the_owner_routes_without_a_retry_loop(tmp_path, monke
     gate, op = run(go())
     assert (gate["gate"], gate["op_id"]) == ("reconciling", op_id)
     assert (op["state"], op["step_outcome"]) == ("reconciling", "unknown")
-    assert op["evidence_ref"] == f"revalidate:{COLD[0]}"
+    assert op["evidence_ref"] == f"revalidate:no_change:{COLD[0]}"
 
 
 # -- the owner's continuation, a skipped restore and a crash after a settled hold (dot recheck 2299) --------------------------
@@ -545,9 +545,6 @@ def test_revalidation_keeps_a_recorded_partial_restore(tmp_path, monkeypatch) ->
     done = _restart(runtime, op_id)
     assert engine.resets == 1, "the declared reset ran exactly once across both restarts"
     assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
-    # The restore step was never rewritten to no_change on the restore's own record: the hold kept what the engine said.
-    held = [h for h in runtime.executor().store.__dict__.get("history", [])]
-    assert held == []  # the store keeps no history; the outcome check is the hold test below
 
 
 def test_a_revalidation_hold_carries_the_recorded_outcome_not_no_change(tmp_path, monkeypatch) -> None:
