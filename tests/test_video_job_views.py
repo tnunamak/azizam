@@ -156,8 +156,8 @@ def test_a_listing_renders_ready_bodies_beside_views_in_the_given_order(shape):
     assert page["last_id"] == "video_p9"
 
 
-@pytest.mark.parametrize(("status", "word", "progress"), [("queued", "queued", 0), ("running", "running", 40),
-                                                          ("succeeded", "succeeded", 100), ("failed", "failed", 0), ("canceled", "failed", 0)])
+@pytest.mark.parametrize(("status", "word", "progress"), [("queued", "queued", 40), ("running", "running", 40),
+                                                          ("succeeded", "succeeded", 100), ("failed", "failed", 40), ("canceled", "failed", 40)])
 def test_a_listed_job_keeps_the_old_status_word_and_item_fields(shape, status, word, progress):
     failure = RunFailure(code="oom", category="upstream", message="out of memory") if status == "failed" else None
     item = body(shape.render_listing([view(status=status, failure=failure, progress=40)], False))["data"][0]
