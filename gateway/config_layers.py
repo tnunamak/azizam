@@ -641,6 +641,10 @@ def build_section(
     usable: list[Override] = []
     for override in ordered:
         faults = check_override(section, override)
+        if faults and _retired_delete(override, faults):
+            # A stored delete of an entry the release no longer has asks for an absence that already holds: it is
+            # inert, never a boot problem (a retired setting's owner delete, train 35's compile_from_pin).
+            continue
         if faults:
             shape_rejected.append(Rejected(override, tuple(faults)))
         else:
@@ -657,6 +661,11 @@ def build_section(
                 return SectionResult(section.id, candidate, tuple(problems), tuple(usable), ())
 
     return _greedy(section, ordered, usable, shape_rejected, context, merge)
+
+
+def _retired_delete(override: Override, faults: Sequence[Problem]) -> bool:
+    """A delete whose only fault is that its pointer is no longer an entry of the section."""
+    return override.op == OP_DELETE and all(fault.code == "not_an_entry" for fault in faults)
 
 
 def _fail_closed(section: Section, pointer: str) -> bool:

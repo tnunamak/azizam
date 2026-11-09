@@ -259,6 +259,28 @@ def test_checkpoint_transport_error_and_non_2xx_are_unknown(tmp_path: Path) -> N
     assert run(bad_status.checkpoint("dom", intent())).outcome == "unknown"
 
 
+@pytest.mark.parametrize(("declared", "reported"), [("failed", "no_change"), ("partial", "partial")])
+def test_a_declared_failed_checkpoint_is_the_profiles_failed_checkpoint(tmp_path: Path, declared: str,
+                                                                         reported: str) -> None:
+    # Live 2026-11-08: the engine refused every save (HTTP 400) and declared "failed". Read as "partial", the
+    # best-effort checkpoint held the domain failed_closed for hours. The profile's checkpoint failure_semantics
+    # speaks about exactly this failure; a declared "partial" stays partial (unknown to the step).
+    invoke = FakeInvoke({"transition.checkpoint": Reply(200, {"outcome": declared, "evidence_ref": "save_refused"}),
+                         "transition.query": Reply(200, {"outcome": declared})})
+    adapter = adapter_for(snapshot_profile(), invoke, tmp_path)
+    result = run(adapter.checkpoint("dom", intent()))
+    assert (result.outcome, result.evidence_ref) == (reported, "save_refused") and result.handle is not None
+    assert run(adapter.query("dom", intent("checkpoint"))).outcome == reported
+
+
+def test_a_declared_failed_effect_other_than_a_checkpoint_stays_partial(tmp_path: Path) -> None:
+    invoke = FakeInvoke({"transition.release": Reply(200, {"outcome": "failed"}),
+                         "transition.query": Reply(200, {"outcome": "failed"})})
+    adapter = adapter_for(snapshot_profile(), invoke, tmp_path)
+    assert run(adapter.release("dom", intent("release"))).outcome == "partial"
+    assert run(adapter.query("dom", intent("release"))).outcome == "partial"
+
+
 def test_checkpoint_success_is_never_attested(tmp_path: Path) -> None:
     invoke = FakeInvoke({"transition.checkpoint": Reply(200, {"outcome": "success", "bytes": 1})})
     adapter = adapter_for(snapshot_profile(), invoke, tmp_path)
@@ -330,6 +352,7 @@ class SnapshotEngine:
         self.resident: Optional[str] = "alpha"
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.checkpoint_body = b"snapshot-bytes"
+        self.checkpoint_outcome = "success"
         self.restore_outcome = "success"
         self.reset_outcome = "success"
         self.restores: list[tuple[str, str]] = []
@@ -351,6 +374,9 @@ class SnapshotEngine:
         if op == "transition.query":
             return Reply(200, {"outcome": "unknown"})
         if op == "transition.checkpoint":
+            if self.checkpoint_outcome != "success":  # the engine refused the save and wrote nothing
+                return Reply(200, {"outcome": self.checkpoint_outcome, "evidence_ref": "save_refused_http_400",
+                                   "incarnation": "inc-1"})
             Path(str(body["path"])).write_bytes(self.checkpoint_body)
             return Reply(200, {"outcome": "success", "bytes": len(self.checkpoint_body),
                                "evidence_ref": "ckpt", "incarnation": "inc-1"})
@@ -422,5 +448,25 @@ def test_a_failed_restore_resets_serves_cold_and_retires_the_snapshot(snapshot_w
         assert store.pointer("dom") is None, "the snapshot is retired, not offered again"
         assert store.latest_published("dom", {"version": "1", "mode": "fast"}) is None
         assert len(engine.restores) == 1
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("kind", ["park", "select"])
+def test_a_refused_best_effort_checkpoint_goes_on_cold_and_leaves_the_gate_open(snapshot_wired, kind) -> None:
+    # The shipped profile attests that a failed checkpoint changes nothing, and best_effort is the default:
+    # the transition goes on with no snapshot instead of holding the domain failed_closed.
+    gates, engine, runtime, store = snapshot_wired
+    engine.checkpoint_outcome = "failed"
+
+    async def scenario() -> None:
+        executor = runtime.executor()
+        began = await executor.submit(domain="dom", kind=kind, idempotency_key=f"{kind}-1",
+                                      **({"target": "alpha"} if kind == "select" else {}))
+        done = await executor.wait(began.operation.op_id)
+        assert done.state == "succeeded", (done.state, done.step, done.step_outcome, done.evidence_ref)
+        assert gates.state("dom") == "open"
+        assert store.pointer("dom") is None, "no snapshot is published from a refused save"
+        assert any(op == "transition.release" for op, _ in engine.calls), "the release goes ahead"
 
     run(scenario())

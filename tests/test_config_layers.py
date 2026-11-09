@@ -236,6 +236,20 @@ def test_an_invalid_override_is_rejected_and_reported_and_the_rest_apply():
     assert any(p.code == "override_rejected" and p.pointer == "/timeout" for p in result.problems)
 
 
+def test_a_stored_delete_of_a_retired_entry_is_inert_and_no_boot_problem():
+    # Live 2026-11-08 (train 35): the owner's delete of compile_from_pin stayed stored after the release retired the
+    # setting; every boot then reported override_rejected. A delete of what the release no longer has changes nothing.
+    result = layers.build_section(make_section(), [drop("/retired_setting"), put("/mode", "slow")])
+    assert result.effective["mode"] == "slow" and "retired_setting" not in result.effective
+    assert result.rejected == () and not [p for p in result.problems if p.code == "override_rejected"]
+
+
+def test_a_stored_set_of_a_retired_entry_is_still_rejected():
+    result = layers.build_section(make_section(), [put("/retired_setting", 1)])
+    assert [item.override.pointer for item in result.rejected] == ["/retired_setting"]
+    assert any(p.code == "override_rejected" for p in result.problems)
+
+
 def test_a_rejected_fail_closed_entry_becomes_absent_and_never_takes_the_release_value():
     section = make_section()
     overrides = [put("/policy", "bogus")]
