@@ -153,6 +153,29 @@ def asset_leaf_specs(spec: Any, _depth: int = 0) -> Iterator[Mapping[str, Any]]:
         yield from asset_leaf_specs(spec.get("items"), _depth + 1)
 
 
+def asset_input_modalities(spec: Mapping[str, Any]) -> tuple[str, ...]:
+    """Ordered, distinct families declared by one asset leaf, never by its intent.
+
+    A scalar accepts is one media type; schema 1 media_type supplies the fallback.
+    Missing or unrecognised media types (including */*) remain generic assets.
+    """
+    accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
+    media_types = [accepted] if isinstance(accepted, str) else accepted
+    modalities: list[str] = []
+    for item in media_types:
+        media_type = str(item).strip().lower()
+        family = media_type.split("/", 1)[0]
+        if "/" in media_type and family in {"image", "audio", "video", "text"}:
+            modality = family
+        elif media_type == "application/json":
+            modality = "text"
+        else:
+            modality = "asset"
+        if modality not in modalities:
+            modalities.append(modality)
+    return tuple(modalities) or ("asset",)
+
+
 def accepts_of(spec: Any) -> tuple[str, ...]:
     """The media types an ``asset`` spec accepts, as its contract lists them. Nothing is guessed: a spec that lists none
     accepts none, so the resolver refuses every file for it."""

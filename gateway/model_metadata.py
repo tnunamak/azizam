@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping
 
-from gateway.manifests import asset_leaf_specs
+from gateway.manifests import asset_input_modalities, asset_leaf_specs
 
 MODEL_TYPES: tuple[str, ...] = (
     "language", "embedding", "reranking", "image", "video", "audio", "decision",
@@ -453,24 +453,24 @@ def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _asset_input_modality(spec: Mapping[str, Any]) -> str | None:
-    """The modality an asset input accepts: the shared kind of its ``accepts`` list (a schema 1 ``media_type`` counts as a
-    one-item list). None when it names no single kind."""
-    accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
-    majors = {str(item).split("/", 1)[0].strip().lower() for item in accepted if str(item).strip()}
-    major = next(iter(majors)) if len(majors) == 1 else ""
-    return major if major in INPUT_MODALITIES else None
+    """One declared asset family, only when it is a single model input kind."""
+    modalities = asset_input_modalities(spec)
+    return modalities[0] if len(modalities) == 1 and modalities[0] in INPUT_MODALITIES else None
 
 
 def asset_media_type(spec: Mapping[str, Any]) -> str | None:
-    """Media kind of one asset input, as ``image/*``. The document says it by what the input accepts: one type as it is,
-    several as their shared kind; an input that accepts nothing it can name has no media type."""
-    accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
+    """One declared media type as written, or the shared family of several.
+
+    Generic or mixed families have no common media type. A single explicit type
+    (including */*) is preserved; a schema 1 media_type is also a declaration.
+    """
+    accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
+    media_types = [accepted] if isinstance(accepted, str) else accepted
+    accepted = [str(item).strip() for item in media_types if str(item).strip()]
     if len(accepted) == 1:
         return accepted[0]
-    majors = {item.split("/", 1)[0].lower() for item in accepted}
-    if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
-        return f"{next(iter(majors))}/*"
-    return None
+    modality = _asset_input_modality(spec)
+    return f"{modality}/*" if accepted and modality else None
 
 
 def _manifest_output_modalities(manifest: Mapping[str, Any]) -> list[str]:

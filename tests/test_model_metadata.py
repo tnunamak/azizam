@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from typing import Any, Mapping
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -189,6 +191,100 @@ class DerivationTableTests(unittest.TestCase):
     def test_embeddings_intent_entry(self) -> None:
         fields = _annotated([{"id": "e", "azizam_intent": "text.embeddings"}])["e"]
         self.assertEqual(fields["type"], "embedding")
+
+
+class AssetModalityTests(unittest.TestCase):
+    def test_scalar_mixed_generic_text_and_schema_one_assets(self) -> None:
+        cases = (
+            ({"accepts": "image/png"}, "image", "image/png"),
+            ({"accepts": ["image/png", "image/jpeg"]}, "image", "image/*"),
+            ({"accepts": ["audio/wav", "image/png", "audio/mpeg"]}, None, None),
+            ({"accepts": ["*/*"]}, None, "*/*"),
+            ({"accepts": ["text/plain", "application/json"]}, "text", "text/*"),
+            ({"accepts": "application/json"}, "text", "application/json"),
+            ({"accepts": ["application/pdf", "application/octet-stream"]}, None, None),
+            ({"media_type": "audio/wav"}, "audio", "audio/wav"),
+            ({"accepts": [], "media_type": "video/mp4"}, "video", "video/mp4"),
+            ({}, None, None),
+        )
+        for declaration, modality, media_type in cases:
+            with self.subTest(declaration=declaration):
+                spec = {"type": "asset", **declaration}
+                self.assertEqual(mm._asset_input_modality(spec), modality)
+                self.assertEqual(mm.asset_media_type(spec), media_type)
+
+    def test_no_accepts_never_adds_an_intent_named_input(self) -> None:
+        for intent in ("image.edit", "audio.transcribe", "speech.recognize",
+                       "sound.analyze", "music.analyze", "video.edit", "smell.infer"):
+            for accepts in (None, []):
+                with self.subTest(intent=intent, accepts=accepts):
+                    spec = {"type": "asset"}
+                    if accepts is not None:
+                        spec["accepts"] = accepts
+                    result = mm.from_contract({
+                        "intent": intent, "inputs": {"source": spec},
+                        "outputs": {"result": {"media_type": "text/plain"}},
+                    })
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result.input_modalities, ())
+
+    def test_nested_leaves_keep_single_kind_rule_per_leaf(self) -> None:
+        manifest = {"intent": "smell.infer", "inputs": {
+            "payload": {"type": "object", "properties": {
+                "frames": {"type": "array", "items": {"type": "asset", "accepts": "image/png"}},
+                "captions": {"type": "asset", "accepts": ["text/plain", "application/json"]},
+                "mixed": {"type": "asset", "accepts": ["audio/wav", "video/mp4"]},
+                "opaque": {"type": "asset", "accepts": ["*/*"]},
+            }},
+        }, "outputs": {"result": {"media_type": "text/plain"}}}
+        result = mm.from_contract(manifest)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.input_modalities, ("text", "image"))
+        self.assertEqual(result.to_fields()["architecture"]["input_modalities"], ["text", "image"])
+
+
+# Frozen asset derivations from 1d749a9c9a2a4452e6771a166c6d8c6b4594039b.
+def _base_asset_input_modality(spec: Mapping[str, Any]) -> str | None:
+    """The modality an asset input accepts: the shared kind of its ``accepts`` list (a schema 1 ``media_type`` counts as a
+    one-item list). None when it names no single kind."""
+    accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
+    majors = {str(item).split("/", 1)[0].strip().lower() for item in accepted if str(item).strip()}
+    major = next(iter(majors)) if len(majors) == 1 else ""
+    return major if major in mm.INPUT_MODALITIES else None
+
+
+def _base_asset_media_type(spec: Mapping[str, Any]) -> str | None:
+    """Media kind of one asset input, as ``image/*``. The document says it by what the input accepts: one type as it is,
+    several as their shared kind; an input that accepts nothing it can name has no media type."""
+    accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
+    if len(accepted) == 1:
+        return accepted[0]
+    majors = {item.split("/", 1)[0].lower() for item in accepted}
+    if len(majors) == 1 and next(iter(majors)) in mm.INPUT_MODALITIES:
+        return f"{next(iter(majors))}/*"
+    return None
+
+
+class ShippedModelMetadataBaseParityTests(unittest.TestCase):
+    def test_all_shipped_model_metadata_and_asset_media_types_match_base(self) -> None:
+        import yaml
+
+        folder = ROOT / "manifests" / "workflows"
+        paths = sorted(path for path in folder.rglob("*") if path.suffix in {".yml", ".yaml"})
+        self.assertTrue(paths, "No shipped manifests found; parity must not pass vacuously")
+        for path in paths:
+            with self.subTest(manifest=str(path.relative_to(ROOT))):
+                manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertIsInstance(manifest, dict)
+                current = mm.from_contract(manifest)
+                with patch.object(mm, "_asset_input_modality", _base_asset_input_modality):
+                    base = mm.from_contract(manifest)
+                self.assertEqual(current, base)
+                self.assertEqual(current.to_fields() if current else None,
+                                 base.to_fields() if base else None)
+                for leaf in mm._asset_inputs(manifest):
+                    with self.subTest(asset=leaf):
+                        self.assertEqual(mm.asset_media_type(leaf), _base_asset_media_type(leaf))
 
 
 class OverrideTests(unittest.TestCase):

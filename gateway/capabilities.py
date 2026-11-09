@@ -39,6 +39,7 @@ from typing import Any, Iterable, Mapping
 from gateway.workflow_policy import NEEDS_CONFIGURATION_MESSAGE
 from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
+from gateway.manifests import asset_input_modalities
 from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
 VALID_AUDIENCES = ("client", "admin", "internal")
@@ -493,8 +494,8 @@ def capability_from_workflow_record(
     (``image/*`` → ``image``, ``audio/*`` → ``audio``, ``video/*`` → ``video``,
     ``text/*`` → ``text``). Input modalities follow declared types, including
     nested object properties and list items. Assets use their ``accepts``
-    media types; only assets without accepts retain the legacy intent fallback.
-    Unmapped media types remain generic ``asset`` modalities.
+    media types (or schema 1 ``media_type``), never their intent name.
+    Missing or unmapped media types remain generic ``asset`` modalities.
 
     Workflows are treated as ``job`` execution by default because they back
     the durable media job surface (``POST /gateway/v1/media/jobs``). Callers
@@ -665,13 +666,8 @@ def _derive_input_modalities(
         if type_name == "string":
             add("text")
         elif type_name == "asset":
-            accepts = spec.get("accepts")
-            if not accepts:
-                add(_intent_asset_modality(intent) or "asset")
-            else:
-                media_types = accepts if isinstance(accepts, list) else [accepts]
-                for media_type in media_types:
-                    add(_media_type_modality(str(media_type)) or "asset")
+            for modality in asset_input_modalities(spec):
+                add(modality)
         elif type_name == "object":
             properties = spec.get("properties")
             if isinstance(properties, dict):
@@ -694,16 +690,6 @@ def _media_type_modality(media_type: str) -> str | None:
         return "video"
     if media_type.startswith("text/") or media_type in {"application/json"}:
         return "text"
-    return None
-
-
-def _intent_asset_modality(intent: str) -> str | None:
-    if intent.startswith("image."):
-        return "image"
-    if intent.startswith("audio.") or intent.startswith("speech.") or intent.startswith("sound.") or intent.startswith("music."):
-        return "audio"
-    if intent.startswith("video."):
-        return "video"
     return None
 
 
