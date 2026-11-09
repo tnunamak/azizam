@@ -114,7 +114,7 @@ def test_status_probe_sends_nothing_for_a_record_with_no_address(probed):
 
 def test_status_shows_the_reason_for_a_record_with_no_address():
     rows = status_endpoint._unconfigured_rows(_config(tts={"health_endpoint": "/health", "name": "Speech"}))
-    assert [(r["key"], r["status"], r["kind"]) for r in rows] == [("tts", "down", "not_configured")]
+    assert [(r["key"], r["status"], r["kind"]) for r in rows] == [("tts", "not_configured", "not_configured")]
     assert service_registry.NOT_CONFIGURED_REASON in rows[0]["last_error"]
     assert status_endpoint._unconfigured_rows(_config(tts={"health_endpoint": "/health", **NON_DEFAULT})) == []
 
