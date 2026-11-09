@@ -376,10 +376,18 @@ stays for robustness (a job queued during the deploy window by the old build).
 - **Gateway code rollback (a train rollback):** one gateway instance runs at a time (the single-instance lock), and
   `scripts/safe-restart` drains running async media jobs before it restarts, so there is no mixed fleet and no
   running v2 engine job is left to an older build. Queued v2 jobs are the exposure: the previous build reads only v1
-  and fails them as `definition_unavailable` (its existing parse failure), with no engine call. The train's rollback
-  note says so and lists the queued workflow jobs at rollback time. The single-instance and drain claims are verified
-  on the real rollback path before the train ships (a rehearsal with a queued and a running job), not assumed from
-  this design. Stored workflow records stay readable by the
+  and fails them as `definition_unavailable` (its existing parse failure), with no engine call.
+  `rollback_job_inventory(path=None)` lists every unfinished workflow job, sorted by job id, with its saved workflow,
+  status, envelope version and rollback reason: `pin_not_recorded` without a pin, `v1_compatible` for v1, and
+  `definition_unavailable` for v2. This is separate from the unchanged forward-deploy
+  `queued_jobs_without_v2_envelope` check. The train's rollback note includes this complete inventory.
+  Before changing builds, `assert_rollback_ready(path=None)` refuses with `RollbackRefused(code, job_ids)`: first
+  `running_jobs` for every running media job, then `retained_deleted_jobs` for tombstoned job rows still present.
+  Both functions are read-only. The previous build does not understand tombstones, so rollback waits until the normal
+  24-hour reaper removes those rows; the guard never reaps or resurrects them. Keep submissions quiesced under the
+  single-instance/drain protocol through the build switch: the readiness check is a snapshot, not an admission lock.
+  The single-instance and drain claims are verified on the real rollback path before the train ships (a rehearsal with
+  queued, running and retained-deleted jobs), not assumed from this design. Stored workflow records stay readable by the
   previous build only if their schema step is one it knows; the schema step of section I2 (published and state) is
   additive, so the previous build ignores the new keys.
 

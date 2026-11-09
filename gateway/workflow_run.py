@@ -1173,3 +1173,74 @@ def queued_jobs_without_v2_envelope(path: Path | None = None) -> list[dict[str, 
         found.append({"job_id": job["job_id"], "workflow": job.get("workflow"), "status": job["status"],
                       "record_revision": None, "binding_key": None})
     return found
+
+
+# ------------------------------------------------------------------------------------------ rollback checks
+
+
+class RollbackRefused(RuntimeError):
+    """A rollback cannot proceed until the named jobs no longer expose unsafe state."""
+
+    def __init__(self, code: str, job_ids: list[str]) -> None:
+        self.code = code
+        self.job_ids = sorted(job_ids)
+        super().__init__(f"Rollback refused: {code}: {', '.join(self.job_ids)}")
+
+
+def rollback_job_inventory(path: Path | None = None) -> list[dict[str, Any]]:
+    """Section 5.5: all unfinished workflow jobs an older build would encounter.
+
+    This reports stored envelope versions, not whether their definitions can execute.
+    It never rewrites a pin, filters tombstones, or applies a history-page limit.
+    """
+    with media_jobs.connection(path or media_jobs.DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT j.job_id, j.workflow, j.status, j.job_json, e.envelope_json "
+            "FROM media_jobs AS j LEFT JOIN job_envelope AS e ON e.job_id=j.job_id "
+            "WHERE j.status IN (?, ?) ORDER BY j.job_id",
+            (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING),
+        ).fetchall()
+    found: list[dict[str, Any]] = []
+    for job_id, saved_workflow, status, job_json, envelope_json in rows:
+        job = json.loads(job_json)
+        try:
+            envelope = json.loads(envelope_json) if envelope_json is not None else {}
+        except (TypeError, ValueError):
+            envelope = {}
+        envelope = envelope if isinstance(envelope, Mapping) else {}
+        source = envelope.get("source")
+        source = source if isinstance(source, Mapping) else {}
+        workflow_source = source.get("kind") == "workflow"
+        if not (is_run_job(job) or workflow_source or saved_workflow):
+            continue
+        version = envelope.get("envelope_version")
+        found.append({
+            "job_id": job_id,
+            "workflow": saved_workflow or (source.get("id") if workflow_source else None),
+            "status": status,
+            "envelope_version": version,
+            "reason": PIN_NOT_RECORDED if envelope_json is None else
+                      "v1_compatible" if type(version) is int and version == 1 else DEFINITION_UNAVAILABLE,
+        })
+    return found
+
+
+def assert_rollback_ready(path: Path | None = None) -> None:
+    """Refuse running media first, then deleted rows an old reader would resurrect.
+
+    The caller must keep submissions quiesced under the single-instance/drain
+    protocol through the rollback; this read-only snapshot is not an admission lock.
+    """
+    with media_jobs.connection(path or media_jobs.DB_PATH) as conn:
+        running = [row[0] for row in conn.execute(
+            "SELECT job_id FROM media_jobs WHERE status=? ORDER BY job_id",
+            (media_jobs.STATUS_RUNNING,),
+        )]
+        if running:
+            raise RollbackRefused("running_jobs", running)
+        retained = [row[0] for row in conn.execute(
+            "SELECT j.job_id FROM media_jobs AS j "
+            "JOIN workflow_job_tombstone AS t ON t.job_id=j.job_id ORDER BY j.job_id"
+        )]
+        if retained:
+            raise RollbackRefused("retained_deleted_jobs", retained)
