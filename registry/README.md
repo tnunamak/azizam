@@ -33,6 +33,20 @@ contracts, then declared capability; the audio direction rule precedes metadata
 subtype, capability subtype, tags, intent mapping and fallback. Adding a mapping
 does not expand the upstream metadata parser's accepted type vocabulary.
 
+`presentation_words.yml` (schema version 1) supplies ordered label-cleanup
+vocabulary for `gateway/model_presentation.py`: provider suffixes, engine prefixes
+and tails, capability-specific suffixes, acronym replacements, parenthesized
+hardware words, hardware label suffixes, bare titles, technical-summary regexes
+and the unclassified presentation fallback. All word lists/maps are non-empty.
+Only `technical_patterns` contains regex syntax; other words are matched
+literally. Prefix matching stays case-sensitive, while engine tails and
+capability suffixes are case-insensitive. The loader names the file and key for
+missing/unknown fields, wrong types, blank words, empty lists/maps or invalid
+patterns. Data is loaded once at import into read-only maps/tuples and patterns
+are compiled then. Restart after edits. Cleanup order, case rules, punctuation,
+sentence/eight-word filtering and URL/IP logic stay in code. Capability taxonomy
+and classification remain separate from this vocabulary.
+
 `models_catalog_operations.yml` holds the catalog's operation synonyms, ordered
 intent prefixes, and exact example/path templates. `gateway/models_catalog.py`
 validates schema version 1 and loads deeply read-only maps once at import. Each
