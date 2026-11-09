@@ -55,6 +55,7 @@ def _has_alpha(raw: bytes) -> bool:
 MAX_FILES_PER_REQUEST = 10
 
 
+KEEP_PROMPT_FLAG = "keep_engine_prompt"   # a request's job metadata: keep the engine's prompt id under ENGINE_PROMPT_KEY
 ENGINE_PROMPT_KEY = "engine_prompt"      # the engine's id of the prompt a run submitted, kept as soon as it is known
 
 
@@ -352,6 +353,14 @@ class NodeGraphRunner:
             job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
             return bool((job.get("metadata") or {}).get("cancel_requested_at"))
 
+        def keep_prompt(prompt_id: str) -> None:
+            """The engine's id of the prompt, kept at once, for the jobs whose request asked for it (a later delete asks the
+            engine to forget the prompt). Other jobs leave no trace of it in their document."""
+            job = media_jobs.get(ctx.job_id, audience="internal", path=media_jobs.DB_PATH) or {}
+            if (job.get("metadata") or {}).get(KEEP_PROMPT_FLAG):
+                media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={ENGINE_PROMPT_KEY: prompt_id},
+                                         path=media_jobs.DB_PATH)
+
         if probe is not None:
             probe.start()
         try:
@@ -359,8 +368,7 @@ class NodeGraphRunner:
                 adapter, session, payload, headers, graph=graph, label=label, max_wait_s=float(host.max_wait_s()),
                 control_timeout=host.control_timeout(), resume_prompt_id=resume, cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
-                on_progress=ctx.record_progress, on_submitted=lambda prompt_id: media_jobs.update_status(
-                    ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={ENGINE_PROMPT_KEY: prompt_id}, path=media_jobs.DB_PATH))
+                on_progress=ctx.record_progress, on_submitted=lambda prompt_id: keep_prompt(prompt_id))
         except graph_round.RoundFailure as failed:
             # The submit marker only means "a submit may be in flight": a round that ended in failure leaves none.
             if resume is None:

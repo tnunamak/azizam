@@ -351,4 +351,5 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         idempotency_key=request.headers.get(IDEMPOTENCY_HEADER) or None, frontend_id=row.id,
         failure_text=row.job_failure_text, retries=row.job_retries,
         extensions=dict(extensions) if isinstance(extensions, Mapping) else {},
-        prompt_retention=hooks.prompt_retention(caller, body), fact_refs=tuple(refs))
+        prompt_retention=hooks.prompt_retention(caller, body), fact_refs=tuple(refs),
+        job_record={"metadata": {"keep_engine_prompt": True}})        # a delete later asks the engine to forget this prompt
