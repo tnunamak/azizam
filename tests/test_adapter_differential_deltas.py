@@ -197,3 +197,10 @@ def test_the_guard_still_refuses_every_other_status_or_error_delta():
 
 def test_a_listed_exception_kind_exists():
     assert set(listed.ERROR_ALLOWED) <= listed.KINDS and "idempotency_conflict" not in listed.KINDS
+
+
+def test_the_engine_facing_reruns_state_why_the_order_changed():
+    for name in ("video_lifecycle", "video_extend"):
+        assert name in listed.ENGINE_FACING_CHANGES
+        assert "the prompt names the uploaded file, so upload-first is the causal order" in listed.RERECORDED[name]
+    assert "create_answers_before_the_engine" in listed.RERECORDED["video_create_unreachable"]

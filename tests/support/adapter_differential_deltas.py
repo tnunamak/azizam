@@ -397,14 +397,17 @@ _ORIGIN = ("the Library sidecar of a stored asset gains an origin block (request
            "it holds no prompt text (test_the_library_sidecar_origin_block_holds_no_prompt_text)")
 _VIDEO_RUN_CORE = ("create answers once the job is queued and the run core runs it: ids are video_mj_*, the first status is "
                    "queued, the prompt is not echoed, and the job rows are the run core's")
+_UPLOAD_FIRST = "the prompt names the uploaded file, so upload-first is the causal order"
 RERECORDED: dict[str, str] = {
     "video_job_succeeds": _ASSET_URL,
     "audio_generate_job": _ASSET_URL,
     **{f"s7_{cell}_cancel_finished": _ASSET_URL for cell in ("ig", "ie", "iv", "as", "aj")},
-    "video_lifecycle": f"{_VIDEO_RUN_CORE}; {_ORIGIN}",
-    "video_extend": f"{_VIDEO_RUN_CORE}; {_ORIGIN}; the reference upload goes before the prompt, as a video_<job>.mp4 file",
-    "video_create_unreachable": "create answers 200 queued before the engine is called, so an unreachable engine fails the job, "
-                                "not the create (the old 502 body named the engine address)",
+    "video_lifecycle": f"{_VIDEO_RUN_CORE}; {_ORIGIN}; engine requests: {_UPLOAD_FIRST}",
+    "video_extend": f"{_VIDEO_RUN_CORE}; {_ORIGIN}; engine requests: {_UPLOAD_FIRST} (the reference goes up as a video_<job>.mp4 file, "
+                    "before the prompt)",
+    "video_create_unreachable": "named delta create_answers_before_the_engine (lead ruling, P8): create answers 200 queued before the "
+                                "engine is asked, so an unreachable engine fails the job (engine-unavailable code, no engine address), "
+                                "not the create; the old 502 body named the engine address",
     **{f"s7_{cell}": f"{_VIDEO_RUN_CORE}; {_ORIGIN}"
        for cell in ("vc_replay_same", "vc_replay_conflict", "vc_cancel_queued", "vc_cancel_finished", "ve_success",
                     "ve_replay_same", "ve_replay_conflict", "ve_cancel_queued", "ve_cancel_finished")},
