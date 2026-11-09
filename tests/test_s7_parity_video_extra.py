@@ -864,6 +864,11 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
 
     def setup(rig):
         _comfy_with_failing_cancel(rig, running_polls=10 ** 6)      # the engine stays busy: the video is still rendering
+        # The test clock does not wait: a 10 s cancel wait would outlast the runner's whole poll budget. A short wait keeps
+        # the run alive while the delete asks (the product wait is the row's 10 s).
+        import dataclasses
+        row = proxy._video_row()
+        rig.set(proxy, "_video_row", lambda: dataclasses.replace(row, cancel_wait_s=0.05))
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
@@ -872,10 +877,9 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
         failed = await rig.call("DELETE", f"/v1/videos/{video_id}", label="delete with a failing cancel")
         seen["failed_status"] = failed.status_code
         seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code
-        import itertools; seen["engine"] = [k for k, _ in itertools.groupby(_engine_paths(rig))]; seen["body"] = failed.text[:300]
 
     _run(tmp_path, "s7-7-cancel-failure", setup, drive)
-    assert seen["failed_status"] == 409, json.dumps(seen["engine"])
+    assert seen["failed_status"] == 409
     assert seen["kept_after_failure"] == 200
 
 
@@ -1611,8 +1615,8 @@ def test_video_child_preserves_exact_source_and_owns_only_its_result(tmp_path, r
         assert response.status_code == 200, response.text
         body = response.json()
         child_id = body["id"]
-        # An extension is an old record (`video_<prompt id>`); an edit or remix is a job.
-        assert (child_id == "video_p2") if route == "extend" else JOB_ID.match(child_id)
+        # An edit, remix or extension is an old record (`video_<prompt id>`): only the create route is on the run core.
+        assert child_id == "video_p2"
         assert (body["object"], body["status"], body["progress"]) == ("video", "queued", 0)
         lineage = "extended_from_video_id" if route == "extend" else "remixed_from_video_id"
         assert body[lineage] == source
