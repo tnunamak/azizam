@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, log_scrub, mcp_server, problem_reports
+from gateway import admin_store, log_scrub, mcp_server, problem_reports, secret_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.mcp_server import McpDeps
 from gateway.problem_reports import Caller, ProblemReportError, ProblemReports
@@ -109,6 +109,20 @@ def test_a_different_failure_is_a_different_report(tmp_path):
     svc.note_failure(A1, {**FAILURE, "target": "music", "code": "out_of_memory", "error": "oom"})
     two = run(svc.submit(A1, {"category": "failure", "summary": "b"}))
     assert one["report_id"] != two["report_id"] and len(svc.list()) == 2
+
+
+def test_reports_without_a_seen_failure_split_by_what_the_agent_says(tmp_path):
+    # Live 2026-11-09: two different video problems with no failure the gateway saw became one report, and the
+    # second summary replaced the first. Without a seen failure the agent's own words are the identity.
+    svc, _ = make(tmp_path, destinations=())
+    one = run(svc.submit(A1, {"category": "failure", "target": "video", "summary": "Renders fail at 90% with a 403."}))
+    two = run(svc.submit(A1, {"category": "differs_from_description", "target": "video",
+                              "summary": "The receipt link for a finished video is dead."}))
+    assert one["report_id"] != two["report_id"] and two["duplicate"] is False
+    assert sorted(row["summary"] for row in svc.list()) == ["Renders fail at 90% with a 403.",
+                                                            "The receipt link for a finished video is dead."]
+    again = run(svc.submit(A2, {"category": "failure", "target": "video", "summary": "Renders fail at 87% with a 403."}))
+    assert again["report_id"] == one["report_id"] and again["count"] == 2  # numbers aside, the same words
 
 
 def test_operator_workaround_comes_back_to_the_next_agent(tmp_path):
@@ -384,7 +398,7 @@ def test_destinations_are_owner_data_with_the_url_hidden_on_read(admin):
     assert put.status_code == 200
     listed = admin.client.get("/admin/api/problem-reports/destinations").json()["destinations"]
     assert listed == [{"id": "ops", "type": "webhook", "origin": "https://hooks.example.com", "format": "json",
-                       "enabled": True}]
+                       "enabled": True, "has_secret": False}]
     assert "secret-topic" not in json.dumps(listed)
     assert problem_reports.destinations_from_settings(admin.path)[0]["url"] == WEBHOOK["url"]
     # A PUT that omits the url keeps the stored one.
@@ -404,3 +418,72 @@ def test_destinations_are_owner_data_with_the_url_hidden_on_read(admin):
 def test_bad_destinations_are_refused(admin, bad):
     resp = admin.client.put("/admin/api/problem-reports/destinations", json={"destinations": [bad]})
     assert resp.status_code == 400
+
+
+NTFY = {"id": "ntfy", "type": "webhook", "url": "https://ntfy.example.com/alerts", "format": "text", "enabled": True}
+
+
+def _settings_json(path):
+    return json.dumps(problem_reports.destinations_from_settings(path))
+
+
+def test_a_destination_secret_is_write_only_bound_to_its_origin_and_sent_as_a_bearer_token(admin, tmp_path):
+    put = admin.client.put("/admin/api/problem-reports/destinations",
+                           json={"destinations": [{**NTFY, "secret": "tk_destinationtoken123"}]})
+    assert put.status_code == 200 and "tk_destinationtoken123" not in put.text
+    assert put.json()["destinations"][0]["has_secret"] is True
+    listed = admin.client.get("/admin/api/problem-reports/destinations")
+    assert "tk_destinationtoken123" not in listed.text and listed.json()["destinations"][0]["has_secret"] is True
+    stored = problem_reports.destinations_from_settings(admin.path)[0]
+    assert "tk_destinationtoken123" not in _settings_json(admin.path) and stored["secret_ref"]
+    assert secret_store.get_provider_secret(stored["secret_ref"], db_path=admin.path,
+                                            expected_origin="https://ntfy.example.com") == "tk_destinationtoken123"
+    poster = FakePoster()
+    svc = ProblemReports(tmp_path / "sent.db", post=poster,
+                         destinations=lambda: problem_reports.destinations_from_settings(admin.path),
+                         secret_for=lambda ref, origin: secret_store.get_provider_secret(
+                             ref, db_path=admin.path, expected_origin=origin))
+    run(svc.submit(A1, {"category": "failure", "summary": "a problem"}))
+    assert poster.sent[0]["url"] == NTFY["url"]
+    assert poster.sent[0]["headers"]["Authorization"] == "Bearer tk_destinationtoken123"
+    assert svc.list()[0]["last_notify_error"] is None
+
+
+def test_a_destination_secret_is_kept_on_the_same_origin_and_dropped_when_the_origin_moves(admin):
+    admin.client.put("/admin/api/problem-reports/destinations",
+                     json={"destinations": [{**NTFY, "secret": "tk_destinationtoken123"}]})
+    first = problem_reports.destinations_from_settings(admin.path)[0]["secret_ref"]
+    admin.client.put("/admin/api/problem-reports/destinations",
+                     json={"destinations": [{**NTFY, "url": "https://ntfy.example.com/other"}]})
+    assert problem_reports.destinations_from_settings(admin.path)[0]["secret_ref"] == first
+    moved = admin.client.put("/admin/api/problem-reports/destinations",
+                             json={"destinations": [{**NTFY, "url": "https://elsewhere.example.net/x"}]})
+    assert moved.json()["destinations"][0]["has_secret"] is False
+    assert "secret_ref" not in problem_reports.destinations_from_settings(admin.path)[0]
+    with pytest.raises(KeyError):  # the old token is deleted, not left behind
+        secret_store.get_provider_secret(first, db_path=admin.path)
+
+
+def test_a_destination_secret_is_cleared_by_null_and_bad_secrets_are_refused(admin):
+    admin.client.put("/admin/api/problem-reports/destinations",
+                     json={"destinations": [{**NTFY, "secret": "tk_destinationtoken123"}]})
+    ref = problem_reports.destinations_from_settings(admin.path)[0]["secret_ref"]
+    cleared = admin.client.put("/admin/api/problem-reports/destinations", json={"destinations": [{**NTFY, "secret": None}]})
+    assert cleared.status_code == 200 and cleared.json()["destinations"][0]["has_secret"] is False
+    with pytest.raises(KeyError):
+        secret_store.get_provider_secret(ref, db_path=admin.path)
+    for bad in ("", "has space", "x" * 5000, 7):
+        resp = admin.client.put("/admin/api/problem-reports/destinations", json={"destinations": [{**NTFY, "secret": bad}]})
+        assert resp.status_code == 400 and "tk_" not in resp.text
+
+
+def test_a_secret_that_cannot_be_read_is_a_failed_delivery_that_names_nothing(tmp_path):
+    poster = FakePoster()
+
+    def unreadable(ref, origin):
+        raise PermissionError("provider secret is not approved for this endpoint origin")
+
+    svc = ProblemReports(tmp_path / "p.db", post=poster, secret_for=unreadable,
+                         destinations=lambda: [{**NTFY, "secret_ref": "sec_1"}])
+    out = run(svc.submit(A1, {"category": "failure", "summary": "a problem"}))
+    assert poster.sent == [] and svc.get(out["report_id"])["last_notify_error"] == "delivery_failed"

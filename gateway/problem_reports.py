@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, log_scrub
+from gateway import admin_store, log_scrub, secret_refs, secret_store
 from gateway.admin_api import AdminAuth, _require_admin
 from gateway.problem_report_tool import CATEGORIES, REPORT_HINT, SUMMARY_MAX, TOOL, WORKAROUND_MAX  # noqa: F401
 
@@ -118,12 +118,15 @@ class ProblemReports:
     def __init__(self, path: Path | Callable[[], Path], *, destinations: Callable[[], list[Mapping[str, Any]]],
                  post: Poster = post_webhook,
                  job_lookup: Callable[[str], Mapping[str, Any] | None] = lambda _job_id: None,
+                 secret_for: Callable[[str, str], str] | None = None,
                  now: Callable[[], float] = time.time, hourly_limit: int = HOURLY_LIMIT) -> None:
         # A callable path is read at first use, so building the store at import reads no setting and touches no disk.
         self._path_source = path
         self._schema_path: Path | None = None  # the database whose tables this store has made
         self._destinations, self._post, self._job_lookup, self._now = destinations, post, job_lookup, now
         self._hourly_limit = hourly_limit
+        # (secret reference, origin) -> the destination's bearer token. The store refuses another origin.
+        self._secret_for = secret_for
         self._failures: dict[str, deque[tuple[float, dict[str, Any]]]] = {}
         self._submitted: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
@@ -232,10 +235,10 @@ class ProblemReports:
             context["error"] = clean_text(job["error"], 300)
         if code and "code" not in context:
             context["code"] = code
-        if tool or target or code or error:
+        if code or error:  # a failure the gateway saw names the problem, whatever words each agent uses
             basis = f"{tool}|{target}|{code}|{_normal(error)}"
-        else:
-            basis = f"-|-|-|{_normal(fields['summary'], 120)}"
+        else:  # nothing seen: the agent's own words are the identity, so two problems stay two reports
+            basis = f"-|{target}|{fields['category']}|{_normal(fields['summary'], 120)}"
         fingerprint = hashlib.sha256(basis.encode("utf-8")).hexdigest()
         row, event = self._upsert(fingerprint, fields, caller, context, tool=tool, target=target, code=code,
                                   error=error, engine=job.get("engine"))
@@ -297,6 +300,11 @@ class ProblemReports:
             body: Any = self._json_body(row, event) if as_json else self._text_body(row)
             headers = {} if as_json else {"Title": self._title(row), "Tags": "warning"}
             try:
+                if destination.get("secret_ref"):
+                    if self._secret_for is None:
+                        raise LookupError("no secret reader")
+                    origin = secret_refs.origin_or_none(destination["url"]) or ""
+                    headers["Authorization"] = "Bearer " + self._secret_for(destination["secret_ref"], origin)
                 await asyncio.wait_for(self._post(destination["url"], body=body, headers=headers, as_json=as_json),
                                        NOTIFY_TIMEOUT_S)
             except Exception:  # noqa: BLE001 - delivery never fails the agent's call; the reason is a fixed word
@@ -387,6 +395,18 @@ def destinations_from_settings(admin_path: Path) -> list[dict[str, Any]]:
     return [dict(item) for item in items or [] if isinstance(item, Mapping)]
 
 
+SECRET_MAX = 4096
+
+
+def _check_secret(item: Mapping[str, Any]) -> None:
+    """``secret`` is write-only: absent keeps the stored one (same origin), null clears it, text replaces it."""
+    if "secret" not in item or item["secret"] is None:
+        return
+    value = item["secret"]
+    if not isinstance(value, str) or not value or len(value) > SECRET_MAX or re.search(r"[\s\x00-\x1f\x7f]", value):
+        raise ProblemReportError(f"secret must be text of 1 to {SECRET_MAX} characters without spaces or control characters")
+
+
 def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not isinstance(items, list) or len(items) > 10:
         raise ProblemReportError("destinations must be a list of at most 10")
@@ -411,20 +431,48 @@ def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dic
         parts = urlsplit(url) if isinstance(url, str) else None
         if not parts or parts.scheme not in ("http", "https") or not parts.netloc or re.search(r"\s", url or ""):
             raise ProblemReportError("a webhook destination needs an http or https url")
-        out.append({"id": did, "type": item["type"], "url": url, "format": fmt, "enabled": enabled})
+        _check_secret(item)
+        checked = {"id": did, "type": item["type"], "url": url, "format": fmt, "enabled": enabled}
+        old = by_id.get(did) or {}
+        if "secret" in item:
+            checked["secret"] = item["secret"]  # stored as a reference by the route; never kept as text
+        elif old.get("secret_ref") and secret_refs.origin_or_none(old.get("url") or "") == secret_refs.origin_or_none(url):
+            checked["secret_ref"] = old["secret_ref"]
+        out.append(checked)
     return out
+
+
+def _store_secrets(checked: list[dict[str, Any]], stored: list[dict[str, Any]], *, admin_path: Path,
+                   session: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Swap each new secret for a reference bound to its url's origin; return the references no longer used."""
+    out = []
+    for item in checked:
+        item = dict(item)
+        if "secret" in item:
+            value = item.pop("secret")
+            if value is not None:
+                item["secret_ref"] = secret_refs.store(value, db_path=admin_path, origin=secret_refs.origin_or_none(item["url"]),
+                                                       session=session)
+        out.append(item)
+    kept = {item.get("secret_ref") for item in out}
+    return out, [d["secret_ref"] for d in stored if d.get("secret_ref") and d["secret_ref"] not in kept]
 
 
 def _public_destination(item: Mapping[str, Any]) -> dict[str, Any]:
     parts = urlsplit(str(item.get("url") or ""))
     return {"id": item.get("id"), "type": item.get("type"), "origin": f"{parts.scheme}://{parts.netloc}",
-            "format": item.get("format", "json"), "enabled": item.get("enabled", True)}
+            "format": item.get("format", "json"), "enabled": item.get("enabled", True),
+            "has_secret": bool(item.get("secret_ref"))}
 
 
 # ---------------------------------------------------------------------------- admin routes
 
 
-def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, admin_path: Path) -> APIRouter:
+def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports,
+                                  admin_path: Path | Callable[[], Path]) -> APIRouter:
+    def where() -> Path:  # read per request, like the store's own path: the admin database can move
+        return Path(admin_path() if callable(admin_path) else admin_path)
+
     router = APIRouter(prefix="/admin/api/problem-reports", tags=["Problem reports"])
 
     def guard(request: Request):
@@ -452,7 +500,7 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
         ctx = guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return {"destinations": [_public_destination(d) for d in destinations_from_settings(admin_path)]}
+        return {"destinations": [_public_destination(d) for d in destinations_from_settings(where())]}
 
     @router.put("/destinations")
     async def put_destinations(request: Request):
@@ -462,12 +510,21 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
         try:
             body = await request.json()
             items = body.get("destinations") if isinstance(body, dict) else None
-            checked = _validate_destinations(items, destinations_from_settings(admin_path))
+            path = where()
+            stored = destinations_from_settings(path)
+            checked = _validate_destinations(items, stored)
         except ProblemReportError as exc:
             return _error(400, "invalid_request", str(exc))
         except ValueError:
             return _error(400, "invalid_request", "the body must be JSON")
-        admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=admin_path)
+        session = getattr(ctx, "browser_session", None)
+        checked, unused = _store_secrets(checked, stored, admin_path=path, session=session)
+        admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=path)
+        for ref in unused:  # a replaced, cleared or moved secret is deleted, not left behind
+            try:
+                secret_store.delete_provider_secret(ref, db_path=path, session=session)
+            except KeyError:
+                pass
         return {"destinations": [_public_destination(d) for d in checked]}
 
     @router.get("/{report_id}")

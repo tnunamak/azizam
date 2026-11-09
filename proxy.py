@@ -16272,6 +16272,7 @@ PROBLEM_REPORTS = problem_reports.ProblemReports(
     lambda: Path(ADMIN_DB_PATH).with_name("problem_reports.db"),
     destinations=lambda: problem_reports.destinations_from_settings(ADMIN_DB_PATH),
     job_lookup=lambda job_id: media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH),
+    secret_for=lambda ref, origin: secret_store.get_provider_secret(ref, db_path=Path(ADMIN_DB_PATH), expected_origin=origin),
 )
 
 
@@ -17614,7 +17615,7 @@ app.include_router(config_api.create_config_router(
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 app.include_router(problem_reports.create_problem_reports_router(
-    auth=ADMIN_AUTH, service=PROBLEM_REPORTS, admin_path=ADMIN_DB_PATH))
+    auth=ADMIN_AUTH, service=PROBLEM_REPORTS, admin_path=lambda: Path(ADMIN_DB_PATH)))
 # Owner-defined categories and plans (design v3). Active rules tighten the
 # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
 def _category_service_catalog() -> list[dict[str, Any]]:
