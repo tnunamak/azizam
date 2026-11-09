@@ -303,7 +303,9 @@ class ProblemReports:
                 if destination.get("secret_ref"):
                     if self._secret_for is None:
                         raise LookupError("no secret reader")
-                    origin = secret_refs.origin_or_none(destination["url"]) or ""
+                    origin = secret_refs.origin_or_none(destination["url"])
+                    if origin is None:  # a secret with no origin to check is never sent
+                        raise LookupError("no origin")
                     headers["Authorization"] = "Bearer " + self._secret_for(destination["secret_ref"], origin)
                 await asyncio.wait_for(self._post(destination["url"], body=body, headers=headers, as_json=as_json),
                                        NOTIFY_TIMEOUT_S)
@@ -412,7 +414,7 @@ def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dic
         raise ProblemReportError("destinations must be a list of at most 10")
     by_id = {d.get("id"): d for d in stored}
     out, seen = [], set()
-    for item in items:
+    for index, item in enumerate(items):
         if not isinstance(item, Mapping):
             raise ProblemReportError("each destination must be an object")
         did = item.get("id")
@@ -431,12 +433,19 @@ def _validate_destinations(items: Any, stored: list[dict[str, Any]]) -> list[dic
         parts = urlsplit(url) if isinstance(url, str) else None
         if not parts or parts.scheme not in ("http", "https") or not parts.netloc or re.search(r"\s", url or ""):
             raise ProblemReportError("a webhook destination needs an http or https url")
+        new_origin = secret_refs.origin_or_none(url)
+        if new_origin is None:
+            raise ProblemReportError(f"destinations[{index}].url has no origin the gateway can check; use a plain "
+                                     "https://host/path address")
         _check_secret(item)
+        if item.get("secret") is not None and parts.scheme != "https":
+            raise ProblemReportError(f"destinations[{index}].secret needs an https url: a token must not cross the "
+                                     "network in clear text")
         checked = {"id": did, "type": item["type"], "url": url, "format": fmt, "enabled": enabled}
         old = by_id.get(did) or {}
         if "secret" in item:
             checked["secret"] = item["secret"]  # stored as a reference by the route; never kept as text
-        elif old.get("secret_ref") and secret_refs.origin_or_none(old.get("url") or "") == secret_refs.origin_or_none(url):
+        elif old.get("secret_ref") and secret_refs.origin_or_none(old.get("url") or "") == new_origin:
             checked["secret_ref"] = old["secret_ref"]
         out.append(checked)
     return out
