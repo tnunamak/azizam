@@ -235,10 +235,12 @@ def store_state(path):
     return mtime, {name: (True if name.endswith("-shm") else state) for name, state in files.items()}
 
 
-def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tmp_path):
-    source_directory = tmp_path / "locked-source"
+def test_live_wal_backup_refuses_once_the_deadline_passes_without_source_or_temp_changes(tmp_path):
+    # A deadline already in the past refuses at the first backup step. (A held lock does not make a reliable fixture:
+    # a mode=ro reader can still read a store whose owner uses exclusive locking mode.)
+    source_directory = tmp_path / "live-source"
     source_directory.mkdir()
-    path = source_directory / "locked.db"
+    path = source_directory / "live.db"
     temporary = tmp_path / "temporary-snapshots"
     temporary.mkdir()
     connection = sqlite3.connect(path)
@@ -248,16 +250,10 @@ def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tm
             "CREATE TABLE media_jobs "
             "(job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)"
         )
-        connection.execute("INSERT INTO media_jobs VALUES ('locked', 'w', 'running', '{}')")
+        connection.execute("INSERT INTO media_jobs VALUES ('live', 'w', 'succeeded', '{}')")
         connection.commit()
-        # Establish SHM before taking exclusive locking mode. This must exercise
-        # the existing live-source backup path, not the private missing-SHM copy.
+        # WAL and SHM both exist, so this exercises the live-source backup path, not the private missing-SHM copy.
         assert Path(str(path) + "-wal").stat().st_size > 0
-        assert Path(str(path) + "-shm").exists()
-        assert connection.execute("PRAGMA locking_mode=EXCLUSIVE").fetchone() == ("exclusive",)
-        connection.execute("BEGIN EXCLUSIVE")
-        connection.execute("UPDATE media_jobs SET workflow = 'held'")
-        connection.commit()
         assert Path(str(path) + "-shm").exists()
         before = store_state(source_directory)
         # run_path returns a namespace copy; patch the function's actual globals.
@@ -265,18 +261,18 @@ def test_locked_wal_backup_refuses_by_deadline_without_source_or_temp_changes(tm
             "import runpy, sys\n"
             "namespace = runpy.run_path(sys.argv[1], run_name='readiness_deadline_test')\n"
             "main = namespace['main']\n"
-            "main.__globals__['BACKUP_TIMEOUT_SECONDS'] = 0.2\n"
+            "main.__globals__['BACKUP_TIMEOUT_SECONDS'] = -1.0\n"
             "raise SystemExit(main(sys.argv[2:]))\n"
         )
         try:
             result = subprocess.run(
                 [sys.executable, "-c", wrapper, str(SCRIPT), "--store", str(path)],
-                cwd=ROOT, text=True, capture_output=True, check=False, timeout=3,
+                cwd=ROOT, text=True, capture_output=True, check=False, timeout=30,
                 env=dict(os.environ, TMPDIR=str(temporary), TEMP=str(temporary),
                          TMP=str(temporary), PYTHONDONTWRITEBYTECODE="1"),
             )
         finally:
-            # The parent still holds the exclusive lock at every assertion.
+            # The parent keeps its connection open at every assertion.
             assert store_state(source_directory) == before
             assert list(temporary.iterdir()) == []
         assert result.returncode == 3, result.stdout
