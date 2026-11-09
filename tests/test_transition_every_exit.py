@@ -1,7 +1,8 @@
 """D2-D4 exit matrix. No private patches; SQLite prefixes model interrupted writes.
 
-The crash rows are durable-state reconstructions, not killed-process tests. Explicit
-no_seam rows keep unsupported deadlines/process death visible in the collection.
+The crash rows are durable-state reconstructions, not killed-process tests. Cells with
+no injection seam (store-write deadlines, process death) are listed in NOT_COVERED and
+are not collected: a skipped case proves nothing and the suite policy refuses it.
 """
 
 from __future__ import annotations
@@ -103,12 +104,11 @@ def cells():
 
 
 def parameter(cell):
-    marks = []
-    if "design_silent" in cell.mark:
-        marks.append(pytest.mark.xfail(reason="design_silent", strict=False))
-    if "no_seam" in cell.mark:
-        marks.append(pytest.mark.skip(reason="no_seam"))
-    return pytest.param(cell, id=cell.id, marks=marks)
+    return pytest.param(cell, id=cell.id)
+
+
+# Exits the matrix names but cannot reach without a seam the executor does not have yet.
+NOT_COVERED = tuple(cell.id for cell in cells() if "no_seam" in cell.mark)
 
 
 class InjectedFailure(OSError):
@@ -496,7 +496,7 @@ async def restart_at_prefix(rig, cell):
     return done
 
 
-@pytest.mark.parametrize("cell", [parameter(cell) for cell in cells()])
+@pytest.mark.parametrize("cell", [parameter(cell) for cell in cells() if "no_seam" not in cell.mark])
 def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: Cell):
     async def scenario():
         rig = Rig(tmp_path, cell)
