@@ -318,3 +318,83 @@ def test_a_recovery_opens_the_gate_when_the_target_is_resident_and_ready(tmp_pat
         engine.clean = True
         done = _restart(runtime, op_id)
     assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+
+
+# -- the revalidation hold is one write, an old intent row still decodes, and the hold shows on the owner routes ------------
+
+import json  # noqa: E402
+
+from gateway.transition_store import _intent_from  # noqa: E402
+
+
+def test_the_revalidation_hold_is_one_write_so_a_crash_between_intent_and_outcome_cannot_lose_the_recorded_evidence(
+        tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="reset", outcome="no_change",
+                              evidence=COLD[0], target="alpha")
+    engine.resident, engine.clean = "alpha", None  # unreadable: the restart holds a revalidation
+    executor = runtime.executor()
+
+    def crash(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("the process died between the intent and the outcome")
+
+    monkeypatch.setattr(executor.store, "write_outcome", crash)
+
+    async def go() -> None:
+        try:
+            await executor.reconcile_startup()
+        except RuntimeError:
+            pass
+        await asyncio.sleep(0.2)
+
+    run(go())
+    held = executor.store.get(op_id)
+    assert (held.evidence_ref or "").endswith(COLD[0]), "the hold carries the recorded evidence from its first write"
+    monkeypatch.undo()
+    engine.clean = True
+    done = _restart(runtime, op_id)
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.evidence_ref)
+
+
+@pytest.mark.parametrize("effect", ["restore", "reset", "revalidate"])
+def test_a_step_intent_row_written_by_the_previous_release_still_decodes(effect) -> None:
+    # The previous release stored exactly these three keys; the effect and block are derived, never stored.
+    old = json.dumps({"step": "restore", "effect_key": f"op-1:{effect}", "expected_incarnation": "inc-1"}, sort_keys=True)
+    decoded = _intent_from(old)
+    assert (decoded.step, decoded.effect_key, decoded.expected_incarnation) == ("restore", f"op-1:{effect}", "inc-1")
+    assert decoded.effect == ("reset" if effect == "reset" else "restore")
+
+
+def test_the_hold_shows_on_the_owner_routes_without_a_retry_loop(tmp_path, monkeypatch) -> None:
+    """GET gate reports ``reconciling`` and the operation id; GET the operation reports the step, the unknown outcome and
+    the ``revalidate:`` evidence. Nothing retries on a timer: the next restart or the owner's resolve settles it."""
+    import httpx
+    from fastapi import APIRouter, FastAPI
+    from types import SimpleNamespace
+    from gateway.transition_admin import register_transition_routes
+
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True)
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="reset", outcome="no_change",
+                              evidence=COLD[0], target="alpha")
+    engine.resident, engine.clean = "alpha", None
+    _restart(runtime, op_id)
+    router = APIRouter(prefix="/admin/api")
+
+    async def read_json(request: Any) -> Any:
+        return await request.json()
+
+    register_transition_routes(router, runtime=lambda: runtime, guard=lambda _r: SimpleNamespace(roles=("owner",)),
+                               read_json=read_json)
+    app = FastAPI()
+    app.include_router(router)
+
+    async def go() -> tuple[Any, Any]:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            gate = (await client.get("/admin/api/engines/domains/dom/gate")).json()
+            op = (await client.get(f"/admin/api/engines/domains/dom/transitions/{op_id}")).json()["operation"]
+            return gate, op
+
+    gate, op = run(go())
+    assert (gate["gate"], gate["op_id"]) == ("reconciling", op_id)
+    assert (op["state"], op["step_outcome"]) == ("reconciling", "unknown")
+    assert op["evidence_ref"] == f"revalidate:{COLD[0]}"
