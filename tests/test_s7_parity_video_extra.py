@@ -494,7 +494,7 @@ def test_video_7_59_status_maps_running_to_in_progress_and_history_success_to_co
     _run(tmp_path, "r7-59", setup, drive)
     assert seen["pending"]["status"] in ("queued", "in_progress")
     assert seen["pending"]["azizam_status"] in ("queued", "running")
-    assert seen["done"]["status"] == "completed"
+    assert seen["done"]["status"] == "completed", seen["done"]
     assert seen["done"]["azizam_status"] == "succeeded"
 
 
@@ -869,7 +869,7 @@ def test_video_delete_with_a_failing_cancel_is_409_and_keeps_the_video(tmp_path)
         seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code
 
     _run(tmp_path, "s7-7-cancel-failure", setup, drive)
-    assert seen["failed_status"] == 409
+    assert seen["failed_status"] == 409, seen
     assert seen["kept_after_failure"] == 200
 
 
