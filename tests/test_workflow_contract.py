@@ -530,9 +530,9 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
         for note in notes:
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
     assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 39
-    assert counts["capability:backfill"] == 33
+    assert counts["capability:backfill"] == 34
     assert counts["requires:move"] == 30
-    assert counts["accepts:add"] == 30
+    assert counts["accepts:add"] == 32
     assert counts["seed:add"] == 2
     assert counts["generate:add"] == 34  # the design said 33: 31 declared and mapped, and 2 added
 
