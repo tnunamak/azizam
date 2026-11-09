@@ -237,7 +237,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5. Re-captured again for S7 (V5c): POST /v1/videos and
         # POST /openai/v1/videos are rows now, so their operation id and summary moved; nothing else did. Before it the digest
         # was 33821a54e784de1c8076b989415d3670e85a0acbe8246a4c9d3569da5932d97f.
-        assert route_graph.openapi_digest(proxy.app) == "14ce7dfb5ffa910de2b633e42712afc201dbafde2da2a7f7517e9805932f1aae"
+        # Re-captured 2026-11-09 for the merge of the image rows (I2) with the video rows (V5a to V5c): each side's document
+        # change is in tests/fixtures/headless_openapi.json, which merged without a conflict. Before it the digests were
+        # 14ce7dfb5ffa910de2b633e42712afc201dbafde2da2a7f7517e9805932f1aae (video side) and
+        # c4a9451c273b6939ab712658a9aec1dca0778dd9d27a579b67a813c5c604640d (image side).
+        assert route_graph.openapi_digest(proxy.app) == "50a4f5e3b70e70355d3d10dbc80452681948d2a605a0a884cb8f74be09e3ecf7"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
