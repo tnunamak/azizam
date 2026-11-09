@@ -323,13 +323,44 @@ class CheckpointStep:
             await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
                             EffectResult(outcome="unknown", evidence_ref=f"checkpoint:{reason}"))
             return "reconcile"
-        await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
-                        EffectResult(outcome="no_change", evidence_ref=f"checkpoint:{reason}:cold_next_start"))
         if not sp.required:
+            await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
+                            EffectResult(outcome="no_change", evidence_ref=f"checkpoint:{reason}:cold_next_start"))
             _log(f"checkpoint skipped for {domain} ({reason}); the next start is cold")
             return "continue"
         servable = await self._servable(ctx, sp)
-        return "reopen" if servable is True else "fail_closed" if servable is False else "reconcile"
+        if servable is None:  # only an unknown outcome may hold reconciling
+            await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
+                            EffectResult(outcome="unknown", evidence_ref=f"checkpoint:{reason}:servable_unknown"))
+            return "reconcile"
+        await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint",
+                        EffectResult(outcome="no_change", evidence_ref=f"checkpoint:{reason}:cold_next_start"))
+        return "reopen" if servable else "fail_closed"
+
+    async def settle(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> StepVerdict:
+        """Settle a checkpoint outcome the executor learned outside ``run`` (the startup reconcile asked ``query``). It is
+        the live path's own settlement: a profile-attested ``no_change`` is a refused save (cleanup, then cold or the
+        servable re-check by ``checkpoint_policy``); anything else is an effect of unknown outcome. A success is recorded
+        and the operation goes on; no snapshot is published late."""
+        sp = parse_policy(ctx.policy)
+        if result.outcome == "success":
+            await _blocking(ctx.store.write_outcome, ctx.operation.op_id, "checkpoint", result)
+            return "continue"
+        if result.outcome == "no_change" and sp.checkpoint_no_change:
+            return await self._not_taken(ctx, sp, "engine_declined")
+        return await self._not_taken(ctx, sp, result.evidence_ref or result.outcome, unknown=True)
+
+    async def recovered(self, ctx: StepContext) -> StepVerdict:
+        """The verdict for a checkpoint whose ``no_change`` was recorded and whose operation stopped before the next step
+        (the gate write was lost). The record was made after the cleanup. An attested refusal goes on cold under
+        ``best_effort`` and is judged by fresh servable evidence under ``required``; an unattested one stays held."""
+        sp = parse_policy(ctx.policy)
+        if not sp.checkpoint_no_change:
+            return "fail_closed"
+        if not sp.required:
+            return "continue"
+        servable = await self._servable(ctx, sp)
+        return "reopen" if servable is True else "fail_closed"
 
     async def _servable(self, ctx: StepContext, sp: SnapshotPolicy) -> Optional[bool]:
         """G7: the profile's ``servable_check``, else the source's resident observation."""

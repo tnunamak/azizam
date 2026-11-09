@@ -663,13 +663,20 @@ def build_section(
     return _greedy(section, ordered, usable, shape_rejected, context, merge)
 
 
+_BAD_ESCAPE = re.compile(r"~(?![01])")
+
+
 def _retired_delete(section: Section, override: Override, faults: Sequence[Problem]) -> bool:
     """A delete whose only fault is that its pointer is no longer an entry, and that names nothing in the release.
 
-    Only a plain key path counts: every segment non-empty, walked through objects alone. A pointer into a list, a
+    Only a plain key path counts: every segment non-empty, every escape one RFC 6901 allows (``~0``, ``~1``), walked
+    through objects alone, and no prefix of it an entry the schema declares (a list, scalar, atomic or member entry
+    answers for what lies beneath it, whether or not the release holds a default for it). A pointer into a list, a
     container the release still holds, or a malformed pointer stays a rejected override.
     """
     if override.op != OP_DELETE or not all(fault.code == "not_an_entry" for fault in faults):
+        return False
+    if _BAD_ESCAPE.search(override.pointer):
         return False
     try:
         segments = split_pointer(override.pointer)
@@ -677,6 +684,9 @@ def _retired_delete(section: Section, override: Override, faults: Sequence[Probl
         return False
     if any(segment == "" for segment in segments):
         return False
+    for length in range(1, len(segments)):
+        if section.index.rule_for(join_pointer(segments[:length])) is not None:
+            return False
     node: Any = section.defaults
     for segment in segments:
         if not isinstance(node, Mapping):

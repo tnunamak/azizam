@@ -722,9 +722,11 @@ class Executor:
             return  # reconciling without an unknown effect: only the owner resolves it
         else:
             if operation.step_outcome in ("no_change", "partial"):
-                # The step ended badly and the gate write was lost: finish as the verdict says.
-                await self._finish_for(operation, "reopen" if operation.step == "drain" else "fail_closed")
-                return
+                # The step ended badly and the gate write was lost: judge it as the live path would have.
+                verdict = await self._lost_gate_write_verdict(operation, adapter, policy)
+                if verdict != "continue":
+                    await self._finish_for(operation, verdict)
+                    return
             after = self._resume_point(operation)
             if await self._opens_next(operation, adapter, after) and not await self._load_still_verified(operation, adapter, policy):
                 # The load was verified before the restart; the engine may have died since. Never open on that old evidence.
@@ -742,6 +744,23 @@ class Executor:
         if current.state == "reconciling":
             current = await asyncio.to_thread(self.store.resume, operation.op_id)
         self._launch_resume(current, after)
+
+    async def _lost_gate_write_verdict(self, operation: Operation, adapter: TransitionAdapter,
+                                       policy: Mapping[str, object]) -> StepVerdict:
+        """The verdict for a step that recorded ``no_change`` or ``partial`` before the process stopped. A drain reopens. A
+        step with a ``recovered`` rule (the checkpoint) judges it itself. Another effect step's ``no_change`` follows the
+        profile's attestation and the servable rule (a check that cannot be read holds ``failed_closed``: the outcome is
+        already written). Everything else holds ``failed_closed``."""
+        if operation.step == "drain":
+            return "reopen"
+        ctx = StepContext(operation=operation, store=self.store, adapter=adapter, snapshots=self._snapshots, policy=policy)
+        recovered = getattr(self._steps.get(operation.step), "recovered", None)  # type: ignore[arg-type]
+        if recovered is not None and operation.step_outcome == "no_change":
+            return await recovered(ctx)
+        if operation.step_outcome == "no_change" and operation.step in EFFECT_STEPS:
+            verdict = await no_change_verdict(ctx, operation.step)
+            return "fail_closed" if verdict == "reconcile" else verdict
+        return "fail_closed"
 
     async def _opens_next(self, operation: Operation, adapter: TransitionAdapter, after: Optional[StepName]) -> bool:
         """True when a select or wake goes on at the open step: it would open the gate on what the load once showed."""
