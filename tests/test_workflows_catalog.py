@@ -22,6 +22,7 @@ from gateway.workflow_openapi import augment_openapi
 from tests.support.registry_provider import provider_of
 from tests.support.workflow_docs import STANDARD_FACTS
 from gateway.workflows_catalog import (
+    _curl_example,
     _workflow_description,
     build_workflows_catalog,
     create_workflows_catalog_router,
@@ -841,6 +842,328 @@ class WorkflowsCatalogTests(unittest.TestCase):
              patch.object(proxy.media_jobs, "recent", side_effect=RuntimeError("scope failed")):
             with self.assertRaises(RuntimeError):
                 asyncio.run(proxy._user_workflows_catalog_payload(object()))
+
+
+class JobRunExampleTests(unittest.TestCase):
+    """Execute published clients against a finite, offline response script."""
+
+    def example(self) -> dict:
+        manifest = yaml.safe_load(VIDEO_MANIFEST)
+        manifest.update(id="video.edit.fixture", intent="video.edit", typical_seconds=1)
+        manifest["bindings"]["comfyui"]["map"] = {}
+        manifest["inputs"] = {
+            "source_video": {"type": "asset", "accepts": ["video/*"], "required": True},
+            "multiplier": {"type": "integer", "default": 2},
+        }
+        registry = WorkflowRegistry()
+        registry.add_manifest(manifest, source_path="video-edit.yml", facts=STANDARD_FACTS)
+        return build_workflows_catalog(
+            records=registry.records(),
+            capabilities=[Capability(intent="video.edit", backend="comfyui", workflow="video.edit.fixture")],
+            base_url="https://gateway.test",
+        )["workflows"][0]["example_request"]
+
+    def steps(self, status: int, terminal: str = "succeeded", asset_status: int = 200) -> list[dict]:
+        return [
+            {"status": status, "json": {"job_id": "job-1", "status": "running"}},
+            {"status": 200, "json": {"job_id": "job-1", "status": terminal}},
+            {"status": 200, "json": {"data": [{"url": "https://assets.test/movie?sig=fixture"}]}},
+            {"status": asset_status, "text": "movie-bytes"},
+        ]
+
+    def test_response_declaration_preserves_multipart_request(self) -> None:
+        example = self.example()
+        self.assertEqual(example["path"], "/gateway/v1/workflows/video.edit.fixture/run")
+        self.assertEqual(example["content_type"], "multipart/form-data")
+        self.assertEqual(example["body"], {})
+        self.assertEqual(example["form"]["multiplier"], 2)
+        self.assertEqual(example["files"]["source_video"]["field"], "source_video")
+        for language in ("curl", "python", "javascript"):
+            code = example[language]
+            self.assertIn("job_id", code)
+            self.assertIn("succeeded", code)
+            self.assertIn("failed", code)
+            self.assertIn("canceled", code)
+            self.assertIn("deadline", code)
+            self.assertIn("/gateway/v1/media/jobs/", code)
+            self.assertIn("/content", code)
+
+    def run_python(self, steps: list[dict], *, expired: bool = False,
+                   poll_elapsed: float | None = None,
+                   arrives_at: dict[str, float] | None = None) -> tuple[bytes | None, list[str], Exception | None]:
+        import io
+        import sys
+        import types
+
+        calls, writes = [], {}
+        queue = list(steps)
+        now = [0.0]
+
+        class Response:
+            def __init__(self, step):
+                self.step = step
+                self.status_code = step["status"]
+                self.headers = {"content-type": "application/json"}
+                self.content = (json.dumps(step["json"]) if "json" in step else step["text"]).encode()
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self.step["json"]
+
+        def request(method, url, **kwargs):
+            calls.append(url)
+            if poll_elapsed is not None and url.endswith("/media/jobs/job-1"):
+                self.assertEqual(kwargs["timeout"], 60)
+                now[0] = poll_elapsed  # The response arrives after time passes inside the poll.
+            for suffix, at in (arrives_at or {}).items():
+                if url.endswith(suffix) or url.startswith(suffix):
+                    self.assertLessEqual(kwargs["timeout"], 600 - now[0])  # never waits past the deadline
+                    now[0] = at  # The response arrives after time passes inside this request.
+            if url.startswith("https://assets.test/"):
+                self.assertNotIn("Authorization", kwargs.get("headers", {}))
+            return Response(queue.pop(0))
+
+        class Output(io.BytesIO):
+            def close(self):
+                if not self.closed:
+                    writes["output"] = self.getvalue()
+                super().close()
+
+        def open_file(path, mode="r"):
+            return Output() if "w" in mode else io.BytesIO(b"input-video")
+
+        requests = types.SimpleNamespace(request=request, get=lambda url, **kwargs: request("GET", url, **kwargs))
+        failure = None
+        clock = (patch("time.monotonic", side_effect=[0, 601]) if expired else
+                 patch("time.monotonic", side_effect=lambda: now[0])
+                 if poll_elapsed is not None or arrives_at else nullcontext())
+        code = self.example()["python"]
+        with clock, patch.dict(sys.modules, {"requests": requests}), patch("builtins.open", side_effect=open_file), \
+             patch("time.sleep", return_value=None):
+            try:
+                exec(code, {})
+            except Exception as exc:
+                failure = exc
+        return writes.get("output"), calls, failure
+
+    def run_process(self, language: str, steps: list[dict]) -> tuple[bytes | None, list[str], str]:
+        import os
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "source-video.mp4").write_bytes(b"input-video")
+            (root / "steps.json").write_text(json.dumps(steps))
+            if language == "curl":
+                # Only HTTP is faked. Bash and the snippet's JSON decoder execute normally.
+                curl = root / "curl"
+                curl.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, pathlib, sys\n"
+                    "root = pathlib.Path(__file__).parent\n"
+                    "steps = json.loads((root / 'steps.json').read_text())\n"
+                    "step = steps.pop(0)\n"
+                    "(root / 'steps.json').write_text(json.dumps(steps))\n"
+                    "args = sys.argv[1:]\n"
+                    "url = next(a for a in args if a.startswith('https://'))\n"
+                    "with (root / 'calls').open('a') as f: f.write(url + '\\n')\n"
+                    "if url.startswith('https://assets.test/') and any('Authorization:' in a for a in args): sys.exit(98)\n"
+                    "if url.startswith('https://assets.test/') and any(c in url for c in '[]{}'):\n"
+                    "    if '--globoff' not in args or '--url' not in args or args[args.index('--url') + 1] != url: sys.exit(97)\n"
+                    "if step['status'] >= 400 and ('--fail' in args or '--fail-with-body' in args): sys.exit(22)\n"
+                    "body = json.dumps(step['json']) if 'json' in step else step['text']\n"
+                    "if '--output' in args: pathlib.Path(args[args.index('--output') + 1]).write_text(body)\n"
+                    "else: print(body)\n"
+                )
+                curl.chmod(0o755)
+                (root / "sleep").write_text("#!/bin/sh\nexit 0\n")
+                (root / "sleep").chmod(0o755)
+                command = ["bash", "-c", self.example()["curl"]]
+            else:
+                bootstrap = (
+                    "import { appendFileSync, readFileSync } from 'node:fs';\n"
+                    "const steps = JSON.parse(readFileSync('steps.json', 'utf8'));\n"
+                    "globalThis.setTimeout = (fn) => { queueMicrotask(fn); return 0; };\n"
+                    "globalThis.fetch = async (url, options = {}) => {\n"
+                    "  appendFileSync('calls', String(url) + '\\n');\n"
+                    "  if (String(url).startsWith('https://assets.test/') && options.headers?.authorization) throw Error('asset bearer leak');\n"
+                    "  const step = steps.shift();\n"
+                    "  return new Response(step.json ? JSON.stringify(step.json) : step.text, {status: step.status});\n"
+                    "};\n"
+                )
+                (root / "client.mjs").write_text(bootstrap + self.example()["javascript"])
+                command = ["node", "client.mjs"]
+            result = subprocess.run(
+                command, cwd=root, env={**os.environ, "PATH": f"{root}:{os.environ.get('PATH', '')}",
+                                       "AZIZAM_API_KEY": "fixture"},
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+            output = root / "workflow-output.bin"
+            return (
+                output.read_bytes() if output.exists() else None,
+                (root / "calls").read_text().splitlines() if (root / "calls").exists() else [],
+                (result.stderr or f"exit {result.returncode}") if result.returncode else "",
+            )
+
+    def check_clients(self, language: str) -> None:
+        runner = self.run_python if language == "python" else lambda steps: self.run_process(language, steps)
+        for status, ready in ((202, False), (200, False), (200, True)):
+            with self.subTest(language=language, submit_status=status, ready=ready):
+                steps = self.steps(status)
+                if ready:
+                    steps[0]["json"]["status"] = "succeeded"
+                    steps.pop(1)
+                output, calls, failure = runner(steps)
+                self.assertFalse(failure, str(failure))
+                self.assertEqual(output, b"movie-bytes")
+                self.assertEqual(calls, [
+                    "https://gateway.test/gateway/v1/workflows/video.edit.fixture/run",
+                    *([] if ready else ["https://gateway.test/gateway/v1/media/jobs/job-1"]),
+                    "https://gateway.test/gateway/v1/media/jobs/job-1/content",
+                    "https://assets.test/movie?sig=fixture",
+                ])
+        for terminal in ("failed", "canceled"):
+            with self.subTest(language=language, terminal=terminal):
+                steps = self.steps(202, terminal)
+                steps[1]["json"]["failure"] = {"code": "engine_failed", "message": "fixture reason"}
+                output, calls, failure = runner(steps)
+                self.assertIsNone(output)
+                self.assertIn(terminal, str(failure))
+                self.assertIn("fixture reason", str(failure))
+                self.assertEqual(len(calls), 2)
+        output, calls, failure = runner(self.steps(202, asset_status=403))
+        self.assertIsNone(output)
+        self.assertTrue(failure)
+        self.assertEqual(len(calls), 4)
+
+    def test_python_202_and_200_jobs_poll_then_download(self) -> None:
+        self.check_clients("python")
+
+    def test_python_deadline_stops_without_content_or_asset(self) -> None:
+        output, calls, failure = self.run_python(self.steps(202), expired=True)
+        self.assertIsNone(output)
+        self.assertIn("deadline", str(failure))
+        self.assertEqual(len(calls), 1)
+
+
+    def test_python_success_arriving_at_or_after_deadline_is_not_downloaded(self) -> None:
+        for elapsed in (600, 601):
+            with self.subTest(poll_elapsed=elapsed):
+                output, calls, failure = self.run_python(self.steps(202), poll_elapsed=elapsed)
+                self.assertIsNone(output)
+                self.assertIsInstance(failure, TimeoutError)
+                self.assertIn("deadline", str(failure))
+                self.assertEqual(calls, [
+                    "https://gateway.test/gateway/v1/workflows/video.edit.fixture/run",
+                    "https://gateway.test/gateway/v1/media/jobs/job-1",
+                ])
+
+    def test_python_downloads_finishing_after_deadline_are_not_saved(self) -> None:
+        run = "https://gateway.test/gateway/v1/workflows/video.edit.fixture/run"
+        poll = "https://gateway.test/gateway/v1/media/jobs/job-1"
+        cases = {
+            # A timely success, then a slow content read: the asset is never requested.
+            "content": ({"/media/jobs/job-1": 590, "/content": 640}, [run, poll, poll + "/content"]),
+            # The asset body finishes after the deadline: nothing is written.
+            "asset": ({"/media/jobs/job-1": 590, "https://assets.test/": 640},
+                      [run, poll, poll + "/content", "https://assets.test/movie?sig=fixture"]),
+        }
+        for name, (arrives_at, expected_calls) in cases.items():
+            with self.subTest(late=name):
+                output, calls, failure = self.run_python(self.steps(202), arrives_at=arrives_at)
+                self.assertIsNone(output)
+                self.assertIsInstance(failure, TimeoutError)
+                self.assertEqual(calls, expected_calls)
+
+    def test_bash_and_javascript_bound_downloads_by_the_deadline(self) -> None:
+        example = self.example()
+        curl_lines = [line for line in example["curl"].replace("\\\n", " ").splitlines() if "curl --" in line]
+        self.assertEqual(len(curl_lines), 4)  # submit, poll, content, asset
+        for line in curl_lines:
+            with self.subTest(curl=line[:60]):
+                self.assertIn("--globoff", line)
+        self.assertIn("remaining < 60 ? remaining : 60", example["curl"])
+        self.assertIn("remaining < 300 ? remaining : 300", example["curl"])
+        # A download cut off by --max-time never takes the output name.
+        part = example["curl"].index("--output workflow-output.bin.part")
+        self.assertLess(part, example["curl"].index("mv workflow-output.bin.part workflow-output.bin"))
+        js = example["javascript"]
+        order = ["const timeLeft", "checkedGet(contentUrl, jobHeaders, Math.min(60000, timeLeft()))",
+                 "checkedGet(assetUrl, {}, Math.min(300000, timeLeft()))", "timeLeft();", "writeFile("]
+        positions = [js.find(marker) for marker in order]
+        self.assertNotIn(-1, positions)
+        self.assertEqual(positions, sorted(positions))
+
+    def test_python_success_arriving_before_deadline_is_downloaded(self) -> None:
+        output, calls, failure = self.run_python(self.steps(202), poll_elapsed=599)
+        self.assertIsNone(failure)
+        self.assertEqual(output, b"movie-bytes")
+        self.assertEqual(len(calls), 4)
+
+    def test_generated_and_recipe_signed_url_curls_disable_globbing(self) -> None:
+        import shlex
+
+        recipe = (Path(__file__).resolve().parents[1] / "docs/LOCAL_CLIENT_RECIPES.md").read_text()
+        fence = chr(96) * 3
+        recipe = recipe.split("### RIFE video interpolation", 1)[1].split(fence + "bash", 1)[1].split(fence, 1)[0]
+        for name, code in (("generated", self.example()["curl"]), ("recipe", recipe)):
+            with self.subTest(source=name):
+                calls = [line.strip() for line in code.replace("\\\n", " ").splitlines()
+                         if line.strip().startswith("curl ") and '"$asset_url"' in line]
+                self.assertEqual(len(calls), 1)
+                self.assertIn('--url "$asset_url"', calls[0])
+                args = shlex.split(calls[0])
+                self.assertIn("--globoff", args)
+                self.assertEqual(args[args.index("--url") + 1], "$asset_url")
+                self.assertNotIn("-H", args)  # Signed URLs must remain bearerless.
+
+    def test_curl_signed_url_with_braces_and_brackets_is_passed_literally(self) -> None:
+        steps = self.steps(202)
+        asset_url = "https://assets.test/movie?sig=[fixture]{one,two}"
+        steps[2]["json"]["data"][0]["url"] = asset_url
+        output, calls, failure = self.run_process("curl", steps)
+        self.assertFalse(failure, failure)
+        self.assertEqual(output, b"movie-bytes")
+        self.assertEqual(calls[-1], asset_url)
+
+    def test_non_job_curl_example_text_is_unchanged(self) -> None:
+        self.assertEqual(
+            _curl_example("https://gateway.test/v1/images/generations",
+                          content_type="application/json", body={"prompt": "fixture"},
+                          form={}, files=[], binary_response=False),
+            "curl 'https://gateway.test/v1/images/generations' \\\n"
+            "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n"
+            "  -H 'Content-Type: application/json' \\\n"
+            "  -d '{\"prompt\":\"fixture\"}'",
+        )
+
+    def test_curl_202_and_200_jobs_poll_then_download(self) -> None:
+        self.check_clients("curl")
+
+    def test_javascript_example_polls_reads_content_then_downloads_the_asset(self) -> None:
+        # The gate sandbox has no Node, so this reads the published order of calls. The same
+        # fixtures drive the curl and Python examples end to end above.
+        code = self.example()["javascript"]
+        order = ["await response.json()", "job.job_id", "const deadline", "['failed', 'canceled']", "checkedGet(pollUrl",
+                 "checkedGet(contentUrl", "content.data?.[0]?.url", "checkedGet(assetUrl,", "asset.arrayBuffer()"]
+        positions = [code.index(marker) for marker in order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("response.arrayBuffer()", code)
+        self.assertIn("job.failure", code)
+
+    def test_rife_recipe_downloads_the_signed_asset_not_content_json(self) -> None:
+        recipe = (Path(__file__).resolve().parents[1] / "docs/LOCAL_CLIENT_RECIPES.md").read_text()
+        fence = chr(96) * 3
+        recipe = recipe.split("### RIFE video interpolation", 1)[1].split(fence + "bash", 1)[1].split(fence, 1)[0]
+        self.assertIn("succeeded", recipe)
+        self.assertIn("failed|canceled", recipe)
+        self.assertIn("deadline", recipe)
+        self.assertIn(".data[0].url", recipe)
+        self.assertIn('--output interpolated.mp4', recipe)
+        self.assertNotIn('content" \\\n  -H "Authorization: Bearer $AZIZAM_API_KEY" -o', recipe)
 
 
 if __name__ == "__main__":

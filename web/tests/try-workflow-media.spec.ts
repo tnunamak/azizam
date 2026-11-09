@@ -203,6 +203,56 @@ describe("workflow media helpers", () => {
     });
   });
 
+  it.each([
+    [
+      "generic failure",
+      { failure: { message: "The workflow engine failed.", code: "internal_error" } },
+      "The workflow engine failed.",
+    ],
+    [
+      "legacy error string",
+      { error: "The legacy job failed." },
+      "The legacy job failed.",
+    ],
+    [
+      "legacy error object",
+      { error: { message: "The legacy renderer failed." } },
+      "The legacy renderer failed.",
+    ],
+    ["neither failure nor error", {}, undefined],
+    [
+      "failure message ahead of legacy error",
+      {
+        failure: { message: "The workflow engine failed.", code: "internal_error" },
+        error: "Less specific legacy error",
+      },
+      "The workflow engine failed.",
+    ],
+    [
+      "blank failure message falls back to legacy error",
+      { failure: { message: " " }, error: "The legacy job failed." },
+      "The legacy job failed.",
+    ],
+    [
+      "invalid failure message falls back to legacy error",
+      { failure: { message: 42 }, error: { message: "The legacy renderer failed." } },
+      "The legacy renderer failed.",
+    ],
+  ] as const)("normalizes a failed job with %s", (_label, details, error) => {
+    expect(
+      workflowJob({
+        job_id: "run_failed",
+        status: "failed",
+        ...details,
+      }),
+    ).toMatchObject({
+      id: "run_failed",
+      status: "failed",
+      // With no reason, leave the caller's existing fallback copy in charge.
+      error,
+    });
+  });
+
   it("builds declared canonical video job paths", () => {
     expect(
       workflowJob(

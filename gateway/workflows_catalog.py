@@ -344,8 +344,15 @@ def _example_request(
     elif content_type == "multipart/form-data":
         form, files = _example_multipart_parts(record, inputs, model=selected_model)
         body = {}
-    # A multipart route answers with the file, except the one asked for a job (``Prefer: respond-async``): its 202 is JSON.
-    answers_job = (route or {}).get("kind") == "respond_async"
+    # Response semantics are independent of the upload format. In particular,
+    # the generic video-edit run remains multipart even though it returns a job.
+    response = wire.get("response")
+    job_urls = (
+        (_join_url(base_url, response["poll"]), _join_url(base_url, response["content"]))
+        if isinstance(response, Mapping) and response.get("kind") == "media_job"
+        else None
+    )
+    answers_job = job_urls is not None or (route or {}).get("kind") == "respond_async"
     binary_response = ((record.intent == "audio.generate" and (route or {}).get("kind") != "media_job")
                        or content_type == "multipart/form-data") and not answers_job
     # Made-up local paths belong in the code examples only. The catalog's
@@ -358,7 +365,7 @@ def _example_request(
     extra_headers = wire.get("headers")
     curl = _curl_example(
         url, content_type=content_type, body=body, form=form, files=paths,
-        binary_response=binary_response, headers=extra_headers,
+        binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
     )
     return {
         "method": method,
@@ -370,11 +377,11 @@ def _example_request(
         "curl": curl,
         "python": _python_example(
             method, url, content_type=content_type, body=body, form=form, files=paths,
-            binary_response=binary_response, headers=extra_headers,
+            binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
         ),
         "javascript": _javascript_example(
             method, url, content_type=content_type, body=body, form=form, files=paths,
-            binary_response=binary_response, headers=extra_headers,
+            binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
         ),
     }
 
@@ -525,7 +532,14 @@ def _curl_example(
     files: Sequence[tuple[str, str]],
     binary_response: bool,
     headers: Mapping[str, str] | None = None,
+    job_urls: tuple[str, str] | None = None,
 ) -> str:
+    if job_urls is not None:
+        submit = _curl_example(
+            url, content_type=content_type, body=body, form=form, files=files,
+            binary_response=False, headers=headers,
+        )
+        return _curl_job_example(submit, *job_urls)
     lines = [
         f"curl {_shell_single_quote(url)} \\",
         "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\",
@@ -556,7 +570,14 @@ def _python_example(
     files: Sequence[tuple[str, str]],
     binary_response: bool,
     headers: Mapping[str, str] | None = None,
+    job_urls: tuple[str, str] | None = None,
 ) -> str:
+    if job_urls is not None:
+        submit = _python_example(
+            method, url, content_type=content_type, body=body, form=form, files=files,
+            binary_response=False, headers=headers,
+        ).rsplit("\n", 1)[0]
+        return submit + "\n" + _python_job_followup(*job_urls)
     if content_type == "multipart/form-data":
         extra = "".join(f", {name!r}: {value!r}" for name, value in (headers or {}).items())
         file_lines = "\n".join(
@@ -602,7 +623,17 @@ def _javascript_example(
     files: Sequence[tuple[str, str]],
     binary_response: bool,
     headers: Mapping[str, str] | None = None,
+    job_urls: tuple[str, str] | None = None,
 ) -> str:
+    if job_urls is not None:
+        submit = _javascript_example(
+            method, url, content_type=content_type, body=body, form=form, files=files,
+            binary_response=False, headers=headers,
+        ).rsplit("\n", 1)[0]
+        if content_type != "multipart/form-data":
+            submit = "import { writeFile } from 'node:fs/promises';\n" + submit
+        submit = submit.replace("  body:", "  signal: AbortSignal.timeout(300000),\n  body:", 1)
+        return submit + "\n" + _javascript_job_followup(*job_urls)
     if content_type == "multipart/form-data":
         extra = "".join(f", {json.dumps(name)}: {json.dumps(value)}" for name, value in (headers or {}).items())
         lines = [
@@ -643,6 +674,142 @@ def _javascript_example(
         f"  body: JSON.stringify({json.dumps(dict(body), indent=2)}),\n"
         f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
     )
+
+
+def _curl_job_example(submit: str, poll_url: str, content_url: str) -> str:
+    def job_url(template: str) -> str:
+        before, after = template.split("{job_id}", 1)
+        return f'{_shell_single_quote(before)}"$job_id"{_shell_single_quote(after)}'
+
+    decode = (
+        "import json, sys\nvalue = json.load(sys.stdin)\n"
+        "for key in sys.argv[1].split('.'):\n"
+        "    value = value[int(key)] if isinstance(value, list) else value[key]\n"
+        "if not isinstance(value, str) or not value: raise SystemExit('Missing ' + sys.argv[1])\n"
+        "print(value)"
+    )
+    submit = submit.replace("curl ", "curl --fail --silent --show-error --globoff --max-time 300 ", 1)
+    return "\n".join([
+        "# Bash, curl and Python 3. A 200 or 202 submit response is still a job.",
+        "set -euo pipefail",
+        "json_field() {",
+        f"  python3 -c {_shell_single_quote(decode)} \"$1\"",
+        "}",
+        f"job=$({submit})",
+        "job_id=$(printf '%s' \"$job\" | json_field job_id)",
+        "job_id=$(python3 -c 'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe=\"\"))' \"$job_id\")",
+        f"poll_url={job_url(poll_url)}",
+        f"content_url={job_url(content_url)}",
+        "deadline=$((SECONDS + 600))",
+        "while true; do",
+        "  state=$(printf '%s' \"$job\" | json_field status)",
+        "  case \"$state\" in",
+        "    succeeded) break ;;",
+        "    failed|canceled) printf 'Job %s %s: %s\\n' \"$job_id\" \"$state\" \"$job\" >&2; exit 1 ;;",
+        "    queued|running) ;;",
+        "    *) printf 'Unexpected job status: %s\\n' \"$state\" >&2; exit 1 ;;",
+        "  esac",
+        "  remaining=$((deadline - SECONDS))",
+        "  if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
+        "  job=$(curl --fail --silent --show-error --globoff --max-time \"$remaining\" \"$poll_url\" \\",
+        "    -H \"Authorization: Bearer $AZIZAM_API_KEY\")",
+        "  sleep 2",
+        "done",
+        "# The deadline covers the whole run, downloads included.",
+        "remaining=$((deadline - SECONDS))",
+        "if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
+        "content=$(curl --fail --silent --show-error --globoff --max-time \"$(( remaining < 60 ? remaining : 60 ))\" \"$content_url\" \\",
+        "  -H \"Authorization: Bearer $AZIZAM_API_KEY\")",
+        "asset_url=$(printf '%s' \"$content\" | json_field data.0.url)",
+        "remaining=$((deadline - SECONDS))",
+        "if (( remaining <= 0 )); then echo \"Job $job_id deadline exceeded\" >&2; exit 1; fi",
+        "# Signed asset URLs are fetched without the API bearer token.",
+        "curl --fail --silent --show-error --globoff --location --max-time \"$(( remaining < 300 ? remaining : 300 ))\" --url \"$asset_url\" --output workflow-output.bin.part",
+        "# Only a complete download takes the output name.",
+        "mv workflow-output.bin.part workflow-output.bin",
+    ])
+
+
+def _python_job_followup(poll_url: str, content_url: str) -> str:
+    return "\n".join([
+        "import time",
+        "from urllib.parse import quote",
+        "",
+        "job = response.json()  # Both 200 and 202 carry a job, never media bytes.",
+        "if not isinstance(job.get('job_id'), str) or not job['job_id']:",
+        "    raise RuntimeError('Submit response has no job_id')",
+        "job_id = quote(job['job_id'], safe='')",
+        f"poll_url = {poll_url!r}.replace('{{job_id}}', job_id)",
+        f"content_url = {content_url!r}.replace('{{job_id}}', job_id)",
+        "headers = {'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"}",
+        "deadline = time.monotonic() + 600",
+        "while job.get('status') != 'succeeded':",
+        "    if job.get('status') in ('failed', 'canceled'):",
+        "        raise RuntimeError(f\"Job {job_id} {job['status']}: {job.get('failure') or job.get('error')}\")",
+        "    if job.get('status') not in ('queued', 'running'):",
+        "        raise RuntimeError(f\"Unexpected job status: {job.get('status')}\")",
+        "    remaining = deadline - time.monotonic()",
+        "    if remaining <= 0:",
+        "        raise TimeoutError(f'Job {job_id} deadline exceeded')",
+        "    poll = requests.get(poll_url, headers=headers, timeout=min(60, remaining))",
+        "    poll.raise_for_status()",
+        "    job = poll.json()",
+        "    if time.monotonic() >= deadline:",
+        "        raise TimeoutError(f'Job {job_id} deadline exceeded')",
+        "    time.sleep(2)",
+        "# The deadline covers the whole run, downloads included.",
+        "def time_left():",
+        "    left = deadline - time.monotonic()",
+        "    if left <= 0:",
+        "        raise TimeoutError(f'Job {job_id} deadline exceeded')",
+        "    return left",
+        "content = requests.get(content_url, headers=headers, timeout=min(60, time_left()))",
+        "content.raise_for_status()",
+        "assets = content.json().get('data') or []",
+        "if not assets or not assets[0].get('url'):",
+        "    raise RuntimeError('Job content has no signed asset URL')",
+        "# Do not forward the API bearer token to the signed asset URL.",
+        "asset = requests.get(assets[0]['url'], timeout=min(300, time_left()))",
+        "asset.raise_for_status()",
+        "time_left()",
+        "with open('workflow-output.bin', 'wb') as output:",
+        "    output.write(asset.content)",
+    ])
+
+
+def _javascript_job_followup(poll_url: str, content_url: str) -> str:
+    return "\n".join([
+        "let job = await response.json(); // Both 200 and 202 carry a job.",
+        "if (typeof job.job_id !== 'string' || !job.job_id) throw new Error('Submit response has no job_id');",
+        "const job_id = encodeURIComponent(job.job_id);",
+        f"const pollUrl = {json.dumps(poll_url)}.replace('{{job_id}}', job_id);",
+        f"const contentUrl = {json.dumps(content_url)}.replace('{{job_id}}', job_id);",
+        "const jobHeaders = { authorization: 'Bearer ' + (process.env.AZIZAM_API_KEY || '') };",
+        "const checkedGet = async (url, headers = {}, timeout = 300000) => {",
+        "  const result = await fetch(url, { headers, signal: AbortSignal.timeout(Math.ceil(timeout)) });",
+        "  if (!result.ok) throw new Error('HTTP ' + result.status + ': ' + await result.text());",
+        "  return result;",
+        "};",
+        "const deadline = Date.now() + 600000;",
+        "while (job.status !== 'succeeded') {",
+        "  if (['failed', 'canceled'].includes(job.status)) throw new Error('Job ' + job_id + ' ' + job.status + ': ' + JSON.stringify(job.failure ?? job.error));",
+        "  if (!['queued', 'running'].includes(job.status)) throw new Error('Unexpected job status: ' + job.status);",
+        "  const remaining = deadline - Date.now();",
+        "  if (remaining <= 0) throw new Error('Job ' + job_id + ' deadline exceeded');",
+        "  job = await (await checkedGet(pollUrl, jobHeaders, Math.min(60000, remaining))).json();",
+        "  await new Promise(resolve => setTimeout(resolve, 2000));",
+        "}",
+        "// The deadline covers the whole run, downloads included.",
+        "const timeLeft = () => { const left = deadline - Date.now(); if (left <= 0) throw new Error('Job ' + job_id + ' deadline exceeded'); return left; };",
+        "const content = await (await checkedGet(contentUrl, jobHeaders, Math.min(60000, timeLeft()))).json();",
+        "const assetUrl = content.data?.[0]?.url;",
+        "if (!assetUrl) throw new Error('Job content has no signed asset URL');",
+        "// Signed asset URLs need no API bearer token.",
+        "const asset = await checkedGet(assetUrl, {}, Math.min(300000, timeLeft()));",
+        "const bytes = Buffer.from(await asset.arrayBuffer());",
+        "timeLeft();",
+        "await writeFile('workflow-output.bin', bytes);",
+    ])
 
 
 def _recent_by_workflow(rows: Iterable[Mapping[str, Any]], id_field: str) -> dict[str, list[dict[str, Any]]]:

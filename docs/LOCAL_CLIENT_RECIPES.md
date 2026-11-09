@@ -2053,20 +2053,44 @@ but is not consumed by this graph.
 ### RIFE video interpolation
 
 Upload-driven video-edit workflows run through the generic workflow route,
-which takes the full workflow id (`video.edit.rife-interpolate`). The route
-answers a media job: 202 while it runs, with its address in `Location`.
-`Prefer: wait=N` waits up to N seconds for the job to end. Read the video from
-the job's content route:
+which takes the full workflow id (`video.edit.rife-interpolate`). Both 202 and
+200 responses contain a job, not video bytes. `Prefer: wait=N` is a bounded
+wait, not a promise of completion. Poll to success, read the content JSON,
+then download its first signed asset URL. This Bash recipe needs curl and jq
+and stops after ten minutes of polling (the job can continue on the server):
 
 ```bash
+set -euo pipefail
 export AZIZAM_API_KEY='opk_...'
-job=$(curl -sS http://127.0.0.1:5000/gateway/v1/workflows/video.edit.rife-interpolate/run \
+base=http://127.0.0.1:5000
+job=$(curl --fail --silent --show-error --max-time 300 \
+  "$base/gateway/v1/workflows/video.edit.rife-interpolate/run" \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H 'Prefer: wait=60' \
   -F 'source_video=@input.mp4;type=video/mp4' \
-  -F 'multiplier=2' | jq -r .job_id)
-curl -sS "http://127.0.0.1:5000/gateway/v1/media/jobs/$job/content" \
-  -H "Authorization: Bearer $AZIZAM_API_KEY" -o interpolated.mp4
+  -F 'multiplier=2')
+job_id=$(printf '%s' "$job" | jq -er '.job_id | select(type == "string" and length > 0) | @uri')
+deadline=$((SECONDS + 600))
+while true; do
+  state=$(printf '%s' "$job" | jq -er '.status')
+  case "$state" in
+    succeeded) break ;;
+    failed|canceled) printf 'Job %s %s: %s\n' "$job_id" "$state" "$job" >&2; exit 1 ;;
+    queued|running) ;;
+    *) printf 'Unexpected job status: %s\n' "$state" >&2; exit 1 ;;
+  esac
+  remaining=$((deadline - SECONDS))
+  if (( remaining <= 0 )); then echo "Job $job_id deadline exceeded" >&2; exit 1; fi
+  job=$(curl --fail --silent --show-error --max-time "$remaining" \
+    "$base/gateway/v1/media/jobs/$job_id" -H "Authorization: Bearer $AZIZAM_API_KEY")
+  sleep 2
+done
+content=$(curl --fail --silent --show-error --max-time 60 \
+  "$base/gateway/v1/media/jobs/$job_id/content" -H "Authorization: Bearer $AZIZAM_API_KEY")
+asset_url=$(printf '%s' "$content" | jq -er '.data[0].url | select(type == "string" and length > 0)')
+# Signed asset URLs are bearerless. Never save the content JSON as an MP4.
+curl --fail --silent --show-error --globoff --location --max-time 300 \
+  --url "$asset_url" --output interpolated.mp4
 ```
 
 The workflow manifest validates the multiplier. `2` is the verified setting;

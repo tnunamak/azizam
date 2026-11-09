@@ -145,7 +145,9 @@ export function workflowJob(
     requestId: stringValue(record.request_id),
     pollPath,
     contentPath,
-    error: errorMessage(record.error),
+    error:
+      stringValue(objectRecord(record.failure)?.message) ??
+      errorMessage(record.error),
   };
 }
 

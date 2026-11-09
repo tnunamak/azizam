@@ -524,7 +524,8 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
         if intent == "video.edit":
             sync = {"method": "POST", "path": f"/gateway/v1/workflows/{record.id}/run",
                     "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
-                    "output": "a media job; its content is the video"}
+                    "output": "a media job; its content is the video",
+                    "response": {"kind": "media_job", "poll": JOB_POLL, "content": JOB_CONTENT}}
     if typical_seconds is not None and typical_seconds <= SLOW_SECONDS and sync:
         recommended = "sync"
     elif async_:
