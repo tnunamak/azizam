@@ -18,10 +18,11 @@ import json
 
 from gateway import client_errors, image_extensions, image_output
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
+from gateway.frontend_shapes._base import TERMINAL, LegacyRoute, Shape, coerce, job_object
 from gateway.workflow_runtime_types import (
     CallerContext,
     JobService,
+    RunRefused,
     MediaRef,
     ResultRef,
     RunJobView,
@@ -472,6 +473,29 @@ class AudioGenerate(Shape):
         return Response(content=self.read(view, refs[0], jobs, caller), media_type=refs[0].media_type)
 
 
+class VideoHooks:
+    """What a deployment adds to a video create: the model name it serves, the delivery rules it applies to the body and the
+    prompt it remembers. The defaults do nothing; the main module installs a subclass in ``VIDEO_HOOKS`` at start."""
+
+    def resolve_model(self, name: str) -> str | Response:
+        """The workflow name a public model name stands for (or the refusal the deployment gives for it)."""
+        return name
+
+    def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
+        """Read the delivery controls of the body (metadata mode, prompt keeping); a Response refuses the request."""
+        return None
+
+    def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> Any:
+        return None
+
+    def keep_prompt(self, caller: Any, key: str, prompt: str) -> bool:
+        """Remember the prompt of a new job under ``key``; True when it was kept."""
+        return False
+
+
+VIDEO_HOOKS: VideoHooks | None = None
+EXPIRY_S = 86400                    # how long the answer to a create says a video stays: the old route's day
+
 _VIDEO_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "completed", "failed": "failed",
                  "canceled": "failed"}
 
@@ -493,6 +517,43 @@ class OpenAIVideoCreate(Shape):
     def render_job(self, view: RunJobView) -> Response:
         """The create answer: the video object of the job, with the id every lifecycle route accepts. No ``Location``."""
         return JSONResponse(self.status_body(view))
+
+    def default_target(self) -> str | None:
+        resolver = DEFAULT_WORKFLOWS.get(self.shape_id)
+        return resolver() if resolver is not None else None
+
+    async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
+        from gateway.frontend_shapes import video_create
+        return await video_create.to_run_request(self, request, row, snapshot, spool=spool)
+
+    async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
+        if isinstance(outcome, RunRefused):
+            return await super().to_response(outcome, row, jobs=jobs, caller=caller, request=request)
+        facts = dict(getattr(getattr(request, "state", None), "video_facts", None) or {})
+        recorded = getattr(jobs, "request_facts", lambda *_: None)(outcome.job_id, caller)
+        facts = {**facts, **(recorded or {})}
+        now = outcome.created_at_s
+        body = {
+            "id": self.wire_id(outcome.job_id), "object": self.wire_name, "model": facts.get("model"),
+            "azizam_resolved_model": facts.get("resolved_model"), "status": "queued", "progress": 0, "created_at": now,
+            "completed_at": None, "expires_at": now + EXPIRY_S, "prompt": None, "remixed_from_video_id": None, "error": None,
+            "size": facts.get("size"), "seconds": facts.get("seconds"), "actual_seconds": facts.get("actual_seconds")}
+        requested, actual = facts.get("seconds"), facts.get("actual_seconds")
+        adjusted = None
+        try:
+            if requested is not None and actual is not None and abs(float(actual) - float(requested)) > 0.05:
+                adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason=frame_count_stride"
+        except (TypeError, ValueError):
+            adjusted = None
+        headers = _wire.result_headers(row.result_headers, {"duration_adjusted": adjusted})
+        return JSONResponse(body, headers=headers)
+
+    async def after_submit(self, request, view: RunJobView, caller) -> None:
+        """A new job's prompt goes to the deployment's prompt memory; a replay of an old job keeps nothing again."""
+        prompt = getattr(getattr(request, "state", None), "video_prompt", None)
+        hooks = VIDEO_HOOKS
+        if hooks is not None and prompt and view.disposition == "new":
+            hooks.keep_prompt(caller, self.wire_id(view.job_id), prompt)
 
     # -- the lifecycle routes: status, content, list and delete are views of the job (S7 parity M7) -----------------
 
@@ -570,8 +631,14 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
     def file_inputs(self, entry: WorkflowEntry, part_names: list[str]) -> Mapping[str, str]:
         return {}
 
+    async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
+        return await Shape.to_response(self, outcome, row, jobs=jobs, caller=caller, request=request)
+
+    async def after_submit(self, request, view, caller) -> None:
+        return None
+
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
-        run = await super().to_run_request(request, row, snapshot, spool=spool)
+        run = await Shape.to_run_request(self, request, row, snapshot, spool=spool)
         if isinstance(run, Response):
             return run
         video = run.inputs.get(self.wire_name)
@@ -586,3 +653,10 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         ref = MediaRef(digest="", media_type="application/octet-stream", size=0, asset_id=source)
         from dataclasses import replace
         return replace(run, inputs=inputs, media={targets[0]: (ref,)})
+
+
+class OpenAIVideoRemix(OpenAIVideoCreate):
+    """``POST /v1/videos/{video_id}/remix``: a prompt and the id of the video to change. The id is read from the path; the
+    run is the edit shape's, with that id as the source."""
+
+    shape_id = "openai.video.remix"

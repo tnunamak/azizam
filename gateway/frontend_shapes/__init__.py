@@ -24,6 +24,7 @@ from gateway.frontend_shapes.shapes import (
     OpenAIImagesVariations,
     OpenAIVideoCreate,
     OpenAIVideoEdit,
+    OpenAIVideoRemix,
 )
 from gateway.workflow_kernel import selector_matches, selector_problems
 from gateway.workflow_runtime_types import FrontendRow, RouteSpec
@@ -32,7 +33,7 @@ ROWS_PATH = Path(__file__).resolve().parents[2] / "registry" / "protocol_fronten
 ROWS_KEY = "frontends"
 
 SHAPE_CLASSES: Mapping[str, Callable[..., Shape]] = {cls.shape_id: cls for cls in (
-    OpenAIImagesJson, OpenAIImagesMultipart, OpenAIImagesVariations, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, LocalAI3D, RawGlb)}
+    OpenAIImagesJson, OpenAIImagesMultipart, OpenAIImagesVariations, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, OpenAIVideoRemix, LocalAI3D, RawGlb)}
 
 
 class RowError(ValueError):
@@ -44,6 +45,16 @@ def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> Any:
     if value not in ("before_policy", "after_policy"):
         raise RowError(f"{row_id}: receipt_opens must be before_policy or after_policy")
     return value
+
+
+def _unconfigured(row_id: str, raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    found = raw.get("unconfigured")
+    if found is None:
+        return None
+    if (not isinstance(found, Mapping) or set(found) != {"status", "code", "message"} or not isinstance(found["status"], int)
+            or not all(isinstance(found[k], str) and found[k] for k in ("code", "message"))):
+        raise RowError(f"{row_id}: unconfigured must be a mapping of status, code and message")
+    return dict(found)
 
 
 def _row(raw: Mapping[str, Any]) -> FrontendRow:
@@ -84,7 +95,7 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_names=next(iter(names)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
-                       receipt_opens=_receipt_opens(row_id, raw))
+                       receipt_opens=_receipt_opens(row_id, raw), unconfigured=_unconfigured(row_id, raw))
 
 
 def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:

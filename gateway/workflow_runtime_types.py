@@ -63,6 +63,9 @@ SERVICE_DISABLED = "service_disabled"
 SERVICE_UNHEALTHY = "service_unhealthy"
 SERVICE_NOT_ADMITTING = "service_not_admitting"
 SERVICE_REASONS = frozenset({SERVICE_DISABLED, SERVICE_UNHEALTHY, SERVICE_NOT_ADMITTING})
+# The service accepted no connection when the binding was asked. Unlike the reasons above it is a 502 whose words name the
+# engine and its address, so ``target_gate`` takes its message from ``AdapterAvailability.unreachable_message``.
+SERVICE_UNREACHABLE = "service_unreachable"
 
 
 # ---------------------------------------------------------------------------------------------------------- I1
@@ -323,6 +326,9 @@ class AdapterAvailability(Protocol):
         """Seconds a caller should wait before retrying after ``binding_problem`` answered a ``SERVICE_*`` reason
         (``service_not_admitting`` has one); None when there is no advice."""
         ...
+    def unreachable_message(self, binding: BindingDef) -> str:
+        """The words of the 502 after ``binding_problem`` answered ``SERVICE_UNREACHABLE``: they name the engine."""
+        ...
 
 
 class Projections(Protocol):
@@ -418,6 +424,9 @@ class RunRequest:
     # The intent the job row is filed under: the one the matched route declares (``runtime_policy.intent``), the same value
     # the request receipt records. Empty: the generic run intent. Not part of run identity.
     intent: str = ""
+    # JSON-safe facts of the request the wire shows again later (a video's size and seconds): written once with the job, never
+    # part of run identity, and kept out of the generic job view.
+    facts: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -609,6 +618,9 @@ class FrontendRow:
     # The words a refusal of this row has for a code the core refused with: ``{code: {"message", "type"}}``. The answer has
     # that message and type and no code (what the route's callers always saw). Row data: ``refusal_bodies``.
     refusal_bodies: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    # What a row answers when no workflow in the registry is selected by it (``unconfigured``): ``{status, code, message}``.
+    # None: the shape's own refusal for a name that selects nothing. Row data.
+    unconfigured: Mapping[str, Any] | None = None
 
 
 class FrontendShape(Protocol):

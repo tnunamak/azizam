@@ -39,7 +39,7 @@ from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
     DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
-    SERVICE_REASONS, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
+    SERVICE_REASONS, SERVICE_UNREACHABLE, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
     CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
     ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
 )
@@ -267,15 +267,20 @@ class BindingAvailability:
     (the adapter is registered and every reviewed role is present); this class gives it the interface projections read."""
 
     def __init__(self, check: Callable[[BindingDef], str | None],
-                 retry_after: Callable[[BindingDef], int | None] | None = None) -> None:
+                 retry_after: Callable[[BindingDef], int | None] | None = None,
+                 unreachable: Callable[[BindingDef], str] | None = None) -> None:
         self._check = check
         self._retry_after = retry_after
+        self._unreachable = unreachable
 
     def binding_problem(self, binding: BindingDef) -> str | None:
         return self._check(binding)
 
     def binding_retry_after_s(self, binding: BindingDef) -> int | None:
         return self._retry_after(binding) if self._retry_after is not None else None
+
+    def unreachable_message(self, binding: BindingDef) -> str:
+        return self._unreachable(binding) if self._unreachable is not None else "the service behind this workflow is unreachable"
 
 
 # ---------------------------------------------------------------------------------------------------- helpers
@@ -544,6 +549,8 @@ class WorkflowRunCore:
         if reason in SERVICE_REASONS:
             return RunRefused(503, str(reason), f"the service behind workflow {entry.id} cannot take a run now ({reason})",
                               retry_after_s=port.available.binding_retry_after_s(binding))
+        if reason == SERVICE_UNREACHABLE:        # a 502 that names the engine; no job exists (S7 video move 4.3)
+            return RunRefused(502, SERVICE_UNREACHABLE, port.available.unreachable_message(binding))
         return None
 
     async def _decide_and_create(self, req: RunRequest, caller: CallerContext, snapshot,

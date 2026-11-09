@@ -971,6 +971,8 @@ frontends:
   - id: videos-create
     shape: openai.video.create
     mode: job
+    refusal_bodies: {service_disabled: {message: Video generation not enabled, type: service_unavailable}}
+    result_headers: {duration_adjusted: X-Duration-Adjusted}
     receipt_protocol: openai.video
     strictness: exact
     lists_as_model: true
@@ -979,11 +981,24 @@ frontends:
       - methods: [POST]
         canonical: /v1/videos
         aliases: [/openai/v1/videos]
-        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive, job_retries: none}
+  - id: videos-remix
+    shape: openai.video.remix
+    mode: job
+    receipt_protocol: openai.video
+    strictness: exact
+    unconfigured: {status: 501, code: video_remix_not_configured, message: "Video remix is not configured on this gateway. Set videos.remix_workflow in proxy_config.yml to enable it."}
+    selects: {match: {inputs: {prompt: {type: string}, video: {media_type: "video/*"}}, outputs: {media_type: "video/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/videos/{video_id}/remix
+        aliases: [/openai/v1/videos/{video_id}/remix]
+        runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
   - id: videos-edit
     shape: openai.video.json_source
     mode: job
     receipt_protocol: openai.video
+    unconfigured: {status: 501, code: video_remix_not_configured, message: "Video remix is not configured on this gateway. Set videos.remix_workflow in proxy_config.yml to enable it."}
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}, video: {media_type: "video/*"}}, outputs: {media_type: "video/*"}}}
     routes:
