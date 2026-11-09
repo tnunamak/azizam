@@ -3,10 +3,10 @@
 
 Stop submissions before invoking this command and keep them stopped through
 rollback; this snapshot is not an admission lock. A store whose WAL still holds
-committed frames (a running gateway) is read through SQLite's read-only WAL path
-so those frames are seen; a checkpointed store is read immutably so SQLite
-creates nothing next to it. A nonempty rollback journal (an interrupted write)
-is refused.
+committed frames is read through SQLite's read-only WAL path when SHM exists.
+Without SHM, the database and WAL are copied privately before SQLite opens them.
+A checkpointed store is read immutably so SQLite creates nothing next to it.
+A nonempty rollback journal (an interrupted write) is refused.
 """
 from __future__ import annotations
 
@@ -15,13 +15,19 @@ from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import stat
 import sys
 import tempfile
+import time
 
 # Support invocation from any cwd without importing the large gateway entrypoint.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+# Bound SQLite backup retries, including an otherwise endless SQLITE_BUSY loop.
+BACKUP_TIMEOUT_SECONDS = 5.0
 
 
 class StoreRefused(Exception):
@@ -83,19 +89,37 @@ def inspect_store(store: str) -> tuple[int, dict]:
         live_wal = has_live_wal(source)
         with tempfile.TemporaryDirectory(prefix="rollback-readiness-") as directory:
             snapshot = Path(directory) / "store.sqlite"
-            # mode=ro prohibits writes to the database and its WAL. With a live
-            # WAL, SQLite's read-only WAL path reads the committed frames (it
-            # uses the existing -shm), and the backup is one consistent read
-            # even if the running gateway checkpoints meanwhile. Without one,
-            # immutable keeps SQLite from creating a WAL or -shm next to the
-            # store, and the unchanged fingerprint (with a content hash) shows
-            # the copy is whole.
-            uri = source.as_uri() + ("?mode=ro" if live_wal else "?mode=ro&immutable=1")
-            with closing(sqlite3.connect(uri, uri=True)) as reader:
+            read_source = source
+            wal = Path(str(source) + "-wal")
+            copied_wal_before = None
+            if live_wal and _companion_size(source, "-shm") is None:
+                # mode=ro can create SHM when it is absent. Reconstruct it only
+                # beside this private copy, never beside the original store.
+                copied_wal_before = fingerprint(wal)
+                read_source = Path(directory) / "source.sqlite"
+                shutil.copyfile(source, read_source)
+                shutil.copyfile(wal, Path(str(read_source) + "-wal"))
+                require_no_hot_journal(source)
+                if fingerprint(source) != before or fingerprint(wal) != copied_wal_before:
+                    raise StoreRefused("store_unreadable")
+            # Existing WAL+SHM keeps its live, consistent SQLite backup path.
+            # A WAL copy must not be immutable: its committed frames matter.
+            uri = read_source.as_uri() + ("?mode=ro" if live_wal else "?mode=ro&immutable=1")
+            deadline = time.monotonic() + BACKUP_TIMEOUT_SECONDS
+
+            def check_deadline(_status: int, _remaining: int, _total: int) -> None:
+                # SQLite also calls progress for BUSY/LOCKED retries.
+                if time.monotonic() >= deadline:
+                    raise StoreRefused("store_unreadable")
+
+            with closing(sqlite3.connect(uri, uri=True, timeout=0)) as reader:
                 with closing(sqlite3.connect(str(snapshot))) as writer:
-                    reader.backup(writer)
+                    reader.backup(writer, pages=128, progress=check_deadline, sleep=0.01)
             require_no_hot_journal(source)
-            if not live_wal and (has_live_wal(source) or fingerprint(source) != before):
+            if copied_wal_before is not None:
+                if fingerprint(source) != before or fingerprint(wal) != copied_wal_before:
+                    raise StoreRefused("store_unreadable")
+            elif not live_wal and (has_live_wal(source) or fingerprint(source) != before):
                 raise StoreRefused("store_unreadable")
             # A store with no job table (a 0-byte file, a wrong database)
             # proves nothing about running jobs; the helpers would call it empty.
