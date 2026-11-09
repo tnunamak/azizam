@@ -11704,6 +11704,7 @@ async def _submit_video_graph(
                     media_type="application/json"
                 )
 
+            now = int(time.time())  # the one reading: the seed's updated_at and the job's created_at share it
             # Seed progress state so /v1/videos/{id} can phase-classify nodes
             # by class type before any ws events arrive.
             try:
@@ -11720,8 +11721,10 @@ async def _submit_video_graph(
                         "node_class": None,
                         "phase": "encoding",
                         "error": None,
-                        "updated_at": time.time(),
+                        "updated_at": now,
                     })
+                    # A resubmit that reuses an id is a new job: its progress clock cannot predate its created_at.
+                    _video_progress[prompt_id]["updated_at"] = max(_video_progress[prompt_id].get("updated_at") or 0, now)
             except Exception:
                 pass
 
@@ -11761,7 +11764,6 @@ async def _submit_video_graph(
             except Exception:
                 pass
 
-            now = int(time.time())
             response_headers = {}
             if duration_adjustment_reason is not None:
                 response_headers["X-Duration-Adjusted"] = (
