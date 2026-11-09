@@ -947,7 +947,7 @@ frontends:
   - id: image-jobs
     shape: openai.images.jobs
     mode: job
-    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    refusal_bodies: {service_disabled: {message: This service is not available right now., code: resource_admission_denied, retry_after_s: 30}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
     strictness: exact

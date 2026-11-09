@@ -593,9 +593,10 @@ class FrontendRow:
     # receipt metadata names by metadata key. Row data: ``result_headers`` and ``result_receipt``.
     result_headers: Mapping[str, str] = field(default_factory=dict)
     result_receipt: Mapping[str, str] = field(default_factory=dict)
-    # The words a refusal of this row has for a code the core refused with: ``{code: {"message", "type"}}``. The answer has
-    # that message and type and no code (what the route's callers always saw). Row data: ``refusal_bodies``.
-    refusal_bodies: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    # The words a refusal of this row has for a code the core refused with: ``{code: {"message", "type"?, "code"?,
+    # "retry_after_s"?}}``. The answer has that message, and the type and code only when the row names them (what the
+    # route's callers always saw). Row data: ``refusal_bodies``.
+    refusal_bodies: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 class FrontendShape(Protocol):

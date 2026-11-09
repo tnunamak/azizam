@@ -95,12 +95,17 @@ def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:
     return dict(found)
 
 
-def _refusal_bodies(row_id: str, raw: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+def _refusal_bodies(row_id: str, raw: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """``{code: {message, type?, code?, retry_after_s?}}``: the words a row has for a refusal code of the core."""
     found = raw.get("refusal_bodies") or {}
-    if not isinstance(found, Mapping) or not all(
-            isinstance(code, str) and isinstance(body, Mapping) and set(body) == {"message", "type"}
-            and all(isinstance(text, str) and text for text in body.values()) for code, body in found.items()):
-        raise RowError(f"{row_id}: refusal_bodies must map a code to its message and type")
+
+    def usable(body: Any) -> bool:
+        return (isinstance(body, Mapping) and "message" in body and set(body) <= {"message", "type", "code", "retry_after_s"}
+                and all(isinstance(body[k], str) and body[k] for k in body if k != "retry_after_s")
+                and (not isinstance(body.get("retry_after_s"), bool)) and isinstance(body.get("retry_after_s", 1), int))
+
+    if not isinstance(found, Mapping) or not all(isinstance(code, str) and usable(body) for code, body in found.items()):
+        raise RowError(f"{row_id}: refusal_bodies must map a code to its message, and optionally its type, code and retry_after_s")
     return {code: dict(body) for code, body in found.items()}
 
 
