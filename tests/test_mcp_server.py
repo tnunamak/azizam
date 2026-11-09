@@ -982,6 +982,22 @@ def test_run_async_media_job_waits_then_returns_links(env):
     assert out["status"] == "succeeded" and out["job_id"] == "mj_1" and out["assets"][0]["kind"] == "audio"
 
 
+def test_finished_job_whose_delivery_is_refused_says_the_render_finished(env):
+    env.core.routes[("POST", "/v1/videos")] = httpx.Response(200, json={"id": "video_7", "status": "queued"})
+    env.core.polls["/v1/videos/video_7"] = [{"id": "video_7", "status": "completed", "progress": 100}]
+    env.core.routes[("GET", "/v1/videos/video_7/content")] = httpx.Response(
+        403, json={"error": {"code": "prompt_not_accessible", "message": "This prompt is not available to you."}})
+    result = call(env, "run", {"target": "video", "inputs": {"prompt": "waves"}, "wait_seconds": 5})
+    out = result["structuredContent"]
+    assert result["isError"]
+    assert out["error"].startswith("The render finished, but the gateway refused to deliver it: This prompt is not available to you.")
+    assert "video_7" in out["error"] and "report_problem" in out["report_hint"]
+    assert out["stage"] == "delivery" and out["job_status"] == "succeeded" and out["job_id"] == "video_7"
+    assert out["code"] == "prompt_not_accessible" and out["http_status"] == 403
+    again = call(env, "job", {"job_id": "video_7"})["structuredContent"]
+    assert again["stage"] == "delivery" and again["job_id"] == "video_7"
+
+
 def test_run_slow_job_returns_a_job_id_after_wait(env):
     env.core.routes[("POST", "/v1/videos")] = httpx.Response(200, json={"id": "video_9", "status": "queued"})
     env.core.polls["/v1/videos/video_9"] = [{"id": "video_9", "status": "in_progress", "progress": 10}]
