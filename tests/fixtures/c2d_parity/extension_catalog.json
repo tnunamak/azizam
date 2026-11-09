@@ -1,0 +1,1530 @@
+{
+  "audiences": [
+    "client",
+    "admin",
+    "internal"
+  ],
+  "summaries": {
+    "admin": {
+      "audience": "admin",
+      "extensions": [
+        {
+          "description": "Per-request prompt retention choice; this control is removed before backend dispatch.",
+          "gateway_controls": [
+            {
+              "default": "member and household settings",
+              "name": "mode",
+              "values": [
+                "forget"
+              ]
+            }
+          ],
+          "namespace": "com.azizam.prompts",
+          "routes": [
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/images/generations",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/images/edits",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos/extensions",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos/workflows/{workflow_id}",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/audio/generate",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/audio/speech",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/responses",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/gateway/v1/media/jobs/image-generations",
+              "target": "gateway_prompt_policy"
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned workflow controls for image, video, and audio routes.",
+          "gateway_controls": [
+            {
+              "default": "the app profile's media_metadata.default",
+              "description": "Whether delivered media keeps its embedded ComfyUI workflow and gateway provenance (full) or has all metadata removed losslessly (none). Valid on every route that returns generated media.",
+              "name": "metadata",
+              "values": [
+                "full",
+                "none"
+              ]
+            }
+          ],
+          "namespace": "com.azizam.workflow",
+          "routes": [
+            {
+              "route": "/v1/images/generations",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui",
+                    "gateway"
+                  ],
+                  "intent": "image.generate",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.anima-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-4b"
+                    },
+                    {
+                      "controls": [
+                        "guidance",
+                        "seam_denoise",
+                        "seam_guidance",
+                        "seam_mask_expand",
+                        "seam_mask_feather",
+                        "seam_mask_width",
+                        "seam_prompt",
+                        "seam_steps",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-4b-seamless-tile"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.krea2-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.krea2-turbo-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed"
+                      ],
+                      "id": "image.generate.moss-image"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed"
+                      ],
+                      "id": "image.generate.moss-image-fast"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.moss-image-quality"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "negative_prompt",
+                        "sampler",
+                        "scheduler",
+                        "seam_blending",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.sdxl-seamless-tile"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/images/edits",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui",
+                    "gateway"
+                  ],
+                  "intent": "image.edit",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.fibo-2-edit-turbo"
+                    },
+                    {
+                      "controls": [
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "denoise",
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein-4b"
+                    },
+                    {
+                      "controls": [
+                        "denoise",
+                        "guidance",
+                        "mask_expand",
+                        "mask_feather",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein-4b-inpaint"
+                    },
+                    {
+                      "controls": [],
+                      "id": "image.edit.image-identity"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "negative_prompt",
+                        "reference_resolution",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-edit"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "negative_prompt",
+                        "reference_image_2",
+                        "reference_resolution",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-edit-multiref"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "lanpaint_steps",
+                        "mask_expand",
+                        "mask_feather",
+                        "negative_prompt",
+                        "prompt_mode",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-inpaint"
+                    },
+                    {
+                      "controls": [
+                        "color_correction_method",
+                        "scale",
+                        "seed"
+                      ],
+                      "id": "image.edit.seedvr2-upscale"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/videos",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "video.edit",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "multiplier",
+                        "source_video"
+                      ],
+                      "id": "video.edit.rife-interpolate"
+                    },
+                    {
+                      "controls": [
+                        "reference_image",
+                        "reference_subject",
+                        "source_subject",
+                        "source_video",
+                        "subject_index"
+                      ],
+                      "id": "video.edit.scail-2-replace"
+                    }
+                  ]
+                },
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "video.generate",
+                  "workflows": [
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-i2v"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "img_compression",
+                        "last_frame",
+                        "last_frame_strength"
+                      ],
+                      "id": "video.generate.ltx-2.5-keyframes"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "img_compression",
+                        "last_frame",
+                        "last_frame_strength",
+                        "mid_frame",
+                        "mid_frame_index",
+                        "mid_frame_strength"
+                      ],
+                      "id": "video.generate.ltx-2.5-keyframes-mid"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-long"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-t2v"
+                    },
+                    {
+                      "controls": [
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-i2v"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "last_frame",
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-keyframes"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "last_frame",
+                        "mid_frame_index",
+                        "middle_frame",
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-keyframes-mid"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.minimax-h3-long"
+                    },
+                    {
+                      "controls": [
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-t2v"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/audio/generate",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "audio.generate",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "bpm",
+                        "cfg",
+                        "cfg_scale",
+                        "keyscale",
+                        "language",
+                        "min_p",
+                        "sampler",
+                        "scheduler",
+                        "steps",
+                        "temperature",
+                        "timesignature",
+                        "top_k",
+                        "top_p"
+                      ],
+                      "id": "audio.generate.ace-step-1.5-xl-turbo"
+                    },
+                    {
+                      "controls": [],
+                      "id": "audio.generate.sa3-small-sfx"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "audio.generate.tangoflux"
+                    },
+                    {
+                      "controls": [],
+                      "id": "audio.generate.yue2-song"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned chat diagnostics controls.",
+          "namespace": "com.azizam.chat",
+          "routes": [
+            {
+              "controls": [
+                "receipt_verbosity"
+              ],
+              "route": "/v1/chat/completions",
+              "target": "chat_extension_inputs"
+            },
+            {
+              "controls": [
+                "receipt_verbosity"
+              ],
+              "route": "/v1/responses",
+              "target": "chat_extension_inputs"
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned routing hints that cannot override app profile policy.",
+          "namespace": "com.azizam.routing",
+          "routes": [
+            {
+              "controls": [
+                "local_preference"
+              ],
+              "route": "/v1/chat/completions",
+              "target": "routing_extension_inputs"
+            },
+            {
+              "controls": [
+                "local_preference"
+              ],
+              "route": "/v1/responses",
+              "target": "routing_extension_inputs"
+            }
+          ]
+        }
+      ],
+      "schema_version": 1
+    },
+    "client": {
+      "audience": "client",
+      "extensions": [
+        {
+          "description": "Per-request prompt retention choice; this control is removed before backend dispatch.",
+          "gateway_controls": [
+            {
+              "default": "member and household settings",
+              "name": "mode",
+              "values": [
+                "forget"
+              ]
+            }
+          ],
+          "namespace": "com.azizam.prompts",
+          "routes": [
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/images/generations",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/images/edits",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos/extensions",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos/workflows/{workflow_id}",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/audio/generate",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/audio/speech",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/responses",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/gateway/v1/media/jobs/image-generations",
+              "target": "gateway_prompt_policy"
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned workflow controls for image, video, and audio routes.",
+          "gateway_controls": [
+            {
+              "default": "the app profile's media_metadata.default",
+              "description": "Whether delivered media keeps its embedded ComfyUI workflow and gateway provenance (full) or has all metadata removed losslessly (none). Valid on every route that returns generated media.",
+              "name": "metadata",
+              "values": [
+                "full",
+                "none"
+              ]
+            }
+          ],
+          "namespace": "com.azizam.workflow",
+          "routes": [
+            {
+              "route": "/v1/images/generations",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui",
+                    "gateway"
+                  ],
+                  "intent": "image.generate",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.anima-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-4b"
+                    },
+                    {
+                      "controls": [
+                        "guidance",
+                        "seam_denoise",
+                        "seam_guidance",
+                        "seam_mask_expand",
+                        "seam_mask_feather",
+                        "seam_mask_width",
+                        "seam_prompt",
+                        "seam_steps",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-4b-seamless-tile"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.krea2-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.krea2-turbo-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed"
+                      ],
+                      "id": "image.generate.moss-image"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed"
+                      ],
+                      "id": "image.generate.moss-image-fast"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.moss-image-quality"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "negative_prompt",
+                        "sampler",
+                        "scheduler",
+                        "seam_blending",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.sdxl-seamless-tile"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/images/edits",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui",
+                    "gateway"
+                  ],
+                  "intent": "image.edit",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.fibo-2-edit-turbo"
+                    },
+                    {
+                      "controls": [
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "denoise",
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein-4b"
+                    },
+                    {
+                      "controls": [
+                        "denoise",
+                        "guidance",
+                        "mask_expand",
+                        "mask_feather",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein-4b-inpaint"
+                    },
+                    {
+                      "controls": [],
+                      "id": "image.edit.image-identity"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "negative_prompt",
+                        "reference_resolution",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-edit"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "negative_prompt",
+                        "reference_image_2",
+                        "reference_resolution",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-edit-multiref"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "lanpaint_steps",
+                        "mask_expand",
+                        "mask_feather",
+                        "negative_prompt",
+                        "prompt_mode",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-inpaint"
+                    },
+                    {
+                      "controls": [
+                        "color_correction_method",
+                        "scale",
+                        "seed"
+                      ],
+                      "id": "image.edit.seedvr2-upscale"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/videos",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "video.edit",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "multiplier",
+                        "source_video"
+                      ],
+                      "id": "video.edit.rife-interpolate"
+                    },
+                    {
+                      "controls": [
+                        "reference_image",
+                        "reference_subject",
+                        "source_subject",
+                        "source_video",
+                        "subject_index"
+                      ],
+                      "id": "video.edit.scail-2-replace"
+                    }
+                  ]
+                },
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "video.generate",
+                  "workflows": [
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-i2v"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "img_compression",
+                        "last_frame",
+                        "last_frame_strength"
+                      ],
+                      "id": "video.generate.ltx-2.5-keyframes"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "img_compression",
+                        "last_frame",
+                        "last_frame_strength",
+                        "mid_frame",
+                        "mid_frame_index",
+                        "mid_frame_strength"
+                      ],
+                      "id": "video.generate.ltx-2.5-keyframes-mid"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-long"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-t2v"
+                    },
+                    {
+                      "controls": [
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-i2v"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "last_frame",
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-keyframes"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "last_frame",
+                        "mid_frame_index",
+                        "middle_frame",
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-keyframes-mid"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.minimax-h3-long"
+                    },
+                    {
+                      "controls": [
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-t2v"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/audio/generate",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "audio.generate",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "bpm",
+                        "cfg",
+                        "cfg_scale",
+                        "keyscale",
+                        "language",
+                        "min_p",
+                        "sampler",
+                        "scheduler",
+                        "steps",
+                        "temperature",
+                        "timesignature",
+                        "top_k",
+                        "top_p"
+                      ],
+                      "id": "audio.generate.ace-step-1.5-xl-turbo"
+                    },
+                    {
+                      "controls": [],
+                      "id": "audio.generate.sa3-small-sfx"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "audio.generate.tangoflux"
+                    },
+                    {
+                      "controls": [],
+                      "id": "audio.generate.yue2-song"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned chat diagnostics controls.",
+          "namespace": "com.azizam.chat",
+          "routes": [
+            {
+              "controls": [
+                "receipt_verbosity"
+              ],
+              "route": "/v1/chat/completions",
+              "target": "chat_extension_inputs"
+            },
+            {
+              "controls": [
+                "receipt_verbosity"
+              ],
+              "route": "/v1/responses",
+              "target": "chat_extension_inputs"
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned routing hints that cannot override app profile policy.",
+          "namespace": "com.azizam.routing",
+          "routes": [
+            {
+              "controls": [
+                "local_preference"
+              ],
+              "route": "/v1/chat/completions",
+              "target": "routing_extension_inputs"
+            },
+            {
+              "controls": [
+                "local_preference"
+              ],
+              "route": "/v1/responses",
+              "target": "routing_extension_inputs"
+            }
+          ]
+        }
+      ],
+      "schema_version": 1
+    },
+    "internal": {
+      "audience": "internal",
+      "extensions": [
+        {
+          "description": "Per-request prompt retention choice; this control is removed before backend dispatch.",
+          "gateway_controls": [
+            {
+              "default": "member and household settings",
+              "name": "mode",
+              "values": [
+                "forget"
+              ]
+            }
+          ],
+          "namespace": "com.azizam.prompts",
+          "routes": [
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/images/generations",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/images/edits",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos/extensions",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/videos/workflows/{workflow_id}",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/audio/generate",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/audio/speech",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/v1/responses",
+              "target": "gateway_prompt_policy"
+            },
+            {
+              "controls": [
+                "mode"
+              ],
+              "route": "/gateway/v1/media/jobs/image-generations",
+              "target": "gateway_prompt_policy"
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned workflow controls for image, video, and audio routes.",
+          "gateway_controls": [
+            {
+              "default": "the app profile's media_metadata.default",
+              "description": "Whether delivered media keeps its embedded ComfyUI workflow and gateway provenance (full) or has all metadata removed losslessly (none). Valid on every route that returns generated media.",
+              "name": "metadata",
+              "values": [
+                "full",
+                "none"
+              ]
+            }
+          ],
+          "namespace": "com.azizam.workflow",
+          "routes": [
+            {
+              "route": "/v1/images/generations",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui",
+                    "gateway"
+                  ],
+                  "intent": "image.generate",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.anima-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-4b"
+                    },
+                    {
+                      "controls": [
+                        "guidance",
+                        "seam_denoise",
+                        "seam_guidance",
+                        "seam_mask_expand",
+                        "seam_mask_feather",
+                        "seam_mask_width",
+                        "seam_prompt",
+                        "seam_steps",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-4b-seamless-tile"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.flux2-klein-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.krea2-turbo"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "lora_strength",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.krea2-turbo-snofs"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed"
+                      ],
+                      "id": "image.generate.moss-image"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed"
+                      ],
+                      "id": "image.generate.moss-image-fast"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.moss-image-quality"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "negative_prompt",
+                        "sampler",
+                        "scheduler",
+                        "seam_blending",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.generate.sdxl-seamless-tile"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/images/edits",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui",
+                    "gateway"
+                  ],
+                  "intent": "image.edit",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.fibo-2-edit-turbo"
+                    },
+                    {
+                      "controls": [
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein"
+                    },
+                    {
+                      "controls": [
+                        "denoise",
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein-4b"
+                    },
+                    {
+                      "controls": [
+                        "denoise",
+                        "guidance",
+                        "mask_expand",
+                        "mask_feather",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.flux2-klein-4b-inpaint"
+                    },
+                    {
+                      "controls": [],
+                      "id": "image.edit.image-identity"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "negative_prompt",
+                        "reference_resolution",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-edit"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "negative_prompt",
+                        "reference_image_2",
+                        "reference_resolution",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-edit-multiref"
+                    },
+                    {
+                      "controls": [
+                        "cfg",
+                        "lanpaint_steps",
+                        "mask_expand",
+                        "mask_feather",
+                        "negative_prompt",
+                        "prompt_mode",
+                        "seed",
+                        "steps"
+                      ],
+                      "id": "image.edit.qwen-image-2.1-inpaint"
+                    },
+                    {
+                      "controls": [
+                        "color_correction_method",
+                        "scale",
+                        "seed"
+                      ],
+                      "id": "image.edit.seedvr2-upscale"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/videos",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "video.edit",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "multiplier",
+                        "source_video"
+                      ],
+                      "id": "video.edit.rife-interpolate"
+                    },
+                    {
+                      "controls": [
+                        "reference_image",
+                        "reference_subject",
+                        "source_subject",
+                        "source_video",
+                        "subject_index"
+                      ],
+                      "id": "video.edit.scail-2-replace"
+                    }
+                  ]
+                },
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "video.generate",
+                  "workflows": [
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-i2v"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "img_compression",
+                        "last_frame",
+                        "last_frame_strength"
+                      ],
+                      "id": "video.generate.ltx-2.5-keyframes"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "img_compression",
+                        "last_frame",
+                        "last_frame_strength",
+                        "mid_frame",
+                        "mid_frame_index",
+                        "mid_frame_strength"
+                      ],
+                      "id": "video.generate.ltx-2.5-keyframes-mid"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-long"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.ltx-2.5-t2v"
+                    },
+                    {
+                      "controls": [
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-i2v"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "last_frame",
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-keyframes"
+                    },
+                    {
+                      "controls": [
+                        "frames",
+                        "last_frame",
+                        "mid_frame_index",
+                        "middle_frame",
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-keyframes-mid"
+                    },
+                    {
+                      "controls": [],
+                      "id": "video.generate.minimax-h3-long"
+                    },
+                    {
+                      "controls": [
+                        "steps"
+                      ],
+                      "id": "video.generate.minimax-h3-t2v"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "route": "/v1/audio/generate",
+              "target": "workflow_manifest_inputs",
+              "targets": [
+                {
+                  "backends": [
+                    "comfyui"
+                  ],
+                  "intent": "audio.generate",
+                  "workflows": [
+                    {
+                      "controls": [
+                        "bpm",
+                        "cfg",
+                        "cfg_scale",
+                        "keyscale",
+                        "language",
+                        "min_p",
+                        "sampler",
+                        "scheduler",
+                        "steps",
+                        "temperature",
+                        "timesignature",
+                        "top_k",
+                        "top_p"
+                      ],
+                      "id": "audio.generate.ace-step-1.5-xl-turbo"
+                    },
+                    {
+                      "controls": [],
+                      "id": "audio.generate.sa3-small-sfx"
+                    },
+                    {
+                      "controls": [
+                        "batch_size",
+                        "guidance",
+                        "steps"
+                      ],
+                      "id": "audio.generate.tangoflux"
+                    },
+                    {
+                      "controls": [],
+                      "id": "audio.generate.yue2-song"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned chat diagnostics controls.",
+          "namespace": "com.azizam.chat",
+          "routes": [
+            {
+              "controls": [
+                "receipt_verbosity"
+              ],
+              "route": "/v1/chat/completions",
+              "target": "chat_extension_inputs"
+            },
+            {
+              "controls": [
+                "receipt_verbosity"
+              ],
+              "route": "/v1/responses",
+              "target": "chat_extension_inputs"
+            }
+          ]
+        },
+        {
+          "description": "Gateway-owned routing hints that cannot override app profile policy.",
+          "namespace": "com.azizam.routing",
+          "routes": [
+            {
+              "controls": [
+                "local_preference"
+              ],
+              "route": "/v1/chat/completions",
+              "target": "routing_extension_inputs"
+            },
+            {
+              "controls": [
+                "local_preference"
+              ],
+              "route": "/v1/responses",
+              "target": "routing_extension_inputs"
+            }
+          ]
+        }
+      ],
+      "schema_version": 1
+    }
+  }
+}
