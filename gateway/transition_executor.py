@@ -623,10 +623,16 @@ class Executor:
         policy = self._policy_of(operation.domain)
         order = [name for name in self._order() if after is None or STEP_ORDER.index(name) > STEP_ORDER.index(after)]
         current = operation
+        # A resume past the load did not run the load's own check: the open boundary looks at the load itself, after
+        # any skipped or intermediate step, and also when the owner resolved the open step (nothing is left to run).
+        unchecked = (after is not None and operation.kind in ("select", "wake")
+                     and STEP_ORDER.index(after) >= STEP_ORDER.index("load"))
         for name in order:
             step = self._steps[name]
             if not step.applies(current, adapter):
                 continue
+            if name == "open" and unchecked and await self._hold_unloaded(current, adapter, policy):
+                return
             ctx = StepContext(operation=current, store=self.store, adapter=adapter, snapshots=self._snapshots,
                               policy=policy, trigger=trigger)
             verdict = await step.run(ctx)
@@ -640,6 +646,8 @@ class Executor:
             await self._apply_verdict(current, verdict)
             return
         if current.state == "running":
+            if unchecked and "open" not in order and await self._hold_unloaded(current, adapter, policy):
+                return
             await asyncio.to_thread(self.store.finish, current.op_id, "succeeded", "open")
 
     async def _apply_verdict(self, operation: Operation, verdict: StepVerdict) -> None:
@@ -729,7 +737,22 @@ class Executor:
                 return
             after = intent.step
         elif operation.state == "reconciling":
-            return  # reconciling without an unknown effect: only the owner resolves it
+            if operation.step_outcome in (None, "unknown") or operation.step_intent is None:
+                return  # reconciling without a settled outcome: only the owner resolves it
+            # The outcome was settled (by the owner or a revalidation) and the process died before the resume. Go on as
+            # the live path would have, through the same checks.
+            verdict = "continue" if operation.step_outcome == "success" else (
+                "fail_closed" if operation.step_outcome == "partial" else
+                await self._settled_verdict(operation, adapter, policy))
+            if verdict == "reconcile":
+                resumed = await asyncio.to_thread(self.store.resume, operation.op_id)
+                await self._hold_revalidation(resumed)
+                await asyncio.to_thread(self.store.finish, operation.op_id, "reconciling", "reconciling")
+                return
+            if verdict != "continue":
+                await self._finish_for(operation, verdict)
+                return
+            after = operation.step_intent.step
         else:
             if operation.step_outcome in ("no_change", "partial"):
                 # The step ended badly and the gate write was lost: judge it as the live path would have.
@@ -742,25 +765,26 @@ class Executor:
 
     async def _resume_from(self, op_id: str, adapter: TransitionAdapter, policy: Mapping[str, object],
                            after: Optional[StepName]) -> None:
-        """Every recovery that goes on runs through here, on the stored row. One that would go on at the open step first
-        looks at the load again: the target must be resident, the offering and ready now. Otherwise it holds."""
+        """Every recovery that goes on runs through here, on the stored row. The open-boundary check is in ``_drive``."""
         current = await asyncio.to_thread(self.store.get, op_id)
         assert current is not None
-        if await self._opens_next(current, adapter, after) and not await self._load_still_verified(current, adapter, policy):
-            # The load was verified before the restart; the engine may have died since. Never open on that old evidence.
-            print(f"[transition-gate] {op_id} resumes at open but the target is not resident and ready now; holding", flush=True)
-            # The hold is recorded at the open step (a held operation needs an unknown outcome): the owner resolves it
-            # there, after looking at the engine.
-            if current.state != "running":
-                current = await asyncio.to_thread(self.store.resume, op_id)
-            held = StepIntent(step="open", effect_key=f"{op_id}:open", expected_incarnation=None)
-            await asyncio.to_thread(self.store.write_intent, op_id, held,
-                                    EffectResult(outcome="unknown", evidence_ref="load_unverified_at_resume"))
-            await asyncio.to_thread(self.store.finish, op_id, "reconciling", "reconciling")
-            return
         if current.state == "reconciling":
             current = await asyncio.to_thread(self.store.resume, op_id)
         self._launch_resume(current, after)
+
+    async def _hold_unloaded(self, operation: Operation, adapter: TransitionAdapter, policy: Mapping[str, object]) -> bool:
+        """At the open boundary of a resumed select or wake, look at the load again (G14): the target must be resident,
+        the offering and ready now. Otherwise hold ``reconciling`` at the open step and return True. The load was verified
+        before the restart, or never seen at all; the engine may have died or not become ready since."""
+        if await self._load_still_verified(operation, adapter, policy):
+            return False
+        print(f"[transition-gate] {operation.op_id} resumes at open but the target is not resident and ready now; holding",
+              flush=True)
+        held = StepIntent(step="open", effect_key=f"{operation.op_id}:open", expected_incarnation=None)
+        await asyncio.to_thread(self.store.write_intent, operation.op_id, held,
+                                EffectResult(outcome="unknown", evidence_ref="load_unverified_at_resume"))
+        await asyncio.to_thread(self.store.finish, operation.op_id, "reconciling", "reconciling")
+        return True
 
     async def _settled_verdict(self, operation: Operation, adapter: TransitionAdapter, policy: Mapping[str, object]) -> StepVerdict:
         """The verdict for a step whose ``no_change`` or ``partial`` outcome is recorded but whose gate verdict was not
@@ -813,16 +837,6 @@ class Executor:
             await self._finish_for(operation, verdict)
             return
         await self._resume_from(operation.op_id, adapter, policy, step)
-
-    async def _opens_next(self, operation: Operation, adapter: TransitionAdapter, after: Optional[StepName]) -> bool:
-        """True when a select or wake goes on at the open step: it would open the gate on what the load once showed."""
-        if operation.kind not in ("select", "wake"):
-            return False
-        start = -1 if after is None else STEP_ORDER.index(after)
-        for name in self._order():
-            if STEP_ORDER.index(name) > start and self._steps[name].applies(operation, adapter):
-                return name == "open"
-        return False
 
     async def _load_still_verified(self, operation: Operation, adapter: TransitionAdapter,
                                    policy: Mapping[str, object]) -> bool:
