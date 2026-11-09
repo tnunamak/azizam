@@ -17,6 +17,7 @@ from gateway.capabilities import (  # noqa: E402
     UNREVIEWED_WORKFLOW_CAVEAT,
     Capability,
     ResourceEstimate,
+    _derive_input_modalities,
     capability_from_workflow_record,
     capability_with_policy_view,
     summarize_capabilities,
@@ -314,6 +315,133 @@ class SummarizeCapabilitiesOrderingTests(unittest.TestCase):
         first = summarize_capabilities([a, b, c], audience="admin")
         second = summarize_capabilities([c, b, a], audience="admin")
         self.assertEqual(first, second)
+
+
+class InputModalityTests(unittest.TestCase):
+    def test_declared_accepts_do_not_depend_on_intent_name(self) -> None:
+        inputs = {"source": {"type": "asset", "accepts": ["audio/wav"]}}
+        for intent in ("smell.infer", "image.transcribe", "audio.transcribe"):
+            with self.subTest(intent=intent):
+                self.assertEqual(
+                    _derive_input_modalities(inputs, intent=intent), ("audio",)
+                )
+
+    def test_audio_asset_under_image_intent_reaches_both_capability_fields(self) -> None:
+        manifest = yaml.safe_load(CHAT_WORKFLOW_YAML)
+        manifest["inputs"]["source_image"].update(
+            accepts=["audio/wav"], recordable=True
+        )
+        cap = capability_from_workflow_record(_record(yaml.safe_dump(manifest)))
+        self.assertEqual(cap.input_modalities, ("text", "audio"))
+        self.assertEqual(cap.recordable_inputs, ("audio",))
+
+    def test_nested_assets_preserve_first_seen_order_and_deduplicate(self) -> None:
+        for list_type in ("list", "array"):
+            with self.subTest(list_type=list_type):
+                inputs = {
+                    "prompt": {"type": "string"},
+                    "payload": {
+                        "type": "object",
+                        "properties": {
+                            "clip": {"type": "asset", "accepts": ["video/mp4"]},
+                            "tracks": {
+                                "type": list_type,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "source": {
+                                            "type": "asset",
+                                            "accepts": [
+                                                "audio/wav", "image/png", "audio/mpeg"
+                                            ],
+                                        },
+                                        "caption": {"type": "string"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    "duplicate": {"type": "asset", "accepts": ["video/webm"]},
+                    "count": {"type": "integer"},
+                }
+                self.assertEqual(
+                    _derive_input_modalities(inputs, intent="smell.infer"),
+                    ("text", "video", "audio", "image"),
+                )
+
+    def test_media_types_use_existing_mapping_without_intent_fallback(self) -> None:
+        inputs = {
+            "source": {
+                "type": "asset",
+                "accepts": ["text/plain", "application/json", "application/octet-stream"],
+            }
+        }
+        self.assertEqual(
+            _derive_input_modalities(inputs, intent="image.transcribe"),
+            ("text", "asset"),
+        )
+
+    def test_asset_without_accepts_keeps_legacy_result(self) -> None:
+        expected = {
+            "image.edit": "image",
+            "audio.transcribe": "audio",
+            "speech.recognize": "audio",
+            "sound.analyze": "audio",
+            "music.analyze": "audio",
+            "video.edit": "video",
+            "smell.infer": "asset",
+        }
+        for intent, modality in expected.items():
+            for spec in ({"type": "asset"}, {"type": "asset", "accepts": []}):
+                with self.subTest(intent=intent, spec=spec):
+                    self.assertEqual(
+                        _derive_input_modalities({"source": spec}, intent=intent),
+                        (modality,),
+                    )
+
+
+class ShippedManifestInputModalityTests(unittest.TestCase):
+    """Shipped manifests: an asset's declared accepts names its modality."""
+
+    EXPECTED = {
+        "mesh.generate.trellis-2.yml": ("image", "text"),
+        "video-ltx-2.5-i2v.yml": ("text", "image"),
+        "video-ltx-2.5-keyframes-mid.yml": ("text", "image"),
+        "video-ltx-2.5-keyframes.yml": ("text", "image"),
+        "video-minimax-h3-i2v.yml": ("text", "image"),
+        "video-minimax-h3-keyframes-mid.yml": ("text", "image"),
+        "video-minimax-h3-keyframes.yml": ("text", "image"),
+        "video-scail-2-replace.yml": ("image", "video", "text"),
+    }
+
+    def test_image_inputs_are_not_named_by_the_intent_family(self) -> None:
+        folder = ROOT / "manifests" / "workflows"
+        for name, expected in self.EXPECTED.items():
+            with self.subTest(manifest=name):
+                doc = yaml.safe_load((folder / name).read_text())
+                self.assertEqual(
+                    _derive_input_modalities(doc["inputs"], intent=doc["intent"]),
+                    expected,
+                )
+
+    def test_every_shipped_asset_with_accepts_maps_to_its_media_family(self) -> None:
+        folder = ROOT / "manifests" / "workflows"
+        checked = 0
+        for path in sorted(folder.glob("*.yml")):
+            doc = yaml.safe_load(path.read_text())
+            inputs = doc.get("inputs") if isinstance(doc, dict) else None
+            if not isinstance(inputs, dict):
+                continue
+            for key, spec in inputs.items():
+                accepts = spec.get("accepts") if isinstance(spec, dict) else None
+                if not (isinstance(spec, dict) and spec.get("type") == "asset" and accepts):
+                    continue
+                families = {str(m).split("/", 1)[0] for m in (accepts if isinstance(accepts, list) else [accepts])}
+                got = _derive_input_modalities({key: spec}, intent=str(doc.get("intent") or ""))
+                with self.subTest(manifest=path.name, input=key):
+                    self.assertEqual(set(got), families & {"image", "audio", "video", "text"} or {"asset"})
+                checked += 1
+        self.assertGreater(checked, 0)
 
 
 class WorkflowDerivedCapabilityTests(unittest.TestCase):

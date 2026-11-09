@@ -491,11 +491,10 @@ def capability_from_workflow_record(
 
     Output modalities come from the manifest output media types
     (``image/*`` → ``image``, ``audio/*`` → ``audio``, ``video/*`` → ``video``,
-    ``text/*`` → ``text``). Input modalities are derived from input ``type``
-    declarations (``asset`` → ``image``/``audio``/``video`` is *not* inferred
-    here; we default to ``image`` only when the intent name starts with
-    ``image.``, otherwise the asset type is left untagged and surfaces as the
-    generic ``asset`` modality so the router does not over-promise).
+    ``text/*`` → ``text``). Input modalities follow declared types, including
+    nested object properties and list items. Assets use their ``accepts``
+    media types; only assets without accepts retain the legacy intent fallback.
+    Unmapped media types remain generic ``asset`` modalities.
 
     Workflows are treated as ``job`` execution by default because they back
     the durable media job surface (``POST /gateway/v1/media/jobs``). Callers
@@ -654,18 +653,35 @@ def _derive_input_modalities(
     inputs: dict[str, Any], *, intent: str
 ) -> tuple[str, ...]:
     modalities: list[str] = []
-    asset_modality = _intent_asset_modality(intent)
-    for spec in inputs.values():
+
+    def add(modality: str) -> None:
+        if modality not in modalities:
+            modalities.append(modality)
+
+    def visit(spec: Any) -> None:
         if not isinstance(spec, dict):
-            continue
+            return
         type_name = str(spec.get("type") or "string")
         if type_name == "string":
-            if "text" not in modalities:
-                modalities.append("text")
+            add("text")
         elif type_name == "asset":
-            picked = asset_modality or "asset"
-            if picked not in modalities:
-                modalities.append(picked)
+            accepts = spec.get("accepts")
+            if not accepts:
+                add(_intent_asset_modality(intent) or "asset")
+            else:
+                media_types = accepts if isinstance(accepts, list) else [accepts]
+                for media_type in media_types:
+                    add(_media_type_modality(str(media_type)) or "asset")
+        elif type_name == "object":
+            properties = spec.get("properties")
+            if isinstance(properties, dict):
+                for child in properties.values():
+                    visit(child)
+        elif type_name in {"list", "array"}:
+            visit(spec.get("items"))
+
+    for spec in inputs.values():
+        visit(spec)
     return tuple(modalities)
 
 
