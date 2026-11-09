@@ -27051,6 +27051,10 @@ class _RunReceiptOwner(ReceiptLifecycleOwner):
 
     short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
 
+    def dispatching(self, backend: str | None) -> None:
+        """The run is submitted: the receipt names the service it runs on (a row with ``backend_at_run``)."""
+        self.receipt.backend = backend
+
     def handoff(self) -> "_RunReceiptOwner":
         super().handoff()
         _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
@@ -27068,7 +27072,7 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     # activity read their capability from it. A route that declares none records the generic run intent.
     owner = _RunReceiptOwner(RouteReceipt(
         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
-        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        backend=None if row.backend_at_run else row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
     owner.short_names = row.receipt_names == "short"
     _ROW_RECEIPT.set(owner.receipt)

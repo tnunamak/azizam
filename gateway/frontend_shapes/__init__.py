@@ -54,6 +54,13 @@ def _receipt_closes(row_id: str, raw: Mapping[str, Any]) -> Any:
     return value
 
 
+def _backend_at_run(row_id: str, raw: Mapping[str, Any]) -> bool:
+    value = raw.get("backend_at_run", False)
+    if not isinstance(value, bool):
+        raise RowError(f"{row_id}: backend_at_run must be true or false")
+    return value
+
+
 def _history_facts(row_id: str, raw: Mapping[str, Any]) -> bool:
     value = raw.get("history_facts", True)
     if not isinstance(value, bool):
@@ -110,7 +117,7 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
                        receipt_opens=_receipt_opens(row_id, raw), receipt_closes=_receipt_closes(row_id, raw),
-                       history_facts=_history_facts(row_id, raw), unconfigured=_unconfigured(row_id, raw))
+                       history_facts=_history_facts(row_id, raw), backend_at_run=_backend_at_run(row_id, raw), unconfigured=_unconfigured(row_id, raw))
 
 
 def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:

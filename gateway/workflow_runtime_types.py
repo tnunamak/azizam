@@ -672,6 +672,9 @@ class FrontendRow:
     # Whether the request's History entry carries the run's workflow facts (``run``); a row whose summaries never had a
     # run block sets false, so the entry stays titled from the body model.
     history_facts: bool = True
+    # True: the receipt names the service it ran on only once the run is submitted, as a route whose refusals come before any
+    # service is chosen always did (row data: ``backend_at_run``). False: it names the route's service when it opens.
+    backend_at_run: bool = False
     # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
     job_failure_text: Literal["adapter", "category_copy"] = "adapter"
     # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits

@@ -556,6 +556,7 @@ def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
     class Owner:
         def report(self, **outcome): calls["report"].append(outcome)
         def handoff(self): calls["handoff"].append(1)
+        def dispatching(self, backend): calls["backend"].append(backend)
         async def __aenter__(self): return self
         async def __aexit__(self, *exc): return False
 
@@ -572,7 +573,7 @@ def _submit_app(calls: dict[str, list], *, disposition: str = "new"):
 
 
 def _keys() -> dict[str, list]:
-    return {key: [] for key in ("report", "handoff", "named", "inputs", "facts")}
+    return {key: [] for key in ("report", "handoff", "named", "inputs", "facts", "backend")}
 
 
 def test_a_queued_create_closes_its_receipt_as_succeeded_and_names_nothing() -> None:
@@ -584,6 +585,17 @@ def test_a_queued_create_closes_its_receipt_as_succeeded_and_names_nothing() -> 
     assert answer.status_code == 200 and answer.json()["status"] == "queued"
     assert calls["report"] == [{"status": "succeeded", "reason": "http_200"}]
     assert calls["handoff"] == [] and calls["named"] == [] and calls["inputs"] == []
+
+
+def test_a_create_names_its_service_on_the_receipt_only_once_the_run_is_submitted() -> None:
+    """The old route set receipt.backend after model resolution: a refusal before that left it unset."""
+    from starlette.testclient import TestClient
+    calls = _keys()
+    TestClient(_submit_app(calls)).post("/v1/videos", json={"prompt": "x", "model": "ltx-2.5-t2v"})
+    assert len(calls["backend"]) == 1
+    refused = _keys()
+    TestClient(_submit_app(refused)).post("/v1/videos", json={"prompt": "x", "model": "no-such-model"})
+    assert refused["backend"] == []
 
 
 def test_a_replay_of_a_create_also_names_nothing_on_its_receipt() -> None:

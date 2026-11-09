@@ -189,14 +189,14 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         wants_async = prefers_async(request.headers.get("prefer"))
         answered = dataclasses.replace(row, mode="job") if wants_async else row
         return await _serve_open(deps, row, answered, shape, core, request, caller, snapshot, spool, owner,
-                                 request_id, wants_async, route_intent(row, canonical))
+                                 request_id, wants_async, route_intent(row, canonical), route_backend(row, canonical))
 
     return serve
 
 
 async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRow, shape: Any, core: Any,
                       request: Request, caller: Any, snapshot: RegistrySnapshot, spool: RequestSpool, owner: Any,
-                      request_id: str, wants_async: bool, intent: str) -> Response:
+                      request_id: str, wants_async: bool, intent: str, backend: str | None) -> Response:
     """The steps after the receipt opens. Each exit reports the outcome, or hands the receipt to the core."""
     if row.unconfigured is not None and not _wire.candidates(snapshot, row):
         # The deployment configures no workflow for this route: the row says what that is told.
@@ -227,6 +227,8 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
         refusal = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
         owner.report(status="failed", reason=outcome.code)
         return refusal
+    if row.backend_at_run:                                # the run exists: the service it runs on is now the receipt's
+        owner.dispatching(backend)
     await shape.after_submit(request, outcome, caller)
     if outcome.disposition == "replay":
         facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome, row)

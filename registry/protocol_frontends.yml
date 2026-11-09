@@ -967,6 +967,7 @@ frontends:
     mode: job
     receipt_closes: submit
     history_facts: false
+    backend_at_run: true
     refusal_bodies: {service_disabled: {message: Video generation not enabled, type: service_unavailable}}
     result_headers: {duration_adjusted: X-Duration-Adjusted}
     receipt_protocol: openai.video
