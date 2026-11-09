@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 from gateway import media_delivery, media_metadata, provenance
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL
-from gateway.workflow_runtime_types import CallerContext, JobService, RequestFacts, RunJobView
+from gateway.workflow_runtime_types import RUN_STARTED_PROGRESS, CallerContext, JobService, RequestFacts, RunJobView
 
 WIRE_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "completed", "failed": "failed", "canceled": "failed"}
 
@@ -24,7 +24,7 @@ WIRE_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "compl
 def effective_status(view: RunJobView) -> str:
     """The job store's status word, except that a run the engine has not reported on yet is still queued: the store marks a
     run ``running`` when it hands the prompt over, and the wire says ``in_progress`` only once the engine reports it running."""
-    return "queued" if view.status == "running" and not view.progress else view.status
+    return "queued" if view.status == "running" and (view.progress or 0) <= RUN_STARTED_PROGRESS else view.status
 
 
 NO_RESULT = "no_result"              # the run core's failure code for a run that ended without a result file

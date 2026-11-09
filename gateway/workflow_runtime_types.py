@@ -40,6 +40,7 @@ NameKind = Literal["workflow", "workflow_alias", "model", "model_alias", "fronte
 CallerContext = Any
 
 # Refusal and failure codes the store, the run core and the frontends share (the error vocabulary of this design).
+RUN_STARTED_PROGRESS = 5            # the progress a run is given when it starts, before its engine has reported anything
 WORKFLOW_DISABLED = "workflow_disabled"
 WORKFLOW_DELETED = "workflow_deleted"
 WORKFLOW_EXISTS = "workflow_exists"

@@ -746,13 +746,13 @@ class NodeGraphAdapter:
 
     async def fetch_selected(self, conn: Connection, status: JobStatus, block: Mapping[str, Any], outputs: Mapping[str, Any], *,
                              limits: Any, headers: Any = UNSET,
-                             session: GraphSession | None = None) -> dict[str, list[bytes]]:
+                             session: GraphSession | None = None, names: list[str] | None = None) -> dict[str, list[bytes]]:
         """The bytes of each named result of a finished prompt, for a route that delivers files itself.
 
         ``status`` is the ``succeeded`` status that ``poll`` returned: the history entry it read is collected by the
         binding's selectors (``collect``), so no second look at the engine is made. The reads go through
         ``output_selectors.FETCH_GATE`` and are bounded while they are read: the number of files, the bytes of one file and
-        the total are the deployment's ``limits`` (D6). A file that cannot be read is left out. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
+        the total are the deployment's ``limits`` (D6). A file that cannot be read is left out. ``names``, when given, receives the engine's file name of each file kept, in order. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
         Raises ``SelectionRefused`` (a result that is missing, ambiguous, malformed or over a limit, or a fetch that waited too long).
         """
         record = status.record
@@ -775,6 +775,8 @@ class NodeGraphAdapter:
                         if data:
                             total += len(data)
                             chosen[name].append(data)
+                            if names is not None:
+                                names.append(str(file.get("filename") or ""))
         except output_selectors.FetchRefused as refusal:
             raise SelectionRefused(refusal.code, str(refusal)) from refusal
         return chosen

@@ -13417,7 +13417,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
             for item in page:
                 if isinstance(item, JobHit):
                     facts = await asyncio.to_thread(_workflow_job_service().request_facts, item.view.job_id, auth_context)
-                    data.append(shape.status_body(item.view, facts))
+                    data.append(shape.list_item(item.view, facts))
                     continue
                 prompt_id, record = item
                 video_id = _video_id_from_prompt_id(prompt_id)
@@ -27534,6 +27534,21 @@ def _video_wire_shape():
     return frontend_shapes.build_shape(row) if row is not None else None
 
 
+async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
+    """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
+    file stops being reachable there. A job the engine never took has none; a failure is not the caller's."""
+    job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
+    prompt_id = ((job or {}).get("metadata") or {}).get("protocol_job")
+    if not prompt_id:
+        return
+    try:
+        headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
+            await _graph(client, "videos").delete_history([str(prompt_id)], headers=headers)
+    except Exception:  # noqa: BLE001 - best effort
+        pass
+
+
 async def _stop_video_run(shape, video_id: str, auth_context: AuthContext) -> None:
     """Ask the run of an unfinished video to stop and wait for it, for at most the row's ``cancel_wait_s``. The wait is an
     asyncio wait on the job's wake-up; it holds no thread. A run that has not stopped is left for the delete to refuse."""
@@ -27681,6 +27696,8 @@ async def videos_delete(video_id: str, request: Request):
         if shape is not None:
             await _stop_video_run(shape, video_id, auth_context)
         hit = await asyncio.to_thread(_video_ledger(shape).delete, video_id, auth_context) if shape is not None else None
+        if isinstance(hit, JobHit):
+            await _forget_video_history(hit.view.job_id, auth_context)
     except JobDeleteConflict:
         return shape.render_delete_conflict()
     except JobNotFound:

@@ -39,7 +39,7 @@ from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
     AUDIO_FACT,
-    DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
+    DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, RUN_STARTED_PROGRESS, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SERVICE_UNREACHABLE, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
     CallerContext, FactRef, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, REQUEST_FACT_KEYS,
     RequestFacts, ResultContent, ResultRef, ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider,
@@ -867,7 +867,7 @@ class WorkflowRunCore:
         if job["status"] == media_jobs.STATUS_QUEUED:
             try:
                 media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
-                                         progress=5, metadata_patch={"started_at": int(time.time())}, path=self._path)
+                                         progress=RUN_STARTED_PROGRESS, metadata_patch={"started_at": int(time.time())}, path=self._path)
             except ValueError:      # canceled, or taken by another worker, between the read and the write
                 return
             media_jobs.append_event(job_id, "started", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": 5},

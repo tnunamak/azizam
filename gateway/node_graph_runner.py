@@ -379,6 +379,8 @@ class NodeGraphRunner:
         media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_job": result.prompt_id,
                                  "protocol_submitting": False}, path=media_jobs.DB_PATH)
         files = [raw for group in result.files.values() for raw in group]
+        if result.names and result.names[0]:        # the first file's name: what a content route names its download by
+            ctx.record_result_metadata({"filename": result.names[0]})
         name = next(iter(result.files)) if len(result.files) == 1 else None
         return name, files
 
