@@ -27504,9 +27504,22 @@ def _audio_job_runs_from_pin(job_id: str, job: Mapping[str, Any]) -> bool:
     if definition_store.DefinitionStore(media_jobs.DB_PATH).has_envelope(job_id):
         return True
     recorded, intent = str(job.get("workflow") or ""), str(job.get("intent") or "")
-    name = recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded
-    manifest = _load_audio_workflow_manifest(name) if name else None
+    manifest = _audio_job_manifest(recorded, intent) if recorded else None
     return manifest is None or _manifest_has_pin(manifest)  # no workflow to judge by: fail closed at the pin
+
+
+def _audio_job_manifest(recorded: str, intent: str) -> dict[str, Any] | None:
+    """The manifest an audio job's recorded workflow names. A job records the bare name or ``<intent>.<name>``. A job
+    that kept no intent is read against each workflow's own intent; two different answers count as none."""
+    if intent:
+        return _load_audio_workflow_manifest(recorded[len(intent) + 1:] if recorded.startswith(f"{intent}.") else recorded)
+    found = _load_audio_workflow_manifest(recorded)
+    if found is not None:
+        return found
+    matches = {str(record.manifest.get("id") or ""): record.manifest for record in _audio_workflow_records()
+               if recorded.startswith(f"{record.intent}.")
+               and _manifest_names_audio_workflow(record.manifest, recorded[len(record.intent) + 1:])}
+    return copy.deepcopy(dict(next(iter(matches.values())))) if len(matches) == 1 else None
 
 
 def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
@@ -27584,10 +27597,13 @@ def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: s
     return isinstance(artifact, str) and Path(artifact).stem == workflow_name
 
 
+def _audio_workflow_records() -> Iterator[Any]:
+    """The registry's records of the audio family (speech-free generation: audio, music, effects)."""
+    return (record for record in GATEWAY_WORKFLOW_REGISTRY.records() if record.intent.startswith(("audio.", "music.", "sfx.")))
+
+
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
-    for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        if not record.intent.startswith(("audio.", "music.", "sfx.")):
-            continue
+    for record in _audio_workflow_records():
         if _manifest_names_audio_workflow(record.manifest, workflow_name):
             return copy.deepcopy(dict(record.manifest))
     return None
