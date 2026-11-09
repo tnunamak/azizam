@@ -57,6 +57,8 @@ _T = TypeVar("_T")
 DEFAULT_FRESH_WITHIN_S = 2.0
 DEFAULT_DEADLINE_S = 60.0
 _SEMANTICS = ("no_change", "unknown")
+_COLD_SETTLEMENTS = frozenset({"restore:declined:serving_cold", "restore:reset:clean:serving_cold"})
+"""Evidence a restore step records when the target serves cold: the settlement a crash must not lose."""
 
 
 class SnapshotAdapter(TransitionAdapter, Protocol):
@@ -353,14 +355,15 @@ class CheckpointStep:
     async def recovered(self, ctx: StepContext) -> StepVerdict:
         """The verdict for a checkpoint whose ``no_change`` was recorded and whose operation stopped before the next step
         (the gate write was lost). The record was made after the cleanup. An attested refusal goes on cold under
-        ``best_effort`` and is judged by fresh servable evidence under ``required``; an unattested one stays held."""
+        ``best_effort`` and is judged by fresh servable evidence under ``required`` (confirmed false closes the gate; an
+        unreadable check reconciles); an unattested one stays held."""
         sp = parse_policy(ctx.policy)
-        if not sp.checkpoint_no_change:
+        if ctx.operation.step_outcome != "no_change" or not sp.checkpoint_no_change:
             return "fail_closed"
         if not sp.required:
             return "continue"
         servable = await self._servable(ctx, sp)
-        return "reopen" if servable is True else "fail_closed"
+        return "reopen" if servable is True else "fail_closed" if servable is False else "reconcile"
 
     async def _servable(self, ctx: StepContext, sp: SnapshotPolicy) -> Optional[bool]:
         """G7: the profile's ``servable_check``, else the source's resident observation."""
@@ -522,6 +525,22 @@ class RestoreStep:
         await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
                         EffectResult(outcome="partial", evidence_ref="restore:failed:state_not_known_clean"))
         return await self._reset(ctx, sp, adapter)
+
+    async def recovered(self, ctx: StepContext) -> StepVerdict:
+        """The verdict for a restore step whose outcome was recorded before the gate write (a crash before open).
+
+        A recorded cold-start settlement (a declined restore, or a reset that verified clean) goes on only after the clean
+        and load evidence is read again now: confirmed not clean closes the gate, an unreadable check reconciles. A restore
+        recorded ``partial`` still owes its declared reset, which runs now. Anything else stays held."""
+        sp = parse_policy(ctx.policy)
+        adapter: SnapshotAdapter = ctx.adapter  # type: ignore[assignment]
+        recorded = (ctx.operation.evidence_ref or "").removeprefix("revalidate:")
+        if ctx.operation.step_outcome == "partial" and recorded == "restore:failed:state_not_known_clean":
+            return await self._reset(ctx, sp, adapter)
+        if ctx.operation.step_outcome == "no_change" and recorded in _COLD_SETTLEMENTS:
+            clean = await self._clean(ctx, sp, adapter)
+            return "continue" if clean is True else "fail_closed" if clean is False else "reconcile"
+        return "fail_closed"
 
     async def _clean(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter) -> Optional[bool]:
         """Is the target clean and serving? The profile's reset ``verify`` observation, else (only
