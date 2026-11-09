@@ -51,8 +51,10 @@ def refuse(status: int, message: str, *, param: str | None = None, code: str | N
 
 
 def short_name(entry: WorkflowEntry) -> str:
-    """The workflow's id without the intent that starts it: the name the old messages used."""
-    return entry.id.removeprefix(f"{entry.contract.get('intent')}.")
+    """The name the old route showed for a workflow in its answers and messages: the manifest's own name (its id without the
+    intent) under its capability, kept as a spelling of its own (not read back from the id) so a caller's text does not move."""
+    own = entry.id.removeprefix(f"{entry.contract.get('intent')}.")
+    return f"{entry.contract.get('capability')}-{own}"
 
 
 def _reference_bytes(value: Any) -> tuple[bytes, str, str | None] | None:
@@ -275,7 +277,7 @@ async def to_run_request(shape: OpenAIVideoCreate, request: Request, row: Fronte
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
         "length_frames": length, "frame_rate": grid.fps,
         "provenance": provenance.build_provenance_record(
-            kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
+            kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=f"{chosen.contract.get('intent')}.{name}",
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
             seed=seed, parameters=parameters, request_id=None, created_at=now)}
     if seed is not None:
