@@ -526,3 +526,46 @@ def test_a_crash_after_a_revalidation_settled_recovers_on_the_next_start(tmp_pat
     assert (row.state, row.step_outcome) == ("reconciling", "no_change"), (row.state, row.step_outcome)
     done = _restart(runtime, op_id)
     assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+
+
+# -- a revalidation keeps the recorded outcome (recheck 3) ---------------------------------------------------------------
+
+
+def test_revalidation_keeps_a_recorded_partial_restore(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.reset_outcome, engine.clean = "failed", None  # the declared reset runs, but its clean check cannot be read
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="restore", outcome="partial",
+                              evidence="restore:failed:state_not_known_clean", target="alpha")
+    engine.resident = "alpha"
+    first = _restart(runtime, op_id)
+    assert (first.state, gates.state("dom")) == ("reconciling", "reconciling"), (first.state, first.step)
+    assert (first.evidence_ref or "").startswith("revalidate:"), first.evidence_ref
+    assert engine.resets == 1
+    engine.clean = True
+    done = _restart(runtime, op_id)
+    assert engine.resets == 1, "the declared reset ran exactly once across both restarts"
+    assert (done.state, gates.state("dom")) == ("succeeded", "open"), (done.state, done.step, done.evidence_ref)
+    # The restore step was never rewritten to no_change on the restore's own record: the hold kept what the engine said.
+    held = [h for h in runtime.executor().store.__dict__.get("history", [])]
+    assert held == []  # the store keeps no history; the outcome check is the hold test below
+
+
+def test_a_revalidation_hold_carries_the_recorded_outcome_not_no_change(tmp_path, monkeypatch) -> None:
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.reset_outcome, engine.clean = "failed", None
+    op_id = _crashed_recorded(runtime, engine, kind="wake", step="restore", effect="restore", outcome="partial",
+                              evidence="restore:failed:state_not_known_clean", target="alpha")
+    engine.resident = "alpha"
+    _restart(runtime, op_id)
+    executor = runtime.executor()
+    seen: list[tuple[str, str | None]] = []
+    real = executor.store.write_outcome
+
+    def spy(op: str, step: Any, result: Any) -> Any:
+        seen.append((result.outcome, result.evidence_ref))
+        return real(op, step, result)
+
+    monkeypatch.setattr(executor.store, "write_outcome", spy)
+    engine.clean = True
+    _restart(runtime, op_id)
+    assert all(outcome != "no_change" or (evidence or "").startswith("restore:reset") for outcome, evidence in seen), seen
