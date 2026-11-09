@@ -758,7 +758,7 @@ STORED_FACTS = {"model": "m", "resolved_model": "m-t2v", "size": "640x480", "sec
                 "frame_rate": 24, "audio": False, "warnings": ["w"], "provenance": {"seed": 7}}
 
 
-def submitted(db, tmp_path, **kw):
+def submit_one(db, tmp_path, **kw):
     snap = snapshot()
     core, port, _ = make_core(db, tmp_path, snap)
     view = run(core.submit_run(request(**kw), Caller(), snapshot=snap))
@@ -766,7 +766,7 @@ def submitted(db, tmp_path, **kw):
 
 
 def test_request_facts_are_written_with_the_job_and_read_back_whole(db, tmp_path):
-    _, port, view = submitted(db, tmp_path, facts=STORED_FACTS)
+    _, port, view = submit_one(db, tmp_path, facts=STORED_FACTS)
     got = WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())
     assert dict(got) == STORED_FACTS
     assert media_jobs.get(view.job_id, audience="client", path=db) is not None
@@ -774,7 +774,7 @@ def test_request_facts_are_written_with_the_job_and_read_back_whole(db, tmp_path
 
 
 def test_a_job_that_recorded_no_facts_has_an_empty_mapping_and_an_unreadable_job_has_none(db, tmp_path):
-    _, port, view = submitted(db, tmp_path)
+    _, port, view = submit_one(db, tmp_path)
     service = WorkflowJobService(port=port, path=db)
     assert dict(service.request_facts(view.job_id, Caller())) == {}
     assert service.request_facts(view.job_id, Caller(scope="app-2")) is None
@@ -790,13 +790,13 @@ def test_a_fact_outside_the_table_is_refused_before_any_claim_or_job(db, tmp_pat
 
 
 def test_facts_are_immutable_after_the_job_finishes(db, tmp_path):
-    core, port, view = submitted(db, tmp_path, facts=STORED_FACTS)
+    core, port, view = submit_one(db, tmp_path, facts=STORED_FACTS)
     run(core.execute_run(view.job_id))
     assert dict(WorkflowJobService(port=port, path=db).request_facts(view.job_id, Caller())) == STORED_FACTS
 
 
 def test_the_maker_alone_sees_the_person_id_and_the_kept_prompt(db, tmp_path):
-    _, port, view = submitted(db, tmp_path, facts=STORED_FACTS)
+    _, port, view = submit_one(db, tmp_path, facts=STORED_FACTS)
     with sqlite3.connect(db) as conn:
         stored = json.loads(conn.execute("SELECT job_json FROM media_jobs WHERE job_id = ?", (view.job_id,)).fetchone()[0])
         stored["maker_person_id"] = "person-1"
@@ -818,7 +818,7 @@ def test_the_maker_alone_sees_the_person_id_and_the_kept_prompt(db, tmp_path):
 
 
 def test_a_job_view_carries_the_progress_column_and_a_succeeded_job_shows_100(db, tmp_path):
-    core, port, view = submitted(db, tmp_path)
+    core, port, view = submit_one(db, tmp_path)
     service = WorkflowJobService(port=port, path=db)
     assert service.get(view.job_id, Caller()).progress == 0
     run(core.execute_run(view.job_id))
