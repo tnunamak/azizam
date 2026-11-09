@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -25,6 +26,16 @@ def effective_status(view: RunJobView) -> str:
     """The job store's status word, except that a run the engine has not reported on yet is still queued: the store marks a
     run ``running`` when it hands the prompt over, and the wire says ``in_progress`` only once the engine reports it running."""
     return "queued" if view.status == "running" and (view.progress or 0) <= RUN_STARTED_PROGRESS else view.status
+
+
+_ADDRESS = re.compile(r"\s+at\s+\S+://\S+")      # " at http://host:port": where the engine runs, which no caller of a job needs
+
+
+def public_failure_message(failure: Any) -> str:
+    """The failure text a caller reads. A job that failed because the engine could not be reached names the engine and not its
+    address: the text reaches every caller who can read the job (the sync routes keep the address for the owner's own call)."""
+    message = failure.message
+    return _ADDRESS.sub("", message) if failure.code == "upstream_unavailable" else message
 
 
 NO_RESULT = "no_result"              # the run core's failure code for a run that ended without a result file
@@ -88,7 +99,7 @@ class VideoViews:
                     body[name] = view.result_metadata[name]
         if view.failure is not None:
             # The code is the wire's own word for any failed job, as it always was; the message keeps the cause.
-            body["error"] = {"code": f"{self.wire_name}_generation_failed", "message": view.failure.message}
+            body["error"] = {"code": f"{self.wire_name}_generation_failed", "message": public_failure_message(view.failure)}
         return body
 
     def list_item(self, view: RunJobView, facts: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -99,7 +110,7 @@ class VideoViews:
                                 "seconds": body.get("seconds"), "created_at": body["created_at"], "completed_at": body["completed_at"],
                                 "prompt": body["prompt"]}
         if view.failure is not None:
-            item["error"] = view.failure.message
+            item["error"] = public_failure_message(view.failure)
         item["status"] = body["azizam_status"]
         item["progress"] = body["progress"]
         return item
