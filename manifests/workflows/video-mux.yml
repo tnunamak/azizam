@@ -4,6 +4,9 @@ version: "0.1.0"
 id: video.edit.video-mux
 intent: video.edit
 capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Add a Soundtrack to a Video
 purpose: Put an audio track onto a video
 description: Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.
