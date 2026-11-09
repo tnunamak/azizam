@@ -85,7 +85,6 @@ def test_stt_chunking_uses_the_record_address():
 
 def test_lifecycle_driver_dials_the_record_address():
     driver = lifecycle_drivers.HttpLoadUnloadDriver
-    assert driver._base_url({"config": dict(NON_DEFAULT)}) == "http://10.9.8.7:9999"
     assert driver._base_url(dict(NON_DEFAULT)) == "http://10.9.8.7:9999"
     request = lifecycle_drivers.engine_read_request(dict(NON_DEFAULT), "/health")
     assert request is not None and request[0] == "http://10.9.8.7:9999/health"
@@ -127,7 +126,7 @@ def test_stt_without_an_address_refuses_and_names_it():
 
 
 def test_lifecycle_driver_dials_nothing_for_a_record_with_no_address():
-    assert lifecycle_drivers.HttpLoadUnloadDriver._base_url({"config": {}}) == ""
+    assert lifecycle_drivers.HttpLoadUnloadDriver._base_url({}) == ""
     assert lifecycle_drivers.engine_read_request({}, "/health") is None
 
 
@@ -160,8 +159,12 @@ def test_host_and_port_derive_the_old_address(host, port):
 
 def test_release_records_give_the_same_origins_as_their_connection_address():
     release = service_registry.release_registry()
-    for record in release.get("records") or release.get("services") or []:
+    records = release.get("services") or release.get("records") or {}
+    checked = 0
+    for record in (records.values() if isinstance(records, dict) else records):
         config = record.get("config") or {}
         base = config.get("default_base_url") or config.get("base_url")
         if base and not (config.get("host") and config.get("port")):
+            checked += 1
             assert service_registry.engine_origin(config) == service_registry.origin_of(base)
+    assert checked
