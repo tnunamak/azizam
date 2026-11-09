@@ -92,6 +92,7 @@ def test_a_declared_failed_is_no_change_exactly_when_the_profile_attests_it(tmp_
     assert run(_invoke_op(absent, op)).outcome == "partial"
 
 
+# Compatibility coverage: these cases already passed on the base; they keep a declared partial partial under any attestation.
 @pytest.mark.parametrize("op", EFFECTS)
 def test_a_declared_partial_is_partial_even_when_the_profile_attests_no_change(tmp_path: Path, op: str) -> None:
     table = {f"transition.{op}": Reply(200, {"outcome": "partial"})}

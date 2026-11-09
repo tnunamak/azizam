@@ -212,6 +212,8 @@ from tests.test_transition_failure_semantics import EFFECTS, _invoke_op  # noqa:
 WORDS = {"failed": None, "partial": "partial", "no_change": "no_change", "success": "success",
          "succeeded": "unknown", "missing": "unknown"}  # an unlisted word and a missing one read as unknown
 ATTEST = ["absent", "unknown", "no_change"]
+# Compatibility coverage, not regression proof: most of these cells (168 of 180 on the base) already passed before S8b.
+# They pin the whole mapping so a later change cannot move a cell unseen.
 CELLS = list(itertools.product(EFFECTS, WORDS, ATTEST, ["direct", "query"]))
 
 
