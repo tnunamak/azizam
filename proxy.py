@@ -16272,7 +16272,7 @@ PROBLEM_REPORTS = problem_reports.ProblemReports(
     lambda: Path(ADMIN_DB_PATH).with_name("problem_reports.db"),
     destinations=lambda: problem_reports.destinations_from_settings(ADMIN_DB_PATH),
     job_lookup=lambda job_id: media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH),
-    secret_for=lambda ref, origin: secret_store.get_provider_secret(ref, db_path=Path(ADMIN_DB_PATH), expected_origin=origin),
+    secret_for=lambda ref, origin: runtime_secrets.resolve(ref, origin=origin),
 )
 
 
