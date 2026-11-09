@@ -357,7 +357,7 @@ def test_owner_lists_reads_and_edits_reports(admin):
     assert patched.status_code == 200 and patched.json()["operator_workaround"] == "use video"
     assert admin.client.get("/admin/api/problem-reports", params={"status": "open"}).json()["reports"] == []
     assert admin.client.get("/admin/api/problem-reports/pr_missing").status_code == 404
-    assert admin.client.patch(f"/admin/api/problem-reports/{rid}", json={"status": "weird"}).status_code == 422
+    assert admin.client.patch(f"/admin/api/problem-reports/{rid}", json={"status": "weird"}).status_code == 400
 
 
 def test_only_the_owner_may_use_the_routes(admin):
@@ -391,4 +391,4 @@ def test_destinations_are_owner_data_with_the_url_hidden_on_read(admin):
 ])
 def test_bad_destinations_are_refused(admin, bad):
     resp = admin.client.put("/admin/api/problem-reports/destinations", json={"destinations": [bad]})
-    assert resp.status_code == 422
+    assert resp.status_code == 400

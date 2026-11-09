@@ -429,7 +429,7 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
         if isinstance(ctx, JSONResponse):
             return ctx
         if status is not None and status not in STATUSES:
-            return _error(422, "invalid_status", "status must be open, resolved or ignored")
+            return _error(400, "invalid_request", "status must be open, resolved or ignored")
         return {"text_format": TEXT_FORMAT, "reports": service.list(status, limit)}
 
     @router.get("/destinations")
@@ -449,9 +449,9 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
             items = body.get("destinations") if isinstance(body, dict) else None
             checked = _validate_destinations(items, destinations_from_settings(admin_path))
         except ProblemReportError as exc:
-            return _error(422, "invalid_destinations", str(exc))
+            return _error(400, "invalid_request", str(exc))
         except ValueError:
-            return _error(422, "invalid_destinations", "the body must be JSON")
+            return _error(400, "invalid_request", "the body must be JSON")
         admin_store.put_operator_setting(SETTING_KEY, {"destinations": checked}, updated_by=ctx.subject, path=admin_path)
         return {"destinations": [_public_destination(d) for d in checked]}
 
@@ -461,7 +461,7 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
         if isinstance(ctx, JSONResponse):
             return ctx
         row = service.get(report_id)
-        return row if row else _error(404, "not_found", "No such report.")
+        return row if row else _error(404, "report_not_found", "No such report.")
 
     @router.patch("/{report_id}")
     async def patch_report(report_id: str, request: Request):
@@ -474,9 +474,9 @@ def create_problem_reports_router(*, auth: AdminAuth, service: ProblemReports, a
                 raise ProblemReportError("send status and/or workaround")
             row = service.update(report_id, status=body.get("status"), workaround=body.get("workaround"))
         except ProblemReportError as exc:
-            return _error(422, "invalid_update", str(exc))
+            return _error(400, "invalid_request", str(exc))
         except ValueError:
-            return _error(422, "invalid_update", "the body must be JSON")
-        return row if row else _error(404, "not_found", "No such report.")
+            return _error(400, "invalid_request", "the body must be JSON")
+        return row if row else _error(404, "report_not_found", "No such report.")
 
     return router

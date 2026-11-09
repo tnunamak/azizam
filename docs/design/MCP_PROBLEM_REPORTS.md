@@ -75,8 +75,7 @@ HTML or markdown. Notification bodies are plain text or JSON strings; the gatewa
 
 1. Stored: SQLite file `problem_reports.db` beside `admin.db` (own file; no admin schema change).
 2. Listed: `GET /admin/api/problem-reports` (owner), `GET /…/{id}`, `PATCH /…/{id}` (status, operator workaround).
-   The operator can also read the same list with the owner-only CLI path `curl` against that route; an MCP read is
-   not built (cheap later, but an owner MCP read needs the owner-OAuth gate the `stt_measurement` tool uses).
+   An MCP read is not built (an owner MCP read needs the owner-OAuth gate the `stt_measurement` tool uses).
 3. Notified: destinations are owner data, not code: the operator setting `problem_report_destinations` in admin.db,
    edited with `GET`/`PUT /admin/api/problem-reports/destinations`. One destination type is built, `webhook`:
    `{"id", "type": "webhook", "url", "format": "json" | "text", "enabled"}`. `json` posts the report as JSON; `text`
