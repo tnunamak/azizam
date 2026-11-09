@@ -94,6 +94,37 @@ async function expectFits(page: Page, composer: Locator) {
   expect(outside, "controls outside the window").toEqual([]);
 }
 
+/** The class of the icon in a control, to tell a paperclip from a picture or video drawing. */
+const iconOf = (control: Locator) => control.locator("svg").first().getAttribute("class");
+
+/**
+ * Every pill and chip starts at the prompt text's left edge. At a phone width they also take the composer's inner
+ * width, so their right edges are one line too.
+ */
+async function expectAligned(composer: Locator, fullWidth: boolean) {
+  const edges = await composer.evaluate((root) => {
+    const pills = Array.from(root.querySelectorAll<HTMLElement>('button[aria-label^="Attach "]'));
+    const chips = Array.from(root.querySelectorAll<HTMLElement>('[data-slot="home-picked-file"] > span'));
+    const area = root.querySelector<HTMLElement>("textarea");
+    const textLeft = area ? area.getBoundingClientRect().left + parseFloat(getComputedStyle(area).paddingLeft) : null;
+    return {
+      boxes: [...pills, ...chips].map((el) => {
+        const r = el.getBoundingClientRect();
+        return { what: el.getAttribute("aria-label") ?? el.textContent, left: r.left, right: r.right };
+      }),
+      textLeft,
+    };
+  });
+  expect(edges.boxes.length).toBeGreaterThan(0);
+  const [first] = edges.boxes;
+  // Inline pills share a line, so only the first starts at the text's edge; stacked ones all do.
+  const startOfLine = fullWidth ? edges.boxes : edges.boxes.filter((box) => box.what?.startsWith("Attach ") !== true || box === first);
+  for (const box of startOfLine) {
+    if (edges.textLeft !== null) expect(Math.abs(box.left - edges.textLeft), `${box.what} left edge`).toBeLessThanOrEqual(1);
+    if (fullWidth) expect(Math.abs(box.right - first.right), `${box.what} right edge`).toBeLessThanOrEqual(1);
+  }
+}
+
 /** The wait line is whole: its text is not cut by an ellipsis. */
 async function expectWaitWhole(page: Page, text: string) {
   const line = page.getByText(text, { exact: true });
@@ -132,6 +163,13 @@ for (const width of [1440, 390]) {
         await expect(composer.getByLabel(`Choose ${slot.label}`, { exact: true })).toHaveCount(1);
       }
       await shot(page, `${kind.kind}-${width}-empty`);
+      // Each pill draws its modality's icon, not a paperclip; a video slot reads as a video slot.
+      for (const [index, slot] of slots.entries()) {
+        const icon = (await iconOf(attach.nth(index))) ?? "";
+        expect(icon, `${slot.label} icon`).not.toContain("paperclip");
+        if (slot.modality === "video") expect(icon, `${slot.label} icon`).toContain("video");
+      }
+      await expectAligned(composer, width === 390);
       await expectWaitWhole(page, waitText(labels));
       await expect(page.getByRole("button", { name: "Make", exact: true })).toHaveAttribute("aria-disabled", "true");
       await expectFits(page, composer);
@@ -139,9 +177,16 @@ for (const width of [1440, 390]) {
       // Each slot in turn: the filled one is labelled and removable, the wait text names the rest.
       for (const [index, slot] of slots.entries()) {
         await composer.getByLabel(`Choose ${slot.label}`, { exact: true }).setInputFiles(filePath(slot));
+        // A filled slot is shown once, as its chip: the chip is the change control, the X removes, no Change pill.
+        const chips = composer.locator('[data-slot="home-picked-file"]');
+        await expect(chips).toHaveCount(index + 1);
         await expect(composer.getByRole("button", { name: /^Change / })).toHaveCount(index + 1);
-        await expect(composer.getByRole("button", { name: `Change ${slot.label}` })).toBeVisible();
+        await expect(chips.getByRole("button", { name: /^Change / })).toHaveCount(index + 1);
+        await expect(chips.getByRole("button", { name: `Change ${slot.label}` })).toBeVisible();
+        await expect(chips.getByRole("button", { name: `Remove ${slot.label}` })).toBeVisible();
         await expect(composer.getByRole("button", { name: /^Remove / })).toHaveCount(index + 1);
+        await expect(composer.getByRole("button", { name: `Attach ${slot.label}` })).toHaveCount(0);
+        await expectAligned(composer, width === 390);
         const rest = labels.slice(index + 1);
         await shot(page, `${kind.kind}-${width}-${index + 1}-of-${slots.length}`);
         if (rest.length) {
@@ -161,6 +206,7 @@ for (const width of [1440, 390]) {
       await expect(page.getByRole("button", { name: "Make", exact: true })).not.toHaveAttribute("aria-disabled", "true");
       await shot(page, `${kind.kind}-${width}-ready`);
       await expectFits(page, composer);
+      await expectAligned(composer, width === 390);
     });
   }
 
@@ -176,6 +222,7 @@ for (const width of [1440, 390]) {
     await expect(attach).toHaveCount(1);
     await expect(attach).toHaveAccessibleName("Attach a picture");
     await expect(attach).toHaveText("");
+    expect(await iconOf(attach)).toContain("paperclip");
     await expect(composer.locator('[data-slot="home-media-input"]')).toHaveCount(0);
     await shot(page, `edit-${width}-empty`);
     await expectWaitWhole(page, "Add a picture to start");

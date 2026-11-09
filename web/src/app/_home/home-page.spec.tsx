@@ -1064,7 +1064,7 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     fireEvent.keyDown(ending, { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
     fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
-    await screen.findByRole("button", { name: "Remove A teal fish" });
+    await screen.findByRole("button", { name: "Remove an ending picture" });
     expect(screen.getByText("Add a starting picture to start")).toBeVisible();
     expect(library.listed.every((url) => url.includes("kind=image"))).toBe(true);
     const starting = picture();
@@ -1074,6 +1074,65 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     const handoff = takeHomeHandoff("video");
     expect(handoff?.files?.map((file) => file.name)).toEqual(["fox.png", "library-picture.png"]);
     expect(handoff?.file_inputs).toEqual(["image", "last_frame"]);
+  });
+
+  it("a filled slot is one chip: Change and Remove carry the slot's label, and no Change pill remains", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    fireEvent.change(fileInput(/^Choose an ending picture$/), { target: { files: [new File(["e"], "end.png", { type: "image/png" })] } });
+    await screen.findByText("end.png");
+    // Filled: its Attach pill is gone and the chip carries the change and remove controls.
+    expect(screen.queryByRole("button", { name: "Attach an ending picture" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Change a/ })).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Change / })).toHaveLength(1);
+    const change = screen.getByRole("button", { name: "Change an ending picture" });
+    expect(change).toHaveTextContent("an ending picture:");
+    expect(change).toHaveTextContent("end.png");
+    expect(screen.getByRole("button", { name: "Remove an ending picture" })).toBeVisible();
+    // The unfilled slot keeps its pill.
+    expect(screen.getByRole("button", { name: "Attach a starting picture" })).toBeVisible();
+    // The chip changes the file: it opens the slot's picker, a choice of the file dialog or the Library.
+    withLibrary([PICTURE_ITEM]);
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    change.focus();
+    fireEvent.keyDown(change, { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Choose from Library" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Choose an ending picture" })).toBeVisible();
+    fireEvent.keyDown(document.activeElement ?? change, { key: "Escape" });
+    // Remove brings the pill back, with focus on it.
+    fireEvent.click(screen.getByRole("button", { name: "Remove an ending picture" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Attach an ending picture" })).toHaveFocus());
+    expect(screen.queryByRole("button", { name: /^Change / })).toBeNull();
+  });
+
+  it("chips keep slot order whichever slot is filled first", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    fireEvent.change(fileInput(/^Choose an ending picture$/), { target: { files: [new File(["e"], "end.png", { type: "image/png" })] } });
+    await screen.findByText("end.png");
+    fireEvent.change(fileInput(/^Choose a starting picture$/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    const chips = Array.from(composer().querySelectorAll<HTMLElement>('[data-slot="home-picked-file"]'));
+    expect(chips.map((chip) => chip.style.order)).toEqual(["1", "0"]);
+    expect(chips.sort((a, b) => Number(a.style.order) - Number(b.style.order)).map((chip) => chip.textContent)).toEqual([
+      expect.stringContaining("a starting picture"), expect.stringContaining("an ending picture"),
+    ]);
+  });
+
+  it("an unfilled slot's pill draws its modality's icon, not a paperclip; a single slot keeps the paperclip", async () => {
+    await chooseKind([textRow, mediaRow([
+      { name: "reference_image", label: "a new character", modality: "image", accepts: ["image/png"] },
+      { name: "source_video", label: "a video to change", modality: "video", accepts: ["video/mp4"] },
+    ])], "Video");
+    const icon = (name: string) => screen.getByRole("button", { name }).querySelector("svg")?.getAttribute("class") ?? "";
+    const video = icon("Attach a video to change");
+    const image = icon("Attach a new character");
+    expect(video).not.toContain("paperclip");
+    expect(image).not.toContain("paperclip");
+    expect(video).not.toEqual(image);
+    expect(video).toContain("video");
+    cleanup();
+    await chooseKind([textRow, editRow], "Edit");
+    expect(screen.getByRole("button", { name: "Attach a picture" }).querySelector("svg")?.getAttribute("class")).toContain("paperclip");
   });
 
   it("scail's video slot opens a video-filtered Library", async () => {

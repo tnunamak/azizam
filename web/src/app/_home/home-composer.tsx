@@ -32,7 +32,7 @@ import { modelDisplayName, prettifyModelId } from "@/lib/model-name";
 import type { CapabilityStateKey, CapabilityView } from "@/lib/capability-state";
 import type { HomeCapability } from "./home-api";
 import { rememberMade, storeHomeHandoff } from "./handoff";
-import { AttachFileButton, HomeMediaInput, PickedFileChip, type PasteTakers, type PickedFrom } from "./home-media-input";
+import { AttachFileButton, HomeMediaInput, PickedFileChip, SlotControl, type PasteTakers, type PickedFrom } from "./home-media-input";
 import {
   capabilityIs,
   capabilityLabel,
@@ -236,6 +236,8 @@ export function HomeComposer({
   // Each file input registers its paste taker and focus target by slot, not by media kind.
   const takers = useRef<PasteTakers["current"]>({});
   const attachButtons = useRef<Record<string, HTMLButtonElement | null>>({});
+  // Where filled slots draw their chips: kept in state so a slot re-renders once the place exists.
+  const [chipHost, setChipHost] = useState<HTMLElement | null>(null);
   const missingInputs = inputs.media.filter((input) => !fileFor(mediaInputKey(input)));
   const missingInput = missingInputs[0] ?? null;
   // A Library pick is still arriving for one of the inputs: Make waits, as it would for a missing file.
@@ -428,14 +430,16 @@ export function HomeComposer({
             ) : null}
           </p>
         ) : null}
-        {filesBesideWords
+        {multipleFiles ? (
+          // Filled slots draw their chip here, in slot order (each chip carries its own order).
+          <div ref={setChipHost} className="flex flex-col" />
+        ) : filesBesideWords
           ? inputs.media.map((input) => {
               const picked = fileFor(mediaInputKey(input));
               return picked ? (
                 <PickedFileChip
                   key={`${kind}:${mediaInputKey(input)}`}
                   input={input}
-                  labelled={multipleFiles}
                   file={picked}
                   title={titleFor(mediaInputKey(input))}
                   onRemove={() => {
@@ -500,17 +504,34 @@ export function HomeComposer({
             </button>
           </div>
         ) : null}
-        <form onSubmit={startWork} className={cn("flex gap-2 px-3 pb-3", multipleFiles ? "items-end" : "items-center")}>
+        <form onSubmit={startWork} className={cn("flex gap-2 px-3 pb-3", multipleFiles ? "items-end max-sm:flex-wrap" : "items-center")}>
           {/* The model and what a run costs read as one group; on a phone the facts sit under the model. */}
-          <div className={cn("flex min-w-0 flex-1 flex-col items-start gap-1", !multipleFiles && "sm:flex-row sm:items-center sm:gap-3")}>
+          <div className={cn("flex min-w-0 flex-1 flex-col items-start gap-1", multipleFiles ? "max-sm:basis-full" : "sm:flex-row sm:items-center sm:gap-3")}>
             {/* The attach button and the model chip share a line, so a phone does not give the button a row of its own. */}
-            <div className={cn("flex max-w-full min-w-0 items-center gap-2 max-sm:flex-wrap", multipleFiles ? "flex-wrap" : "sm:max-w-[60%]")}>
-            {filesBesideWords
+            <div className={cn("flex max-w-full min-w-0 items-center gap-2 max-sm:flex-wrap", multipleFiles ? "flex-wrap max-sm:w-full" : "sm:max-w-[60%]")}>
+            {multipleFiles
+              ? inputs.media.map((input, index) => (
+                  <SlotControl
+                    key={`${kind}:${mediaInputKey(input)}`}
+                    input={input}
+                    title={titleFor(mediaInputKey(input))}
+                    file={fileFor(mediaInputKey(input))}
+                    onFile={chooseFile(mediaInputKey(input))}
+                    disabled={!runnable}
+                    onPendingChange={arrivingFor(input)}
+                    takers={takers}
+                    chipHost={chipHost}
+                    order={index}
+                    buttonRef={(node) => {
+                      attachButtons.current[mediaInputKey(input)] = node;
+                    }}
+                  />
+                ))
+              : filesBesideWords
               ? inputs.media.map((input) => (
                   <AttachFileButton
                     key={`${kind}:${mediaInputKey(input)}`}
                     input={input}
-                    labelled={multipleFiles}
                     file={fileFor(mediaInputKey(input))}
                     onFile={chooseFile(mediaInputKey(input))}
                     disabled={!runnable}
@@ -562,7 +583,7 @@ export function HomeComposer({
             onClick={(event) => {
               if (!canMake) event.preventDefault();
             }}
-            className={cn(MAKE, canMake ? MAKE_READY : MAKE_RESTING)}
+            className={cn(MAKE, canMake ? MAKE_READY : MAKE_RESTING, multipleFiles && "max-sm:ml-auto")}
           >
             {verb}
             <ArrowUp aria-hidden="true" className="size-4" />

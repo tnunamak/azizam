@@ -808,7 +808,8 @@ pytest = 23381  # dot 2310: +10 in tests/test_home_api.py (8: required_media_inp
 # Status coverage review (2026-11-08): +9 cases in owner-status.spec.tsx (starting, faulted, other-label and provider spares); measured 3937.
 # Builder A carried test (2026-11-08): +1 case in owner-status.spec.tsx (a degraded spare that shares a label is a fault on record).
 # Home media slots (2026-11-09): +17 cases in web/src/app/_home (home-model, home-page, handoff specs); measured 4000 (vitest list --json --root web).
-vitest = 4000
+# Home media slots round 2 (2026-11-09): +3 cases in home-page.spec.tsx (chip is the change control, chip order, slot icons); measured 4003 (vitest list --json --root web).
+vitest = 4003
 # Builder E2 (2026-11-08): +45 cases in web/src/app/workflows/owner-view.spec.tsx; measured 3983 (vitest run).
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.

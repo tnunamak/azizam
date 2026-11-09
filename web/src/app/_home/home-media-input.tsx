@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type DragEvent, type Ref } from "react";
+import { createPortal } from "react-dom";
 import { Library, Paperclip, Upload, X } from "lucide-react";
 import { LibraryPicker } from "@/components/media-input/library-picker";
 import { FOCUS_RING } from "@/components/media-input/focus-ring";
@@ -249,15 +250,12 @@ export function PickedFileChip({
   input,
   file,
   title,
-  labelled = false,
   onRemove,
 }: {
   input: MediaInput;
   file: File;
   /** What the Library calls the file, when it came from there; otherwise the file's own name shows. */
   title?: string | null;
-  /** Multiple required slots keep their label beside the chosen file. */
-  labelled?: boolean;
   onRemove: () => void;
 }) {
   const preview = usePreview(file, input);
@@ -275,7 +273,6 @@ export function PickedFileChip({
             <Icon aria-hidden="true" className="size-4" />
           </span>
         )}
-        {labelled ? <span className="text-muted-foreground shrink-0 whitespace-nowrap">{mediaPhrase(input)}:</span> : null}
         <span className="min-w-0 truncate font-medium">{name}</span>
         <button
           type="button"
@@ -313,7 +310,6 @@ export function AttachFileButton({
   onPendingChange,
   takers,
   buttonRef,
-  labelled = false,
 }: {
   input: MediaInput;
   file: File | null;
@@ -325,8 +321,6 @@ export function AttachFileButton({
   takers?: PasteTakers;
   /** The attach button, so the composer can move focus to it when the chip is removed. */
   buttonRef?: Ref<HTMLButtonElement>;
-  /** A compact labelled chip, rather than an icon-only attachment control. */
-  labelled?: boolean;
 }) {
   const pick = useHomePick(input, file, onFile, onPendingChange, takers);
   const attachButton = useRef<HTMLButtonElement | null>(null);
@@ -336,7 +330,7 @@ export function AttachFileButton({
     if (typeof buttonRef === "function") buttonRef(node);
     else if (buttonRef) (buttonRef as { current: HTMLButtonElement | null }).current = node;
   };
-  const label = file ? `Change ${labelled ? mediaPhrase(input) : input.word}` : `Attach ${mediaPhrase(input)}`;
+  const label = file ? `Change ${input.word}` : `Attach ${mediaPhrase(input)}`;
   return (
     <>
       <input
@@ -352,9 +346,8 @@ export function AttachFileButton({
       {homeLibraryKind(input, pick) ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button ref={setButton} type="button" disabled={disabled} aria-label={label} title={label} className={labelled ? PILL : ATTACH_CLASS}>
+            <button ref={setButton} type="button" disabled={disabled} aria-label={label} title={label} className={ATTACH_CLASS}>
               <Paperclip aria-hidden="true" className="size-4" />
-              {labelled ? label : null}
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
@@ -369,11 +362,168 @@ export function AttachFileButton({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <button ref={setButton} type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={labelled ? PILL : ATTACH_CLASS}>
+        <button ref={setButton} type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={ATTACH_CLASS}>
           <Paperclip aria-hidden="true" className="size-4" />
-          {labelled ? label : null}
         </button>
       )}
+      <PickStatus pick={pick} className="basis-full" />
+      <HomeLibraryPicker pick={pick} input={input} />
+    </>
+  );
+}
+
+/**
+ * One of two or more named slots (a keyframes video's starting and ending picture). Unfilled, it is a labelled pill
+ * in the toolbar with its modality's icon. Filled, it is shown once, as a chip in `chipHost` above the words: the
+ * chip's thumbnail and label are the control that changes the file, and its X takes the file out. The slot's file
+ * input, Library picker and paste taker live here in both states.
+ */
+export function SlotControl({
+  input,
+  file,
+  title,
+  onFile,
+  disabled = false,
+  onPendingChange,
+  takers,
+  chipHost,
+  order,
+  buttonRef,
+}: {
+  input: MediaInput;
+  file: File | null;
+  /** What the Library calls the file, when it came from there; otherwise the file's own name shows. */
+  title?: string | null;
+  onFile: (file: File | null, from?: PickedFrom) => void;
+  disabled?: boolean;
+  onPendingChange?: (pending: boolean) => void;
+  takers?: PasteTakers;
+  /** Where filled slots draw their chip. */
+  chipHost: HTMLElement | null;
+  /** The slot's place among the chips, so they keep declaration order whichever was filled first. */
+  order: number;
+  /** The slot's current control (its pill, or its chip's change control), so focus can return to it. */
+  buttonRef?: Ref<HTMLButtonElement>;
+}) {
+  const pick = useHomePick(input, file, onFile, onPendingChange, takers);
+  const control = useRef<HTMLButtonElement | null>(null);
+  const removed = useRef(false);
+  useTakeFocus(pick, "replace", control);
+  // After Remove the pill takes the chip's place; focus follows it there once it exists.
+  useEffect(() => {
+    if (!file && removed.current && control.current) {
+      removed.current = false;
+      control.current.focus();
+    }
+  });
+  const setControl = (node: HTMLButtonElement | null) => {
+    control.current = node;
+    if (typeof buttonRef === "function") buttonRef(node);
+    else if (buttonRef) (buttonRef as { current: HTMLButtonElement | null }).current = node;
+  };
+  const Icon = kindIcon(input.modality);
+  const phrase = mediaPhrase(input);
+  const preview = useObjectUrl(file && input.modality === "image" ? file : null);
+  const name = file ? (title ?? file.name) : "";
+  const libraryAvailable = homeLibraryKind(input, pick) !== null;
+
+  /** The trigger: a menu of two when the Library can hold the file, else straight to the file dialog. */
+  function wrap(trigger: (props: { onClick?: () => void }) => React.ReactElement) {
+    if (!libraryAvailable) return trigger({ onClick: pick.openFileDialog });
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>{trigger({})}</DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem onSelect={pick.openFileDialog}>
+            <Upload aria-hidden="true" />
+            Choose {phrase}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openHomeLibrary(input, pick)}>
+            <Library aria-hidden="true" />
+            Choose from Library
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  const chip =
+    file && chipHost
+      ? createPortal(
+          <div data-slot="home-picked-file" data-modality={input.modality} style={{ order }} className="px-3 pt-3">
+            <span className="bg-muted text-meta inline-flex max-w-full items-center rounded-full py-1 pr-1 pl-1 max-sm:flex max-sm:w-full">
+              {wrap((props) => (
+                <button
+                  ref={setControl}
+                  type="button"
+                  disabled={disabled}
+                  aria-label={`Change ${phrase}`}
+                  title={`Change ${phrase}`}
+                  {...props}
+                  className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-full text-left disabled:cursor-default", FOCUS_RING)}
+                >
+                  {preview ? (
+                    // A local object address of the person's own picture: next/image has nothing to optimise.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={preview} alt={`Your ${input.word}: ${name}`} className="size-8 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <span className="text-muted-foreground flex size-8 shrink-0 items-center justify-center">
+                      <Icon aria-hidden="true" className="size-4" />
+                    </span>
+                  )}
+                  <span className="text-muted-foreground shrink-0 whitespace-nowrap">{phrase}:</span>
+                  <span className="min-w-0 truncate font-medium">{name}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={(event) => {
+                  if (isStrayClickAfterPick(event)) return;
+                  removed.current = true;
+                  onFile(null);
+                }}
+                aria-label={`Remove ${phrase}`}
+                className={cn(
+                  "text-muted-foreground hover:bg-border hover:text-foreground inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full max-sm:size-11",
+                  FOCUS_RING,
+                )}
+              >
+                <X aria-hidden="true" className="size-4" />
+              </button>
+            </span>
+          </div>,
+          chipHost,
+        )
+      : null;
+
+  return (
+    <>
+      <input
+        ref={pick.fileInput}
+        type="file"
+        accept={pick.accept}
+        disabled={disabled}
+        className="sr-only"
+        tabIndex={-1}
+        aria-label={`Choose ${phrase}`}
+        onChange={pick.onFileInputChange}
+      />
+      {file
+        ? chip
+        : wrap((props) => (
+            <button
+              ref={setControl}
+              type="button"
+              disabled={disabled}
+              aria-label={`Attach ${phrase}`}
+              title={`Attach ${phrase}`}
+              {...props}
+              className={cn(PILL, "max-sm:w-full max-sm:justify-start")}
+            >
+              <Icon aria-hidden="true" className="size-4" />
+              Attach {phrase}
+            </button>
+          ))}
       <PickStatus pick={pick} className="basis-full" />
       <HomeLibraryPicker pick={pick} input={input} />
     </>
