@@ -695,6 +695,7 @@ def test_remote_concrete_profile_override_remains_operator_authored():
 
 def test_classification_follows_the_model_list_type():
     from gateway.model_presentation import LISTED_METADATA_KEY, product_capability
+    # This pins the contract path only; declared-only classification is tested separately below.
     # A declared kind cannot contradict the intent's type; it only splits audio.
     assert product_capability(Capability(intent="chat.completions", backend="one", capability="music")) == "chat"
     assert product_capability(Capability(intent="audio.generate", backend="one", capability="chat")) == "audio"
@@ -760,6 +761,17 @@ def test_without_a_contract_the_declared_capability_decides():
     mesh = Capability(intent="mesh.generate", backend="one", input_modalities=("asset", "text"), capability="mesh")
     assert product_capability(mesh) == "mesh"
     assert capability_presentation(mesh)["capability_title"] == "3D models"
+    # The intent family differs, so an intent-prefix fallback cannot satisfy these assertions.
+    assert product_capability(Capability(intent="asset.generate", backend="one", capability="mesh")) == "mesh"
+    assert product_capability("asset.generate", {"capability": "mesh"}) == "mesh"
     # A declared word outside the product vocabulary is not trusted onto the wire.
     odd = Capability(intent="mesh.generate", backend="one", capability="smell")
     assert product_capability(odd) == "other"
+
+
+@pytest.mark.parametrize("declared", [["mesh"], {"kind": "mesh"}], ids=["list", "dict"])
+def test_without_a_contract_non_string_declared_capability_is_unclassified(declared):
+    from gateway.model_presentation import product_capability
+
+    capability = Capability(intent="mesh.generate", backend="one")
+    assert product_capability(capability, {"capability": declared}) == "other"
