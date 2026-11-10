@@ -15,13 +15,14 @@ from gateway.node_graph_runner import GraphHost, NodeGraphRunner, Plan
 
 @pytest.fixture
 def harvest(monkeypatch):
-    def run(*, n, returned, resume, media_type="image/png", batched=True):
+    def run(*, n, returned, resume, media_type="image/png", batched=True, per_prompt=None):
         stored, calls, metadata, commits = [], [], [], []
         limits = object()
         outputs = {"out": {"media_type": media_type}}
         ctx = SimpleNamespace(
-            job_id="mj_resume", inputs={"n": n} if batched else {}, generated={}, media={},
-            payload={"body": {"options": {}}},
+            job_id="mj_resume", inputs={"batch_size": per_prompt} if per_prompt else {}, generated={}, media={},
+            # The image shape sends the count as ``options.n``; it is never a workflow input (shapes.py, the image options).
+            payload={"body": {"options": {"n": n} if batched else {}}},
             pin=SimpleNamespace(contract={"inputs": {}, "outputs": outputs}, binding={},
                                 envelope=SimpleNamespace(binding_key="b")),
             record_result_metadata=metadata.append, record_progress=lambda _percent: None,
@@ -30,7 +31,8 @@ def harvest(monkeypatch):
         class Batching:
             async def plan(self, session, ctx, inputs, options):
                 assert resume is None, "recovery must not rerun engine batch sizing"
-                return Plan(total=inputs["n"], max_rounds=inputs["n"])
+                total = options["n"] * inputs.get("batch_size", 1)
+                return Plan(total=total, max_rounds=total)
 
             async def target(self, plan, session, round_no, remaining):
                 return remaining
@@ -107,3 +109,7 @@ def test_resumed_single_video_keeps_one_file(harvest):
 
 def test_resumed_batch_caps_extra_files_at_requested_count(harvest):
     assert harvest(n=3, returned=[b"A", b"B", b"C", b"extra"], resume="saved") == [b"A", b"B", b"C"]
+
+
+def test_resumed_batch_keeps_every_file_of_a_batch_size_input(harvest):
+    assert harvest(n=2, per_prompt=2, returned=[b"A", b"B", b"C", b"D", b"extra"], resume="saved") == [b"A", b"B", b"C", b"D"]
