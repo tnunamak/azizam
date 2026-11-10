@@ -404,8 +404,9 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
 def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
     """Sync and async routes for one workflow, and which to prefer."""
     intent = record.intent
-    # Video workflows are configured as ``video-<short id>``; the rest use the short id.
-    model = f"video-{short_id(record)}" if intent.startswith("video.") else short_id(record)
+    native = gateway_route(record)
+    row = workflow_request_maps.execution_row(intent, required=not native)
+    model = (row.model_prefix if row is not None else "") + short_id(record)
     sync: dict[str, Any] | None = None
     async_: dict[str, Any] | None = None
 
@@ -427,15 +428,13 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
             "fields": request_mapping(record, "async"),
         }
 
-    native = gateway_route(record)
     if native:
         sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
                 "output": "JSON (see the route's response schema)",
                 "response": {"kind": "json"}}
-        if intent == "image.edit":
-            sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
-                                 "note": "options go in extensions['com.azizam.workflow']"}
+        if row is not None and row.native_alternate is not None:
+            sync["alternate"] = workflow_request_maps.render_alternate(row, model=model)
     elif intent == "image.generate":
         sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
@@ -580,6 +579,7 @@ def workflow_catalog(
     with limits gets them as ``limits``.
     """
     records = sorted(records, key=lambda r: r.id)
+    workflow_request_maps.validate_execution_records(records)
     alias_map = aliases_by_workflow(records, aliases)
     catalog = []
     for record in records:
@@ -759,6 +759,7 @@ def augment_openapi(
 ) -> dict[str, Any]:
     """Add the typed native surface to a FastAPI OpenAPI document, in place."""
     records = sorted(records, key=lambda r: r.id)
+    workflow_request_maps.validate_execution_records(records)
     info = spec.setdefault("info", {})
     if info.get("title") in (None, "FastAPI"):
         info["title"] = "Azizam"
