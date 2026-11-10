@@ -109,9 +109,7 @@ def source_attachment(monkeypatch):
     return found
 
 
-def test_shipped_source_attachment(monkeypatch, record_property):
+def test_shipped_source_attachment(monkeypatch):
     actual = source_attachment(monkeypatch)
-    record_property("source_golden", json.dumps(actual, sort_keys=True))
     path = GOLDEN.with_name("xc_source.json")
-    if path.exists():
-        assert actual == json.loads(path.read_text())
+    assert actual == json.loads(path.read_text())

@@ -1,0 +1,24 @@
+{
+  "video.edit.scail-2-replace": {
+    "facts": {
+      "remixed_from_video_id": "video_mj_source",
+      "source_asset_id": "asset-source"
+    },
+    "inputs": {
+      "prompt": "sample"
+    },
+    "media": {
+      "source_video": [
+        {
+          "asset_id": "asset-source",
+          "digest": "",
+          "filename": null,
+          "media_type": "application/octet-stream",
+          "size": 0,
+          "spool_key": null,
+          "wire_media_type": null
+        }
+      ]
+    }
+  }
+}
