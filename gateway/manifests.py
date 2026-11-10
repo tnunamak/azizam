@@ -192,7 +192,10 @@ def normalize_input_spec(spec: Mapping[str, Any], _depth: int = 0) -> dict[str, 
         if isinstance(declared, str):
             declared = [declared]
         def within(narrow: str, broad: str) -> bool:
-            return all(b == "*" or a == b for a, b in zip(narrow.split("/"), broad.split("/")))
+            if not isinstance(narrow, str) or not isinstance(broad, str):
+                return False
+            return len(narrow.split("/")) == len(broad.split("/")) == 2 and all(
+                b == "*" or a == b for a, b in zip(narrow.split("/"), broad.split("/")))
         accepted = []
         for item in declared:
             for allowed in alias["accepts"]:
