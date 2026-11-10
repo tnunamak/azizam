@@ -13,6 +13,7 @@ from starlette.convertors import CONVERTOR_TYPES
 from starlette.routing import PARAM_REGEX
 
 from gateway import toolcall_detection as _message_data
+from gateway.strict_yaml import safe_load_strict
 from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.chat_extensions import (
@@ -343,7 +344,7 @@ def load_input_contract(path: str | Path = _EXTENSION_ROWS_PATH) -> InputContrac
     def bad(reason: str) -> ValueError:
         return ValueError(f"{path}: input_contract: {reason}")
     try:
-        doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        doc = safe_load_strict(Path(path).read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise bad(str(exc)) from exc
     row = doc.get("input_contract") if isinstance(doc, Mapping) else None
