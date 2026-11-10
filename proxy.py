@@ -120,6 +120,7 @@ from gateway import asset_types, media_delivery, media_fetch, media_metadata, pr
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
+from gateway import image_graph_roles, image_map_targets
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
 from gateway import pinned_runtime, request_spool, workflow_run
@@ -8661,6 +8662,30 @@ def _requested_batch_size(workflow: Mapping[str, Any], meta: Mapping[str, Any]) 
     return 1
 
 
+def _image_graph_roles(
+    manifest: Mapping[str, Any] | None,
+    graph_meta: Any,
+    graph: Mapping[str, Any],
+    graph_name: str,
+) -> dict[str, Any]:
+    """The node roles an image route reads for ``graph`` (loaded as ``graph_name``), in the shape the route code takes.
+
+    Each role comes from the data home that owns it: the workflow's name from its record's graph path.
+    A role no home carries for this graph (an operator graph with no registered record, or a record whose maps leave the
+    role out) stays as the graph file's own ``_meta`` block, ``graph_meta``, declares it. A record describes ``graph``
+    only when its graph file is the one that loaded: a model that shares a name with another record's graph keeps its own
+    ``_meta``.
+    """
+    roles = dict(graph_meta) if isinstance(graph_meta, Mapping) else {}
+    binding = ((manifest or {}).get("bindings") or {}).get(DERIVED._GRAPH_BINDING)
+    path = binding.get("workflow") if isinstance(binding, Mapping) else None
+    if not isinstance(path, str) or Path(path).stem != graph_name:
+        return roles
+    if path in _IMAGE_GRAPH_ROLES:
+        roles["name"] = Path(path).stem
+    return roles
+
+
 def _workflow_display_name(manifest: Mapping[str, Any] | None) -> str | None:
     """The name a person knows a workflow by (its manifest's ``display_name``), or None for a route with no manifest."""
     name = (manifest or {}).get("display_name") if isinstance(manifest, Mapping) else None
@@ -9186,7 +9211,8 @@ async def proxy_graph_image_request(
         )
 
     workflow = copy.deepcopy(workflow)
-    meta = workflow.pop("_meta", {})
+    graph_meta = workflow.pop("_meta", {})
+    meta = _image_graph_roles(manifest, graph_meta, workflow, str(model))
     workflow_name = str(meta.get("name") or model)
     if receipt is not None:
         receipt.requested_workflow = str(model) if model is not None else None
@@ -9677,7 +9703,8 @@ async def proxy_graph_image_edit_request(
         )
 
     workflow = copy.deepcopy(workflow)
-    meta = workflow.pop("_meta", {})
+    graph_meta = workflow.pop("_meta", {})
+    meta = _image_graph_roles(manifest, graph_meta, workflow, str(model))
     workflow_name = str(meta.get("name") or model)
     if receipt is not None:
         receipt.requested_workflow = str(model) if model is not None else None
@@ -14400,6 +14427,11 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
 
 
 GATEWAY_WORKFLOW_REGISTRY = _load_gateway_workflow_registry()
+# The images section's graph_roles, checked once against the registry's graphs: an invalid table stops the boot. A
+# registry that could not be read (reported above) has no graphs to check them against.
+_IMAGE_GRAPH_ROLES: Mapping[str, Any] = (
+    image_graph_roles.load(_images_section(), GATEWAY_WORKFLOW_REGISTRY, DERIVED._GRAPH_BINDING)
+    if GATEWAY_WORKFLOW_REGISTRY.records() else {})
 
 
 def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict: bool = False) -> registry_snapshot.Snapshot:
@@ -21858,7 +21890,8 @@ async def _proxy_offset_inpaint_tile_request(
     width, height = parse_size(size)
 
     base_workflow = copy.deepcopy(base_workflow)
-    base_meta = base_workflow.pop("_meta", {})
+    base_graph_meta = base_workflow.pop("_meta", {})
+    base_meta = _image_graph_roles(base_manifest, base_graph_meta, base_workflow, base_model)
     base_workflow = _apply_workflow_prompt(base_manifest, base_workflow, base_meta, prompt)
     base_size_node = base_meta.get("size_node")
     if base_size_node and base_size_node in base_workflow:
@@ -21964,7 +21997,8 @@ async def _proxy_offset_inpaint_tile_request(
                 assert uploaded_mask is not None
 
                 edit_workflow = copy.deepcopy(inpaint_workflow)
-                edit_meta = edit_workflow.pop("_meta", {})
+                edit_graph_meta = edit_workflow.pop("_meta", {})
+                edit_meta = _image_graph_roles(inpaint_manifest, edit_graph_meta, edit_workflow, inpaint_model)
                 set_workflow_background_removal(edit_workflow, edit_meta, False)
                 edit_workflow = bind_backend_request(
                     inpaint_manifest,
@@ -22136,7 +22170,9 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         if direct_workflow is None and graph_workflow_refused(selected, intent=IMAGE_EDIT_INTENT):
             return selected  # a refused package model is unavailable; it never becomes its -edit sibling
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
-        if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
+        direct_roles = _image_graph_roles(
+            _find_image_manifest(IMAGE_EDIT_INTENT, selected), direct_meta, direct_workflow or {}, selected)
+        if not (direct_roles.get("image_node") or direct_roles.get("image_nodes")):
             selected = f"{selected}-edit"
 
     # A mask needs the mask-bound variant, which takes precedence over the
