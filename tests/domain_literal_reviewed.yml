@@ -170,3 +170,8 @@ sites:
     count: 2
     category: wire_enum
     reason: Names the audio stream_format value defined by the OpenAI Audio speech request, and the audio field of the com.azizam.video extension the gateway publishes on its JSON video create request; both are published OpenAPI schema property names or values.
+  - file: gateway/workflow_request_maps.py
+    literal: video
+    count: 1
+    category: wire_enum
+    reason: Names the video async transport kind that the gateway publishes in each workflow's execution block of the workflow catalog; the reader checks the kind's declared shape and never selects a workflow, model, engine or intent by it.

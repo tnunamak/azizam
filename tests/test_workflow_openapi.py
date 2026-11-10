@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import yaml
+
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
@@ -45,6 +47,10 @@ from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 MANIFESTS = ROOT / "manifests" / "workflows"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 MIB = 1 << 20
+
+
+def _execution_fixture():
+    return yaml.safe_load(workflow_request_maps.DEFAULT_PATH.read_text(encoding="utf-8"))["execution"]
 
 
 class WorkflowOpenApiTests(unittest.TestCase):
@@ -485,7 +491,7 @@ class ReferenceInputTests(unittest.TestCase):
     @staticmethod
     def maps(record, placements, *, mode="async"):
         # Exercise the real grammar and projection; only the loaded data changes.
-        document = {"schema_version": 1, "maps": [
+        document = {"schema_version": 1, "execution": _execution_fixture(), "maps": [
             {"select": {"intent": record.intent, "mode": mode},
              "inputs": placements, "default": {"in": "extension"}},
             {"select": {"any": True}, "default": {"in": "extension"}},
@@ -764,7 +770,7 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def maps():
-        document = {"schema_version": 1, "maps": [
+        document = {"schema_version": 1, "execution": _execution_fixture(), "maps": [
             {"select": {"intent": "fixture.generate", "mode": "sync"},
              "inputs": {"guide_frame": {"in": "file", "field": "guide_frame"}},
              "default": {"in": "extension"}},
@@ -971,6 +977,431 @@ class WorkflowResponseKindDeclarationTests(unittest.TestCase):
                 route = _execution(record, 1)["sync"]
                 if route:
                     self.assertIn(route["response"]["kind"], {"json", "binary", "media_job"})
+
+
+class ExecutionDataTests(unittest.TestCase):
+    @staticmethod
+    def document():
+        return {
+            "schema_version": 1,
+            "maps": [{"select": {"any": True}, "default": {"in": "extension"}}],
+            "execution": _execution_fixture(),
+        }
+
+    @staticmethod
+    def load_document(document, *, records=None):
+        with patch.object(Path, "read_text", return_value=json.dumps(document)):
+            return workflow_request_maps.load(Path("execution-fixture.yml"), records=records)
+
+    @staticmethod
+    def record(intent, *, native=None):
+        return SimpleNamespace(
+            id=f"{intent}.fixture", intent=intent,
+            contract={"inputs": {}, "bindings": {"gateway": {"route": native}} if native else {}},
+        )
+
+    def test_execution_reader_rejects_malformed_rows_with_filename(self):
+        # Each mutation must fail in the reader, before any projection happens.
+        cases = [
+            (("unexpected",), True),
+            (("schema_version",), True),
+            (("schema_version",), 1.0),
+            (("execution",), None),
+            (("execution", "unknown"), True),
+            (("execution", "intents"), {}),
+            (("execution", "intents", "image.edit", "extra"), True),
+            (("execution", "intents", "image.edit", "model_prefix"), 1),
+            (("execution", "intents", "image.edit", "route_inputs"), ["count", "count"]),
+            (("execution", "intents", "image.edit", "route_inputs"), ["absent"]),
+            (("execution", "intents", "image.edit", "sync"), "absent"),
+            (("execution", "intents", "image.edit", "async"), "generated_image"),
+            (("execution", "intents", "image.edit", "native_alternate", "model"), {"from": "other"}),
+            (("execution", "intents", "image.edit", "native_alternate", "model"),
+             {"from": "model", "text": "suffix"}),
+            (("execution", "field_rows", "count", "unless_all_inputs"), ["x", "x"]),
+            (("execution", "field_rows", "count", "value", "minimum"), True),
+            (("execution", "field_rows", "count", "value", "minimum"), 11),
+            (("execution", "field_rows", "count", "value", "in"), "file"),
+            (("execution", "field_rows", "count", "value", "unknown"), 1),
+            (("execution", "native_sync", "model"), {"from": "model"}),
+            (("execution", "native_sync", "path"), {"from": "workflow_run_path"}),
+            (("execution", "sync_templates", "generated_image", "unknown"), 1),
+            (("execution", "sync_templates", "generated_image", "model"), {"from": "fields", "mode": "sync"}),
+            (("execution", "sync_templates", "generated_image", "fields"), {"from": "fields", "mode": "other"}),
+            (("execution", "sync_templates", "generated_image", "fields"), {"from": "fields", "mode": "async"}),
+            (("execution", "sync_templates", "generated_image", "response", "unknown"), 1),
+            (("execution", "sync_templates", "generated_image", "response"), {"kind": "json", "poll": "/x"}),
+            (("execution", "sync_templates", "generated_image", "output"), {"from": "model"}),
+            (("execution", "async_templates", "generated_image_job", "submit", "body", "unknown"), 1),
+            (("execution", "async_templates", "generated_image_job", "poll", "unknown"), 1),
+            (("execution", "async_templates", "generated_image_job", "poll", "path"), {"from": "model"}),
+            (("execution", "async_templates", "generated_image_job", "poll", "path"), "/x/{expression}"),
+            (("execution", "async_templates", "generated_image_job", "poll", "path"), "//host/x"),
+            (("execution", "async_templates", "generated_image_job", "statuses"), ["queued", "queued"]),
+            (("execution", "async_templates", "generated_image_job", "terminal"), ["not-a-status"]),
+            (("execution", "async_templates", "generated_image_job", "kind"), "unknown"),
+            (("execution", "async_templates", "prefer_binary_model_job", "fields"), {"from": "fields", "mode": "async"}),
+            (("execution", "async_templates", "prefer_binary_model_job", "submit", "body"),
+             {"intent": "unfamiliar.render", "request": "body"}),
+            (("execution", "async_templates", "prefer_binary_model_job", "submit", "headers"), {"Other": "value"}),
+        ]
+        for path, value in cases:
+            with self.subTest(path=path, value=value):
+                document = self.document()
+                target = document
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                with self.assertRaises(ValueError) as caught:
+                    self.load_document(document)
+                self.assertIn("execution-fixture.yml", str(caught.exception))
+        for path in (("execution",),
+                     ("execution", "intents", "image.edit", "async"),
+                     ("execution", "sync_templates", "generated_image", "fields")):
+            with self.subTest(missing=path):
+                document = self.document()
+                target = document
+                for key in path[:-1]:
+                    target = target[key]
+                del target[path[-1]]
+                with self.assertRaisesRegex(ValueError, "execution-fixture.yml"):
+                    self.load_document(document)
+        document = self.document()
+        document["execution"]["field_rows"]["same_name"] = copy.deepcopy(
+            document["execution"]["field_rows"]["count"])
+        document["execution"]["intents"]["image.edit"]["route_inputs"] = ["count", "same_name"]
+        with self.assertRaisesRegex(ValueError, "duplicate output field"):
+            self.load_document(document)
+
+    def test_execution_reader_rejects_duplicate_yaml_and_unreadable_documents(self):
+        raw = yaml.safe_dump(self.document(), sort_keys=False)
+        raw = raw.replace("    image.generate:\n", "    image.generate: {}\n    image.generate:\n", 1)
+        with patch.object(Path, "read_text", return_value=raw):
+            with self.assertRaisesRegex(ValueError, "execution-fixture.yml"):
+                workflow_request_maps.load(Path("execution-fixture.yml"))
+        for raw in ("[]", "null", "1", "{broken"):
+            with self.subTest(raw=raw), patch.object(Path, "read_text", return_value=raw):
+                with self.assertRaisesRegex(ValueError, "execution-fixture.yml"):
+                    workflow_request_maps.load(Path("execution-fixture.yml"))
+        with patch.object(Path, "read_text", side_effect=OSError("unavailable")):
+            with self.assertRaisesRegex(ValueError, "execution-fixture.yml.*cannot read"):
+                workflow_request_maps.load(Path("execution-fixture.yml"))
+
+    def test_intent_without_execution_row_gets_no_templated_routes(self):
+        from gateway.workflow_openapi import _execution, workflow_catalog
+
+        native = self.record("unfamiliar.render", native="/native-fixture")
+        bare_record = self.record("unfamiliar.render")
+        maps = self.load_document(self.document(), records=[native, bare_record])
+        with patch.object(workflow_request_maps, "_MAPS", maps):
+            self.assertIsNone(workflow_request_maps.execution_row("unfamiliar.render"))
+            self.assertEqual(_execution(native, 1)["sync"]["path"], "/native-fixture")
+            self.assertNotIn("alternate", _execution(native, 1)["sync"])
+            self.assertIsNone(_execution(native, 1)["async"])
+            self.assertEqual(_execution(bare_record, 1), {"recommended": "sync", "sync": None, "async": None})
+            self.assertIsNone(maps.execution.render_sync(bare_record))
+            self.assertIsNone(maps.execution.render_async(bare_record))
+            workflow_catalog([self.record("image.generate"), native])
+
+    def test_native_only_execution_row_requires_native_binding(self):
+        document = self.document()
+        row = copy.deepcopy(document["execution"]["intents"]["image.edit"])
+        row["sync"] = None
+        row["async"] = None
+        document["execution"]["intents"]["unfamiliar.render"] = row
+        with self.assertRaisesRegex(ValueError, "execution-fixture.yml.*needs a native binding"):
+            self.load_document(document, records=[self.record("unfamiliar.render")])
+        self.load_document(document, records=[self.record("unfamiliar.render", native="/native-fixture")])
+
+
+    def test_route_inputs_follow_ordered_guards_and_settable_dimensions(self):
+        from gateway.workflow_openapi import route_inputs
+
+        fields = _execution_fixture()["field_rows"]
+        cases = [
+            ("image.generate", {}, ["count", "size_body"]),
+            ("image.generate", {"n": {}}, ["count", "size_body"]),
+            ("image.generate", {"width": {}}, ["count", "size_body"]),
+            ("image.generate", {"height": {}}, ["count", "size_body"]),
+            ("image.generate", {"width": {}, "height": {}}, ["count"]),
+            ("image.generate", {"width": {}, "height": {"settable": False}},
+             ["count", "size_body"]),
+            ("image.edit", {}, ["count", "size_form"]),
+            ("audio.generate", {}, []),
+            ("mesh.generate", {}, ["size_body"]),
+            ("video.generate", {}, ["duration", "size_body"]),
+            ("video.generate", {"length": {}}, ["size_body"]),
+            ("video.generate", {"length": {"settable": False}}, ["duration", "size_body"]),
+            ("video.generate", {"width": {}, "height": {}, "length": {}}, []),
+        ]
+        for intent, inputs, refs in cases:
+            with self.subTest(intent=intent, inputs=inputs):
+                record = self.record(intent)
+                record.contract["inputs"] = {
+                    name: {"type": "number", **spec} for name, spec in inputs.items()
+                }
+                self.assertEqual(route_inputs(record), [fields[ref]["value"] for ref in refs])
+
+    def test_route_inputs_use_unfamiliar_data_rows_and_return_fresh_fields(self):
+        from gateway.workflow_openapi import route_inputs
+
+        for intent in ("unfamiliar.render", "another.compose"):
+            document = self.document()
+            execution = document["execution"]
+            execution["field_rows"]["custom"] = {
+                "unless_all_inputs": ["alpha", "beta"],
+                "value": {"name": "choice", "type": "string", "description": "Configured.",
+                          "in": "form", "field": "choice"},
+            }
+            execution["intents"][intent] = {
+                "model_prefix": "", "route_inputs": ["custom", "count"],
+                "sync": "generated_image", "async": None, "native_alternate": None,
+            }
+            record = self.record(intent)
+            record.contract["inputs"] = {"alpha": {"type": "number"}}
+            maps = self.load_document(document)
+            expected = [execution["field_rows"][ref]["value"] for ref in ("custom", "count")]
+            with patch.object(workflow_request_maps, "_MAPS", maps):
+                first = route_inputs(record)
+                self.assertEqual(first, expected)
+                first[0]["description"] = "Changed by caller."
+                first.reverse()
+                self.assertEqual(route_inputs(record), expected)
+                self.assertEqual(maps.execution.field_rows["custom"]["value"]["description"],
+                                 "Configured.")
+                record.contract["inputs"]["beta"] = {"type": "number"}
+                self.assertEqual(route_inputs(record), expected[1:])
+            # Change only row data: order, placement and guard determine the new projection.
+            execution["intents"][intent]["route_inputs"] = ["count", "custom"]
+            execution["field_rows"]["custom"]["unless_all_inputs"] = []
+            execution["field_rows"]["custom"]["value"]["in"] = "body"
+            with patch.object(workflow_request_maps, "_MAPS", self.load_document(document)):
+                self.assertEqual(route_inputs(record), [
+                    execution["field_rows"][ref]["value"] for ref in ("count", "custom")
+                ])
+
+    def test_route_inputs_missing_row_has_no_templated_fields(self):
+        from gateway.workflow_openapi import route_inputs
+
+        self.assertEqual(route_inputs(self.record("unregistered.render")), [])
+        document = self.document()
+        del document["execution"]["intents"]["image.generate"]
+        with patch.object(workflow_request_maps, "_MAPS", self.load_document(document)):
+            self.assertEqual(route_inputs(self.record("image.generate")), [])
+
+    def test_route_inputs_preserve_native_and_recommended_run_suppression(self):
+        from gateway.workflow_openapi import route_inputs
+
+        for intent in (*workflow_request_maps._MAPS.execution.intents, "unregistered.render"):
+            with self.subTest(intent=intent):
+                self.assertEqual(route_inputs(self.record(intent, native="/native-fixture")), [])
+        fields = _execution_fixture()["field_rows"]
+        for typical in (None, 0, 29.999, 30, 30.001, 60):
+            with self.subTest(typical=typical):
+                record = self.record("video.edit")
+                record.contract["typical_seconds"] = typical
+                expected = [] if typical is not None and typical <= 30 else [
+                    fields[ref]["value"] for ref in ("duration", "size_body")
+                ]
+                self.assertEqual(route_inputs(record), expected)
+
+    def test_unfamiliar_intent_prefix_and_alternate_come_only_from_data(self):
+        from gateway.workflow_openapi import _execution
+
+        for intent in ("unfamiliar.render", "another.compose"):
+            document = self.document()
+            document["execution"]["intents"][intent] = {
+                "model_prefix": "custom-", "route_inputs": [], "sync": None, "async": None,
+                "native_alternate": {
+                    "method": "POST", "path": "/alternate-fixture",
+                    "model": {"from": "model"}, "note": "data-defined alternate",
+                },
+            }
+            record = self.record(intent, native="/native-fixture")
+            before = copy.deepcopy(record.contract)
+            for prefix, path in (("custom-", "/alternate-fixture"), ("changed-", "/another-alternate")):
+                document["execution"]["intents"][intent]["model_prefix"] = prefix
+                document["execution"]["intents"][intent]["native_alternate"]["path"] = path
+                maps = self.load_document(document, records=[record])
+                with patch.object(workflow_request_maps, "_MAPS", maps):
+                    execution = _execution(record, 1)
+                    self.assertEqual(execution["sync"]["alternate"], {
+                        "method": "POST", "path": path, "model": prefix + "fixture",
+                        "note": "data-defined alternate",
+                    })
+                    self.assertNotIn("model", execution["sync"])
+                    self.assertIsNone(execution["async"])
+                    self.assertEqual(execution["recommended"], "sync")
+            self.assertEqual(record.contract, before)
+
+
+    def test_execution_projection_follows_added_and_changed_data_rows(self):
+        from gateway.workflow_openapi import _execution, workflow_catalog
+
+        for intent in ("unfamiliar.render", "another.compose"):
+            with self.subTest(intent=intent):
+                document = self.document()
+                record = self.record(intent)
+                record.contract["inputs"] = {"prompt": {"type": "string"}}
+                before = self.load_document(document)
+                with patch.object(workflow_request_maps, "_MAPS", before):
+                    self.assertEqual(_execution(record, 1),
+                                     {"recommended": "sync", "sync": None, "async": None})
+                execution = document["execution"]
+                execution["sync_templates"]["fixture_sync"] = {
+                    "method": "POST", "path": "/fixture/first",
+                    "content_type": "application/json", "model": {"from": "model"},
+                    "fields": {"from": "fields", "mode": "sync"},
+                    "output": "fixture response", "response": {"kind": "json"},
+                }
+                execution["async_templates"]["fixture_async"] = copy.deepcopy(
+                    execution["async_templates"]["generated_image_job"])
+                execution["async_templates"]["fixture_async"]["submit"]["body"]["intent"] = intent
+                execution["intents"][intent] = {
+                    "model_prefix": "fixture-", "route_inputs": [], "sync": "fixture_sync",
+                    "async": "fixture_async", "native_alternate": None,
+                }
+                document["maps"].insert(0, {
+                    "select": {"intent": intent, "mode": "any"},
+                    "inputs": {"prompt": {"in": "body", "field": "message"}},
+                    "default": {"in": "extension"},
+                })
+                for path, kind, prefix in (
+                    ("/fixture/first", "json", "fixture-"),
+                    ("/fixture/second", "binary", "changed-"),
+                ):
+                    execution["sync_templates"]["fixture_sync"]["path"] = path
+                    execution["sync_templates"]["fixture_sync"]["response"]["kind"] = kind
+                    execution["intents"][intent]["model_prefix"] = prefix
+                    maps = self.load_document(document, records=[record])
+                    with patch.object(workflow_request_maps, "_MAPS", maps):
+                        projected = _execution(record, None)
+                        self.assertEqual(projected["sync"], {
+                            "method": "POST", "path": path, "content_type": "application/json",
+                            "model": prefix + "fixture",
+                            "fields": {"prompt": {"in": "body", "field": "message"}},
+                            "output": "fixture response", "response": {"kind": kind},
+                        })
+                        self.assertEqual(projected["async"]["submit"]["body"]["intent"], intent)
+                        self.assertEqual(projected["async"]["submit"]["model"], prefix + "fixture")
+                        self.assertEqual(projected["async"]["fields"], projected["sync"]["fields"])
+                        self.assertEqual(projected["recommended"], "async")
+                        self.assertEqual(workflow_catalog([record])[0]["execution"], projected)
+
+    def test_execution_projection_uses_declared_modes_and_preserves_recommendation(self):
+        from gateway import workflow_openapi
+
+        for intent, row in workflow_request_maps._MAPS.execution.intents.items():
+            record = self.record(intent)
+            for typical in (None, 0, 29.999, 30, 30.001, 120):
+                with self.subTest(intent=intent, typical=typical), patch.object(
+                    workflow_openapi, "request_mapping",
+                    side_effect=lambda _record, mode: {"mode": mode},
+                ) as mapping:
+                    projected = workflow_openapi._execution(record, typical)
+                    modes = ["sync"] if row.sync is not None else []
+                    if row.async_ is not None:
+                        modes.append(row.async_["fields"]["mode"])
+                    self.assertEqual([call.args[1] for call in mapping.call_args_list], modes)
+                    preferred = "sync" if (
+                        typical is not None and typical <= 30 and row.sync is not None
+                    ) else ("async" if row.async_ is not None else "sync")
+                    self.assertEqual(projected["recommended"], preferred)
+                    if projected["async"] is not None:
+                        self.assertEqual(projected["async"]["poll"]["path"], row.async_["poll"]["path"])
+                    native = self.record(intent, native="/native-fixture")
+                    mapping.reset_mock()
+                    native_projection = workflow_openapi._execution(native, typical)
+                    self.assertEqual([call.args[1] for call in mapping.call_args_list], ["sync"])
+                    self.assertEqual(native_projection["sync"]["path"], "/native-fixture")
+                    self.assertIsNone(native_projection["async"])
+                    self.assertNotIn("model", native_projection["sync"])
+
+    def test_execution_projection_does_not_share_mutable_route_data(self):
+        from gateway.workflow_openapi import _execution
+
+        for intent in workflow_request_maps._MAPS.execution.intents:
+            record = self.record(intent)
+            with self.subTest(intent=intent):
+                expected = _execution(record, 1)
+                first = _execution(record, 1)
+                if first["sync"] is not None:
+                    first["sync"]["response"]["kind"] = "changed"
+                    first["sync"]["fields"]["changed"] = {}
+                if first["async"] is not None:
+                    first["async"]["statuses"].append("changed")
+                    first["async"]["terminal"].clear()
+                    first["async"]["fields"]["changed"] = {}
+                    first["async"]["submit"].setdefault("headers", {})["Prefer"] = "changed"
+                self.assertEqual(_execution(record, 1), expected)
+
+    def test_execution_templates_shadow_existing_routes_without_changing_goldens(self):
+        from gateway.workflow_openapi import _execution
+
+        maps = workflow_request_maps._MAPS.execution
+        for intent in maps.intents:
+            for native in (None, "/native-fixture"):
+                record = self.record(intent, native=native)
+                with self.subTest(intent=intent, native=native):
+                    execution = _execution(record, 1)
+                    self.assertEqual(maps.render_sync(record, native=bool(native)), execution["sync"])
+                    if not native:
+                        self.assertEqual(maps.render_async(record), execution["async"])
+        registry = WorkflowRegistry.from_directory(MANIFESTS)
+        self.assertEqual(registry.errors, [])
+        maps.validate_records(registry.records())
+
+    def test_execution_rendering_preserves_mapping_modes_and_literal_placeholders(self):
+        from gateway import workflow_openapi
+
+        maps = workflow_request_maps._MAPS.execution
+        for intent, row in maps.intents.items():
+            record = self.record(intent)
+            with self.subTest(intent=intent), patch.object(
+                workflow_openapi, "request_mapping", side_effect=lambda _record, mode: {"mode": mode}
+            ) as mapping:
+                sync = maps.render_sync(record)
+                async_ = maps.render_async(record)
+                expected = (["sync"] if row.sync is not None else [])
+                if row.async_ is not None:
+                    expected.append(row.async_["fields"]["mode"])
+                    self.assertEqual(async_["poll"]["path"], row.async_["poll"]["path"])
+                self.assertEqual([call.args[1] for call in mapping.call_args_list], expected)
+                if sync:
+                    self.assertEqual(sync["fields"], {"mode": "sync"})
+
+    def test_execution_rows_are_deeply_frozen_and_renderings_are_independent(self):
+        maps = workflow_request_maps._MAPS.execution
+        with self.assertRaises(TypeError):
+            maps.field_rows["count"]["value"]["name"] = "changed"
+        with self.assertRaises(TypeError):
+            maps.intents["image.edit"].native_alternate["model"]["from"] = "changed"
+        record = self.record("mesh.generate")
+        first = maps.render_async(record)
+        first["statuses"].append("changed")
+        first["terminal"].clear()
+        first["submit"]["headers"]["Prefer"] = "changed"
+        first["fields"]["changed"] = {}
+        second = maps.render_async(record)
+        self.assertNotIn("changed", second["statuses"])
+        self.assertTrue(second["terminal"])
+        self.assertEqual(second["submit"]["headers"], {"Prefer": "respond-async"})
+        self.assertNotIn("changed", second["fields"])
+        record = self.record("image.edit", native="/native-fixture")
+        first = maps.render_sync(record, native=True)
+        first["response"]["kind"] = "changed"
+        first["alternate"]["model"] = "changed"
+        second = maps.render_sync(record, native=True)
+        self.assertEqual(second["response"], {"kind": "json"})
+        self.assertEqual(second["alternate"]["model"], "fixture")
+        left = maps.render_async(self.record("video.generate"))
+        right_record = self.record("video.edit")
+        right_record.id = "video.edit.other"
+        right = maps.render_async(right_record)
+        self.assertEqual(left["submit"]["model"], "video-fixture")
+        self.assertEqual(right["submit"]["model"], "video-other")
+
+
 if __name__ == "__main__":
     unittest.main()
 

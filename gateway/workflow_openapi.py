@@ -380,117 +380,42 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     count.
     """
     inputs = settable_inputs(record.contract)
-    has_size = "width" in inputs and "height" in inputs
     out: list[dict[str, Any]] = []
     if gateway_route(record) or _carried_by_run_route(record):
         return out
-    if record.intent in ("image.generate", "image.edit"):
-        out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
-                    "label": "number of results",
-                    "description": "Number of images.", "in": "body", "field": "n"})
-    if record.intent.startswith("video."):
-        if "length" not in inputs:
-            out.append({"name": "seconds", "type": "number", "minimum": 1,
-                        "description": "Clip length in seconds.",
-                        "in": "body", "field": "seconds"})
-    if not has_size and record.intent != "audio.generate":
-        out.append({"name": "size", "type": "string",
-                    "description": "WIDTHxHEIGHT, e.g. 960x512.",
-                    "in": "body" if record.intent != "image.edit" else "form",
-                    "field": "size"})
+    execution = workflow_request_maps._MAPS.execution
+    row = execution.row(record.intent)
+    if row is None:
+        return out
+    for ref in row.route_inputs:
+        field_row = execution.field_rows[ref]
+        guard = field_row["unless_all_inputs"]
+        if guard and all(name in inputs for name in guard):
+            continue
+        # The strict reader restricts field values to scalars.
+        out.append(dict(field_row["value"]))
     return out
 
 
 def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
     """Sync and async routes for one workflow, and which to prefer."""
     intent = record.intent
-    # Video workflows are configured as ``video-<short id>``; the rest use the short id.
-    model = f"video-{short_id(record)}" if intent.startswith("video.") else short_id(record)
+    native = gateway_route(record)
+    row = workflow_request_maps.execution_row(intent)
+    model = (row.model_prefix if row is not None else "") + short_id(record)
     sync: dict[str, Any] | None = None
     async_: dict[str, Any] | None = None
 
-    def job_route(wrapped_intent: str) -> dict[str, Any]:
-        return {
-            "kind": "media_job",
-            "submit": {
-                "method": "POST",
-                "path": JOBS_SUBMIT,
-                "content_type": _JSON,
-                "body": {"intent": wrapped_intent, "request": "<the sync request body>"},
-                "model": model,
-            },
-            "poll": {"method": "GET", "path": JOB_POLL},
-            "content": {"method": "GET", "path": JOB_CONTENT},
-            "cancel": {"method": "POST", "path": JOB_CANCEL},
-            "statuses": _MEDIA_JOB_STATUSES,
-            "terminal": ["succeeded", "failed", "canceled"],
-            "fields": request_mapping(record, "async"),
-        }
-
-    native = gateway_route(record)
     if native:
         sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
                 "output": "JSON (see the route's response schema)",
                 "response": {"kind": "json"}}
-        if intent == "image.edit":
-            sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
-                                 "note": "options go in extensions['com.azizam.workflow']"}
-    elif intent == "image.generate":
-        sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
-                "model": model, "fields": request_mapping(record, "sync"),
-                "output": "data[].b64_json or data[].url",
-                "response": {"kind": "json"}}
-        async_ = job_route("image.generate")
-    elif intent == "image.edit":
-        sync = {"method": "POST", "path": "/v1/images/edits", "content_type": _MULTIPART,
-                "model": model, "fields": request_mapping(record, "sync"),
-                "extensions_field": "extensions (JSON string)",
-                "output": "data[].b64_json or data[].url",
-                "response": {"kind": "json"}}
-    elif intent == "audio.generate":
-        sync = {"method": "POST", "path": "/v1/audio/generate", "content_type": _JSON,
-                "model": model, "fields": request_mapping(record, "sync"),
-                "output": "audio bytes (see Content-Type)",
-                "response": {"kind": "binary"}}
-        async_ = job_route("audio.generate")
-    elif intent == "mesh.generate":
-        sync = {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
-                "fields": request_mapping(record, "sync"),
-                "output": "model/gltf-binary (GLB bytes)",
-                "response": {"kind": "binary", "media_type": "model/gltf-binary"}}
-        # The same route answers 202 with a media job when the request says ``Prefer: respond-async`` (RFC 7240). The
-        # run takes minutes under load, and a held connection that drops loses the answer; the job does not.
-        async_ = {
-            "kind": "respond_async",
-            "submit": {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
-                       "headers": {"Prefer": "respond-async"}},
-            "poll": {"method": "GET", "path": JOB_POLL},
-            "content": {"method": "GET", "path": JOB_CONTENT, "output": "model/gltf-binary (GLB bytes)"},
-            "cancel": {"method": "POST", "path": JOB_CANCEL,
-                       "note": "the engine cannot stop mid-run: the job ends as canceled when the run returns"},
-            "statuses": _MEDIA_JOB_STATUSES,
-            "terminal": ["succeeded", "failed", "canceled"],
-            "fields": request_mapping(record, "sync"),
-            "output": "202 with a media job (Location, Preference-Applied: respond-async)",
-        }
-    elif intent.startswith("video."):
-        async_ = {
-            "kind": "video",
-            "submit": {"method": "POST", "path": "/v1/videos", "content_type": _JSON,
-                       "model": model},
-            "poll": {"method": "GET", "path": "/v1/videos/{video_id}"},
-            "content": {"method": "GET", "path": "/v1/videos/{video_id}/content"},
-            "cancel": {"method": "DELETE", "path": "/v1/videos/{video_id}"},
-            "statuses": _VIDEO_STATUSES,
-            "terminal": ["completed", "failed"],
-            "fields": request_mapping(record, "async"),
-        }
-        if intent == "video.edit":
-            sync = {"method": "POST", "path": f"/gateway/v1/workflows/{record.id}/run",
-                    "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
-                    "output": "a media job; its content is the video",
-                    "response": {"kind": "media_job", "poll": JOB_POLL, "content": JOB_CONTENT}}
+        if row is not None and row.native_alternate is not None:
+            sync["alternate"] = workflow_request_maps.render_alternate(row, model=model)
+    else:
+        sync = workflow_request_maps.render_sync(record)
+        async_ = workflow_request_maps.render_async(record)
     if typical_seconds is not None and typical_seconds <= SLOW_SECONDS and sync:
         recommended = "sync"
     elif async_:
@@ -580,6 +505,7 @@ def workflow_catalog(
     with limits gets them as ``limits``.
     """
     records = sorted(records, key=lambda r: r.id)
+    workflow_request_maps.validate_execution_records(records)
     alias_map = aliases_by_workflow(records, aliases)
     catalog = []
     for record in records:
@@ -759,6 +685,7 @@ def augment_openapi(
 ) -> dict[str, Any]:
     """Add the typed native surface to a FastAPI OpenAPI document, in place."""
     records = sorted(records, key=lambda r: r.id)
+    workflow_request_maps.validate_execution_records(records)
     info = spec.setdefault("info", {})
     if info.get("title") in (None, "FastAPI"):
         info["title"] = "Azizam"
