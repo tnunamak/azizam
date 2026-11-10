@@ -1,0 +1,25 @@
+schema_version: 1
+packs:
+  - id: llamacpp-cache-prompt
+    source: >-
+      llama-server enables KV-cache reuse when cache_prompt=true is sent.
+      setdefault semantics — does not overwrite if caller explicitly sets false.
+      Source: ENGINE_TRANSFORMS_DESIGN.md §2.3, r/LocalLLaMA audit.
+    specs:
+      - kind: default-params
+        set:
+          cache_prompt: true
+  - id: mistral-penalty-clamp
+    source: >-
+      Mistral's API accepts frequency_penalty and presence_penalty in [-2.0, 2.0].
+      Clamp both so out-of-range client values don't trigger a 400.
+      Source: docs/design/ENGINE_QUIRK_FINDINGS.md, thesis verdict (Mistral and TabbyAPI penalty ranges differ).
+    specs:
+      - kind: clamp
+        param: frequency_penalty
+        min: -2.0
+        max: 2.0
+      - kind: clamp
+        param: presence_penalty
+        min: -2.0
+        max: 2.0

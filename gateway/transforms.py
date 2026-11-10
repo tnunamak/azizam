@@ -23,7 +23,10 @@ import copy
 import json
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Optional, Protocol, TypeAlias, runtime_checkable
+
+import yaml
 
 # ---------------------------------------------------------------------------
 # Context
@@ -550,6 +553,57 @@ class TransformRegistry:
 
     def names(self) -> list[str]:
         return list(self._transforms.keys())
+
+
+TRANSFORM_PACKS_FILE = Path(__file__).resolve().parent.parent / "registry" / "transform_packs.yml"
+
+
+def load_transform_packs(path: Path, registry: TransformRegistry) -> None:
+    """Validate data-defined packs through register before publishing any row."""
+    path = Path(path)
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"{path}: cannot load transform packs: {exc}") from exc
+    if (
+        not isinstance(data, Mapping)
+        or set(data) != {"schema_version", "packs"}
+        or data["schema_version"] != 1
+        or not isinstance(data["packs"], list)
+    ):
+        raise ValueError(f"{path}: expected schema_version: 1 and a packs list")
+
+    # Use the existing primitive construction/validation path, without
+    # publishing a partial file if a later row is malformed.
+    staged = TransformRegistry()
+    names = set(registry.names())
+    pending: list[tuple[str, list[dict[str, Any]]]] = []
+    for index, row in enumerate(data["packs"], 1):
+        pack_id = row.get("id") if isinstance(row, Mapping) else None
+        label = repr(pack_id) if isinstance(pack_id, str) else f"at row {index}"
+        try:
+            if not isinstance(row, Mapping) or set(row) != {"id", "source", "specs"}:
+                raise ValueError("expected exactly id, source and specs")
+            if not isinstance(pack_id, str) or not pack_id.strip():
+                raise ValueError("id must be a nonempty string")
+            if not isinstance(row["source"], str) or not row["source"].strip():
+                raise ValueError("source must be a nonempty string")
+            specs = row["specs"]
+            if not isinstance(specs, list) or not specs or any(
+                not isinstance(spec, dict) for spec in specs
+            ):
+                raise ValueError("specs must be a nonempty list of primitive mappings")
+            if pack_id in names:
+                raise ValueError("duplicate or already registered pack id")
+            staged.register(pack_id, specs)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"{path}: pack {label}: {exc}") from exc
+        names.add(pack_id)
+        pending.append((pack_id, specs))
+
+    for pack_id, specs in pending:
+        registry.register(pack_id, specs)
 
 
 # ---------------------------------------------------------------------------
@@ -1156,36 +1210,5 @@ REGISTRY.register(
 # Source: ENGINE_TRANSFORMS_DESIGN.md §3.3 (null-param-strip).
 REGISTRY.register_builtin("drop-null-params", DropNullParamsTransform({}))
 
-# ---- llamacpp-cache-prompt ------------------------------------------------
-# llama-server enables KV-cache reuse when cache_prompt=true is sent.
-# setdefault semantics — does not overwrite if caller explicitly sets false.
-# Source: ENGINE_TRANSFORMS_DESIGN.md §2.3, r/LocalLLaMA audit.
-REGISTRY.register(
-    "llamacpp-cache-prompt",
-    {
-        "kind": "default-params",
-        "set": {"cache_prompt": True},
-    },
-)
-
-# ---- mistral-penalty-clamp ------------------------------------------------
-# Mistral's API accepts frequency_penalty and presence_penalty in [-2.0, 2.0].
-# Clamp both so out-of-range client values don't trigger a 400.
-# Source: docs/design/ENGINE_QUIRK_FINDINGS.md, thesis verdict (Mistral and TabbyAPI penalty ranges differ).
-REGISTRY.register(
-    "mistral-penalty-clamp",
-    [
-        {
-            "kind": "clamp",
-            "param": "frequency_penalty",
-            "min": -2.0,
-            "max": 2.0,
-        },
-        {
-            "kind": "clamp",
-            "param": "presence_penalty",
-            "min": -2.0,
-            "max": 2.0,
-        },
-    ],
-)
+# Declarative pack instances and their source notes live in the data file.
+load_transform_packs(TRANSFORM_PACKS_FILE, REGISTRY)
