@@ -140,7 +140,8 @@ def test_where_a_row_is_selected_it_matches_the_route_code() -> None:
             if row is None:
                 continue
             chosen.setdefault(row.index, []).append((record.id, mode))
-            assert maps().place(row, record, mode) == _route_mapping(record, mode), (
+            # Order is part of the answer: repeated parts (image[]) go out in the order the mapping lists them.
+            assert list(maps().place(row, record, mode).items()) == list(_route_mapping(record, mode).items()), (
                 f"{record.id} ({mode}): request map row {row.index} disagrees with _route_mapping"
             )
     assert sorted(chosen) == list(range(1, len(maps().rows) + 1)), (
