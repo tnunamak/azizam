@@ -284,3 +284,38 @@ word, an unknown set word, two rows with the same selector, and a row with no
 media-bearing container post-step stays in
 `gateway.workflow_openapi.request_mapping`. Restart the gateway after editing the
 file.
+
+## Model vocabulary and workflow input compatibility
+
+`capability_intent_metadata.yml` also owns `contract`, the global ordered model
+metadata vocabularies, derivation priorities, tag-bearing types and bidirectional
+tag/input implications. `gateway/model_metadata.py` loads this section before
+operation and capability rows. Its closed validator refuses unknown/missing
+fields, duplicate YAML keys, duplicate values and undeclared references. Names
+are data identifiers, never import paths. Existing vocabulary tuple exports
+remain available; shipped model metadata output remains pinned by the existing
+golden. A separate vocabulary file would split this reader's release contract
+from the intent rows that use it.
+
+`protocol_frontends.yml` owns the closed `input_contract` mapping. Its
+`extension_hints` map logical input names to standard request-field hints;
+`source_role_paths` lists neutral and legacy manifest paths in precedence order.
+The legacy section name lives only in data. A manifest can declare neutral
+`roles.source` and `input_fields` (logical input to request-field hint), checked
+by `workflow.schema.json` and `gateway/workflow_contract.py`. A source role must
+name a declared, bound media input. New hints cannot name undeclared inputs.
+The extension binder receives the runner-selected binding key, reads that
+binding's `map` and adds `route_bound_inputs` to standard input protection.
+Unmapped extension inputs remain visible in the existing ignored-input report.
+Existing manifests retain their bytes and identity hashes; their legacy source
+path remains supported by the declared path list.
+
+`input_type_aliases.yml` owns compatibility aliases at the value-validation
+boundary. Each alias declares a canonical reference `type` and nonempty,
+distinct `accepts` media patterns. `gateway/manifests.py` rejects unknown keys,
+duplicate YAML keys, existing primitive names, executable-looking alias names
+and unsupported target types. Aliases normalize without mutating the caller's
+spec, including nested object/array specs. Declared MIME constraints intersect
+the alias constraint; they cannot widen it. Strict schema-2 manifest loading
+never applies compatibility aliases. This separate file keeps the legacy
+compatibility vocabulary out of the canonical workflow schema.

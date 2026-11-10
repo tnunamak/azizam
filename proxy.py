@@ -12240,7 +12240,7 @@ async def _proxy_graph_video_create(
                         ext_block, video_manifest.get("inputs") or {}
                     ),
                 }
-            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest)
+            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest, backend=DERIVED._GRAPH_BINDING)
             rejected = {**validation.rejected, **unknown_fields}
             # Preserve the required-picture errors before reporting other invalid inputs.
             for name, reason in validation.rejected.items():
@@ -12608,6 +12608,7 @@ async def _proxy_graph_video_create(
                 body,
                 manifest,
                 workflow,
+                backend=DERIVED._GRAPH_BINDING,
             )
         except (ExtensionError, ManifestError) as e:
             return Response(

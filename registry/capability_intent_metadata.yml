@@ -41,3 +41,30 @@ families:
     operation: speech
   - prefix: audio.
     model_metadata: {type: audio, input_modalities: [text], output_modalities: [audio]}
+
+# Global model metadata vocabulary and derivation rules.
+contract:
+  # Ordered rosters control emission order, not semantic roles.
+  schema_version: 1
+  types: [language, embedding, reranking, image, video, audio, decision]
+  input_modalities: [text, image, audio, video, file]
+  output_modalities: [text, image, audio, video, embedding]
+  tags: [tool-use, reasoning, vision, file-input]
+  tag_types: [language]
+  derivation:
+    # Scalar manifest inputs and fallback output typing have named roles.
+    scalar_input: text
+    fallback_output: text
+    default_type: language
+    output_priority:
+      - {modality: image, type: image}
+      - {modality: audio, type: audio}
+      - {modality: video, type: video}
+      - {modality: embedding, type: embedding}
+    input_priority:
+      - {modality: image, type: image}
+      - {modality: audio, type: audio}
+      - {modality: video, type: video}
+  # Each row is a bidirectional equivalence, scoped to its tag-bearing type.
+  implications:
+    - {type: language, tag: vision, input_modality: image}

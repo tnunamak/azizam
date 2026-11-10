@@ -11,7 +11,6 @@
     "gateway/service_registry.py": 1,
     "gateway/toolcall_detection.py": 6,
     "gateway/transforms.py": 5,
-    "gateway/video_extensions.py": 2,
     "gateway/video_media_jobs.py": 1,
     "gateway/video_subject.py": 1,
     "gateway/workflows_catalog.py": 2,
