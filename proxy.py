@@ -15385,7 +15385,7 @@ async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
                 if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
                     selected[0]
-                    for capability in ("audio.speech", "audio.transcriptions", "audio.translations", "embeddings")
+                    for capability in (_SPEECH_CAPABILITY, _TRANSCRIPTION_CAPABILITY, "audio.translations", "embeddings")
                     if (selected := service_for_capability(capability)) is not None
                 ] + [service_id for service_id in [_highest_priority_chat_backend()] if service_id]
                 + [str(route["service_id"])
