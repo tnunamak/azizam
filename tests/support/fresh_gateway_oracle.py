@@ -338,6 +338,8 @@ def main(argv: list[str]) -> int:
     with GatewayRig("fresh-no-egress", scratch) as rig:
         for key in (*hosts, *flags):
             rig.monkeypatch.setitem(proxy.runtime().derived, key, empty[key])
+        # A fresh gateway holds no engine records: the rig's extra speech and transcription engines are not fresh state.
+        rig.monkeypatch.setitem(proxy.config, "backends", {k: v for k, v in proxy.config["backends"].items() if k == "litellm"})
         for method, path, body in requests:
             response = asyncio.run(rig.call(method, path, label=f"fresh {path}", json_body=body))
             report["statuses"].append([path, response.status_code])
