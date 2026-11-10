@@ -1748,13 +1748,12 @@ def service_base_url(config: Mapping[str, Any]) -> str:
     ).strip()
     if raw:
         return raw.rstrip("/")
-    host = str(config.get("host") or "").strip()
-    port = config.get("port")
-    if not host or port is None:
+    # Host and port build the URL only through host_port_origin, which refuses an invalid host, port or scheme.
+    origin = host_port_origin(config)
+    if not origin:
         return ""
-    scheme = str(config.get("scheme") or "http").strip() or "http"
     base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
-    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
+    return f"{origin}/{base_path.strip('/')}".rstrip("/")
 
 
 def origin_of(url: str) -> str:
@@ -1890,16 +1889,27 @@ def _reads_process_command_lines(config: Mapping[str, Any]) -> bool:
     return isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline"
 
 
+def names_host_port(config: Mapping[str, Any]) -> bool:
+    """True when the record names both a host and a port. Such a record's address is its host and port, valid or not."""
+    return bool(str(config.get("host") or "").strip()) and config.get("port") not in (None, "")
+
+
 def host_port_origin(config: Mapping[str, Any]) -> str:
-    """``scheme://host:port`` from the record's host and port, or ``""`` unless it names both. No default stands in."""
-    host = str(config.get("host") or "").strip()
-    port = config.get("port")
-    if not host or port in (None, ""):
+    """``scheme://host:port`` from the record's host and port; ``""`` unless it names both and both are valid.
+
+    No default stands in, and an invalid host, port or scheme gives ``""``: a host such as ``user@evil.example.com``
+    would otherwise build a URL whose real host is not the one the record shows. Callers that read another address
+    when this is empty check ``names_host_port`` first, so a named invalid address never falls through.
+    """
+    if not names_host_port(config):
         return ""
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
-    scheme = str(config.get("scheme") or "http").strip() or "http"
-    return f"{scheme}://{host}:{port}"
+    try:
+        host, port, scheme = _valid_host_port(config)
+    except EngineAddressError:
+        return ""
+    url = f"{scheme}://[{host}]:{port}" if ":" in host else f"{scheme}://{host}:{port}"  # IPv6 needs its brackets
+    # The URL a client parses must name the host the record shows, or it names no address.
+    return url if (urlsplit(url).hostname or "") == host.lower() else ""
 
 
 def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
@@ -1909,7 +1919,9 @@ def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
     fingerprint covers, so a change to it is the owner's on a record that holds a key. Empty when the record names
     no address; the driver then has nowhere to send a key.
     """
-    return host_port_origin(config) or origin_of(service_base_url(config))
+    if names_host_port(config):
+        return host_port_origin(config)
+    return origin_of(service_base_url(config))
 
 
 def engine_origin(config: Mapping[str, Any]) -> str:
@@ -1919,7 +1931,7 @@ def engine_origin(config: Mapping[str, Any]) -> str:
     ``connection.address``. ``""`` means the engine is not configured. No caller supplies a host or port of its own.
     """
     origin = lifecycle_dial_url(config)
-    if origin:
+    if origin or names_host_port(config):
         return origin
     connection = config.get("connection")
     return origin_of(str(connection.get("address") or "")) if isinstance(connection, Mapping) else ""
@@ -1934,10 +1946,19 @@ _HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?")
 
 def _require_valid_host_port(config: Mapping[str, Any]) -> None:
     """Raise EngineAddressError, naming only the field, unless host is a bare host name or IP and port is 1-65535."""
+    _valid_host_port(config)
+
+
+def _valid_host_port(config: Mapping[str, Any]) -> tuple[str, int, str]:
+    """The record's bare host, port number and scheme; EngineAddressError, naming only the field, when one is invalid."""
+    scheme = (str(config.get("scheme") or "http").strip() or "http").lower()
+    if scheme not in ("http", "https"):
+        raise EngineAddressError("service record scheme is not http or https")
     host = str(config.get("host") or "").strip()
     bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     valid_host = bool(_HOSTNAME.fullmatch(bare))
-    if not valid_host and ":" in bare:
+    # An IPv6 scope id ("%eth0") may carry any text, and a URL parser reads it differently; no engine needs one.
+    if not valid_host and ":" in bare and "%" not in bare:
         try:
             ipaddress.ip_address(bare)
             valid_host = True
@@ -1951,6 +1972,7 @@ def _require_valid_host_port(config: Mapping[str, Any]) -> None:
         number = int(port.strip())
     if number is None or not 1 <= number <= 65535:
         raise EngineAddressError("service record port is not a number from 1 to 65535")
+    return bare, number, scheme
 
 
 def engine_base_address(config: Mapping[str, Any]) -> str:
@@ -1974,10 +1996,9 @@ def checked_engine_base_address(config: Mapping[str, Any]) -> str:
     ``/prefix/...``. ``engine_origin`` is the origin only: use it for credential-origin comparisons and for endpoints
     defined against the origin. A named invalid URL raises EngineAddressError instead of choosing another address.
     """
-    bare = host_port_origin(config)
-    if bare:
+    if names_host_port(config):
         _require_valid_host_port(config)
-        return bare
+        return host_port_origin(config)
     connection = config.get("connection")
     candidates = [config.get(key) for key in ("base_url", "api_base", "default_base_url")]
     fields = ["base_url", "api_base", "default_base_url"]
