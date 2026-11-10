@@ -89,6 +89,22 @@ def test_unknown_converter_is_refused_with_file_and_row(tmp_path):
     )
 
 
+@pytest.mark.parametrize("route_path", [
+    "/v1/items/{id}/{id}",
+    "/v1/items/{id:int}/{id:int}",
+    "/v1/items/{id:int}/{id:uuid}",
+], ids=["implicit-converters", "same-converters", "different-converters"])
+def test_duplicate_parameter_name_is_refused_with_file_and_row(tmp_path, route_path):
+    with pytest.raises(ValueError, match="Duplicated param name"):
+        Router(routes=[Route(route_path, route_endpoint("duplicate"), methods=["GET"])])
+    path = write_rows(tmp_path, ["/valid", route_path])
+    with pytest.raises(ValueError) as error:
+        catalog.load_extension_routes(path)
+    assert str(error.value) == (
+        f"{path}: record 1, row 2: duplicate path parameter 'id': {route_path!r}"
+    )
+
+
 def test_registered_custom_converter_loads_and_matches(tmp_path):
     class TaggedInteger(Convertor):
         regex = r"tag-[0-9]+"

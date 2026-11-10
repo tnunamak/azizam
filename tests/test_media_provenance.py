@@ -567,7 +567,7 @@ class _NullClient:
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")
 class AvDeliveryTests(unittest.TestCase):
-    def _make(self, suffix: str, *, audio: bool) -> bytes:
+    def _make(self, suffix: str, *, audio: bool, prompt_json: str = PROMPT_JSON) -> bytes:
         workdir = Path(tempfile.mkdtemp())
         try:
             target = workdir / f"in{suffix}"
@@ -576,7 +576,7 @@ class AvDeliveryTests(unittest.TestCase):
             else:
                 src = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=0.5", "-pix_fmt", "yuv420p"]
             cmd = ["ffmpeg", "-v", "error", "-y", *src,
-                   "-metadata", f"prompt={PROMPT_JSON}", "-metadata", f"workflow={WORKFLOW_JSON}", str(target)]
+                   "-metadata", f"prompt={prompt_json}", "-metadata", f"workflow={WORKFLOW_JSON}", str(target)]
             if suffix == ".mp4":
                 cmd[-1:-1] = ["-movflags", "+use_metadata_tags"]
             subprocess.run(cmd, check=True)
@@ -628,6 +628,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
     """GET /v1/videos/{id}/content: query control, submit-time choice, the plans' bound."""
 
     async def _fetch(self, *, query: str, record_mode: str | None, auth, keep_prompt: bool = True,
+                     caller_is_maker: bool = True, prompt_text: str = "video test prompt",
                      expect_status: int = 200) -> Any:
         if not FFMPEG:
             self.skipTest("ffmpeg is required")
@@ -640,8 +641,17 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         admin_path = patch.object(proxy.ADMIN_STORE, "path", admin_db)
         admin_path.start()
         self.addCleanup(admin_path.stop)
-        auth = proxy.AuthContext(identity=replace(auth.identity, person_id=maker["id"]))
-        raw = AvDeliveryTests()._make(".mp4", audio=False)
+        if caller_is_maker:
+            caller = maker
+        else:
+            caller = admin_store.upsert_oidc_user("test", "video-reader", path=admin_db)
+            self.assertNotEqual(caller["id"], maker["id"])
+        auth = proxy.AuthContext(identity=replace(auth.identity, person_id=caller["id"]))
+        # A real engine writes the person's words into the prompt graph it embeds in the file; the route
+        # delivers those tags and the stored row only decides who may have them (as test_prompt_memory_identity
+        # does for images). The fixture's graph carries the kept text the same way.
+        raw = AvDeliveryTests()._make(".mp4", audio=False, prompt_json=json.dumps(
+            {"3": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt_text}}}))
         prompt_id = "pid-1"
         record = {
             "owner_key_hash": proxy._asset_owner_key(auth), "deleted_at": None,
@@ -650,7 +660,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             "provenance": provenance.build_provenance_record(kind="video", seed=3, request_id="video_x"),
         }
         if keep_prompt:
-            prompt_memory.put(f"video_{prompt_id}", maker["id"], "video test prompt", kept_until=None,
+            prompt_memory.put(f"video_{prompt_id}", maker["id"], prompt_text, kept_until=None,
                               admin_path=admin_db)
 
         class View:
@@ -737,6 +747,35 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
                 body = await self._fetch(query=query, record_mode=record_mode, auth=full_auth, keep_prompt=False,
                                          expect_status=403)
                 self.assertEqual(body["error"]["code"], "prompt_not_accessible")
+
+    async def test_nonmaker_default_full_delivers_video_without_private_metadata(self) -> None:
+        sentinel = "kept-video-maker-prompt-sentinel-1109"
+        content = await self._fetch(
+            query="", record_mode=None, auth=FULL_AUTH, caller_is_maker=False,
+            prompt_text=sentinel,
+        )
+        self.assertTrue(content.startswith(b"\x00\x00\x00") and b"ftyp" in content[:16], content[:16])
+        tags = json.dumps(media_metadata.read_media_tags(content, ".mp4")).casefold()
+        for key in ("prompt", "workflow", "azizam_provenance"):
+            self.assertNotIn(f'"{key}":', tags)
+        self.assertNotIn(sentinel.encode(), content)
+
+    async def test_nonmaker_explicit_full_with_kept_prompt_is_refused(self) -> None:
+        body = await self._fetch(
+            query="metadata=full", record_mode=None, auth=FULL_AUTH, caller_is_maker=False,
+            prompt_text="kept-video-maker-prompt-sentinel-1109", expect_status=403,
+        )
+        self.assertEqual(body["error"]["code"], "prompt_not_accessible")
+
+    async def test_maker_default_full_retains_kept_prompt_metadata(self) -> None:
+        sentinel = "kept-video-maker-prompt-sentinel-1109"
+        content = await self._fetch(
+            query="", record_mode=None, auth=FULL_AUTH, caller_is_maker=True,
+            prompt_text=sentinel,
+        )
+        self.assertTrue(self._has_metadata(content))
+        self.assertIn(sentinel, json.dumps(media_metadata.read_media_tags(content, ".mp4")))
+        self.assertIn(sentinel.encode(), content)
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")

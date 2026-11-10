@@ -110,10 +110,15 @@ def load_extension_routes(
             location = f"{path}: record {record_number}, row {row_number}"
             if "//" in route:
                 raise ValueError(f"{location}: extension route has an empty path segment: {route!r}")
+            parameter_names: set[str] = set()
             for parameter in PARAM_REGEX.finditer(route):
                 converter = (parameter.group(2) or ":str")[1:]
                 if converter not in CONVERTOR_TYPES:
                     raise ValueError(f"{location}: unknown path converter {converter!r}: {route!r}")
+                name = parameter.group(1)
+                if name in parameter_names:
+                    raise ValueError(f"{location}: duplicate path parameter {name!r}: {route!r}")
+                parameter_names.add(name)
             route_inputs = frozenset(_string_list(row.get("route_inputs", []), "route_inputs"))
             prefixes: tuple[str, ...] = ()
             route_intent: str | None = None
