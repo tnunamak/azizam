@@ -127,7 +127,7 @@ def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors
 # The input types whose value is one media reference: a value that names a stored or supplied file, not a plain value.
 # This is the leaf test of a value check (a reference is a string or a mapping). It does not say whether an input
 # carries media: an array or object can hold assets, and ``media_bearing`` answers that for every rule that asks.
-MEDIA_INPUT_TYPES = frozenset({"asset"})
+_REFERENCE_INPUT_TYPES = frozenset({"asset"})
 _INPUT_TYPE_ALIASES_PATH = Path(__file__).resolve().parents[1] / "registry" / "input_type_aliases.yml"
 
 
@@ -159,11 +159,11 @@ def load_input_type_aliases(path: str | Path = _INPUT_TYPE_ALIASES_PATH) -> Mapp
         raise bad("aliases must be a mapping")
     result = {}
     for name, row in doc["aliases"].items():
-        if not re.fullmatch(r"[a-z][a-z0-9_-]*", name) or name in {"string", "number", "integer", "boolean", "object", "array", *MEDIA_INPUT_TYPES}:
+        if not re.fullmatch(r"[a-z][a-z0-9_-]*", name) or name in {"string", "number", "integer", "boolean", "object", "array", *_REFERENCE_INPUT_TYPES}:
             raise bad("alias must be a new data name")
         if not isinstance(row, dict) or set(row) != {"type", "accepts"}:
             raise bad(f"aliases.{name}: expected only type and accepts")
-        if not isinstance(row["type"], str) or row["type"] not in MEDIA_INPUT_TYPES:
+        if not isinstance(row["type"], str) or row["type"] not in _REFERENCE_INPUT_TYPES:
             raise bad(f"aliases.{name}.type: unknown reference type")
         accepts = row["accepts"]
         if (not isinstance(accepts, list) or not accepts
@@ -177,6 +177,10 @@ def load_input_type_aliases(path: str | Path = _INPUT_TYPE_ALIASES_PATH) -> Mapp
 @lru_cache(maxsize=1)
 def _shipped_input_type_aliases() -> Mapping[str, Mapping[str, Any]]:
     return load_input_type_aliases()
+
+
+# Compatibility roster retained for the one-time schema converter and external readers.
+MEDIA_INPUT_TYPES = _REFERENCE_INPUT_TYPES | frozenset(_shipped_input_type_aliases())
 
 
 def normalize_input_spec(spec: Mapping[str, Any], _depth: int = 0) -> dict[str, Any]:
@@ -791,7 +795,7 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     elif expected_type == "boolean":
         if not isinstance(value, bool):
             return f"{name} must be a boolean"
-    elif isinstance(expected_type, str) and expected_type in MEDIA_INPUT_TYPES:
+    elif isinstance(expected_type, str) and expected_type in _REFERENCE_INPUT_TYPES:
         # An image input is a media reference, like an asset: a data URI, URL or gateway reference.
         if not isinstance(value, (str, dict)):
             return f"{name} must be an asset reference"
