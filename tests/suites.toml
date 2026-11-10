@@ -474,11 +474,6 @@ reason = "V5d: a create waits for the engine round before answering (it answers 
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_retention_media_snapshots.py::test_media_dispatch_persists_exact_fact_snapshot[video-False]"
-reason = "V5d: the run-core video create receipt does not carry the destination retention_facts snapshot"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_adapter_differential_s7.py::test_s7_cell[ve-wait_timeout]"
 reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
 
