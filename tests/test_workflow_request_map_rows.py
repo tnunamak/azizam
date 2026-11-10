@@ -51,6 +51,26 @@ def refusal(tmp_path: Path, maps: list) -> str:
 # ------------------------------------------------------------------- refusals
 
 
+def test_refuses_two_inputs_keys_in_one_row(tmp_path: Path) -> None:
+    path = tmp_path / "workflow_request_maps.yml"
+    path.write_text(
+        "schema_version: 1\n"
+        "maps:\n"
+        "  - select: {any: true}\n"
+        "    inputs:\n"
+        "      prompt: {in: body}\n"
+        "    inputs:\n"
+        "      seed: {in: extension}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as caught:
+        workflow_request_maps.load(path)
+    message = str(caught.value)
+    assert str(path) in message
+    assert "not valid YAML" in message
+    assert "duplicate key \'inputs\'" in message
+
+
 def test_refuses_a_row_key_it_does_not_know(tmp_path: Path) -> None:
     message = refusal(
         tmp_path,

@@ -27,6 +27,7 @@ from typing import Any, Mapping
 import yaml
 
 from gateway.manifests import media_bearing
+from gateway.strict_yaml import safe_load_strict
 from gateway.workflow_view import settable_inputs
 
 DEFAULT_PATH = Path(__file__).resolve().parents[1] / "registry" / "workflow_request_maps.yml"
@@ -240,7 +241,7 @@ def load(path: str | Path = DEFAULT_PATH) -> RequestMaps:
     """Read the file once and return its read-only rows, or refuse a malformed row."""
     path = Path(path)
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = safe_load_strict(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
         raise ValueError(f"{path}: not valid YAML: {error}") from error
     if not isinstance(document, Mapping):
