@@ -8693,6 +8693,9 @@ def _image_graph_roles(
     # Prompt: a mapped prompt is written by the map, so no prompt node is read from the graph.
     if found.prompt:
         roles.pop("prompt_node", None)
+    # Seed: a mapped seed is bound through the map, so no seed node is read from the graph.
+    if found.seed:
+        roles.pop("seed_node", None)
     return roles
 
 
