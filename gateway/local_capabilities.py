@@ -53,8 +53,6 @@ INTENT_EMBEDDINGS = "text.embeddings"
 INTENT_SPEECH = "speech.synthesis"
 INTENT_TRANSCRIPTIONS = "speech.transcription"
 INTENT_TRANSLATIONS = "speech.translation"
-INTENT_IMAGE_GENERATE = "image.generate"
-INTENT_IMAGE_EDIT = "image.edit"
 INTENT_VIDEO_GENERATE = "video.generate"
 INTENT_AUDIO_GENERATE = "audio.generate"
 
@@ -753,8 +751,6 @@ __all__ = [
     "INTENT_EMBEDDINGS",
     "INTENT_SPEECH",
     "INTENT_TRANSCRIPTIONS",
-    "INTENT_IMAGE_GENERATE",
-    "INTENT_IMAGE_EDIT",
     "INTENT_VIDEO_GENERATE",
     "INTENT_AUDIO_GENERATE",
     "build_local_capabilities",

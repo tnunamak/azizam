@@ -23,8 +23,6 @@ from gateway.local_capabilities import (  # noqa: E402
     INTENT_CHAT,
     INTENT_COMPLETIONS,
     INTENT_EMBEDDINGS,
-    INTENT_IMAGE_EDIT,
-    INTENT_IMAGE_GENERATE,
     INTENT_SPEECH,
     INTENT_TRANSCRIPTIONS,
     INTENT_TRANSLATIONS,
@@ -407,8 +405,8 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
 
     def test_image_generate_and_edit(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
-        gen = _by_intent(caps, INTENT_IMAGE_GENERATE)
-        edit = _by_intent(caps, INTENT_IMAGE_EDIT)
+        gen = _by_intent(caps, "image.generate")
+        edit = _by_intent(caps, "image.edit")
         self.assertEqual(len(gen), 1)
         self.assertEqual(gen[0].model, "flux2-klein-4b")
         self.assertEqual(gen[0].execution, "job")
