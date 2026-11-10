@@ -33,9 +33,62 @@ from __future__ import annotations
 import json
 import logging
 import unicodedata
-from typing import Any, AsyncIterator
+from pathlib import Path
+from string import Formatter
+from types import MappingProxyType
+from typing import Any, AsyncIterator, Mapping
+
+import yaml
 
 logger = logging.getLogger("gateway.toolcall")
+
+_GATEWAY_MESSAGES_PATH = Path(__file__).resolve().parents[1] / "registry" / "gateway_messages.yml"
+_MESSAGE_FIELDS = frozenset({
+    "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+})
+
+
+def _validate_message_template(value: str, name: str, fields: set[str]) -> None:
+    """Only exact, single-use placeholders; no attribute access or formatting."""
+    try:
+        parts = list(Formatter().parse(value))
+    except ValueError as error:
+        raise ValueError(f"{name}: invalid message template") from error
+    seen: list[str] = []
+    for _literal, field, format_spec, conversion in parts:
+        if field is None:
+            continue
+        if field not in fields or format_spec or conversion is not None:
+            raise ValueError(f"{name}: unsupported placeholder")
+        seen.append(field)
+    if set(seen) != fields or len(seen) != len(fields):
+        raise ValueError(f"{name}: each required placeholder must appear exactly once")
+
+
+def load_gateway_messages(path: str | Path = _GATEWAY_MESSAGES_PATH) -> Mapping[str, str]:
+    """Load closed, immutable display copy; data cannot select executable code."""
+    document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(document, Mapping):
+        raise ValueError("gateway messages must be a mapping")
+    required = _MESSAGE_FIELDS | {"schema_version"}
+    unknown = set(document) - required
+    if unknown:
+        raise ValueError(f"gateway messages: unknown keys {sorted(map(str, unknown))}")
+    missing = required - set(document)
+    if missing:
+        raise ValueError(f"gateway messages: missing keys {sorted(missing)}")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError("gateway messages: schema_version must be 1")
+    for name in _MESSAGE_FIELDS:
+        if not isinstance(document[name], str) or not document[name].strip():
+            raise ValueError(f"{name} must be non-empty text")
+    _validate_message_template(document["tool_call_advisory"], "tool_call_advisory", {"family", "backend_label"})
+    _validate_message_template(document["backend_label"], "backend_label", {"backend_hint"})
+    return MappingProxyType({name: document[name] for name in _MESSAGE_FIELDS})
+
+
+# Load once, as with other release registry data; malformed copy fails at startup.
+GATEWAY_MESSAGES = load_gateway_messages()
 
 # ---------------------------------------------------------------------------
 # §5.2 — Detection: marker table
@@ -75,13 +128,9 @@ def _find_marker(content: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# §5.3 — Advisory map: backend-hint → remediation
+# §5.3 — Advisory copy: detected family and backend label, never dispatch
 # ---------------------------------------------------------------------------
-# ``backend_hint`` is the value callers derive from config["backends"][sid]:
-#   prefer config["backends"][sid].get("preset") — the stored preset id
-#   fall back to the service_id itself (many operators name services "vllm" etc.)
-#
-# Matching is case-insensitive substring so "my-vllm-gpu" still hits "vllm".
+# ``backend_hint`` is included verbatim as a label, not matched to any engine.
 
 def advisory_for_backend(
     backend_hint: str, family: str, operator_advisory: str | None = None
@@ -101,15 +150,10 @@ def advisory_for_backend(
     ``family`` is the detected name from TOOLCALL_MARKERS (data). ``backend_hint``
     is included only as a label so the operator knows which backend it was.
     """
-    fam = family or "unknown"
-    base = (
-        f"Detected {fam}-format tool calls in the response content, but tool_calls "
-        f"is empty; this backend"
-        + (f" ({backend_hint})" if backend_hint else "")
-        + " is not lifting tool calls into the OpenAI tool_calls field. Enable "
-        "tool-call parsing in the backend's own configuration (most OpenAI-"
-        "compatible servers have a flag or template setting for this), and confirm "
-        "the loaded model's chat template supports tools."
+    messages = GATEWAY_MESSAGES
+    backend_label = messages["backend_label"].format(backend_hint=backend_hint) if backend_hint else ""
+    base = messages["tool_call_advisory"].format(
+        family=family or messages["unknown_family"], backend_label=backend_label,
     )
     if operator_advisory:
         return f"{base} {operator_advisory.strip()}"

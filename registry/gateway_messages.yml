@@ -1,0 +1,12 @@
+schema_version: 1
+metadata_description: >-
+  Whether delivered media keeps its embedded ComfyUI workflow
+  and gateway provenance (full) or has all metadata removed
+  losslessly (none). Valid on every route that returns generated media.
+tool_call_advisory: >-
+  Detected {family}-format tool calls in the response content, but tool_calls
+  is empty; this backend{backend_label} is not lifting tool calls into the OpenAI tool_calls field. Enable
+  tool-call parsing in the backend's own configuration (most OpenAI-compatible servers have a flag or template setting for this), and confirm
+  the loaded model's chat template supports tools.
+backend_label: " ({backend_hint})"
+unknown_family: unknown
