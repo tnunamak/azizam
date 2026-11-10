@@ -89,6 +89,7 @@ tests/test_engine_dispatch_wiring.py
 tests/test_engine_egress_boot.py
 tests/test_engine_egress_choke_point.py
 tests/test_engine_inference_path.py
+tests/test_engine_knowledge_boundary.py
 tests/test_engine_probe_connection.py
 tests/test_engine_protocol_legacy_wire.py
 tests/test_engine_protocol_native_data.py
@@ -403,5 +404,5 @@ tests/test_workflow_run_route.py
 tests/test_workflow_schema_migration.py
 tests/test_workflows_catalog.py
 tests/test_xc_input_contract.py
-tests/test_xc_shipped_golden.py
 tests/test_xc_measurements.py
+tests/test_xc_shipped_golden.py
