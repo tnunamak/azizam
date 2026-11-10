@@ -382,7 +382,7 @@
       "sha256": "2ccfdba86a41f4a90e3142b86b67ee2dad4ef74112040ddebd66108ba92ce9c7"
     },
     "/gateway/v1/workflows/{workflow_id}/run": {
-      "bytes": 3086,
+      "bytes": 3200,
       "full": {
         "post": {
           "description": "Starts a media job for the workflow with this full id (`GET /gateway/v1/workflows` lists them) and answers the job: 202 while it is queued or running, with its address in `Location`. Read it at `GET /gateway/v1/media/jobs/{job_id}` and its output at `GET /gateway/v1/media/jobs/{job_id}/content`. `Prefer: wait=N` waits up to N seconds for the job to end before it answers. Each video-edit workflow also has a concrete path below with its exact form fields.",
@@ -396,6 +396,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/WorkflowForm_video_edit_scail_2_replace"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowForm_video_edit_video_mux"
                     }
                   ]
                 }
@@ -488,7 +491,7 @@
           "summary": "Run a workflow by its full id"
         }
       },
-      "sha256": "5d2044e1473b977776a8ca301d09c2a2fe8c3f0e7a932c7eec1229321ae59366"
+      "sha256": "fe89e088a98ee5505b1be0f37c50a59c24f8bfe33e0c78d8a8dd5b84c9fb6fda"
     },
     "/openai/v1/audio/generate": {
       "bytes": 1593,
@@ -1090,7 +1093,7 @@
     }
   },
   "shared": {
-    "bytes": 9613,
+    "bytes": 9641,
     "full": {
       "info": {
         "description": "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content.",
@@ -1414,6 +1417,7 @@
         "mesh.generate.trellis-2",
         "video.edit.rife-interpolate",
         "video.edit.scail-2-replace",
+        "video.edit.video-mux",
         "video.generate.ltx-2.5-i2v",
         "video.generate.ltx-2.5-keyframes",
         "video.generate.ltx-2.5-keyframes-mid",
@@ -1426,7 +1430,7 @@
         "video.generate.minimax-h3-t2v"
       ]
     },
-    "sha256": "b35bb85fd3201f08d0614b1cb684a1520b3ee9bcb02a26ecd223ec267ea790c0"
+    "sha256": "a5cdf57fbfa004176d77f443be27804bcd24017d6d07ade52590f03037e9e011"
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
@@ -3461,7 +3465,7 @@
       "sha256": "31d0370ccc9ba443dd66c3197a862a00def64a2e8ee58c8afdb4a39919c440ae"
     },
     "image.edit.qwen-image-2.1-inpaint": {
-      "bytes": 5036,
+      "bytes": 5122,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3583,8 +3587,7 @@
                 "type": "integer"
               },
               "mask_feather": {
-                "default": 48,
-                "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.",
+                "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
                 "maximum": 256,
                 "minimum": 0,
                 "type": "integer"
@@ -3634,7 +3637,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_inpaint",
         "run_path": null
       },
-      "sha256": "ecdb669c63350ae4d6cf684d14bfe78cee51ffdd9e0a50e75098125d4e3863c3"
+      "sha256": "c7e95bc11804e99c6ac43ee6addef0e948f0807acad7510bddffe00a097fdcdf"
     },
     "image.edit.seedvr2-upscale": {
       "bytes": 3240,
@@ -6409,7 +6412,7 @@
       "sha256": "34ae51104e003cc27de38e2c5590927653db90470037f5d21b3a23f0cf5ae1af"
     },
     "video.edit.rife-interpolate": {
-      "bytes": 8282,
+      "bytes": 7920,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6491,23 +6494,7 @@
               "name": "video"
             }
           ],
-          "route_inputs": [
-            {
-              "description": "Clip length in seconds.",
-              "field": "seconds",
-              "in": "body",
-              "minimum": 1,
-              "name": "seconds",
-              "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
-            }
-          ],
+          "route_inputs": [],
           "short_id": "rife-interpolate",
           "typical_seconds": 4.0
         },
@@ -6701,7 +6688,7 @@
           }
         }
       },
-      "sha256": "0db4fbafc2ffc617f2ad73fe9f710f934e5934f571c8e76d898e0c38e67098fc"
+      "sha256": "104c235bc54cfe39cdac3d90ca34f0d9d54f2b674b5cb1d3b7fa3a5d4d41e662"
     },
     "video.edit.scail-2-replace": {
       "bytes": 15773,
@@ -7225,8 +7212,276 @@
       },
       "sha256": "c7e1c36f987190f85d5d167de66ff21f5fa8f54795aae4893f337818916dd071"
     },
+    "video.edit.video-mux": {
+      "bytes": 9014,
+      "full": {
+        "catalog_entry": {
+          "aliases": [],
+          "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+          "display_name": "Add a Soundtrack to a Video",
+          "execution": {
+            "async": {
+              "cancel": {
+                "method": "DELETE",
+                "path": "/v1/videos/{video_id}"
+              },
+              "content": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}/content"
+              },
+              "fields": {
+                "source_audio": {
+                  "field": "source_audio",
+                  "in": "extension"
+                },
+                "source_video": {
+                  "field": "source_video",
+                  "in": "extension"
+                }
+              },
+              "kind": "video",
+              "poll": {
+                "method": "GET",
+                "path": "/v1/videos/{video_id}"
+              },
+              "statuses": [
+                "queued",
+                "in_progress",
+                "completed",
+                "failed"
+              ],
+              "submit": {
+                "content_type": "application/json",
+                "method": "POST",
+                "model": "video-video-mux",
+                "path": "/v1/videos"
+              },
+              "terminal": [
+                "completed",
+                "failed"
+              ]
+            },
+            "recommended": "sync",
+            "sync": {
+              "content_type": "multipart/form-data",
+              "fields": {
+                "source_audio": {
+                  "field": "source_audio",
+                  "in": "file"
+                },
+                "source_video": {
+                  "field": "source_video",
+                  "in": "file"
+                }
+              },
+              "method": "POST",
+              "output": "a media job; its content is the video",
+              "path": "/gateway/v1/workflows/video.edit.video-mux/run",
+              "response": {
+                "content": "/gateway/v1/media/jobs/{job_id}/content",
+                "kind": "media_job",
+                "poll": "/gateway/v1/media/jobs/{job_id}"
+              }
+            }
+          },
+          "id": "video.edit.video-mux",
+          "inputs_schema": {
+            "$ref": "#/components/schemas/WorkflowInputs_video_edit_video_mux"
+          },
+          "intent": "video.edit",
+          "outputs": [
+            {
+              "media_type": "video/mp4",
+              "name": "video"
+            }
+          ],
+          "route_inputs": [],
+          "short_id": "video-mux",
+          "typical_seconds": 5.0
+        },
+        "components": {
+          "WorkflowExtensionInputs_video_edit_video_mux": {
+            "additionalProperties": false,
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "properties": {
+              "source_audio": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "source_video": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video that gets the new sound.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video",
+              "source_audio"
+            ],
+            "title": "Add a Soundtrack to a Video",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          },
+          "WorkflowForm_video_edit_video_mux": {
+            "additionalProperties": false,
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "properties": {
+              "source_audio": {
+                "description": "The song or sound to put on the video.",
+                "format": "binary",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "source_video": {
+                "description": "The video that gets the new sound.",
+                "format": "binary",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video",
+              "source_audio"
+            ],
+            "title": "Add a Soundtrack to a Video",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          },
+          "WorkflowInputs_video_edit_video_mux": {
+            "additionalProperties": false,
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "properties": {
+              "source_audio": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
+                "type": "string",
+                "x-azizam-asset": true
+              },
+              "source_video": {
+                "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video that gets the new sound.",
+                "type": "string",
+                "x-azizam-asset": true
+              }
+            },
+            "required": [
+              "source_video",
+              "source_audio"
+            ],
+            "title": "Add a Soundtrack to a Video",
+            "type": "object",
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          }
+        },
+        "extension_carried_by_routes": [],
+        "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_video_mux",
+        "run_path": {
+          "post": {
+            "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
+            "operationId": "run_video_mux",
+            "requestBody": {
+              "content": {
+                "multipart/form-data": {
+                  "schema": {
+                    "$ref": "#/components/schemas/WorkflowForm_video_edit_video_mux"
+                  }
+                }
+              },
+              "required": true
+            },
+            "responses": {
+              "200": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "description": "The job, ended within `Prefer: wait`."
+              },
+              "202": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object"
+                    }
+                  }
+                },
+                "description": "The job, queued or running; `Location` is its address."
+              },
+              "400": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Invalid input. `error.message` names the field and the rule."
+              },
+              "401": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Missing or invalid bearer token."
+              },
+              "403": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Not permitted by the app profile."
+              },
+              "404": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Unknown workflow, model, or job."
+              },
+              "502": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Backend failed while rendering."
+              },
+              "503": {
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                    }
+                  }
+                },
+                "description": "Backend unavailable or disabled."
+              }
+            },
+            "summary": "Run Add a Soundtrack to a Video",
+            "tags": [
+              "gateway-workflows"
+            ],
+            "x-azizam-workflow-id": "video.edit.video-mux"
+          }
+        }
+      },
+      "sha256": "52d53f6b8b8810e8e4975e54eae4f3d4e60b3f27348623f1b1da7e940e26536a"
+    },
     "video.generate.ltx-2.5-i2v": {
-      "bytes": 4109,
+      "bytes": 4740,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7246,12 +7501,24 @@
                 "frame_rate": {
                   "in": "none"
                 },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
                 "image": {
                   "field": "input_reference",
                   "in": "body"
                 },
                 "image_strength": {
                   "field": "image_strength",
+                  "in": "body"
+                },
+                "length": {
+                  "field": "seconds",
                   "in": "body"
                 },
                 "negative_prompt": {
@@ -7264,6 +7531,14 @@
                 },
                 "seed": {
                   "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
                   "in": "body"
                 }
               },
@@ -7303,23 +7578,7 @@
               "name": "video"
             }
           ],
-          "route_inputs": [
-            {
-              "description": "Clip length in seconds.",
-              "field": "seconds",
-              "in": "body",
-              "minimum": 1,
-              "name": "seconds",
-              "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
-            }
-          ],
+          "route_inputs": [],
           "short_id": "ltx-2.5-i2v",
           "typical_seconds": 56.0
         },
@@ -7336,6 +7595,12 @@
             "additionalProperties": false,
             "description": "Make a video with sound from a starting picture and a description.",
             "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
               "image": {
                 "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
                 "type": "string",
@@ -7348,6 +7613,14 @@
                 "minimum": 0,
                 "type": "number"
               },
+              "length": {
+                "description": "Frame count on the 8N+1 grid.",
+                "maximum": 241,
+                "minimum": 9,
+                "type": "integer",
+                "x-azizam-offset": 1,
+                "x-azizam-step": 8
+              },
               "negative_prompt": {
                 "description": "Describe anything you want left out.",
                 "type": "string"
@@ -7359,6 +7632,12 @@
               "seed": {
                 "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
                 "type": "integer"
               }
             },
@@ -7375,10 +7654,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v",
         "run_path": null
       },
-      "sha256": "12e80cd09655d5699c070abc4b970fcc6dc8f43e18d5fef79d37644a14d5e908"
+      "sha256": "f697b8ea1ae4841dc3fd7a8a9525f93a3e7409bb2f07082d589be2100dd01080"
     },
     "video.generate.ltx-2.5-keyframes": {
-      "bytes": 6747,
+      "bytes": 7252,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7401,6 +7680,14 @@
                 "frames": {
                   "field": "frames",
                   "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 },
                 "image": {
                   "field": "input_reference",
@@ -7432,6 +7719,14 @@
                 },
                 "seed": {
                   "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
                   "in": "body"
                 }
               },
@@ -7479,13 +7774,6 @@
               "minimum": 1,
               "name": "seconds",
               "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
             }
           ],
           "short_id": "ltx-2.5-keyframes",
@@ -7543,6 +7831,12 @@
                 "x-azizam-offset": 1,
                 "x-azizam-step": 8
               },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
               "image": {
                 "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
                 "type": "string",
@@ -7586,6 +7880,12 @@
                 "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
               }
             },
             "required": [
@@ -7602,10 +7902,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes",
         "run_path": null
       },
-      "sha256": "fb8840e379d8799330ae8a3ab1645bc2354ecb54300db29201524bdd1abbbc66"
+      "sha256": "858038c1e08e9628b3159cb73045d4c11c220a5c7f4f5bc380057f0eb7b94bec"
     },
     "video.generate.ltx-2.5-keyframes-mid": {
-      "bytes": 8772,
+      "bytes": 9277,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7628,6 +7928,14 @@
                 "frames": {
                   "field": "frames",
                   "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 },
                 "image": {
                   "field": "input_reference",
@@ -7671,6 +7979,14 @@
                 },
                 "seed": {
                   "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
                   "in": "body"
                 }
               },
@@ -7718,13 +8034,6 @@
               "minimum": 1,
               "name": "seconds",
               "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
             }
           ],
           "short_id": "ltx-2.5-keyframes-mid",
@@ -7801,6 +8110,12 @@
                 "x-azizam-offset": 1,
                 "x-azizam-step": 8
               },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
               "image": {
                 "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
                 "type": "string",
@@ -7862,6 +8177,12 @@
                 "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
+                "type": "integer"
               }
             },
             "required": [
@@ -7879,7 +8200,7 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid",
         "run_path": null
       },
-      "sha256": "2d80833c71b0abd05b695b12f396c96cd63b04532009bad86511f20e0fc35e12"
+      "sha256": "20e8252ff38c92b1bb2763ca2b1381adca1596d890bfe9e3abb3018104c5329c"
     },
     "video.generate.ltx-2.5-long": {
       "bytes": 3827,
@@ -8034,7 +8355,7 @@
       "sha256": "bad20b8b0d1f1c0a7fa1bad24132abca4a1387fdbf8c95e9a1f80c0a6c55c205"
     },
     "video.generate.ltx-2.5-t2v": {
-      "bytes": 3374,
+      "bytes": 4005,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -8056,6 +8377,18 @@
                 "frame_rate": {
                   "in": "none"
                 },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "length": {
+                  "field": "seconds",
+                  "in": "body"
+                },
                 "negative_prompt": {
                   "field": "negative_prompt",
                   "in": "body"
@@ -8066,6 +8399,14 @@
                 },
                 "seed": {
                   "field": "seed",
+                  "in": "body"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
                   "in": "body"
                 }
               },
@@ -8105,23 +8446,7 @@
               "name": "video"
             }
           ],
-          "route_inputs": [
-            {
-              "description": "Clip length in seconds.",
-              "field": "seconds",
-              "in": "body",
-              "minimum": 1,
-              "name": "seconds",
-              "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
-            }
-          ],
+          "route_inputs": [],
           "short_id": "ltx-2.5-t2v",
           "typical_seconds": 49.0
         },
@@ -8138,6 +8463,20 @@
             "additionalProperties": false,
             "description": "Make a video with sound from a description or picture.",
             "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 704,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "length": {
+                "description": "Frame count on the 8N+1 grid.",
+                "maximum": 241,
+                "minimum": 9,
+                "type": "integer",
+                "x-azizam-offset": 1,
+                "x-azizam-step": 8
+              },
               "negative_prompt": {
                 "description": "Describe anything you want left out.",
                 "type": "string"
@@ -8149,6 +8488,12 @@
               "seed": {
                 "description": "Use the same number to repeat a variation with the same settings.",
                 "minimum": 0,
+                "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1280,
+                "minimum": 64,
                 "type": "integer"
               }
             },
@@ -8164,10 +8509,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v",
         "run_path": null
       },
-      "sha256": "6fdec1b410ea299cd8ad8dfda1679539d5884dba7d99b1452496a499abf2b0ea"
+      "sha256": "2b5fb8529da2a9042f534eaff9299a660549076aa0ebb5fdfdae9dbea643bd76"
     },
     "video.generate.minimax-h3-i2v": {
-      "bytes": 3964,
+      "bytes": 4662,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8184,8 +8529,23 @@
                 "path": "/v1/videos/{video_id}/content"
               },
               "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
                 "image": {
                   "field": "input_reference",
+                  "in": "body"
+                },
+                "length": {
+                  "field": "seconds",
                   "in": "body"
                 },
                 "prompt": {
@@ -8199,6 +8559,14 @@
                 "steps": {
                   "field": "steps",
                   "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 }
               },
               "kind": "video",
@@ -8237,23 +8605,7 @@
               "name": "video"
             }
           ],
-          "route_inputs": [
-            {
-              "description": "Clip length in seconds.",
-              "field": "seconds",
-              "in": "body",
-              "minimum": 1,
-              "name": "seconds",
-              "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
-            }
-          ],
+          "route_inputs": [],
           "short_id": "minimax-h3-i2v",
           "typical_seconds": 135.0
         },
@@ -8278,10 +8630,24 @@
             "additionalProperties": false,
             "description": "Make a video with stereo sound from a starting picture and a description.",
             "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
               "image": {
                 "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
                 "type": "string",
                 "x-azizam-asset": true
+              },
+              "length": {
+                "description": "Frame count on the 17N+5 grid.",
+                "maximum": 362,
+                "minimum": 22,
+                "type": "integer",
+                "x-azizam-offset": 5,
+                "x-azizam-step": 17
               },
               "prompt": {
                 "description": "Describe the scene, action, and mood.",
@@ -8298,6 +8664,12 @@
                 "maximum": 50,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
               }
             },
             "required": [
@@ -8313,10 +8685,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v",
         "run_path": null
       },
-      "sha256": "ccfe064114f15f4e41cff2603c7c79cf8b766f9b70ce37e34d3c9789b4595523"
+      "sha256": "aa68aeb56d57c6b029eb769bb912ad2cbcd9ce84930c31b58fc01d0b8db012e4"
     },
     "video.generate.minimax-h3-keyframes": {
-      "bytes": 5386,
+      "bytes": 5955,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8333,9 +8705,20 @@
                 "path": "/v1/videos/{video_id}/content"
               },
               "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
                 "frames": {
                   "field": "frames",
                   "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 },
                 "image": {
                   "field": "input_reference",
@@ -8356,6 +8739,14 @@
                 "steps": {
                   "field": "steps",
                   "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 }
               },
               "kind": "video",
@@ -8402,13 +8793,6 @@
               "minimum": 1,
               "name": "seconds",
               "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
             }
           ],
           "short_id": "minimax-h3-keyframes",
@@ -8459,6 +8843,12 @@
                 "x-azizam-offset": 5,
                 "x-azizam-step": 17
               },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
               "image": {
                 "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
                 "type": "string",
@@ -8484,6 +8874,12 @@
                 "maximum": 50,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
               }
             },
             "required": [
@@ -8500,10 +8896,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes",
         "run_path": null
       },
-      "sha256": "e78f64bc3300e7a93518a78251bd8b7a8f0eb6a574978a0f042235c843e4a1d0"
+      "sha256": "5469953a21c20d1b596ee6c685eb68b1fafeccb6b084825e14b66e5357cab51e"
     },
     "video.generate.minimax-h3-keyframes-mid": {
-      "bytes": 6856,
+      "bytes": 7425,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8520,9 +8916,20 @@
                 "path": "/v1/videos/{video_id}/content"
               },
               "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
                 "frames": {
                   "field": "frames",
                   "in": "extension"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 },
                 "image": {
                   "field": "input_reference",
@@ -8551,6 +8958,14 @@
                 "steps": {
                   "field": "steps",
                   "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 }
               },
               "kind": "video",
@@ -8597,13 +9012,6 @@
               "minimum": 1,
               "name": "seconds",
               "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
             }
           ],
           "short_id": "minimax-h3-keyframes-mid",
@@ -8666,6 +9074,12 @@
                 "x-azizam-offset": 5,
                 "x-azizam-step": 17
               },
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
               "image": {
                 "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
                 "type": "string",
@@ -8702,6 +9116,12 @@
                 "maximum": 50,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
               }
             },
             "required": [
@@ -8719,7 +9139,7 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid",
         "run_path": null
       },
-      "sha256": "719d1058b9947c4ef7b25c3fc3d1af03967f77368e1bee7990bc4718cfcd9cc8"
+      "sha256": "b7b5d1fbd8006a5a0de619eb3eec85b08bfcf21d89eb53ed4929a0aee2921870"
     },
     "video.generate.minimax-h3-long": {
       "bytes": 3549,
@@ -8860,7 +9280,7 @@
       "sha256": "2fd9904c809ba0909e9e073e01ce05b995f8b6f3bcd6a591184a7698c781ba74"
     },
     "video.generate.minimax-h3-t2v": {
-      "bytes": 3545,
+      "bytes": 4243,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8877,6 +9297,21 @@
                 "path": "/v1/videos/{video_id}/content"
               },
               "fields": {
+                "frame_rate": {
+                  "in": "none"
+                },
+                "height": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
+                },
+                "length": {
+                  "field": "seconds",
+                  "in": "body"
+                },
                 "prompt": {
                   "field": "prompt",
                   "in": "body"
@@ -8888,6 +9323,14 @@
                 "steps": {
                   "field": "steps",
                   "in": "extension"
+                },
+                "width": {
+                  "combine": [
+                    "width",
+                    "height"
+                  ],
+                  "field": "size",
+                  "in": "body"
                 }
               },
               "kind": "video",
@@ -8926,23 +9369,7 @@
               "name": "video"
             }
           ],
-          "route_inputs": [
-            {
-              "description": "Clip length in seconds.",
-              "field": "seconds",
-              "in": "body",
-              "minimum": 1,
-              "name": "seconds",
-              "type": "number"
-            },
-            {
-              "description": "WIDTHxHEIGHT, e.g. 960x512.",
-              "field": "size",
-              "in": "body",
-              "name": "size",
-              "type": "string"
-            }
-          ],
+          "route_inputs": [],
           "short_id": "minimax-h3-t2v",
           "typical_seconds": 122.0
         },
@@ -8967,6 +9394,20 @@
             "additionalProperties": false,
             "description": "Make a video with stereo sound from a description.",
             "properties": {
+              "height": {
+                "description": "Video height in pixels.",
+                "maximum": 768,
+                "minimum": 64,
+                "type": "integer"
+              },
+              "length": {
+                "description": "Frame count on the 17N+5 grid.",
+                "maximum": 362,
+                "minimum": 22,
+                "type": "integer",
+                "x-azizam-offset": 5,
+                "x-azizam-step": 17
+              },
               "prompt": {
                 "description": "Describe the scene, action, and mood.",
                 "type": "string"
@@ -8982,6 +9423,12 @@
                 "maximum": 50,
                 "minimum": 1,
                 "type": "integer"
+              },
+              "width": {
+                "description": "Video width in pixels.",
+                "maximum": 1344,
+                "minimum": 64,
+                "type": "integer"
               }
             },
             "required": [
@@ -8996,7 +9443,7 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v",
         "run_path": null
       },
-      "sha256": "7af9211fc023656b14df62066369adb50a0ebb7c7d4c7ba131fa334c6f49f811"
+      "sha256": "2667e41214de74a61770ad6bbc748cecc4e6d1665d756abec166bdc037d16ede"
     }
   }
 }

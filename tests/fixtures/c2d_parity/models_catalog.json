@@ -278,6 +278,12 @@
         "video.edit.scail-2-replace"
       ],
       [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
+      ],
+      [
         "video.generate",
         "comfyui",
         null,
@@ -1584,6 +1590,12 @@
         "video.edit.scail-2-replace"
       ],
       [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
+      ],
+      [
         "video.generate",
         "comfyui",
         null,
@@ -1932,6 +1944,12 @@
         "comfyui",
         null,
         "video.edit.scail-2-replace"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
       ],
       [
         "video.generate",
@@ -2403,6 +2421,12 @@
         "video.edit.scail-2-replace"
       ],
       [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
+      ],
+      [
         "video.generate",
         "comfyui",
         null,
@@ -2489,6 +2513,12 @@
         "video.edit.scail-2-replace"
       ],
       [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
+      ],
+      [
         "video.generate",
         "comfyui",
         null,
@@ -2573,6 +2603,12 @@
         "comfyui",
         null,
         "video.edit.scail-2-replace"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
       ]
     ],
     "video.generate": [
@@ -2663,6 +2699,12 @@
         "video.edit.scail-2-replace"
       ],
       [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
+      ],
+      [
         "video.generate",
         "comfyui",
         null,
@@ -2747,6 +2789,12 @@
         "comfyui",
         null,
         "video.edit.scail-2-replace"
+      ],
+      [
+        "video.edit",
+        "comfyui",
+        null,
+        "video.edit.video-mux"
       ]
     ]
   },
@@ -3080,8 +3128,8 @@
   ],
   "catalog_counts": {
     "aliases": 3,
-    "capabilities": 58,
-    "models": 48
+    "capabilities": 59,
+    "models": 49
   },
   "catalog_models": [
     {
@@ -6883,6 +6931,98 @@
       "sha256": "d1febe6a2876519ef18346464d2b1af787488f72f46da7995ccdb8d7d28716f1"
     },
     {
+      "bytes": 1756,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "video",
+            "icon_key": "video",
+            "input_modalities": [
+              "video",
+              "audio"
+            ],
+            "intent": "video.edit",
+            "label": "Video",
+            "output_modalities": [
+              "video"
+            ],
+            "streaming": false
+          }
+        ],
+        "capability": "video",
+        "capability_title": "Video",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "Join a song or sound to a video.",
+        "display_name": "Add a Soundtrack to a Video",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "video.edit"
+          }
+        ],
+        "icon_key": "video",
+        "id": "video.edit.video-mux",
+        "io": {
+          "input": [
+            "audio",
+            "video"
+          ],
+          "output": [
+            "video"
+          ]
+        },
+        "locality": "unknown",
+        "name": "Add a Soundtrack to a Video",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "comfyui",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Add a Soundtrack to a Video",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Add a Soundtrack to a Video",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "video.edit.video-mux",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "video.edit.video-mux"
+        ],
+        "workflow": "video.edit.video-mux"
+      },
+      "id": "video.edit.video-mux",
+      "sha256": "3e13d367eb3504ca1fbbf04c7c0185d2616e9bed6c8e70a54c113fb49cb366ec"
+    },
+    {
       "bytes": 2193,
       "full": {
         "alias": false,
@@ -8601,6 +8741,12 @@
       "comfyui",
       null,
       "video.edit.scail-2-replace"
+    ],
+    [
+      "video.edit",
+      "comfyui",
+      null,
+      "video.edit.video-mux"
     ],
     [
       "video.generate",

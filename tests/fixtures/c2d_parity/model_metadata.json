@@ -7165,6 +7165,32 @@
         "type": "video"
       }
     },
+    "video.edit.video-mux": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "audio",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
     "video.generate.ltx-2.5-i2v": {
       "fields": {
         "architecture": {
@@ -8518,6 +8544,7 @@
     "mesh.generate.trellis-2",
     "video.edit.rife-interpolate",
     "video.edit.scail-2-replace",
+    "video.edit.video-mux",
     "video.generate.ltx-2.5-i2v",
     "video.generate.ltx-2.5-keyframes",
     "video.generate.ltx-2.5-keyframes-mid",

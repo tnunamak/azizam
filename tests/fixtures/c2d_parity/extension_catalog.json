@@ -1029,6 +1029,13 @@
                         "subject_index"
                       ],
                       "id": "video.edit.scail-2-replace"
+                    },
+                    {
+                      "controls": [
+                        "source_audio",
+                        "source_video"
+                      ],
+                      "id": "video.edit.video-mux"
                     }
                   ]
                 },
@@ -1536,6 +1543,13 @@
                         "subject_index"
                       ],
                       "id": "video.edit.scail-2-replace"
+                    },
+                    {
+                      "controls": [
+                        "source_audio",
+                        "source_video"
+                      ],
+                      "id": "video.edit.video-mux"
                     }
                   ]
                 },
@@ -2043,6 +2057,13 @@
                         "subject_index"
                       ],
                       "id": "video.edit.scail-2-replace"
+                    },
+                    {
+                      "controls": [
+                        "source_audio",
+                        "source_video"
+                      ],
+                      "id": "video.edit.video-mux"
                     }
                   ]
                 },
