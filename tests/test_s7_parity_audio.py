@@ -508,7 +508,8 @@ def test_audio_28_delivery_carries_provenance_and_the_sync_asset(tmp_path):
         assert record["workflow_id"] == "audio.generate.tangoflux"
         assert record["requested_model"] == record["resolved_model"] == "tangoflux"
         assert record["backend"] == "comfyui"  # the fixture's engine backend
-        assert record["request_id"] == f"audio_{ENGINE_PROMPT_ID}"  # the id the fake engine returned, exactly
+        # The file links to the request's stored receipt (not the engine job id, which names no receipt).
+        assert record["request_id"] == record["receipt"].rsplit("/", 1)[1] == _receipts(rig)[0]["request_id"]
         assert record["seed"] == sampler["seed"]
         assert record["parameters"]["duration"] == sampler["duration"]
         assert record["parameters"]["type"] == r.headers["x-audio-type"] == "music"

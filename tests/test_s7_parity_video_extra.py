@@ -1471,7 +1471,9 @@ def test_video_provenance_embeds_the_prompt_only_when_the_plan_allows(tmp_path, 
         provenance = json.loads(record.group(0))
         assert provenance["schema"] == "azizam.provenance/1"
         assert provenance["kind"] == "video"
-        assert provenance["request_id"] == provenance["receipt"].rsplit("/", 1)[1] == video_id
+        # The file links to the request's stored receipt, not to the video id (which names no receipt).
+        assert provenance["request_id"] == provenance["receipt"].rsplit("/", 1)[1]
+        assert provenance["request_id"].startswith("req_") and provenance["request_id"] != video_id
         assert provenance["requested_model"] == "ltx-2.5-t2v"
         assert provenance["resolved_model"] == "video-ltx-2.5-t2v"
         assert provenance["workflow_id"] == "video.generate.video-ltx-2.5-t2v"
