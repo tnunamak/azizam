@@ -66,3 +66,14 @@ def test_every_group_of_a_rule_must_hold_and_the_first_rule_wins():
 def test_a_malformed_file_is_refused_with_its_cause(broken, cause):
     with pytest.raises(families.FamiliesFileError, match=cause):
         families.parse(broken)
+
+
+def test_the_generated_model_list_agrees_with_the_family_rows():
+    """Every family the generated list stores is the one the rows give, so the two sources cannot drift apart."""
+    generated = yaml.safe_load((families.FAMILIES_FILE.parent / "openai_model_aliases.generated.yml").read_text(encoding="utf-8"))
+    drift = {}
+    for row in generated["models"]:
+        family = families.FAMILIES.category_for(proxy.normalize_model_id(row["id"]))
+        if (family or "unknown") != row["category"]:
+            drift[row["id"]] = (row["category"], family)
+    assert drift == {}
