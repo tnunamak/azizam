@@ -228,8 +228,11 @@ def test_the_image_readers_follow_the_snapshot():
 def test_the_edit_default_is_the_images_release_value_unless_the_model_defaults_name_one(monkeypatch):
     """No model id in code: the images section names the edit default, and model_compatibility overrides it."""
     monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {})
+    from gateway.frontend_shapes import shapes
     with section_published("images", _images(edits={"default_workflow": "unfamiliar-editor"})):
         assert proxy.image_edit_default_model() == "unfamiliar-editor"
+        # The OpenAI edit route's no-model default is this reader, so the release value reaches requests.
+        assert shapes.DEFAULT_WORKFLOWS[shapes.OpenAIImagesMultipart.shape_id]() == "unfamiliar-editor"
     missing = _images()
     del missing["edits"]["default_workflow"]
     with section_published("images", missing), pytest.raises(proxy.SettingMissing, match="images.edits.default_workflow"):
