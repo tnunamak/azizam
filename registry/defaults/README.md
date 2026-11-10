@@ -39,8 +39,8 @@ first boot (design 8.1); the gateway no longer runs that import. The library (`g
 two uses: to read what an import of an old file would write, against a scratch database
 (`python -m gateway.config_legacy_import --config <copy of the old file>`), and for test setup. A schema may list, at its
 root, the keys of the old block that the section does not own (`x-azizam-startup-only`); each must be a key of the startup
-schema or a deliberate move in its `x-azizam-moved` map (`tests/test_startup_config.py` checks this). `model_routing`
-lists `gguf_dir` and `audio` lists `workflows_dir`, storage roots that stay in the startup file; `images` lists `cache_dir`,
+schema or a deliberate move in its `x-azizam-moved` map (`tests/test_startup_config.py` checks this). `audio`
+lists `workflows_dir`, a storage root that stays in the startup file; `images` lists `cache_dir`,
 `vram_estimates_file` and `signed_url_secret`; `voices` lists `dir`. `model_compatibility` lists `generated_aliases_file`: the
 generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a
 setting. `models` is a section whose root is a mapping from a model id to its entry; the old startup block was a list of

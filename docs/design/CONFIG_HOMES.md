@@ -79,7 +79,7 @@ Classes:
 | 457, 1966 | `ADMIN_DB_PATH` | `admin.db_path`, env `AZIZAM_ADMIN_DB` | S | C10 |
 | 598, 599 | `PROXY_HOST`, `PROXY_PORT` | `proxy.*`, env `AZIZAM_PORT` | S | C10 |
 | 653 | `LLM_BACKEND_HOSTS` | `backends` (registry) | A | C9 |
-| 807 | `GGUF_DIR` | `model_routing.gguf_dir` | S (storage root) | C10 |
+| 807 | `GGUF_DIR` | removed: nothing read it (train 45) | S (storage root) | C10 |
 | 808 | `SWITCH_TIMEOUT` | `model_routing.switch_timeout` | C | C7 |
 | 820 | `UPSTREAM_READ_TIMEOUT` | `model_routing.upstream_read_timeout`, env | C | C7 |
 | 824 | `ROLES` | `roles` | C | C7 |
@@ -922,7 +922,7 @@ setting lives now (`x-azizam-moved`, or the config section of the same name). Th
 - `auth.public_paths`, `auth.trusted_proxies`, `auth.setup_allowed_cidrs`, `auth.cloudflare_mode`, `auth.allow_query_param_key`
 - `mcp.allowed_origins`, `mcp.oauth.*`
 - `request_body_limits.json_bytes`, `request_body_limits.media_bytes`
-- `model_routing.gguf_dir`, `images.cache_dir`, `images.vram_estimates_file`, `images.signed_url_secret` (secret),
+- `images.cache_dir`, `images.vram_estimates_file`, `images.signed_url_secret` (secret),
   `images.media_jobs.payload_dir`, `voices.dir`, `audio.workflows_dir`: storage roots and one secret
 
 **Where the other keys went.** `backends` and `providers`: the service registry. `routing`: deleted (nothing read it).
@@ -971,7 +971,7 @@ write a startup file and put engines, aliases and section settings into admin.db
 11. Pending: independent review by the lead.
 
 **Deploy risks.** The live `proxy_config.yml` must keep its own `proxy.host`, `auth.setup_allowed_cidrs`,
-`auth.trusted_proxies`, `model_routing.gguf_dir` and `admin.oidc.cookie.secure: true`; a section block left in it stops
+`auth.trusted_proxies` and `admin.oidc.cookie.secure: true`; a section block left in it stops
 the gateway at start with the new home named. Live `workflow_execution` and `models` blocks were never imported and must
 be entered through the config API. `.dockerignore` now ships `proxy_config.yml` so a container starts from the first-run
 file.

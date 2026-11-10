@@ -50,7 +50,6 @@ admin:
 #   media_bytes: 537919488   # env: AZIZAM_REQUEST_BODY_MEDIA_BYTES
 
 # Storage roots (a relative path is inside the repository):
-# model_routing: {gguf_dir: /path/to/gguf}
 # images: {cache_dir: cache/images, vram_estimates_file: cache/vram_estimates.json, media_jobs: {payload_dir: data/image_media_jobs}}
 # voices: {dir: data/voices}
 # audio: {workflows_dir: workflows/audio}

@@ -817,7 +817,6 @@ images:
     # edit workflow. Explicit model choices remain pinned to that workflow.
     multiref_default_workflow: qwen-image-2.1-edit-multiref
 model_routing:
-  gguf_dir: /media/windows/AI Models/LLMs/GGUF
   switch_timeout: 60
   # Per-chunk (idle) read timeout for /v1/chat/completions and /v1/completions
   # forwarding. NOT a wall-clock cap — this is the max silence between bytes

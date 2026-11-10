@@ -63,7 +63,6 @@ def prepare(state: Path):
         "images": {"cache_dir": str(state / "images"), "vram_estimates_file": str(state / "vram.json"),
                    "background_removal": {"enabled": False}},
         "voices": {"dir": str(state / "voices")},
-        "model_routing": {"gguf_dir": str(state / "models")},
     }
     for backend in config["backends"].values():
         if backend.get("enabled"):
