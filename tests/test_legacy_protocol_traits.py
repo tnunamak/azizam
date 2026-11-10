@@ -92,6 +92,8 @@ def test_every_legacy_shipped_copy_selects_original_traits(tmp_path, monkeypatch
             raw.pop(key, None)
         (tmp_path / f"{name}.yml").write_text(yaml.safe_dump(raw))
     monkeypatch.setattr(description, "user_directory", lambda: tmp_path)
+    # registry_problems() reports the roots of the last merged load.
+    assert set(description.load_registry()) == set(originals)
     assert description.registry_problems() == []
     # Load only the copies, so a copy that was skipped cannot be stood in for by its shipped original.
     loaded = description.load_registry(tmp_path)
