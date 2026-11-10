@@ -1,0 +1,4761 @@
+{
+  "audio.generate.ace-step-1.5-xl-turbo async": [
+    [
+      "tags",
+      {
+        "field": "tags",
+        "in": "body"
+      }
+    ],
+    [
+      "lyrics",
+      {
+        "field": "lyrics",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "bpm",
+      {
+        "field": "bpm",
+        "in": "extension"
+      }
+    ],
+    [
+      "timesignature",
+      {
+        "field": "timesignature",
+        "in": "extension"
+      }
+    ],
+    [
+      "language",
+      {
+        "field": "language",
+        "in": "extension"
+      }
+    ],
+    [
+      "keyscale",
+      {
+        "field": "keyscale",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg_scale",
+      {
+        "field": "cfg_scale",
+        "in": "extension"
+      }
+    ],
+    [
+      "temperature",
+      {
+        "field": "temperature",
+        "in": "extension"
+      }
+    ],
+    [
+      "top_p",
+      {
+        "field": "top_p",
+        "in": "extension"
+      }
+    ],
+    [
+      "top_k",
+      {
+        "field": "top_k",
+        "in": "extension"
+      }
+    ],
+    [
+      "min_p",
+      {
+        "field": "min_p",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ]
+  ],
+  "audio.generate.ace-step-1.5-xl-turbo sync": [
+    [
+      "tags",
+      {
+        "field": "tags",
+        "in": "body"
+      }
+    ],
+    [
+      "lyrics",
+      {
+        "field": "lyrics",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "bpm",
+      {
+        "field": "bpm",
+        "in": "extension"
+      }
+    ],
+    [
+      "timesignature",
+      {
+        "field": "timesignature",
+        "in": "extension"
+      }
+    ],
+    [
+      "language",
+      {
+        "field": "language",
+        "in": "extension"
+      }
+    ],
+    [
+      "keyscale",
+      {
+        "field": "keyscale",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg_scale",
+      {
+        "field": "cfg_scale",
+        "in": "extension"
+      }
+    ],
+    [
+      "temperature",
+      {
+        "field": "temperature",
+        "in": "extension"
+      }
+    ],
+    [
+      "top_p",
+      {
+        "field": "top_p",
+        "in": "extension"
+      }
+    ],
+    [
+      "top_k",
+      {
+        "field": "top_k",
+        "in": "extension"
+      }
+    ],
+    [
+      "min_p",
+      {
+        "field": "min_p",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ]
+  ],
+  "audio.generate.sa3-small-sfx async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "audio.generate.sa3-small-sfx sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "audio.generate.tangoflux async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "audio.generate.tangoflux sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "audio.generate.yue2-song async": [
+    [
+      "tags",
+      {
+        "field": "tags",
+        "in": "body"
+      }
+    ],
+    [
+      "lyrics",
+      {
+        "field": "lyrics",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "audio.generate.yue2-song sync": [
+    [
+      "tags",
+      {
+        "field": "tags",
+        "in": "body"
+      }
+    ],
+    [
+      "lyrics",
+      {
+        "field": "lyrics",
+        "in": "body"
+      }
+    ],
+    [
+      "duration",
+      {
+        "field": "duration",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "image.analyze.face-likeness async": [
+    [
+      "reference",
+      {
+        "field": "reference",
+        "in": "extension"
+      }
+    ],
+    [
+      "candidate",
+      {
+        "field": "candidate",
+        "in": "extension"
+      }
+    ],
+    [
+      "people",
+      {
+        "field": "people",
+        "in": "extension"
+      }
+    ],
+    [
+      "thresholds",
+      {
+        "field": "thresholds",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.analyze.face-likeness sync": [
+    [
+      "reference",
+      {
+        "field": "reference",
+        "in": "file"
+      }
+    ],
+    [
+      "candidate",
+      {
+        "field": "candidate",
+        "in": "file"
+      }
+    ],
+    [
+      "people",
+      {
+        "field": "people",
+        "in": "form"
+      }
+    ],
+    [
+      "thresholds",
+      {
+        "field": "thresholds",
+        "in": "form"
+      }
+    ]
+  ],
+  "image.edit.fibo-2-edit-turbo async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.fibo-2-edit-turbo sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.flux2-klein async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "mask",
+      {
+        "field": "mask",
+        "in": "file"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.flux2-klein sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "mask",
+      {
+        "field": "mask",
+        "in": "file"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.flux2-klein-4b async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "mask",
+      {
+        "field": "mask",
+        "in": "file"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "denoise",
+      {
+        "field": "denoise",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.flux2-klein-4b sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "mask",
+      {
+        "field": "mask",
+        "in": "file"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "denoise",
+      {
+        "field": "denoise",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.flux2-klein-4b-inpaint async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "mask",
+      {
+        "field": "mask",
+        "in": "file"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "denoise",
+      {
+        "field": "denoise",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_expand",
+      {
+        "field": "mask_expand",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_feather",
+      {
+        "field": "mask_feather",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.flux2-klein-4b-inpaint sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "mask",
+      {
+        "field": "mask",
+        "in": "file"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "denoise",
+      {
+        "field": "denoise",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_expand",
+      {
+        "field": "mask_expand",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_feather",
+      {
+        "field": "mask_feather",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.image-identity async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "people",
+      {
+        "field": "people",
+        "in": "extension"
+      }
+    ],
+    [
+      "attempts",
+      {
+        "field": "attempts",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "photo_as_canvas",
+      {
+        "field": "photo_as_canvas",
+        "in": "extension"
+      }
+    ],
+    [
+      "only_listed_people",
+      {
+        "field": "only_listed_people",
+        "in": "extension"
+      }
+    ],
+    [
+      "stop_when_pass",
+      {
+        "field": "stop_when_pass",
+        "in": "extension"
+      }
+    ],
+    [
+      "facing_each_other",
+      {
+        "field": "facing_each_other",
+        "in": "extension"
+      }
+    ],
+    [
+      "pooling",
+      {
+        "field": "pooling",
+        "in": "extension"
+      }
+    ],
+    [
+      "max_refs_per_person",
+      {
+        "field": "max_refs_per_person",
+        "in": "extension"
+      }
+    ],
+    [
+      "refine",
+      {
+        "field": "refine",
+        "in": "extension"
+      }
+    ],
+    [
+      "refine_attempts",
+      {
+        "field": "refine_attempts",
+        "in": "extension"
+      }
+    ],
+    [
+      "pose_policy",
+      {
+        "field": "pose_policy",
+        "in": "extension"
+      }
+    ],
+    [
+      "mode",
+      {
+        "field": "mode",
+        "in": "extension"
+      }
+    ],
+    [
+      "thresholds",
+      {
+        "field": "thresholds",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.image-identity sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "source_image",
+      {
+        "field": "image",
+        "in": "file"
+      }
+    ],
+    [
+      "people",
+      {
+        "field": "people",
+        "in": "form"
+      }
+    ],
+    [
+      "attempts",
+      {
+        "field": "attempts",
+        "in": "form"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "form"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "form"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "form"
+      }
+    ],
+    [
+      "photo_as_canvas",
+      {
+        "field": "photo_as_canvas",
+        "in": "form"
+      }
+    ],
+    [
+      "only_listed_people",
+      {
+        "field": "only_listed_people",
+        "in": "form"
+      }
+    ],
+    [
+      "stop_when_pass",
+      {
+        "field": "stop_when_pass",
+        "in": "form"
+      }
+    ],
+    [
+      "facing_each_other",
+      {
+        "field": "facing_each_other",
+        "in": "form"
+      }
+    ],
+    [
+      "pooling",
+      {
+        "field": "pooling",
+        "in": "form"
+      }
+    ],
+    [
+      "max_refs_per_person",
+      {
+        "field": "max_refs_per_person",
+        "in": "form"
+      }
+    ],
+    [
+      "refine",
+      {
+        "field": "refine",
+        "in": "form"
+      }
+    ],
+    [
+      "refine_attempts",
+      {
+        "field": "refine_attempts",
+        "in": "form"
+      }
+    ],
+    [
+      "pose_policy",
+      {
+        "field": "pose_policy",
+        "in": "form"
+      }
+    ],
+    [
+      "mode",
+      {
+        "field": "mode",
+        "in": "form"
+      }
+    ],
+    [
+      "thresholds",
+      {
+        "field": "thresholds",
+        "in": "form"
+      }
+    ]
+  ],
+  "image.edit.qwen-image-2.1-edit async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference_resolution",
+      {
+        "field": "reference_resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.qwen-image-2.1-edit sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference_resolution",
+      {
+        "field": "reference_resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.qwen-image-2.1-edit-multiref async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "reference_image_2",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference_resolution",
+      {
+        "field": "reference_resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.qwen-image-2.1-edit-multiref sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "reference_image_2",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference_resolution",
+      {
+        "field": "reference_resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.qwen-image-2.1-inpaint async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_expand",
+      {
+        "field": "mask_expand",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_feather",
+      {
+        "field": "mask_feather",
+        "in": "extension"
+      }
+    ],
+    [
+      "lanpaint_steps",
+      {
+        "field": "lanpaint_steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "prompt_mode",
+      {
+        "field": "prompt_mode",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.qwen-image-2.1-inpaint sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "cfg",
+      {
+        "field": "cfg",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_expand",
+      {
+        "field": "mask_expand",
+        "in": "extension"
+      }
+    ],
+    [
+      "mask_feather",
+      {
+        "field": "mask_feather",
+        "in": "extension"
+      }
+    ],
+    [
+      "lanpaint_steps",
+      {
+        "field": "lanpaint_steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "prompt_mode",
+      {
+        "field": "prompt_mode",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.seedvr2-upscale async": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "scale",
+      {
+        "field": "scale",
+        "in": "extension"
+      }
+    ],
+    [
+      "color_correction_method",
+      {
+        "field": "color_correction_method",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.edit.seedvr2-upscale sync": [
+    [
+      "source_image",
+      {
+        "field": "image[]",
+        "in": "file"
+      }
+    ],
+    [
+      "scale",
+      {
+        "field": "scale",
+        "in": "extension"
+      }
+    ],
+    [
+      "color_correction_method",
+      {
+        "field": "color_correction_method",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.anima-turbo async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.anima-turbo sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-4b async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-4b sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-4b-seamless-tile async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_mask_width",
+      {
+        "field": "seam_mask_width",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_mask_expand",
+      {
+        "field": "seam_mask_expand",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_mask_feather",
+      {
+        "field": "seam_mask_feather",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_steps",
+      {
+        "field": "seam_steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_guidance",
+      {
+        "field": "seam_guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_denoise",
+      {
+        "field": "seam_denoise",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_prompt",
+      {
+        "field": "seam_prompt",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-4b-seamless-tile sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_mask_width",
+      {
+        "field": "seam_mask_width",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_mask_expand",
+      {
+        "field": "seam_mask_expand",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_mask_feather",
+      {
+        "field": "seam_mask_feather",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_steps",
+      {
+        "field": "seam_steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_guidance",
+      {
+        "field": "seam_guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_denoise",
+      {
+        "field": "seam_denoise",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_prompt",
+      {
+        "field": "seam_prompt",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-snofs async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "lora_strength",
+      {
+        "field": "lora_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.flux2-klein-snofs sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "lora_strength",
+      {
+        "field": "lora_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.krea2-turbo async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.krea2-turbo sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.krea2-turbo-snofs async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "lora_strength",
+      {
+        "field": "lora_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.krea2-turbo-snofs sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "lora_strength",
+      {
+        "field": "lora_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.moss-image async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.moss-image sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.moss-image-fast async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.moss-image-fast sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.moss-image-quality async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.moss-image-quality sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.sdxl-seamless-tile async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_blending",
+      {
+        "field": "seam_blending",
+        "in": "extension"
+      }
+    ]
+  ],
+  "image.generate.sdxl-seamless-tile sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "guidance",
+      {
+        "field": "guidance",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "batch_size",
+      {
+        "field": "batch_size",
+        "in": "extension"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "extension"
+      }
+    ],
+    [
+      "sampler",
+      {
+        "field": "sampler",
+        "in": "extension"
+      }
+    ],
+    [
+      "scheduler",
+      {
+        "field": "scheduler",
+        "in": "extension"
+      }
+    ],
+    [
+      "seam_blending",
+      {
+        "field": "seam_blending",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.generate.trellis-2 async": [
+    [
+      "image",
+      {
+        "field": "image",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "bg_removal",
+      {
+        "field": "bg_removal",
+        "in": "extension"
+      }
+    ],
+    [
+      "extensions",
+      {
+        "field": "extensions",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.generate.trellis-2 sync": [
+    [
+      "image",
+      {
+        "field": "image",
+        "in": "file"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "form"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "form"
+      }
+    ],
+    [
+      "bg_removal",
+      {
+        "field": "bg_removal",
+        "in": "form"
+      }
+    ],
+    [
+      "extensions",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.edit.rife-interpolate async": [
+    [
+      "source_video",
+      {
+        "field": "source_video",
+        "in": "extension"
+      }
+    ],
+    [
+      "multiplier",
+      {
+        "field": "multiplier",
+        "in": "extension"
+      }
+    ]
+  ],
+  "video.edit.rife-interpolate sync": [
+    [
+      "source_video",
+      {
+        "field": "source_video",
+        "in": "file"
+      }
+    ],
+    [
+      "multiplier",
+      {
+        "field": "multiplier",
+        "in": "form"
+      }
+    ]
+  ],
+  "video.edit.scail-2-replace async": [
+    [
+      "reference_image",
+      {
+        "field": "reference_image",
+        "in": "extension"
+      }
+    ],
+    [
+      "source_video",
+      {
+        "field": "source_video",
+        "in": "extension"
+      }
+    ],
+    [
+      "source_subject",
+      {
+        "field": "source_subject",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference_subject",
+      {
+        "field": "reference_subject",
+        "in": "extension"
+      }
+    ],
+    [
+      "subject_index",
+      {
+        "field": "subject_index",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference_fit",
+      {
+        "field": "reference_fit",
+        "in": "extension"
+      }
+    ],
+    [
+      "source_point_x",
+      {
+        "field": "source_point_x",
+        "in": "extension"
+      }
+    ],
+    [
+      "source_point_y",
+      {
+        "field": "source_point_y",
+        "in": "extension"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.edit.scail-2-replace sync": [
+    [
+      "reference_image",
+      {
+        "field": "reference_image",
+        "in": "file"
+      }
+    ],
+    [
+      "source_video",
+      {
+        "field": "source_video",
+        "in": "file"
+      }
+    ],
+    [
+      "source_subject",
+      {
+        "field": "source_subject",
+        "in": "form"
+      }
+    ],
+    [
+      "reference_subject",
+      {
+        "field": "reference_subject",
+        "in": "form"
+      }
+    ],
+    [
+      "subject_index",
+      {
+        "field": "subject_index",
+        "in": "form"
+      }
+    ],
+    [
+      "reference_fit",
+      {
+        "field": "reference_fit",
+        "in": "form"
+      }
+    ],
+    [
+      "source_point_x",
+      {
+        "field": "source_point_x",
+        "in": "form"
+      }
+    ],
+    [
+      "source_point_y",
+      {
+        "field": "source_point_y",
+        "in": "form"
+      }
+    ],
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "form"
+      }
+    ],
+    [
+      "width",
+      {
+        "field": "width",
+        "in": "form"
+      }
+    ],
+    [
+      "height",
+      {
+        "field": "height",
+        "in": "form"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "length",
+        "in": "form"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "form"
+      }
+    ]
+  ],
+  "video.edit.video-mux async": [
+    [
+      "source_video",
+      {
+        "field": "source_video",
+        "in": "extension"
+      }
+    ],
+    [
+      "source_audio",
+      {
+        "field": "source_audio",
+        "in": "extension"
+      }
+    ]
+  ],
+  "video.edit.video-mux sync": [
+    [
+      "source_video",
+      {
+        "field": "source_video",
+        "in": "file"
+      }
+    ],
+    [
+      "source_audio",
+      {
+        "field": "source_audio",
+        "in": "file"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-i2v async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "image_strength",
+      {
+        "field": "image_strength",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-i2v sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "image_strength",
+      {
+        "field": "image_strength",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-keyframes async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "image_strength",
+      {
+        "field": "image_strength",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "last_frame_strength",
+      {
+        "field": "last_frame_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "img_compression",
+      {
+        "field": "img_compression",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-keyframes sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "image_strength",
+      {
+        "field": "image_strength",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "last_frame_strength",
+      {
+        "field": "last_frame_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "img_compression",
+      {
+        "field": "img_compression",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-keyframes-mid async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "image_strength",
+      {
+        "field": "image_strength",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "last_frame_strength",
+      {
+        "field": "last_frame_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame",
+      {
+        "field": "mid_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame_index",
+      {
+        "field": "mid_frame_index",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame_strength",
+      {
+        "field": "mid_frame_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "img_compression",
+      {
+        "field": "img_compression",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-keyframes-mid sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "image_strength",
+      {
+        "field": "image_strength",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "last_frame_strength",
+      {
+        "field": "last_frame_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame",
+      {
+        "field": "mid_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame_index",
+      {
+        "field": "mid_frame_index",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame_strength",
+      {
+        "field": "mid_frame_strength",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "img_compression",
+      {
+        "field": "img_compression",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-long async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-long sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-t2v async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.ltx-2.5-t2v sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "negative_prompt",
+      {
+        "field": "negative_prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-i2v async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-i2v sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-keyframes async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-keyframes sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-keyframes-mid async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "middle_frame",
+      {
+        "field": "middle_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame_index",
+      {
+        "field": "mid_frame_index",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-keyframes-mid sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "image",
+      {
+        "field": "input_reference",
+        "in": "body"
+      }
+    ],
+    [
+      "last_frame",
+      {
+        "field": "last_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "middle_frame",
+      {
+        "field": "middle_frame",
+        "in": "extension"
+      }
+    ],
+    [
+      "mid_frame_index",
+      {
+        "field": "mid_frame_index",
+        "in": "extension"
+      }
+    ],
+    [
+      "frames",
+      {
+        "field": "frames",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-long async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-long sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-t2v async": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ],
+  "video.generate.minimax-h3-t2v sync": [
+    [
+      "prompt",
+      {
+        "field": "prompt",
+        "in": "body"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "body"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ],
+    [
+      "width",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "height",
+      {
+        "combine": [
+          "width",
+          "height"
+        ],
+        "field": "size",
+        "in": "body"
+      }
+    ],
+    [
+      "length",
+      {
+        "field": "seconds",
+        "in": "body"
+      }
+    ],
+    [
+      "frame_rate",
+      {
+        "in": "none"
+      }
+    ]
+  ]
+}

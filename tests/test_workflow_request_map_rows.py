@@ -8,6 +8,7 @@ has a row yet.
 
 from __future__ import annotations
 
+import json
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -22,9 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gateway import workflow_request_maps  # noqa: E402
 from gateway.discovery import WorkflowRecord, WorkflowRegistry  # noqa: E402
 from gateway.manifests import ManifestIdentity  # noqa: E402
-from gateway.workflow_openapi import _route_mapping  # noqa: E402
+from gateway.workflow_openapi import _route_mapping, request_mapping  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
+GOLDEN = ROOT / "tests" / "fixtures" / "workflow_request_maps" / "request_mapping_golden.json"
 MODES = ("sync", "async")
 
 
@@ -196,6 +198,21 @@ def test_a_second_route_image_keeps_the_repeated_image_part_order() -> None:
     assert [name for name, _ in placed] == ["source_image", "reference_image", "prompt", "steps"]
     assert placed[0][1] == {"in": "file", "field": "image[]"}
     assert placed[1][1] == {"in": "file", "field": "image[]"}
+
+
+def test_request_mapping_matches_the_frozen_golden_file() -> None:
+    """The public mapping, container post-step included, is frozen for every bundled workflow and mode."""
+    golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    live = {
+        f"{record.id} {mode}": [
+            [name, placement] for name, placement in request_mapping(record, mode).items()
+        ]
+        for record in registry().records()
+        for mode in MODES
+    }
+    assert sorted(live) == sorted(golden)
+    for key, expected in golden.items():
+        assert live[key] == expected, f"{key}: request_mapping changed since the golden capture"
 
 
 def test_where_a_row_is_selected_it_matches_the_route_code() -> None:
