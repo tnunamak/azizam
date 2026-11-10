@@ -434,3 +434,20 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DisabledRecordTests(RealtimeRouteCase):
+    def test_disabled_realtime_record_is_not_started_or_dialled(self) -> None:
+        for record in (
+            {"enabled": False, "host": "203.0.113.5", "port": 9, "capabilities": ["realtime"]},
+            {"host": "203.0.113.5", "port": 9, "enabled": "false", "capabilities": ["realtime"]},
+        ):
+            with self.subTest(record=record):
+                cfg = dict(proxy.config)
+                cfg["backends"] = {**cfg["backends"], "realtime": record}
+                with patch.object(proxy, "config", cfg):
+                    with self.assertRaises(Exception):
+                        with self.client.websocket_connect("/v1/realtime"):
+                            self.fail("the upgrade was accepted")
+                self.connect.assert_not_called()
+                self.ensure.assert_not_called()

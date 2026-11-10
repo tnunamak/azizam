@@ -38,6 +38,11 @@ records:
         runtime_policy: {protocol: openai.models, intent: models.list}
       - methods: [POST]
         canonical: /v1/decisions
+        operation: decisions
+        model_metadata:
+          type: decision
+          input_modalities: [text]
+          output_modalities: [text]
         runtime_policy: {protocol: openai.decisions, intent: decision.systemone}
       - methods: [GET]
         translator: identity
@@ -73,12 +78,24 @@ records:
         translator: identity
         intent: audio.speech
         canonical: /v1/audio/speech
+        extensions: [com.azizam.prompts]
+        extension_order: 70
+        operation: speech
+        model_metadata:
+          type: audio
+          input_modalities: [text]
+          output_modalities: [audio]
         alias: /openai/v1/audio/speech
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
         translator: identity
         intent: audio.transcriptions
         canonical: /v1/audio/transcriptions
+        operation: transcriptions
+        model_metadata:
+          type: audio
+          input_modalities: [audio]
+          output_modalities: [text]
         alias: /openai/v1/audio/transcriptions
         body: multipart
         runtime_policy: {protocol: openai.audio, intent: speech.transcription, backend: stt, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
@@ -93,6 +110,17 @@ records:
         translator: identity
         intent: audio.generate
         canonical: /v1/audio/generate
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 60
+        route_inputs: [prompt, tags, lyrics, duration, seed]
+        workflow_targets:
+          intent_prefixes: [audio.]
+          route_intent: audio.generate
+        operation: audio_generate
+        model_metadata:
+          type: audio
+          input_modalities: [text]
+          output_modalities: [audio]
         alias: /openai/v1/audio/generate
         runtime_policy: {protocol: openai.audio, intent: audio.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [GET]
@@ -105,11 +133,33 @@ records:
         translator: identity
         intent: images.generate
         canonical: /v1/images/generations
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 10
+        route_inputs: [prompt, source_image, width, height]
+        workflow_targets:
+          intent_prefixes: [image.generate]
+          route_intent: image.generate
+        operation: images
+        model_metadata:
+          type: image
+          input_modalities: [text]
+          output_modalities: [image]
         alias: /openai/v1/images/generations
       - methods: [POST]
         translator: identity
         intent: images.edit
         canonical: /v1/images/edits
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 20
+        route_inputs: [prompt, source_image, width, height, mask, source_mask, mask_asset]
+        workflow_targets:
+          intent_prefixes: [image.edit]
+          route_intent: image.edit
+        operation: image_edits
+        model_metadata:
+          type: image
+          input_modalities: [text, image]
+          output_modalities: [image]
         alias: /openai/v1/images/edits
         body: multipart
       - methods: [GET]
@@ -132,12 +182,23 @@ records:
         translator: identity
         intent: assets.delete
         canonical: /openai/v1/assets/{asset_id}
+      # Data only: no translator, because the videos-create frontend row below serves this route. The row stays here for the
+      # extension catalog and the model metadata, which read their facts from registered_routes.
       - methods: [POST]
-        translator: identity
         intent: videos.create
         canonical: /v1/videos
+        extensions: [com.azizam.prompts, com.azizam.workflow]
+        extension_order: 30
+        route_inputs: [prompt, negative_prompt, width, height, length, frame_rate, seed, image, image_strength]
+        workflow_targets:
+          intent_prefixes: [video.]
+          route_intent: video.generate
+        operation: videos
+        model_metadata:
+          type: video
+          input_modalities: [text]
+          output_modalities: [video]
         alias: /openai/v1/videos
-        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [GET]
         translator: identity
         intent: videos.retrieve
@@ -182,18 +243,27 @@ records:
         translator: identity
         intent: rerank
         canonical: /v1/rerank
+        operation: rerank
+        model_metadata:
+          type: reranking
+          input_modalities: [text]
+          output_modalities: [text]
         alias: /openai/v1/rerank
         runtime_policy: {protocol: openai.rerank, intent: text.embeddings, backend: rerank, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [POST]
         translator: identity
         intent: videos.extend
         canonical: /v1/videos/extensions
+        extensions: [com.azizam.prompts]
+        extension_order: 40
         alias: /openai/v1/videos/extensions
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
         translator: identity
         intent: responses.create
         canonical: /v1/responses
+        extensions: [com.azizam.prompts, com.azizam.chat, com.azizam.routing]
+        extension_order: 80
         alias: /openai/v1/responses
       - methods: [GET]
         translator: identity
@@ -209,6 +279,13 @@ records:
         translator: identity
         intent: chat.completions
         canonical: /v1/chat/completions
+        extensions: [com.azizam.chat, com.azizam.routing]
+        extension_order: 75
+        operation: chat
+        model_metadata:
+          type: language
+          input_modalities: [text]
+          output_modalities: [text]
         alias: /openai/v1/chat/completions
         azizam_policy: {protocol: openai.chat, intent: chat.completions}
       - methods: [POST]
@@ -221,6 +298,11 @@ records:
         translator: identity
         intent: text.embeddings
         canonical: /v1/embeddings
+        operation: embeddings
+        model_metadata:
+          type: embedding
+          input_modalities: [text]
+          output_modalities: [embedding]
         alias: /openai/v1/embeddings
         azizam_policy: {protocol: openai.embeddings, intent: text.embeddings}
       - methods: [GET]
@@ -903,6 +985,7 @@ frontends:
     refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
     result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
@@ -919,6 +1002,7 @@ frontends:
     refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source, image_mask: X-Image-Mask, image_mask_source: X-Image-Mask-Source}
     result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
@@ -935,6 +1019,7 @@ frontends:
     refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
     result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
     result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
@@ -947,9 +1032,11 @@ frontends:
   - id: image-jobs
     shape: openai.images.jobs
     mode: job
-    refusal_bodies: {service_disabled: {message: Image generation not enabled, type: service_unavailable}}
+    refusal_bodies: {service_disabled: {message: This service is not available right now., code: resource_admission_denied, retry_after_s: 30}}
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    refusal_receipt: rejected
+    run_receipt_path: /v1/images/generations
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
     routes:
@@ -971,6 +1058,13 @@ frontends:
   - id: videos-create
     shape: openai.video.create
     mode: job
+    cancel_wait_s: 10
+    receipt_allowed: true
+    receipt_closes: submit
+    history_facts: false
+    backend_at_run: true
+    refusal_bodies: {service_disabled: {message: Video generation not enabled, type: service_unavailable}}
+    result_headers: {duration_adjusted: X-Duration-Adjusted}
     receipt_protocol: openai.video
     strictness: exact
     lists_as_model: true
@@ -979,11 +1073,24 @@ frontends:
       - methods: [POST]
         canonical: /v1/videos
         aliases: [/openai/v1/videos]
-        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
+        runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive, job_retries: none}
+  - id: videos-remix
+    shape: openai.video.remix
+    mode: job
+    receipt_protocol: openai.video
+    strictness: exact
+    unconfigured: {status: 501, code: video_remix_not_configured, message: "Video remix is not configured on this gateway. Set videos.remix_workflow in proxy_config.yml to enable it."}
+    selects: {match: {inputs: {prompt: {type: string}, video: {media_type: "video/*"}}, outputs: {media_type: "video/*"}}}
+    routes:
+      - methods: [POST]
+        canonical: /v1/videos/{video_id}/remix
+        aliases: ["/openai/v1/videos/{video_id}/remix"]
+        runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
   - id: videos-edit
     shape: openai.video.json_source
     mode: job
     receipt_protocol: openai.video
+    unconfigured: {status: 501, code: video_remix_not_configured, message: "Video remix is not configured on this gateway. Set videos.remix_workflow in proxy_config.yml to enable it."}
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}, video: {media_type: "video/*"}}, outputs: {media_type: "video/*"}}}
     routes:

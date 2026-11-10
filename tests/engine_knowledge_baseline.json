@@ -4,11 +4,10 @@
     "gateway/a1111_api.py": 2,
     "gateway/extension_catalog.py": 1,
     "gateway/lifecycle_drivers.py": 11,
-    "gateway/local_capabilities.py": 17,
+    "gateway/local_capabilities.py": 3,
     "gateway/manifests.py": 1,
     "gateway/model_files.py": 2,
     "gateway/model_ids.py": 1,
-    "gateway/model_presentation.py": 1,
     "gateway/openai_media_schemas.py": 1,
     "gateway/protocols/ollama.py": 1,
     "gateway/service_registry.py": 1,
@@ -19,7 +18,7 @@
     "gateway/video_subject.py": 1,
     "gateway/workflows_catalog.py": 2,
     "metrics_sampler.py": 8,
-    "proxy.py": 220,
-    "status_endpoint.py": 134
+    "proxy.py": 218,
+    "status_endpoint.py": 132
   }
 }

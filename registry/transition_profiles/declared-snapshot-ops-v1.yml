@@ -25,6 +25,12 @@
 #   reset         effect_key and expected_incarnation only
 #   compatibility no body: the call carries no arguments
 #
+# Failure semantics (reviewed data, per effect operation: release, load, checkpoint, restore, restore.reset):
+# `failure_semantics: no_change` attests that a call which declares outcome "failed" left the engine as it was.
+# Absent, or `unknown`, means a failed call may have changed it. The adapter reads a declared "failed" as
+# no_change only where this file attests it, and as partial everywhere else; the executor and the steps then
+# judge an attested no_change by the servable re-check (decision G7). Nothing in code decides it per operation.
+#
 # What each declared operation promises:
 # - A checkpoint that fails leaves the engine unchanged (that is what failure_semantics no_change attests).
 # - The engine writes the snapshot only at `path`, and only when the checkpoint succeeds.
@@ -45,8 +51,13 @@ operations:
 # A release whose outcome is "success" counts as stock released (D3 "Release"). The executor still checks
 # fresh, incarnation-matched evidence that nothing is resident before it believes the result.
 attested: true
-# A checkpoint that fails leaves the engine unchanged, so a failed checkpoint is a known no-change and the
-# park goes on cold; the executor still asks `query` when the profile says so.
+# Release and load carry no block here: no protocol description in this repository says that a failed release or
+# load leaves the engine unchanged, so their failure semantics stay absent (unknown) and a failed one holds the
+# gate. A profile for an engine that promises it adds `release: {failure_semantics: no_change}` or the same for
+# `load`.
+#
+# A checkpoint that fails leaves the engine unchanged (the promise above, design note T1.3), so a failed checkpoint
+# is a known no-change and the park goes on cold; the executor still asks `query` when the profile says so.
 checkpoint:
   failure_semantics: no_change
   query: true

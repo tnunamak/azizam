@@ -2,8 +2,12 @@
 
 The real app runs over GatewayRig and a HandlerTransport engine. No route,
 scheduler, runner, graph-builder or ownership function is called or patched here.
-The one strict xfail is the section-4 idempotency_acceptance delta: it asserts the
-new deduplicated contract and is expected red on the old direct route.
+The section-4 idempotency_acceptance delta (the same key deduplicates) holds on the row path, so its test is a plain pass.
+
+Rewritten for the video move (docs/design/CODE_TO_DATA_S7_VIDEO_MOVE.md section 5.1): a video made by create is a job,
+``video_mj_<hex>``. Ids are read from responses; the engine prompt id is ``p<n>`` in submit order, and a create waits
+for its runner to submit the prompt before a test reads the engine's graph. Chain extension stays on the old handler, so
+an extension is still ``video_<prompt id>``.
 
 Some inventory items lack a usable black-box fixture or contradict writers.md.
 Those gaps are reported with the delivery; they are not hidden by skips.
@@ -12,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -28,11 +33,14 @@ from tests.support.access import authenticated, everything, identity, plan_for
 from tests.support.adapter_differential_rig import GatewayRig
 from tests.support.config_snapshot import publish_section
 from tests.support.fake_upstream import HandlerTransport
+from tests.support import video_rig
+from tests.support.video_rig import video_job_rows
 
 HOST = "comfy.fk.test"
 MODEL = "ltx-2.5-t2v"
 CREATE = {"prompt": "waves at dusk", "model": MODEL}
 REAL_SLEEP = asyncio.sleep
+JOB_ID = re.compile(r"^video_mj_[0-9a-f]{32}$")
 
 
 class VideoEngine:
@@ -122,12 +130,40 @@ def run(coro):
     return asyncio.run(coro)
 
 
+async def submitted(world, count, *, timeout_s=5.0):
+    """Wait (bounded) until the engine has accepted ``count`` prompts: a job's runner submits after the create answers."""
+    deadline = time.monotonic() + timeout_s
+    while len(world.engine.prompts) < count:
+        if time.monotonic() > deadline:
+            pytest.fail(f"the engine has {len(world.engine.prompts)} prompts after {timeout_s}s, expected {count}")
+        await REAL_SLEEP(0.005)
+
+
 async def create(world, **options):
+    before = len(world.engine.prompts)
     response = await world.rig.call("POST", "/v1/videos", json_body={**CREATE, **options})
     # A broken setup must not become an expected failure in the allowed-delta test.
     if response.status_code != 200:
         raise RuntimeError(f"source create failed: {response.status_code} {response.text}")
+    if JOB_ID.match(response.json()["id"]):
+        await submitted(world, before + 1)
     return response
+
+
+async def await_status(world, video_id, status="completed", *, timeout_s=10.0):
+    """Poll the public status route until the video shows ``status``; return the body."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        response = await world.rig.call("GET", f"/v1/videos/{video_id}")
+        assert response.status_code == 200, response.text
+        if response.json()["status"] == status:
+            return response.json()
+        assert time.monotonic() < deadline, f"{video_id} stayed {response.json()['status']!r}, expected {status!r}"
+        await REAL_SLEEP(0.01)
+
+
+def prompt_posts(world):
+    return [call for call in world.engine.traffic() if call == ("POST", "/prompt")]
 
 
 def rows(path, table):
@@ -148,8 +184,7 @@ def receipt(world, request_id):
 async def source(world):
     made = await create(world)
     video_id = made.json()["id"]
-    ready = await world.rig.call("GET", f"/v1/videos/{video_id}")
-    assert ready.status_code == 200 and ready.json()["status"] == "completed", ready.text
+    await await_status(world, video_id)
     return video_id
 
 
@@ -197,7 +232,7 @@ async def terminal_job(world, job_id):
 
 def test_video_01_disabled_capability_refuses_before_engine(world):
     async def drive():
-        world.rig.set(proxy, "COMFY_ENABLED", False)
+        video_rig.disable_service(world.rig)         # the service record is off, as an operator turns it off
         response = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
         assert response.status_code == 503
         assert response.json()["error"] == {"message": "Video generation not enabled", "type": "service_unavailable"}
@@ -237,7 +272,6 @@ def test_video_04_access_plan_refuses_before_engine(world):
     run(drive())
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="idempotency_acceptance: section 4 now permits video-create deduplication")
 def test_video_05_same_key_deduplicates_under_the_allowed_delta(world):
     async def drive():
         responses = []
@@ -246,6 +280,8 @@ def test_video_05_same_key_deduplicates_under_the_allowed_delta(world):
             if response.status_code != 200:
                 raise RuntimeError(f"create setup failed: {response.status_code} {response.text}")
             responses.append(response.json())
+        await submitted(world, 1)
+        await REAL_SLEEP(0.05)
         assert (responses[0]["id"], len(world.engine.prompts)) == (responses[1]["id"], 1)
     run(drive())
 
@@ -273,18 +309,27 @@ def test_video_08_seconds_follow_the_recorded_frame_grid(world):
 def test_video_10_create_submits_exactly_one_engine_prompt(world):
     async def drive():
         await create(world)
-        assert world.engine.traffic() == [("POST", "/prompt")]
+        # The job's runner also polls the engine for the result; the submit is the one POST of a prompt.
+        assert prompt_posts(world) == [("POST", "/prompt")]
+        assert [call for call in world.engine.traffic() if call[0] == "POST"] == [("POST", "/prompt")]
     run(drive())
 
 
-def test_video_11_unreachable_engine_leaves_no_video_or_media_job(world):
+def test_video_11b_an_unreachable_engine_fails_the_job_and_no_body_names_its_address(world):
+    """P8 (new behaviour, a delta): the create is stored and answered first; the job then fails with a stable code, and neither the
+    create answer nor the job's status nor its content names the engine's address."""
     async def drive():
         world.engine.down = True
-        response = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
-        assert response.status_code == 502
-        assert response.json()["error"] == {"message": f"ComfyUI unavailable at http://{HOST}", "type": "api_error"}
-        assert rows(world.rig.media_jobs_db, "video_job_records") == []
-        assert rows(world.rig.media_jobs_db, "media_jobs") == []
+        made = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
+        assert made.status_code == 200 and made.json()["status"] == "queued", made.text
+        video_id = made.json()["id"]
+        failed = await await_status(world, video_id, "failed")
+        content = await world.rig.call("GET", f"/v1/videos/{video_id}/content")
+        assert failed["error"]["code"] == "video_generation_failed" and failed["error"]["message"] == "ComfyUI unavailable", failed
+        assert [json.loads(r["job_json"]).get("error_code") for r in rows(world.rig.media_jobs_db, "media_jobs")] == ["upstream_unavailable"]
+        for text in (made.text, json.dumps(failed), content.text):
+            assert HOST not in text and "comfy.fk.test" not in text, text
+        assert content.status_code >= 400
     run(drive())
 
 
@@ -293,7 +338,8 @@ def test_video_12_create_does_not_wait_for_render(world):
         world.engine.pending = True
         response = await create(world)
         assert response.json()["status"] == "queued"
-        assert ("GET", "/history/p1") not in world.engine.traffic()
+        # The answer came while the engine still held the render: the video is not finished.
+        assert (await world.rig.call("GET", f"/v1/videos/{response.json()['id']}")).json()["status"] != "completed"
     run(drive())
 
 
@@ -310,17 +356,20 @@ def test_video_13_disconnect_does_not_cancel_the_accepted_engine_prompt(world):
 
         await world.rig.call_disconnecting("POST", "/v1/videos", label="disconnect after engine accepts",
                                           json_body=CREATE, disconnect_when=disconnect_after_accept)
-        assert world.engine.traffic() == [("POST", "/prompt")]
+        await submitted(world, 1)
+        assert prompt_posts(world) == [("POST", "/prompt")]
+        assert not [call for call in world.engine.traffic() if call[1].endswith("/cancel")]
         assert world.rig.calls[-1]["response"]["status"] == 200
     run(drive())
 
 
-def test_video_14_sync_create_receipt_has_no_job_id(world):
+def test_video_14_create_receipt_names_the_job(world):
+    """video-14 (delta receipt_names_job): the receipt carries the job id; the old receipt had `null`."""
     async def drive():
         response = await create(world)
         kept = receipt(world, response.headers["x-request-id"])
         assert (kept["status"], kept["intent"], kept["protocol"], kept["job_id"]) == (
-            "succeeded", "video.generate", "openai.video", None)
+            "succeeded", "video.generate", "openai.video", response.json()["id"].removeprefix("video_"))
         assert kept["finished_at_ms"] is not None
     run(drive())
 
@@ -331,8 +380,11 @@ def test_video_15_receipt_pins_writer_inventory_not_unwritten_fields(world):
         kept = receipt(world, response.headers["x-request-id"])
         assert kept["requested_model"] == MODEL and kept["backend"] == "comfyui"
         assert kept["policy_decision"] == "allowed"
+        # Integrator decision: create keeps the old receipt, closed at submit with nothing resolved. Only the job_id
+        # link (receipt_names_job, video-14) and the named contract_manifest_hash delta differ from the old receipt.
         assert kept["accepted_inputs"] == [] and kept["rejected_inputs"] == {}
-        assert kept["resolved_model"] is None and kept["resolved_workflow"] is None and kept["manifest_hash"] is None
+        assert kept["resolved_model"] is None and kept["resolved_workflow"] is None
+        assert kept["manifest_hash"] is None
         assert kept["metadata"]["status_code"] == 200
     run(drive())
 
@@ -344,11 +396,17 @@ def test_video_18_content_delivery_indexes_the_video_in_library(world):
         assert response.status_code == 200 and response.headers["content-type"].startswith("video/mp4")
         metadata = [json.loads(path.read_text()) for path in world.rig.cache.glob("*.meta.json")]
         assert any(row.get("asset_id", "").startswith("vid_") for row in metadata)
-        deliveries = [json.loads(row["job_json"]) for row in rows(world.rig.media_jobs_db, "media_jobs")
-                      if row["request_id"] == video_id]
-        assert len(deliveries) == 1
-        assert deliveries[0]["intent"] == "video.generate" and deliveries[0]["status"] == "succeeded"
-        assert deliveries[0]["assets"][0]["kind"] == "video"
+        # The job is the one delivery row (video-18). Its public job document shows the asset the Library indexed.
+        job = await world.rig.call("GET", f"/gateway/v1/media/jobs/{video_id.removeprefix('video_')}", unordered_json=True)
+        assert job.status_code == 200, job.text
+        assert job.json()["intent"] == "video.generate" and job.json()["status"] == "succeeded"
+        assert len(job.json()["assets"]) == 1 and job.json()["assets"][0]["media_type"].startswith("video/")   # delta: the run core lists no `kind` leaf (open item)
+        assert any(row.get("asset_id") == job.json()["assets"][0]["asset_id"] for row in metadata)
+        again = await world.rig.call("GET", f"/v1/videos/{video_id}/content")
+        assert again.status_code == 200
+        # Exactly one video row after both fetches: a delivery must not add a second job (design 5.4).
+        listed = video_job_rows(world.rig)
+        assert [(row["request_id"], row["status"]) for row in listed] == [(listed[0]["request_id"], "succeeded")], listed
     run(drive())
 
 
@@ -356,8 +414,11 @@ def test_video_19_success_keeps_the_queued_video_envelope_without_location(world
     async def drive():
         response = await create(world)
         body = response.json()
-        assert {key: body[key] for key in ("id", "object", "model", "azizam_resolved_model", "status", "progress")} == {
-            "id": "video_p1", "object": "video", "model": MODEL, "azizam_resolved_model": "video-ltx-2.5-t2v",
+        assert JOB_ID.match(body["id"])
+        # `azizam_resolved_model` keeps the old wire value (the workflow key). Design 1.2 records the manifest id
+        # without the intent prefix instead; reported to the design owner as a wire change no section 5.4 kind covers.
+        assert {key: body[key] for key in ("object", "model", "azizam_resolved_model", "status", "progress")} == {
+            "object": "video", "model": MODEL, "azizam_resolved_model": "video-ltx-2.5-t2v",
             "status": "queued", "progress": 0}
         assert response.status_code == 200 and "location" not in response.headers
     run(drive())
@@ -374,9 +435,10 @@ def test_video_20_create_response_request_id_names_its_receipt(world):
 def test_video_21_created_video_id_is_accepted_by_public_status(world):
     async def drive():
         made = await create(world)
-        assert made.json()["id"] == "video_p1"
-        status = await world.rig.call("GET", "/v1/videos/video_p1")
-        assert status.status_code == 200 and status.json()["id"] == "video_p1"
+        video_id = made.json()["id"]
+        assert JOB_ID.match(video_id)
+        status = await world.rig.call("GET", f"/v1/videos/{video_id}")
+        assert status.status_code == 200 and status.json()["id"] == video_id
     run(drive())
 
 
@@ -384,8 +446,7 @@ def test_video_23_engine_failure_keeps_the_video_error_vocabulary(world):
     async def drive():
         world.engine.failed = True
         made = await create(world)
-        status = await world.rig.call("GET", f"/v1/videos/{made.json()['id']}")
-        body = status.json()
+        body = await await_status(world, made.json()["id"], "failed")
         assert body["status"] == "failed"
         assert body["error"] == {"code": "video_generation_failed",
                                  "message": "ComfyUI LTXVConcatAVLatent node 12: execution failed"}
@@ -505,11 +566,14 @@ def test_video_49_disabled_capability_refuses_edit(world):
 def test_video_50_cancel_of_the_goldens_missing_job_does_not_cancel_a_video(world):
     async def drive():
         world.engine.pending = True
-        await create(world)
-        before = len(world.engine.calls)
+        made = await create(world)
+        await submitted(world, 1)
         response = await world.rig.call("POST", "/gateway/v1/media/jobs/None/cancel", json_body={})
         assert response.status_code == 404
-        assert len(world.engine.calls) == before
+        # The fake clock lets a held render reach the runner's own timeout at once; what the cancel of a missing job must never
+        # do is ask for a cancel of the video: the job records no cancel request and never ends canceled.
+        job = await world.rig.call("GET", f"/gateway/v1/media/jobs/{made.json()['id'].removeprefix('video_')}", unordered_json=True)
+        assert job.json().get("cancel_requested") in (False, None) and job.json()["status"] != "canceled", job.text
     run(drive())
 
 
@@ -660,29 +724,25 @@ def test_video_100_media_job_mirrors_typed_library_assets(world):
 # ---- V3b contract tests from the video parity oracle audit (pinned on the old route; the move pairs them with deltas) ----
 
 
-def test_video_16_record_save_failure_is_swallowed_on_the_old_create(world):
-    """video-16: a failed record save does not abort the create answer. The row path makes this a visible failure
-    (allowed delta ``persistence_failure_visible``); this test is replaced by that delta's fault test at the move."""
+def test_video_16_job_store_write_failure_is_a_visible_failure(world):
+    """video-16 (delta persistence_failure_visible): the old create swallowed a failed record save and answered the video.
+    The job is the record, so a job store that refuses the write is a 500 with no job and no engine request."""
     async def drive():
-        first = await create(world)
-        assert first.json()["id"] == "video_p1"
-        assert len(rows(world.rig.media_jobs_db, "video_job_records")) == 1
         with sqlite3.connect(world.rig.media_jobs_db) as db:
             db.execute("""
-                CREATE TRIGGER parity_refuse_video_insert
-                BEFORE INSERT ON video_job_records
-                BEGIN SELECT RAISE(ABORT, 'parity record write failure'); END
+                CREATE TRIGGER parity_refuse_job_insert
+                BEFORE INSERT ON media_jobs
+                BEGIN SELECT RAISE(ABORT, 'parity job write failure'); END
             """)
         try:
-            second = await create(world, prompt="second accepted engine request")
-            assert second.json()["id"] == "video_p2"
-            assert set(world.engine.prompts) == {"p1", "p2"}
-            kept = rows(world.rig.media_jobs_db, "video_job_records")
-            assert len(kept) == 1 and kept[0]["prompt_id"] == "p1"
-            assert receipt(world, second.headers["x-request-id"])["status"] == "succeeded"
+            response = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
+            assert response.status_code == 500, response.text
+            await REAL_SLEEP(0.05)
+            assert world.engine.calls == []
         finally:
             with sqlite3.connect(world.rig.media_jobs_db) as db:
-                db.execute("DROP TRIGGER IF EXISTS parity_refuse_video_insert")
+                db.execute("DROP TRIGGER IF EXISTS parity_refuse_job_insert")
+        assert (await world.rig.call("GET", "/v1/videos")).json()["data"] == []
     run(asyncio.wait_for(drive(), timeout=20))
 
 
@@ -703,9 +763,16 @@ def test_video_06_frame_grid_and_dimensions_are_in_the_submitted_graph(world, se
 
 
 def test_video_07_clamped_default_size_is_the_size_in_the_graph(world):
-    """video-07: an unparsable size answers the default size and renders at that size."""
+    """video-07: an unparsable size is either refused 400 `invalid_request_error` (the alternative video-texts.md allows)
+    or answered with the default size, rendered at that size (the old behaviour). It is never a 500."""
     async def drive():
-        response = await create(world, size="bad")
+        response = await world.rig.call("POST", "/v1/videos", json_body={**CREATE, "size": "bad"})
+        assert response.status_code in (200, 400), response.text
+        if response.status_code == 400:
+            assert response.json()["error"]["type"] == "invalid_request_error"
+            assert not world.engine.prompts
+            return
+        await submitted(world, 1)
         assert response.json()["size"] == "1024x704"
         graph = world.engine.prompts["p1"]["prompt"]
         assert graph["20"]["inputs"]["value"] == 1024
@@ -713,44 +780,43 @@ def test_video_07_clamped_default_size_is_the_size_in_the_graph(world):
     run(asyncio.wait_for(drive(), timeout=20))
 
 
-def test_video_17_request_receipt_is_open_while_the_engine_holds_the_submit_and_finishes_once(world):
-    """writers-12/18/19: one receipt, in_progress with its facts before the engine answers, the same one closed after."""
+def test_video_17_request_receipt_closes_with_the_answer_not_with_the_engine(world):
+    """writers-12/18/19, video-17: one receipt, opened with its facts and closed once with the create answer. The job's
+    runner, not the request, waits for the engine, so a submit the engine holds does not hold the receipt open. The
+    receipt is read while the engine holds the submit reply and read again after the runner finished the job; it is the
+    same single row both times (the old request held it open: restart_closes_receipt family; a design question)."""
     async def drive():
         world.engine.submit_release = asyncio.Event()
-        task = asyncio.create_task(create(world))
         try:
-            async def accepted_by_engine():
-                while not world.engine.prompts:
-                    if task.done():
-                        await task
-                        raise RuntimeError("create ended before the engine accepted")
-                    await REAL_SLEEP(0)
-            await asyncio.wait_for(accepted_by_engine(), timeout=5)
-            in_flight = rows(world.rig.receipts_db, "receipts")
-            assert len(in_flight) == 1
-            opened = json.loads(in_flight[0]["receipt_json"])
-            assert opened["status"] == "in_progress"
-            assert opened["accepted_at_ms"] is not None
-            assert opened["attempt_number"] == 1
-            assert opened["intent"] == "video.generate"
-            assert opened["protocol"] == "openai.video"
-            assert opened["requested_model"] == MODEL
-            rid = opened["request_id"]
-            world.engine.submit_release.set()
-            response = await asyncio.wait_for(task, timeout=10)
-            assert response.headers["x-request-id"] == rid
+            response = await asyncio.wait_for(create_unawaited(world), timeout=5)
+            rid = response.headers["x-request-id"]
+            await submitted(world, 1)                  # the engine has the prompt and holds its reply
             closed = receipt(world, rid)
             assert len(rows(world.rig.receipts_db, "receipts")) == 1
-            assert closed["status"] == "succeeded"
-            assert closed["metadata"]["status_code"] == 200
-            assert closed["backend"] == "comfyui"
+            assert closed["status"] == "succeeded" and closed["metadata"]["status_code"] == 200
+            assert closed["intent"] == "video.generate" and closed["protocol"] == "openai.video"
+            assert closed["requested_model"] == MODEL and closed["backend"] == "comfyui"
+            assert closed["attempt_number"] == 1
             assert closed["finished_at_ms"] >= closed["accepted_at_ms"]
         finally:
             world.engine.submit_release.set()
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        video_id = response.json()["id"]
+        await await_status(world, video_id)
+        final = receipt(world, rid)
+        assert len(rows(world.rig.receipts_db, "receipts")) == 1
+        # The receipt names its job (delta receipt_names_job), so the run core files the job's result summary on it, as it does
+        # for every receipt that names a job. Nothing else changes: it is not reopened, rewritten or closed again.
+        summary = final["metadata"].pop("result_bundle", None)
+        assert summary is not None, "the job's result summary should reach the receipt that names the job"
+        assert final == closed, "the runner's work rewrote or reopened the create receipt"
     run(asyncio.wait_for(drive(), timeout=20))
+
+
+async def create_unawaited(world):
+    """A create that does not wait for the runner's submit (the engine holds it)."""
+    response = await world.rig.call("POST", "/v1/videos", json_body=CREATE)
+    assert response.status_code == 200, response.text
+    return response
 
 
 def test_video_96_media_job_ids_are_unique_and_link_the_runner_receipt(world):
@@ -786,22 +852,3 @@ def test_video_96_media_job_ids_are_unique_and_link_the_runner_receipt(world):
             assert recorded["path"] == "/gateway/v1/media/jobs"
             assert recorded["status"] == "succeeded"
     run(asyncio.wait_for(drive(), timeout=40))
-
-
-def test_video_05_old_route_ignores_the_key_even_for_a_different_body(world):
-    """video-05 (old behaviour, with the dedupe delta replacing it at the move): the same key with another body is two
-    separate engine submissions."""
-    async def drive():
-        answers = []
-        for prompt in ("first prompt", "different prompt"):
-            response = await world.rig.call(
-                "POST", "/v1/videos", json_body={**CREATE, "prompt": prompt},
-                headers={"Idempotency-Key": "legacy-key-conflict"})
-            if response.status_code != 200:
-                raise RuntimeError(f"legacy create failed: {response.status_code} {response.text}")
-            answers.append(response.json())
-        assert [r["id"] for r in answers] == ["video_p1", "video_p2"]
-        assert len(world.engine.prompts) == 2
-        assert world.engine.prompts["p1"]["prompt"]["5"]["inputs"]["text"] == "first prompt"
-        assert world.engine.prompts["p2"]["prompt"]["5"]["inputs"]["text"] == "different prompt"
-    run(asyncio.wait_for(drive(), timeout=20))

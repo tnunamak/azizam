@@ -302,7 +302,12 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
     # from the snapshot it found.
     provider = getattr(module, "GATEWAY_REGISTRY_PROVIDER", None) if module is not None else None
     saved_snapshot = provider.current() if provider is not None else None
+    # ...and adopts the next workflow registry in place; an owner workflow a test saved must not serve on the next one.
+    workflows = getattr(module, "GATEWAY_WORKFLOW_REGISTRY", None) if module is not None else None
+    saved_workflows = workflows.contents() if workflows is not None else None
     yield
+    if workflows is not None and saved_workflows is not None and workflows.contents()[0] is not saved_workflows[0]:
+        workflows.restore(saved_workflows)
     if provider is not None and saved_snapshot is not None and provider.current() is not saved_snapshot:
         provider.swap(saved_snapshot)
     if holder is not None and saved is not None:

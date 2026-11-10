@@ -527,7 +527,7 @@ export interface CurrentHealthService {
   engine_label?: string;
   capability_title?: string;
   capability_labels?: string[];
-  icon_key?: import("./product-api-types").CapabilityIconKey;
+  icon_key?: string;
   in_use?: boolean | null;
   /** The service record says it starts when needed. */
   starts_on_demand?: boolean;

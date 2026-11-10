@@ -40,7 +40,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 import httpx
 import yaml
 
-from gateway import engine_egress, lifecycle_drivers
+from gateway import engine_egress, lifecycle_drivers, service_registry
 from gateway import http_tls
 from gateway.resource_awareness import ResourceObserver, age_resource_view
 from gateway.http_tls import tls_context
@@ -338,9 +338,13 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
     backends = config.get("backends", {}) or {}
     targets: list[dict[str, Any]] = []
     for key, cfg in backends.items():
-        if not isinstance(cfg, dict):
+        if not isinstance(cfg, dict) or not _is_enabled(cfg):
             continue
-        url = service_health_endpoint(cfg)
+        try:
+            service_registry.checked_engine_base_address(cfg)
+            url = service_health_endpoint(cfg)
+        except service_registry.EngineAddressError:
+            continue  # _unconfigured_rows reports the refusal without dialing another address.
         if not url:
             continue
         name = cfg.get("name") or key
@@ -357,7 +361,11 @@ def _lifecycle_backend_targets(config: dict) -> list[dict[str, Any]]:
     backends = config.get("backends", {}) or {}
     targets: list[dict[str, Any]] = []
     for key, cfg in backends.items():
-        if not isinstance(cfg, dict):
+        if not isinstance(cfg, dict) or not _is_enabled(cfg):
+            continue
+        try:
+            service_registry.checked_engine_base_address(cfg)
+        except service_registry.EngineAddressError:
             continue
         lifecycle = cfg.get("lifecycle")
         if not isinstance(lifecycle, Mapping):
@@ -494,6 +502,32 @@ def _http_target_row(target: Mapping[str, Any], status: str, error: Optional[str
     }
 
 
+def _unconfigured_rows(config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One row per invalid execution address or relative health path with no complete address.
+
+    Such an engine is not configured: shown as "not_configured" (never as measured down), with the reason, and never probed.
+    """
+    rows: list[dict[str, Any]] = []
+    for key, cfg in ((config or {}).get("backends") or {}).items():
+        if not isinstance(cfg, Mapping) or not _is_enabled(cfg):
+            continue
+        try:
+            service_registry.checked_engine_base_address(cfg)
+            if not cfg.get("health_endpoint") or service_health_endpoint(cfg):
+                continue
+            reason = service_registry.NOT_CONFIGURED_REASON
+        except service_registry.EngineAddressError as error:
+            reason = str(error)
+        rows.append({
+            "key": key, "service_id": key, "name": cfg.get("name") or key, "url": "",
+            "role": cfg.get("role") if cfg.get("role") in _VALID_ROLES else "required", "note": cfg.get("note"),
+            "status": "not_configured", "live_status": "not_configured", "latency_ms": None,
+            "last_error": f"not configured: {reason}",
+            "kind": "not_configured", "observed_at_s": int(time.time()),
+        })
+    return rows
+
+
 def _overdue_http_row(target: Mapping[str, Any]) -> dict[str, Any]:
     # Slow, not down: the same verdict as a probe that times out on its own.
     return {**_http_target_row(target, "degraded", "timeout"), "observed_at_s": int(time.time())}
@@ -537,7 +571,8 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
             row["observed_at_s"] = int(time.time())
             return row
         # The systemd batch runs alongside the HTTP probes. Each lifecycle row waits for the batch, not for them.
-        systemd_states = asyncio.ensure_future(_systemd_lifecycle_states(lifecycle_targets, backends))
+        # With no lifecycle target nothing awaits it, and a task nobody awaits is left pending after this returns.
+        systemd_states = asyncio.ensure_future(_systemd_lifecycle_states(lifecycle_targets, backends)) if lifecycle_targets else None
 
         async def lifecycle_probe(target):
             # Shielded: a lifecycle probe that hits its deadline must not cancel the batch the other rows wait on.
@@ -555,12 +590,47 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
                 return_exceptions=False,
             ),
         )
-    return _merge_backend_observations([*http_results, *lifecycle_results])
+    return _merge_backend_observations([*http_results, *lifecycle_results, *_unconfigured_rows(config)])
 
 
 # --- llama.cpp /props + /slots -------------------------------------------
 
-async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]]:
+def _is_enabled(record: Mapping[str, Any]) -> bool:
+    """The record's ``enabled`` through the one parser the gateway uses; a disabled record is neither probed nor listed."""
+    return service_registry.bool_from_config(record.get("enabled"), True)
+
+
+def _configured_engine_base(record: Mapping[str, Any]) -> str:
+    if not _is_enabled(record):
+        return ""
+    try:
+        return service_registry.checked_engine_base_address(record)
+    except service_registry.EngineAddressError:
+        return ""  # The grid reports the field-level configuration refusal.
+
+
+def _managed_chat_origin(config: Mapping[str, Any]) -> str:
+    """The address of the chat engine the gateway runs on this computer, from its service record ("" when none).
+
+    The first record that declares chat and a lifecycle driver other than ``external``; the origin is the one the
+    gateway dials (``service_registry.engine_origin``). A record that names no address is not probed.
+    """
+    for cfg in ((config or {}).get("backends") or {}).values():
+        if not isinstance(cfg, Mapping):
+            continue
+        lifecycle = cfg.get("lifecycle")
+        driver = str(lifecycle.get("driver") or "external").strip().lower() if isinstance(lifecycle, Mapping) else "external"
+        capabilities = {str(c).lower() for c in (cfg.get("capabilities") or []) if isinstance(c, str)}
+        if not _is_enabled(cfg):
+            continue
+        if driver not in {"external", "none"} and capabilities & {"chat", "completions"}:
+            origin = _configured_engine_base(cfg)
+            if origin:
+                return origin
+    return ""
+
+
+async def _llama_props_and_slots(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[list[dict]]]:
     """Fetch non-invasive llama-server metadata.
 
     ``/slots`` is deliberately not queried here. llama-server implements that
@@ -580,9 +650,12 @@ async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]
         except Exception:
             return None
 
+    origin = _managed_chat_origin(config)
+    if not origin:  # no record names an address: nothing is probed
+        return None, None
     try:
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
-            props = await _get(client, "http://127.0.0.1:5051/props")
+            props = await _get(client, service_registry.join_base_path(origin, "/props"))
             return props, None
     except Exception:
         return None, None
@@ -806,7 +879,7 @@ async def _models_section(config: dict, props: Optional[dict], slots: Optional[l
     # Image workflows: list ComfyUI api_workflows dir.
     image_workflows: list[str] = []
     try:
-        comfy_cfg = config.get("backends", {}).get("comfyui", {})
+        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
         wf_dir = comfy_cfg.get("workflows_dir")
         if wf_dir:
             p = Path(wf_dir)
@@ -932,7 +1005,10 @@ def _safe_float(s: str) -> Optional[float]:
         return None
 
 
-async def _comfy_queue_and_stats() -> tuple[Optional[dict], Optional[dict]]:
+_GRAPH_SERVICE_ID = "comfyui"  # the id of the graph engine's service record (proxy._GRAPH_BACKEND_ID)
+
+
+async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:
     async def _get(client, url):
         try:
             r = await client.get(url, extensions=engine_egress.probe())
@@ -940,11 +1016,15 @@ async def _comfy_queue_and_stats() -> tuple[Optional[dict], Optional[dict]]:
         except Exception:
             return None
 
+    graph = ((config or {}).get("backends") or {}).get(_GRAPH_SERVICE_ID) or {}
+    origin = _configured_engine_base(graph)
+    if not origin:  # the record names no address: the graph engine is not configured
+        return None, None
     try:
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             queue, stats = await asyncio.gather(
-                _get(client, "http://127.0.0.1:7890/queue"),
-                _get(client, "http://127.0.0.1:7890/system_stats"),
+                _get(client, service_registry.join_base_path(origin, "/queue")),
+                _get(client, service_registry.join_base_path(origin, "/system_stats")),
             )
         if isinstance(queue, dict):
             running = queue.get("queue_running") or []
@@ -1845,7 +1925,7 @@ def _capabilities(config: dict) -> list[dict]:
 def _image_capabilities(config: dict) -> list[dict]:
     out: list[dict] = []
     try:
-        comfy_cfg = config.get("backends", {}).get("comfyui", {})
+        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
         wf_dir = comfy_cfg.get("workflows_dir")
         if not wf_dir:
             return out
@@ -2711,7 +2791,7 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
 
 # --- voxtral / parakeet enriched ------------------------------------------
 
-async def _enriched_aux_health() -> dict:
+async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
     out: dict[str, Any] = {"voxtral": None, "parakeet": None}
     async def _get(client, url):
         try:
@@ -2720,12 +2800,16 @@ async def _enriched_aux_health() -> dict:
         except Exception:
             return None
 
+    backends = (config or {}).get("backends") or {}
+
+    async def _health(client, service_id: str):
+        record = backends.get(service_id) or {}
+        origin = _configured_engine_base(record)
+        return await _get(client, service_registry.join_base_path(origin, "/health")) if origin else None  # no address: not configured, not probed
+
     try:
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
-            voxtral, parakeet = await asyncio.gather(
-                _get(client, "http://127.0.0.1:8001/health"),
-                _get(client, "http://127.0.0.1:5092/health"),
-            )
+            voxtral, parakeet = await asyncio.gather(_health(client, "tts"), _health(client, "stt"))
         out["voxtral"] = voxtral
         out["parakeet"] = parakeet
     except Exception:
@@ -2781,7 +2865,7 @@ def _voices_summary(proxy_module) -> Optional[dict]:
             "openai_alias_map": dict(sorted(openai_alias_map.items())),
             "native_voices": sorted(native_voices),
             "example_curl": (
-                "curl -s http://127.0.0.1:5000/v1/audio/speech "
+                "curl -s \"$AZIZAM_URL\"/v1/audio/speech "
                 "-H 'Authorization: Bearer $AZIZAM_KEY' "
                 "-H 'Content-Type: application/json' "
                 "-d '{\"model\":\"voxtral-4b-tts\",\"voice\":\"nova\",\"input\":\"hello\"}' "
@@ -3898,9 +3982,9 @@ async def build_status_payload(config: dict) -> dict:
     # Phase 1: the sections that need only the config and the stores. They run at once, each within its budget.
     first = await gather_sections({
         "backends": _backend_grid(config),
-        "comfy_queue": _comfy_queue_and_stats(),
-        "llama_props_slots": _llama_props_and_slots(),
-        "aux_health": _enriched_aux_health(),
+        "comfy_queue": _comfy_queue_and_stats(config),
+        "llama_props_slots": _llama_props_and_slots(config),
+        "aux_health": _enriched_aux_health(config),
         "gpus": _section(_gpus_raw),
         "ram_attribution": _section(_ram_attribution, config),
         "repo_state": _section(_repo_state),
@@ -4373,7 +4457,7 @@ def _build_models(
 
     image_workflows: list[str] = []
     try:
-        comfy_cfg = config.get("backends", {}).get("comfyui", {})
+        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
         wf_dir = comfy_cfg.get("workflows_dir")
         if wf_dir:
             p = Path(wf_dir)
@@ -4519,6 +4603,17 @@ def latest_payload() -> Mapping[str, Any]:
     return _SNAPSHOT["payload"]
 
 
+def _rows_of_enabled_engines(rows: list, config: Mapping[str, Any]) -> list:
+    """*rows* without those of an engine the current config disables: a snapshot built before a reload must not hold one."""
+    records = (config or {}).get("backends") or {}
+
+    def disabled(row: Any) -> bool:
+        record = records.get(str(row.get("service_id") or row.get("key") or "")) if isinstance(row, Mapping) else None
+        return isinstance(record, Mapping) and not _is_enabled(record)
+
+    return [row for row in rows if not disabled(row)]
+
+
 async def get_cached_status(config: dict) -> dict:
     """The latest snapshot, for every status reader. It never waits for a probe: it returns the snapshot as it is, with
     its age, and a read after idle starts the refresh in the background.
@@ -4536,6 +4631,8 @@ async def get_cached_status(config: dict) -> dict:
     now = _now()
     age = round(now - _SNAPSHOT["built"], 2)
     data = dict(_SNAPSHOT["payload"])
+    if isinstance(data.get("backends"), list):
+        data["backends"] = _rows_of_enabled_engines(data["backends"], config)
     data["cache_age_s"] = age
     if "resource_awareness" in data:
         data["resource_awareness"] = age_resource_view(data["resource_awareness"], max(0, age))

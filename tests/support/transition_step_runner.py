@@ -46,9 +46,11 @@ class FakeOperationStore:
         self.gates[domain] = "closed"
         return Begun(op)
 
-    def write_intent(self, op_id: str, intent: StepIntent) -> Operation:
+    def write_intent(self, op_id: str, intent: StepIntent, held: Optional[EffectResult] = None) -> Operation:
         op = self.ops[op_id]
-        self.ops[op_id] = replace(op, step=intent.step, step_intent=intent, step_outcome=None)
+        self.ops[op_id] = replace(op, step=intent.step, step_intent=intent,
+                                  step_outcome=held.outcome if held else None,
+                                  evidence_ref=held.evidence_ref if held else op.evidence_ref)
         return self.ops[op_id]
 
     def write_outcome(self, op_id: str, step: StepName, result: EffectResult) -> Operation:

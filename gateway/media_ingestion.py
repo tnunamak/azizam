@@ -217,10 +217,13 @@ def index_video_delivery(
     media_type: str,
     record: Mapping[str, Any] | None,
 ) -> media_jobs.MediaJob | None:
-    """Index a synchronous public video content delivery as a Library asset."""
+    """Index a synchronous public video content delivery as a Library asset.
+
+    ``record`` is the old tracking record, or a job's request facts: the facts name the maker as ``maker_person_id``
+    (only the maker's read carries it) where the old record says ``person_id``."""
     safe_record = record if isinstance(record, Mapping) else {}
     workflow = _safe_video_workflow(safe_record)
-    person_id = _safe_string(safe_record.get("person_id"))
+    person_id = _safe_string(safe_record.get("person_id")) or _safe_string(getattr(record, "maker_person_id", None))
     owner_key_hash = _safe_string(safe_record.get("owner_key_hash"))
     job = index_sync_assets(
         request_id=video_id,

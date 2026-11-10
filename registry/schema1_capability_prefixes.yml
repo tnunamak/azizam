@@ -1,0 +1,13 @@
+schema_version: 1
+prefixes:
+  - prefix: image.
+    capability: image
+  - prefix: video.
+    capability: video
+  - prefix: mesh.
+    capability: mesh
+  - prefix: audio.
+    capability: audio
+  - prefix: speech.
+    capability: audio
+default: workflow

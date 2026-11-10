@@ -1389,3 +1389,54 @@ def test_newer_busy_row_still_beats_older_ready_check():
     health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 499}}
     status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=500)
     assert merge_evidence(health, status)["svc"]["source"] == "status"
+
+
+def _snapshot_reading(service_id: str, *, status: str, observed_at_s: int, available: bool) -> dict:
+    return {service_id: {"status": status, "available": available, "source": "probe", "observed_at_s": observed_at_s}}
+
+
+def test_a_request_after_the_snapshot_build_overrides_the_cached_reading(tmp_path: Path, evidence_now):
+    from gateway.availability import evidence_with_current_receipts
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(db)
+    now = evidence_now
+    answered = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
+    answered.finish("ok", now_ms=(now - 2) * 1000)
+    receipt_store.record(answered, created_at=now - 2, path=db)
+    cached = _snapshot_reading("svc", status="down", observed_at_s=now - 10, available=False)
+
+    merged = evidence_with_current_receipts(cached, receipt_store_path=db, now_s=now)
+
+    assert merged["svc"]["request_id"] == answered.request_id
+    assert merged["svc"]["available"] is True
+
+
+def test_a_receipt_older_than_the_cached_reading_does_not_override_it(tmp_path: Path, evidence_now):
+    from gateway.availability import evidence_with_current_receipts
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(db)
+    now = evidence_now
+    old = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
+    old.finish("ok", now_ms=(now - 20) * 1000)
+    receipt_store.record(old, created_at=now - 20, path=db)
+    cached = _snapshot_reading("svc", status="down", observed_at_s=now - 5, available=False)
+
+    merged = evidence_with_current_receipts(cached, receipt_store_path=db, now_s=now)
+
+    assert merged["svc"] == cached["svc"]
+
+
+def test_a_service_the_probe_found_off_keeps_that_reading_over_a_new_request(tmp_path: Path, evidence_now):
+    from gateway.availability import evidence_with_current_receipts
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(db)
+    now = evidence_now
+    answered = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
+    answered.finish("ok", now_ms=(now - 1) * 1000)
+    receipt_store.record(answered, created_at=now - 1, path=db)
+    cached = {"svc": {"status": "unavailable", "available": False, "enabled": False, "source": "probe",
+                      "observed_at_s": now - 10}}
+
+    merged = evidence_with_current_receipts(cached, receipt_store_path=db, now_s=now)
+
+    assert merged["svc"] == cached["svc"]

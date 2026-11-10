@@ -39,6 +39,7 @@ from typing import Any, Iterable, Mapping
 from gateway.workflow_policy import NEEDS_CONFIGURATION_MESSAGE
 from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
+from gateway.manifests import asset_input_modalities
 from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
 VALID_AUDIENCES = ("client", "admin", "internal")
@@ -491,11 +492,10 @@ def capability_from_workflow_record(
 
     Output modalities come from the manifest output media types
     (``image/*`` → ``image``, ``audio/*`` → ``audio``, ``video/*`` → ``video``,
-    ``text/*`` → ``text``). Input modalities are derived from input ``type``
-    declarations (``asset`` → ``image``/``audio``/``video`` is *not* inferred
-    here; we default to ``image`` only when the intent name starts with
-    ``image.``, otherwise the asset type is left untagged and surfaces as the
-    generic ``asset`` modality so the router does not over-promise).
+    ``text/*`` → ``text``). Input modalities follow declared types, including
+    nested object properties and list items. Assets use their ``accepts``
+    media types (or schema 1 ``media_type``), never their intent name.
+    Missing or unmapped media types remain generic ``asset`` modalities.
 
     Workflows are treated as ``job`` execution by default because they back
     the durable media job surface (``POST /gateway/v1/media/jobs``). Callers
@@ -654,18 +654,30 @@ def _derive_input_modalities(
     inputs: dict[str, Any], *, intent: str
 ) -> tuple[str, ...]:
     modalities: list[str] = []
-    asset_modality = _intent_asset_modality(intent)
-    for spec in inputs.values():
+
+    def add(modality: str) -> None:
+        if modality not in modalities:
+            modalities.append(modality)
+
+    def visit(spec: Any) -> None:
         if not isinstance(spec, dict):
-            continue
+            return
         type_name = str(spec.get("type") or "string")
         if type_name == "string":
-            if "text" not in modalities:
-                modalities.append("text")
+            add("text")
         elif type_name == "asset":
-            picked = asset_modality or "asset"
-            if picked not in modalities:
-                modalities.append(picked)
+            for modality in asset_input_modalities(spec):
+                add(modality)
+        elif type_name == "object":
+            properties = spec.get("properties")
+            if isinstance(properties, dict):
+                for child in properties.values():
+                    visit(child)
+        elif type_name in {"list", "array"}:
+            visit(spec.get("items"))
+
+    for spec in inputs.values():
+        visit(spec)
     return tuple(modalities)
 
 
@@ -678,16 +690,6 @@ def _media_type_modality(media_type: str) -> str | None:
         return "video"
     if media_type.startswith("text/") or media_type in {"application/json"}:
         return "text"
-    return None
-
-
-def _intent_asset_modality(intent: str) -> str | None:
-    if intent.startswith("image."):
-        return "image"
-    if intent.startswith("audio.") or intent.startswith("speech.") or intent.startswith("sound.") or intent.startswith("music."):
-        return "audio"
-    if intent.startswith("video."):
-        return "video"
     return None
 
 

@@ -21,13 +21,13 @@ import logging
 import secrets
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from gateway import generated_defaults, log_scrub, media_jobs, result_bundle
+from gateway import generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
@@ -38,10 +38,12 @@ from gateway.result_bundle import Reader, ResultLimits, ResultRefused
 from gateway.workflow_envelope import Envelope
 from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
-    DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
-    SERVICE_REASONS, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
-    CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
-    ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
+    AUDIO_FACT,
+    DEFINITION_UNAVAILABLE, ENVELOPE_VERSION_UNSUPPORTED, RUN_STARTED_PROGRESS, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
+    SERVICE_REASONS, SERVICE_UNREACHABLE, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
+    CallerContext, FactRef, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, REQUEST_FACT_KEYS,
+    RequestFacts, ResultContent, ResultRef, ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider,
+    WorkflowEntry,
 )
 
 log = logging.getLogger(__name__)
@@ -61,12 +63,14 @@ RECEIPT_OUTCOMES = {
     media_jobs.STATUS_FAILED: ("failed", "failed"),
     media_jobs.STATUS_CANCELED: ("cancelled", "cancelled"),
 }
+RUN_RECEIPT_ID_KEY = "run_receipt_id"        # the request id of the receipt a run filed for itself (``run_receipt_path``)
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
+REQUEST_FACTS_KEY = "request_facts"          # where the request facts sit in the job's metadata: written once with the row
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
 CLAIM_POLL_S = 0.05
+SUBMIT_POLL_S = 0.02
 RETRY_AFTER_S = 2
-WAIT_POLL_S = 0.1
 TOMBSTONE_RETENTION_S = 24 * 3600     # a deleted job is hidden at once and removed after this long
 
 # I7: the code's value of each key is its ceiling; the runtime config (section ``workflow_execution``) may only lower it.
@@ -196,9 +200,14 @@ class RunContext:
     media: Mapping[str, tuple[MediaRef, ...]]
     generated: Mapping[str, Any]
     spool: JobSpool
+    # Files the Library keeps as the result's sources in place of ``media`` for the same input (``RunRequest.sources``).
+    sources: Mapping[str, tuple[MediaRef, ...]] = field(default_factory=dict)
     request_id: str | None = None      # the request the job answers (the Library asset origin names it)
     # The adapter calls it once, with its result metadata, before it commits the bundle (S7 parity M5).
     record_result_metadata: Callable[[Mapping[str, Any]], None] = lambda metadata: None
+    # The adapter calls it with how far the engine has got (0 to 99). The job's progress never goes down, so a smaller
+    # value than an earlier one changes nothing.
+    record_progress: Callable[[int], None] = lambda percent: None
 
 
 class RunPort(Protocol):
@@ -267,15 +276,20 @@ class BindingAvailability:
     (the adapter is registered and every reviewed role is present); this class gives it the interface projections read."""
 
     def __init__(self, check: Callable[[BindingDef], str | None],
-                 retry_after: Callable[[BindingDef], int | None] | None = None) -> None:
+                 retry_after: Callable[[BindingDef], int | None] | None = None,
+                 unreachable: Callable[[BindingDef], str] | None = None) -> None:
         self._check = check
         self._retry_after = retry_after
+        self._unreachable = unreachable
 
     def binding_problem(self, binding: BindingDef) -> str | None:
         return self._check(binding)
 
     def binding_retry_after_s(self, binding: BindingDef) -> int | None:
         return self._retry_after(binding) if self._retry_after is not None else None
+
+    def unreachable_message(self, binding: BindingDef) -> str:
+        return self._unreachable(binding) if self._unreachable is not None else "the service behind this workflow is unreachable"
 
 
 # ---------------------------------------------------------------------------------------------------- helpers
@@ -415,7 +429,39 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
         job_id=str(job["job_id"]), status=status, disposition=disposition,  # type: ignore[arg-type]
         workflow_id=str(job.get("workflow") or ""), record_revision=revision, binding_key=binding_key,
         created_at_s=int(job.get("created_at") or 0), updated_at_s=int(job.get("updated_at") or 0),
-        failure=failure, results=results, result_metadata=dict((job.get("metadata") or {}).get(RESULT_METADATA_KEY) or {}))
+        failure=failure, results=results, result_metadata=dict((job.get("metadata") or {}).get(RESULT_METADATA_KEY) or {}),
+        progress=100 if status == media_jobs.STATUS_SUCCEEDED else int(job.get("progress") or 0),
+        intent=str(job.get("intent") or ""),
+        finished_at_s=int(job["finished_at"]) if media_jobs.is_terminal(status) and job.get("finished_at") is not None else None)
+
+
+WIRE_ID_PLACEHOLDER = "{wire_id}"       # what a shape writes where the id the caller will see is not yet known
+
+
+def with_wire_id(value: Any, wire_id: str) -> Any:
+    """``value`` with the placeholder replaced by ``wire_id`` in every string it holds."""
+    if isinstance(value, str):
+        return value.replace(WIRE_ID_PLACEHOLDER, wire_id)
+    if isinstance(value, Mapping):
+        return {key: with_wire_id(item, wire_id) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [with_wire_id(item, wire_id) for item in value]
+    return value
+
+
+# The job store refuses some key names inside a job's metadata (they can hold media bytes). A fact keeps its public name in
+# ``RequestFacts`` and is stored under the name here.
+_FACT_STORED_AS = {AUDIO_FACT: "audio_track"}
+_FACT_PUBLIC_AS = {stored: public for public, stored in _FACT_STORED_AS.items()}
+
+
+def request_facts_record(facts: Mapping[str, Any]) -> dict[str, Any]:
+    """The facts a request wants kept, checked and made plain, as the job's metadata stores them. A key outside
+    ``REQUEST_FACT_KEYS`` is refused (ValueError); a key with no value is dropped."""
+    unknown = sorted(set(facts) - REQUEST_FACT_KEYS)
+    if unknown:
+        raise ValueError(f"request facts hold only the listed keys, not {unknown}")
+    return {_FACT_STORED_AS.get(key, key): plain(value) for key, value in facts.items() if value is not None}
 
 
 # ----------------------------------------------------------------------------------------------------- the core
@@ -427,6 +473,27 @@ class _AdmissionLost(Exception):
     def __init__(self, refused: "RunRefused") -> None:
         super().__init__(refused.code)
         self.refused = refused
+
+
+def resolve_fact_refs(facts: Mapping[str, Any], refs: Sequence[FactRef], *, job_id: str,
+                      generated: Mapping[str, Any]) -> dict[str, Any]:
+    """The request facts with every ``FactRef`` filled: the wire id of the job, or the value drawn for a generated input. A ref
+    whose value does not exist is left out of the facts (never a placeholder)."""
+    resolved = plain(facts)
+    for ref in refs:
+        if ref.source == "job_id":
+            value: Any = f"{ref.prefix}{job_id}"
+        elif ref.source.startswith("generated:"):
+            value = generated.get(ref.source.split(":", 1)[1])
+            if value is None:
+                continue
+        else:
+            raise ValueError(f"unknown fact source {ref.source!r}")
+        node = resolved
+        for key in ref.path[:-1]:
+            node = node.setdefault(key, {})
+        node[ref.path[-1]] = value
+    return resolved
 
 
 class WorkflowRunCore:
@@ -444,6 +511,7 @@ class WorkflowRunCore:
         self._port = port
         self._spool = spool
         self._path = path or media_jobs.DB_PATH
+        self._refusal_words: dict[str, str] = {}      # job id -> the row's word a refused run's receipt closes with (until it closes)
         self._generate = generate
         self._lease_s = claim_lease_s
         self._wait_s = claim_wait_s
@@ -454,6 +522,7 @@ class WorkflowRunCore:
     async def submit_run(self, req: RunRequest, caller: CallerContext, *,
                          snapshot) -> RunJobView | RunRefused:
         port = self._port
+        request_facts_record(req.facts)         # a key outside the table is a defect of the shape: refused before any claim
         scope, maker = port.owner_scope(caller), port.maker(caller)
         fence = None
         identity = ""
@@ -481,7 +550,30 @@ class WorkflowRunCore:
             port.schedule(created["job_id"])
         except Exception:  # noqa: BLE001 - the job stays queued; recovery schedules it and a retry replays it
             log.exception("job %s was created but not scheduled", created["job_id"])
+        if req.submit_wait_s > 0:
+            refused = await self._await_submit(created["job_id"], req.submit_wait_s)
+            if refused is not None:
+                return refused
         return job_view(created, self._path, disposition="new")
+
+    async def _await_submit(self, job_id: str, wait_s: float) -> RunRefused | None:
+        """Wait until the engine has taken the job (its upstream job id is kept) or the job has ended. A job that failed before
+        the engine took it is discarded and refused with 502, so a caller never holds a job the engine does not know. A health
+        probe cannot prove this: only the engine's own reply to the submission can. After ``wait_s`` the queued job is the answer."""
+        deadline = time.monotonic() + wait_s
+        while True:
+            job = media_jobs.get(job_id, audience="internal", path=self._path) or {}
+            status = str(job.get("status") or "")
+            if status == media_jobs.STATUS_FAILED:
+                if media_jobs.discard_failed(job_id, path=self._path):
+                    code = str(job.get("error_code") or SERVICE_UNREACHABLE)
+                    return RunRefused(502, code, str(job.get("error") or "The engine did not take the job."))
+                return None
+            if media_jobs.is_terminal(status) or (job.get("metadata") or {}).get("protocol_job"):
+                return None
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(SUBMIT_POLL_S)
 
     async def _claim(self, fence: media_jobs.RunClaimFence, identity: str) -> RunJobView | RunRefused | None:
         """Step 1. None means this request holds the claim."""
@@ -544,6 +636,8 @@ class WorkflowRunCore:
         if reason in SERVICE_REASONS:
             return RunRefused(503, str(reason), f"the service behind workflow {entry.id} cannot take a run now ({reason})",
                               retry_after_s=port.available.binding_retry_after_s(binding))
+        if reason == SERVICE_UNREACHABLE:        # a 502 that names the engine; no job exists (S7 video move 4.3)
+            return RunRefused(502, SERVICE_UNREACHABLE, port.available.unreachable_message(binding))
         return None
 
     async def _decide_and_create(self, req: RunRequest, caller: CallerContext, snapshot,
@@ -619,12 +713,18 @@ class WorkflowRunCore:
         port = self._port
         binding = entry.bindings[binding_key]
         owner_hash, app_id, key_name = port.job_owner(caller)
+        facts = request_facts_record(req.facts)
         job = media_jobs.MediaJob(
             intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
-            metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
-                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries})
+            app_profile=req.job_record.get("app_profile"), parent_request_id=req.job_record.get("parent_request_id"),
+            metadata={**dict(req.job_record.get("metadata") or {}),
+                      "mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
+                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries,
+                      **({REQUEST_FACTS_KEY: facts} if facts else {}),
+                      **({"run_receipt_path": req.run_receipt_path} if req.run_receipt_path else {})})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
+        adopted_sources: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
             # Admission again, inside the write transaction that inserts the job: a count taken before it can be stale
@@ -634,6 +734,10 @@ class WorkflowRunCore:
                 raise _AdmissionLost(late)
             contract = plain(entry.contract)
             generated = self._generate(contract.get("inputs") or {}, req.inputs)
+            if req.fact_refs:           # the facts that wait for the job (a drawn seed) are filled before the row is written
+                drawn = {name: item["value"] for name, item in generated.items() if "value" in item}
+                record.metadata[REQUEST_FACTS_KEY] = request_facts_record(
+                    resolve_fact_refs(req.facts, req.fact_refs, job_id=record.job_id, generated=drawn))
             identity = port.adapter_identity(entry, binding_key, binding)
             envelope = build_job_envelope(
                 source_kind="workflow", source_id=entry.id, contract=execution_contract(contract),
@@ -643,10 +747,14 @@ class WorkflowRunCore:
                 service_id=identity.service_id, origin=identity.origin, generated=generated,
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
+            adopted_sources.update(self._spool.adopt(record.job_id, dict(req.sources)))
             port.save_payload(record.job_id, {
                 "body": {"inputs": plain(req.inputs), **({"options": plain(req.options)} if req.options else {}),
+                         **({"refusal": plain(req.run_refusal)} if req.run_refusal else {}),
                          **({"extensions": plain(req.extensions)} if req.extensions else {})}, "auth": port.caller_payload(caller),
-                "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()}}, caller)
+                "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()},
+                **({"sources": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted_sources.items()}}
+                   if adopted_sources else {})}, caller)
             return envelope
 
         try:
@@ -717,10 +825,19 @@ class WorkflowRunCore:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
         if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
             return None
+        metadata = job.get("metadata") or {}
+        # A job whose run files its own receipt closed the submit receipt at the 202: the outcome belongs to the run's
+        # receipt, and a job that never started a run has none to close.
+        receipt_id = metadata.get(RUN_RECEIPT_ID_KEY) if metadata.get("run_receipt_path") else job["request_id"]
+        if not receipt_id:
+            return None
         status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
         if status == "failed":
             reason = str(job.get("error_code") or reason)
-        return str(job["request_id"]), status, reason
+            # A run refused with a 4xx closes with the row's word for a refused request (``refusal_receipt``, carried with the
+            # run); any other failure, and a refusal by the service (5xx), is a failure.
+            status = self._refusal_words.pop(job_id, status)
+        return str(receipt_id), status, reason
 
     def _close_recovered_receipt(self, job_id: str) -> None:
         """Recovery settled this job from its committed result: close its request receipt with the job's outcome. The
@@ -754,7 +871,7 @@ class WorkflowRunCore:
         if job["status"] == media_jobs.STATUS_QUEUED:
             try:
                 media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
-                                         progress=5, metadata_patch={"started_at": int(time.time())}, path=self._path)
+                                         progress=RUN_STARTED_PROGRESS, metadata_patch={"started_at": int(time.time())}, path=self._path)
             except ValueError:      # canceled, or taken by another worker, between the read and the write
                 return
             media_jobs.append_event(job_id, "started", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": 5},
@@ -781,14 +898,23 @@ class WorkflowRunCore:
         if (job.get("metadata") or {}).get("retries") == "none":
             policy = dataclasses.replace(policy, max_attempts=1)
         attempt = int(job.get("attempt_number") or 1)       # the durable number: a recovered job keeps its budget
+        request_id = str(job.get("request_id") or "") or None
+        if (job.get("metadata") or {}).get("run_receipt_path"):
+            request_id = await self._open_run_receipt(job_id, job, caller) or request_id
+        refusal = (payload.get("body") or {}).get("refusal")
+        if refusal:
+            self._refuse_at_run(job_id, job, refusal)
+            return
         while True:
             ctx = RunContext(
                 job_id=job_id, caller=caller, pin=pin, payload=payload,
                 inputs=dict((payload.get("body") or {}).get("inputs") or {}),
                 media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
                 generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
-                request_id=str(job.get("request_id") or "") or None,
-                record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
+                sources={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("sources") or {}).items()},
+                request_id=request_id,
+                record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata),
+                record_progress=lambda percent: self._record_progress(job_id, percent))
             media_jobs.append_event(
                 job_id, "attempt", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": min(95, 5 + (attempt - 1) * 10),
                                     "attempt": attempt, "total": policy.max_attempts}, path=self._path)
@@ -818,6 +944,10 @@ class WorkflowRunCore:
                 attempt += 1
                 continue
             break
+        committed = media_jobs.get(job_id, audience="internal", path=self._path)
+        if committed is not None and committed["status"] == media_jobs.STATUS_SUCCEEDED:     # the event the job routes always wrote
+            media_jobs.append_event(job_id, "succeeded", {"phase": "complete", "status": media_jobs.STATUS_SUCCEEDED, "progress": 100,
+                                                          "attempt": attempt, "total": policy.max_attempts}, path=self._path)
         self._settle(job_id)
 
     async def _before_retry(self, job_id: str, exc: BaseException, attempt: int, delay: float, policy: RetryPolicy) -> tuple[CallerContext | None, Mapping[str, Any] | None, tuple[str, str, str] | None]:
@@ -863,14 +993,59 @@ class WorkflowRunCore:
             return None, None, ("job_settled", "internal", "The job ended while it waited to retry.")
         return caller, payload, None
 
+    def _refuse_at_run(self, job_id: str, job: Mapping[str, Any], refusal: Mapping[str, Any]) -> None:
+        """The shape took a request the run refuses (``RunRequest.run_refusal``): the job fails with the refusal's code and the
+        row's failure text for its category, and no engine is called."""
+        category = str(refusal.get("category") or "invalid_input")
+        text, _ = media_job_shape.stored_failure(
+            str((job.get("metadata") or {}).get("failure_text") or "adapter"), category, str(refusal.get("message") or ""),
+            str(refusal.get("code") or ""), None)
+        with contextlib.suppress(ValueError):
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
+                                     metadata_patch={"last_http_status": int(refusal.get("status") or 400)})
+        # The row's word for a refused request applies to a 4xx refusal only; the receipt closes in ``_fail`` below.
+        if str(refusal.get("receipt") or "failed") == "rejected" and 400 <= int(refusal.get("status") or 400) < 500:
+            self._refusal_words[job_id] = "rejected"
+        self._fail(job_id, str(refusal.get("code") or INTERNAL_ERROR), category, text)
+
+    async def _open_run_receipt(self, job_id: str, job: Mapping[str, Any], caller: CallerContext | None) -> str | None:
+        """The run files its own receipt (a row's ``run_receipt_path``): the port opens it, and its id is kept on the job so
+        the end of the job closes it and the Library names it as the origin. None when the port opens none. Never raises."""
+        open_receipt = getattr(self._port, "open_run_receipt", None)
+        if open_receipt is None:
+            return None
+        try:
+            receipt_id = await open_receipt(job, caller)
+            if receipt_id:
+                media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
+                                         metadata_patch={RUN_RECEIPT_ID_KEY: receipt_id})
+            return receipt_id or None
+        except Exception:  # noqa: BLE001 - a run with no receipt of its own still runs
+            log.exception("job %s could not open its run receipt", job_id)
+            return None
+
     def _record_result_metadata(self, job_id: str, result_metadata: Mapping[str, Any]) -> None:
-        """Keep the adapter's result metadata on the still-running job, as it gave it (the job store refuses unsafe
+        """Keep the adapter's result metadata on the still-running job, as it gave it (a later call adds to what an earlier one kept) (the job store refuses unsafe
         content). It does nothing once the job is terminal."""
         try:
+            kept = ((media_jobs.get(job_id, audience="internal", path=self._path) or {}).get("metadata") or {}).get(RESULT_METADATA_KEY)
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, path=self._path,
-                                     metadata_patch={RESULT_METADATA_KEY: plain(result_metadata)})
+                                     metadata_patch={RESULT_METADATA_KEY: plain({**(kept if isinstance(kept, Mapping) else {}), **result_metadata})})
         except ValueError:
             log.warning("job %s result metadata was not stored", job_id, exc_info=True)
+
+    def _record_progress(self, job_id: str, percent: int) -> None:
+        """Raise the running job's progress to ``percent`` (at most 99: only success shows 100). It never lowers it and does
+        nothing once the job is terminal."""
+        try:
+            value = max(0, min(99, int(percent)))
+            job = media_jobs.get(job_id, audience="internal", path=self._path)
+            if job is None or job["status"] != media_jobs.STATUS_RUNNING or value <= int(job.get("progress") or 0):
+                return
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, progress=value, expected_status=media_jobs.STATUS_RUNNING,
+                                     path=self._path)
+        except (ValueError, TypeError):
+            log.warning("job %s progress was not stored", job_id, exc_info=True)
 
     def _dispatch_problem(self, job: Mapping[str, Any], pin: PinnedDefinitions,
                           caller: CallerContext | None) -> tuple[str, str, str] | None:
@@ -907,6 +1082,8 @@ class WorkflowRunCore:
         try:
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
+                metadata_patch=({"last_http_status": last_status} if (last_status := upstream_status if upstream_status is not None
+                                                                        else 504 if category == "timeout" else None) is not None else None),
                 error_info={"error_code": code, "error_category": category, "retryable": retryable,
                             "upstream_http_status": upstream_status})
         except ValueError:
@@ -1071,7 +1248,14 @@ class WorkflowJobService:
     """``JobService`` over the job store. Who may read or cancel is the port's decision (the existing media-job rules)."""
 
     def __init__(self, *, port: RunPort, path: Path | None = None,
-                 tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time) -> None:
+                 tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time,
+                 prompt_lookup: Callable[[str, str], str | None] | None = None,
+                 wire_id: Callable[[str], str] | None = None) -> None:
+        # ``wire_id(job_id)`` is the id the frontend shows for a job: the placeholder in the recorded facts becomes it on read.
+        self._wire_id = wire_id
+        # ``prompt_lookup(job_id, person_id)`` is the text the prompt-memory rules still keep for the maker, or None. The
+        # main module gives it; without it no facts carry a prompt.
+        self._prompt_lookup = prompt_lookup
         self._port = port
         self._path = path or media_jobs.DB_PATH
         self._retention_s = tombstone_retention_s
@@ -1092,11 +1276,13 @@ class WorkflowJobService:
 
     async def wait(self, job_id: str, caller: CallerContext, timeout_s: float) -> RunJobView:
         deadline = time.monotonic() + max(0.0, timeout_s)
-        while True:
-            job = self._readable(job_id, caller)
-            if media_jobs.is_terminal(str(job["status"])) or time.monotonic() >= deadline:
-                return job_view(job, self._path, disposition="replay")
-            await asyncio.sleep(WAIT_POLL_S)
+        with job_wake.watch(job_id) as woken:
+            while True:
+                job = self._readable(job_id, caller)
+                remaining = deadline - time.monotonic()
+                if media_jobs.is_terminal(str(job["status"])) or remaining <= 0:
+                    return job_view(job, self._path, disposition="replay")
+                await woken.wait(min(remaining, job_wake.FALLBACK_S))
 
     def cancel(self, job_id: str, caller: CallerContext) -> RunJobView:
         job = self._readable(job_id, caller)
@@ -1112,6 +1298,61 @@ class WorkflowJobService:
                 self._port.drop_payload(job_id)
             job = current
         return job_view(job, self._path, disposition="replay")
+
+    def request_facts(self, job_id: str, caller: CallerContext) -> RequestFacts | None:
+        try:
+            job = self._readable(job_id, caller)
+        except JobNotFound:
+            return None
+        recorded = (job.get("metadata") or {}).get(REQUEST_FACTS_KEY)
+        values = ({_FACT_PUBLIC_AS.get(k, k): v for k, v in recorded.items() if _FACT_PUBLIC_AS.get(k, k) in REQUEST_FACT_KEYS}
+                  if isinstance(recorded, Mapping) else {})
+        if self._wire_id is not None:
+            values = with_wire_id(values, self._wire_id(job_id))
+        maker = str(job.get("maker_person_id") or "")
+        own = bool(maker) and self._port.maker(caller) == maker
+        prompt = None
+        if own and self._prompt_lookup is not None:
+            with contextlib.suppress(Exception):
+                prompt = self._prompt_lookup(job_id, maker)
+        return RequestFacts(values, prompt=prompt, maker_person_id=maker if own else None)
+
+    def list(self, caller: CallerContext, *, intents: Sequence[str], limit: int, after_id: str | None = None,
+             after_key: tuple[int, str] | None = None, order: str = "desc", workflows: Sequence[str] = ()) -> tuple[tuple[RunJobView, ...], bool]:
+        if after_id is not None and after_key is not None:
+            raise ValueError("give after_id or after_key, not both")
+        wanted = tuple(dict.fromkeys(intents))
+        by_workflow = tuple(dict.fromkeys(workflows))          # jobs of these workflows count whatever intent filed them
+        if not wanted and not by_workflow:
+            return (), False
+        direction = "ASC" if order == "asc" else "DESC"
+        marks = ",".join("?" for _ in wanted)
+        wmarks = ",".join("?" for _ in by_workflow)
+        sql = (f"SELECT job_json, created_at FROM media_jobs WHERE (intent IN ({marks}) OR workflow IN ({wmarks})) "
+               "AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone) "
+               f"ORDER BY created_at {direction}, job_id {direction}")
+        page: list[dict[str, Any]] = []
+        seen_cursor = after_id is None
+        has_more = False
+        with media_jobs.connection(self._path) as conn:
+            for job_json, created_at in conn.execute(sql, wanted + by_workflow):
+                job = media_jobs.for_audience(json.loads(job_json), "internal")
+                if not is_run_job(job) or not self._port.can_read(job, caller):
+                    continue
+                if after_key is not None:
+                    position = (int(created_at or 0), str(job["job_id"]))
+                    if (position <= after_key) if order == "asc" else (position >= after_key):
+                        continue
+                elif not seen_cursor:
+                    seen_cursor = job["job_id"] == after_id
+                    continue
+                if len(page) == limit:
+                    has_more = True
+                    break
+                page.append(job)
+        if not seen_cursor:
+            raise JobNotFound(str(after_id))
+        return tuple(job_view(job, self._path, disposition="replay") for job in page), has_more
 
     def delete(self, job_id: str, caller: CallerContext) -> None:
         job = self._readable(job_id, caller)
@@ -1173,3 +1414,96 @@ def queued_jobs_without_v2_envelope(path: Path | None = None) -> list[dict[str, 
         found.append({"job_id": job["job_id"], "workflow": job.get("workflow"), "status": job["status"],
                       "record_revision": None, "binding_key": None})
     return found
+
+
+# ------------------------------------------------------------------------------------------ rollback checks
+
+
+class RollbackRefused(RuntimeError):
+    """A rollback cannot proceed until the named jobs no longer expose unsafe state."""
+
+    def __init__(self, code: str, job_ids: list[str]) -> None:
+        self.code = code
+        self.job_ids = sorted(job_ids)
+        super().__init__(f"Rollback refused: {code}: {', '.join(self.job_ids)}")
+
+
+def rollback_job_inventory(path: Path | None = None) -> list[dict[str, Any]]:
+    """Section 5.5: all unfinished workflow jobs an older build would encounter.
+
+    This reports stored envelope versions, not whether their definitions can execute.
+    It never rewrites a pin, filters tombstones, or applies a history-page limit.
+    """
+    store = Path(path or media_jobs.DB_PATH)
+    if not store.exists():  # a read-only check never creates the store
+        return []
+    with media_jobs.connection(store) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "media_jobs" not in tables:
+            return []
+        envelope_column = "e.envelope_json" if "job_envelope" in tables else "NULL"
+        envelope_join = " LEFT JOIN job_envelope AS e ON e.job_id=j.job_id" if "job_envelope" in tables else ""
+        rows = conn.execute(
+            f"SELECT j.job_id, j.workflow, j.status, j.job_json, {envelope_column} "
+            f"FROM media_jobs AS j{envelope_join} "
+            "WHERE j.status IN (?, ?) ORDER BY j.job_id",
+            (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING),
+        ).fetchall()
+    found: list[dict[str, Any]] = []
+    for job_id, saved_workflow, status, job_json, envelope_json in rows:
+        job = json.loads(job_json)
+        try:
+            envelope = json.loads(envelope_json) if envelope_json is not None else {}
+        except (TypeError, ValueError):
+            envelope = {}
+        envelope = envelope if isinstance(envelope, Mapping) else {}
+        source = envelope.get("source")
+        source = source if isinstance(source, Mapping) else {}
+        workflow_source = source.get("kind") == "workflow"
+        if not (is_run_job(job) or workflow_source or saved_workflow):
+            continue
+        version = envelope.get("envelope_version")
+        found.append({
+            "job_id": job_id,
+            "workflow": saved_workflow or (source.get("id") if workflow_source else None),
+            "status": status,
+            "envelope_version": version,
+            "reason": PIN_NOT_RECORDED if envelope_json is None else
+                      "v1_compatible" if type(version) is int and version == 1 else DEFINITION_UNAVAILABLE,
+        })
+    return found
+
+
+def assert_rollback_ready(path: Path | None = None) -> None:
+    """Refuse running media first, then deleted rows an old reader would resurrect, then queued jobs it cannot read.
+
+    A queued job whose envelope the older build cannot read (``definition_unavailable``) would be failed by that build,
+    so the rollback waits until the owner lets it finish or cancels it. ``pin_not_recorded`` jobs are not refused: on an
+    older store those are runnable v1 jobs.
+
+    The caller must keep submissions quiesced under the single-instance/drain
+    protocol through the rollback; this read-only snapshot is not an admission lock.
+    """
+    store = Path(path or media_jobs.DB_PATH)
+    if not store.exists():  # a read-only check never creates the store
+        return
+    with media_jobs.connection(store) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "media_jobs" not in tables:
+            return
+        running = [row[0] for row in conn.execute(
+            "SELECT job_id FROM media_jobs WHERE status=? ORDER BY job_id",
+            (media_jobs.STATUS_RUNNING,),
+        )]
+        if running:
+            raise RollbackRefused("running_jobs", running)
+        # A store without the tombstone table has no retained deletes, but its queued jobs still need the check below.
+        retained = [row[0] for row in conn.execute(
+            "SELECT j.job_id FROM media_jobs AS j "
+            "JOIN workflow_job_tombstone AS t ON t.job_id=j.job_id ORDER BY j.job_id"
+        )] if "workflow_job_tombstone" in tables else []
+        if retained:
+            raise RollbackRefused("retained_deleted_jobs", retained)
+    unreadable = [row["job_id"] for row in rollback_job_inventory(store) if row["reason"] == DEFINITION_UNAVAILABLE]
+    if unreadable:
+        raise RollbackRefused("queued_jobs_unreadable_by_older_build", unreadable)

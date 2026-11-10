@@ -5,6 +5,7 @@ the design names (a typo key, a string default on a seed, authority keys in the 
 from __future__ import annotations
 
 import copy
+import json
 from fractions import Fraction
 import re
 import sys
@@ -23,6 +24,7 @@ from gateway.workflow_contract import (
     value_problems,
 )
 from gateway.workflow_convert import convert_1_to_2, convert_and_check
+from tests.support.section_edits import without_section_additions
 from tests.test_domain_literal_ratchet import vocabulary
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -513,11 +515,22 @@ def test_the_bundled_files_are_schema_two_and_the_frozen_copies_are_schema_one()
 
 def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but_for_the_named_edits():
     named = {"ace-step-1.5-xl-turbo"}
+    staged = {"flux2-klein-4b-edit", "flux2-klein-edit"}     # each lists the one result stage that applies its mask
     for path in V1_FIXTURES:
         converted, _ = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / path.name).read_text(encoding="utf-8"))
+        if path.stem in staged:
+            assert bundled["bindings"]["comfyui"].pop("result_processing") == ["post_composite_mask"], path.name
+        if path.stem == "qwen-image-2.1-inpaint":       # the feather the workflow's own graph applies, not a default of 48
+            spec = converted["inputs"]["mask_feather"]
+            assert spec.pop("default") == 48
+            assert bundled["inputs"]["mask_feather"]["description"].startswith(spec["description"])
+            spec["description"] = bundled["inputs"]["mask_feather"]["description"]
+        if path.stem == "video-mux":                    # the length rule added to the release description
+            assert bundled["description"].startswith(converted["description"])
+            converted["description"] = bundled["description"]
         if path.stem not in named:
-            assert bundled == converted, path.name
+            assert without_section_additions(bundled, converted) == converted, path.name
     ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))
     bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8"))
     assert set(ace["inputs"]) - set(bundled["inputs"]) == {"prompt"}
@@ -640,6 +653,163 @@ def test_the_converter_survives_documents_of_the_wrong_shape():
     for bad in ({"schema_version": 1}, {"schema_version": 1, "inputs": [], "outputs": 3, "bindings": []},
                 {"schema_version": 1, "inputs": {"a": 5}, "bindings": {"b": None}, "requires": {}}):
         convert_1_to_2(bad)
+
+
+
+# Base 22e712f59c3fe04e0bf2b9a5a930e666a446d271: literal byte goldens for the
+# backfill table and the inline malformed documents already exercised above.
+# These are NOT the separate 38-file frozen corpus goldens.
+@pytest.mark.parametrize("source, expected", [
+    ({"schema_version": 1, "intent": "image.edit"},
+     b'{"schema_version":2,"intent":"image.edit","capability":"image","annotations":{"azizam.dev/backfill":{"capability":"intent-prefix rule, schema 1 to 2"}}}'),
+    ({"schema_version": 1, "intent": "video.edit"},
+     b'{"schema_version":2,"intent":"video.edit","capability":"video","annotations":{"azizam.dev/backfill":{"capability":"intent-prefix rule, schema 1 to 2"}}}'),
+    ({"schema_version": 1, "intent": "mesh.generate"},
+     b'{"schema_version":2,"intent":"mesh.generate","capability":"mesh","annotations":{"azizam.dev/backfill":{"capability":"intent-prefix rule, schema 1 to 2"}}}'),
+    ({"schema_version": 1, "intent": "audio.generate"},
+     b'{"schema_version":2,"intent":"audio.generate","capability":"audio","annotations":{"azizam.dev/backfill":{"capability":"intent-prefix rule, schema 1 to 2"}}}'),
+    ({"schema_version": 1, "intent": "speech.synthesis"},
+     b'{"schema_version":2,"intent":"speech.synthesis","capability":"audio","annotations":{"azizam.dev/backfill":{"capability":"intent-prefix rule, schema 1 to 2"}}}'),
+    ({"schema_version": 1, "intent": "unfamiliar.run"},
+     b'{"schema_version":2,"intent":"unfamiliar.run","capability":"workflow","annotations":{"azizam.dev/backfill":{"capability":"intent-prefix rule, schema 1 to 2"}}}'),
+    ({"schema_version": 1, "intent": "image.edit", "capability": "declared"},
+     b'{"schema_version":2,"intent":"image.edit","capability":"declared"}'),
+    ({"schema_version": 1},
+     b'{"schema_version":2}'),
+    ({"schema_version": 1, "inputs": [], "outputs": 3, "bindings": []},
+     b'{"schema_version":2,"inputs":[],"outputs":3,"bindings":[]}'),
+    ({"schema_version": 1, "inputs": {"a": 5}, "bindings": {"b": None}, "requires": {}},
+     b'{"schema_version":2,"inputs":{"a":5},"bindings":{"b":null},"requires":{}}'),
+])
+def test_schema_one_backfill_and_inline_fixture_bytes_match_base(source, expected):
+    original = copy.deepcopy(source)
+    converted, notes = convert_1_to_2(source)
+    assert json.dumps(converted, ensure_ascii=False, separators=(",", ":")).encode("utf-8") == expected
+    expected_notes = [(("schema_version",), "set", "the document dialect is 2")]
+    if "intent" in source and "capability" not in source:
+        expected_notes.append((("capability",), "backfill", "inferred once from the intent prefix, as the catalog did"))
+    assert [(note.path, note.operation, note.reason) for note in notes] == expected_notes
+    assert source == original
+    assert convert_1_to_2(converted) == (converted, [])
+
+
+def _capability_prefix_rules():
+    return {"schema_version": 1, "prefixes": [
+        {"prefix": "image.", "capability": "image"},
+        {"prefix": "video.", "capability": "video"},
+        {"prefix": "mesh.", "capability": "mesh"},
+        {"prefix": "audio.", "capability": "audio"},
+        {"prefix": "speech.", "capability": "audio"},
+    ], "default": "workflow"}
+
+
+def _use_capability_prefix_file(tmp_path, monkeypatch, document):
+    from gateway import workflow_convert
+
+    path = tmp_path / "capability-prefixes.yml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    # On base the attribute is absent and ignored, so behavioral assertions fail,
+    # not collection or monkeypatch setup.
+    monkeypatch.setattr(workflow_convert, "SCHEMA1_CAPABILITY_PREFIXES_PATH", path, raising=False)
+    return path
+
+
+def test_schema_one_backfill_reads_changed_data_on_each_conversion(tmp_path, monkeypatch):
+    rules = _capability_prefix_rules()
+    path = _use_capability_prefix_file(tmp_path, monkeypatch, rules)
+    assert convert_1_to_2({"schema_version": 1, "intent": "image.edit"})[0]["capability"] == "image"
+    rules["prefixes"][0]["capability"] = "changed"
+    rules["default"] = "other"
+    path.write_text(yaml.safe_dump(rules, sort_keys=False), encoding="utf-8")
+    assert convert_1_to_2({"schema_version": 1, "intent": "image.edit"})[0]["capability"] == "changed"
+    assert convert_1_to_2({"schema_version": 1, "intent": "unfamiliar.run"})[0]["capability"] == "other"
+
+
+def test_schema_one_prefix_rows_are_ordered_and_the_default_is_data(tmp_path, monkeypatch):
+    rules = {"schema_version": 1, "prefixes": [
+        {"prefix": "image.edit", "capability": "specific"},
+        {"prefix": "image.", "capability": "broad"},
+    ], "default": "fallback"}
+    path = _use_capability_prefix_file(tmp_path, monkeypatch, rules)
+    assert convert_1_to_2({"schema_version": 1, "intent": "image.edit"})[0]["capability"] == "specific"
+    rules["prefixes"].reverse()
+    path.write_text(yaml.safe_dump(rules, sort_keys=False), encoding="utf-8")
+    assert convert_1_to_2({"schema_version": 1, "intent": "image.edit"})[0]["capability"] == "broad"
+    rules["prefixes"] = []
+    path.write_text(yaml.safe_dump(rules, sort_keys=False), encoding="utf-8")
+    assert convert_1_to_2({"schema_version": 1, "intent": "image.edit"})[0]["capability"] == "fallback"
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda d: d.update(unknown=True), "unknown keys"),
+    (lambda d: d.pop("default"), "default"),
+    (lambda d: d["prefixes"][0].update(prefix=""), "prefixes\\[0\\].prefix"),
+    (lambda d: d["prefixes"][0].update(prefix="   "), "prefixes\\[0\\].prefix"),
+    (lambda d: d["prefixes"].append(dict(d["prefixes"][0])), "duplicate prefix"),
+    (lambda d: d["prefixes"][0].update(unknown=True), "unknown keys"),
+    (lambda d: d.pop("schema_version"), "schema_version"),
+    (lambda d: d.update(schema_version=2), "schema_version"),
+    (lambda d: d.update(schema_version=True), "schema_version"),
+    (lambda d: d.pop("prefixes"), "prefixes"),
+    (lambda d: d.update(prefixes={}), "prefixes"),
+    (lambda d: d["prefixes"].append("broken"), "must be a mapping"),
+    (lambda d: d["prefixes"][0].pop("prefix"), "prefixes\\[0\\].prefix"),
+    (lambda d: d["prefixes"][0].update(prefix=3), "prefixes\\[0\\].prefix"),
+    (lambda d: d["prefixes"][0].pop("capability"), "capability"),
+    (lambda d: d["prefixes"][0].update(capability=""), "capability"),
+    (lambda d: d.update(default=None), "default"),
+    # A padded value would load, never match, and be written verbatim.
+    (lambda d: d["prefixes"][0].update(prefix=" " + d["prefixes"][0]["prefix"]), "prefixes\\[0\\].prefix"),
+    (lambda d: d["prefixes"][0].update(capability=d["prefixes"][0]["capability"] + " "), "capability"),
+    (lambda d: d.update(default=" " + d["default"]), "default"),
+])
+def test_schema_one_capability_data_is_validated_before_use(tmp_path, monkeypatch, change, message):
+    rules = _capability_prefix_rules()
+    change(rules)
+    _use_capability_prefix_file(tmp_path, monkeypatch, rules)
+    # Even a matching first row must not hide a later malformed or duplicate row.
+    with pytest.raises(ValueError, match=message):
+        convert_1_to_2({"schema_version": 1, "intent": "image.edit"})
+
+
+@pytest.mark.parametrize("field, message", [
+    ("prefix", r"prefixes\[0\]\.prefix"),
+    ("capability", r"prefixes\[0\]\.capability"),
+    ("default", "default"),
+])
+@pytest.mark.parametrize("control", ["\t", "\r", "\n"], ids=["tab", "CR", "LF"])
+def test_schema_one_capability_data_refuses_embedded_controls(tmp_path, monkeypatch, field, message, control):
+    rules = _capability_prefix_rules()
+    target = rules if field == "default" else rules["prefixes"][0]
+    original = target[field]
+    target[field] = original[:2] + control + original[2:]
+    path = _use_capability_prefix_file(tmp_path, monkeypatch, rules)
+    # The default must be validated even though image.edit matches the first row.
+    with pytest.raises(ValueError, match=message + r".*tab, CR or LF") as caught:
+        convert_1_to_2({"schema_version": 1, "intent": "image.edit"})
+    assert str(path) in str(caught.value)
+
+
+@pytest.mark.parametrize("text, message", [
+    ("[]", "must be a mapping"),
+    ("schema_version: [", "cannot read"),
+])
+def test_schema_one_capability_data_shape_and_yaml_errors_are_clear(tmp_path, monkeypatch, text, message):
+    path = _use_capability_prefix_file(tmp_path, monkeypatch, _capability_prefix_rules())
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        convert_1_to_2({"schema_version": 1, "intent": "image.edit"})
+
+
+def test_schema_one_missing_data_refuses_backfill_but_not_explicit_or_other_dialects(tmp_path, monkeypatch):
+    path = _use_capability_prefix_file(tmp_path, monkeypatch, _capability_prefix_rules())
+    path.unlink()
+    with pytest.raises(ValueError, match="cannot read"):
+        convert_1_to_2({"schema_version": 1, "intent": "image.edit"})
+    assert convert_1_to_2({"schema_version": 1, "intent": "image.edit", "capability": "kept"})[0]["capability"] == "kept"
+    assert convert_1_to_2({"schema_version": 2, "intent": "image.edit"}) == (
+        {"schema_version": 2, "intent": "image.edit"}, [])
+    assert convert_1_to_2({"schema_version": 1})[0] == {"schema_version": 2}
 
 
 # ------------------------------------------------------------------------------------------- the token test

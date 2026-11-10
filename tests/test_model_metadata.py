@@ -5,6 +5,10 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from typing import Any, Mapping
+from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -189,6 +193,100 @@ class DerivationTableTests(unittest.TestCase):
     def test_embeddings_intent_entry(self) -> None:
         fields = _annotated([{"id": "e", "azizam_intent": "text.embeddings"}])["e"]
         self.assertEqual(fields["type"], "embedding")
+
+
+class AssetModalityTests(unittest.TestCase):
+    def test_scalar_mixed_generic_text_and_schema_one_assets(self) -> None:
+        cases = (
+            ({"accepts": "image/png"}, "image", "image/png"),
+            ({"accepts": ["image/png", "image/jpeg"]}, "image", "image/*"),
+            ({"accepts": ["audio/wav", "image/png", "audio/mpeg"]}, None, None),
+            ({"accepts": ["*/*"]}, None, "*/*"),
+            ({"accepts": ["text/plain", "application/json"]}, "text", "text/*"),
+            ({"accepts": "application/json"}, "text", "application/json"),
+            ({"accepts": ["application/pdf", "application/octet-stream"]}, None, None),
+            ({"media_type": "audio/wav"}, "audio", "audio/wav"),
+            ({"accepts": [], "media_type": "video/mp4"}, "video", "video/mp4"),
+            ({}, None, None),
+        )
+        for declaration, modality, media_type in cases:
+            with self.subTest(declaration=declaration):
+                spec = {"type": "asset", **declaration}
+                self.assertEqual(mm._asset_input_modality(spec), modality)
+                self.assertEqual(mm.asset_media_type(spec), media_type)
+
+    def test_no_accepts_never_adds_an_intent_named_input(self) -> None:
+        for intent in ("image.edit", "audio.transcribe", "speech.recognize",
+                       "sound.analyze", "music.analyze", "video.edit", "smell.infer"):
+            for accepts in (None, []):
+                with self.subTest(intent=intent, accepts=accepts):
+                    spec = {"type": "asset"}
+                    if accepts is not None:
+                        spec["accepts"] = accepts
+                    result = mm.from_contract({
+                        "intent": intent, "inputs": {"source": spec},
+                        "outputs": {"result": {"media_type": "text/plain"}},
+                    })
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result.input_modalities, ())
+
+    def test_nested_leaves_keep_single_kind_rule_per_leaf(self) -> None:
+        manifest = {"intent": "smell.infer", "inputs": {
+            "payload": {"type": "object", "properties": {
+                "frames": {"type": "array", "items": {"type": "asset", "accepts": "image/png"}},
+                "captions": {"type": "asset", "accepts": ["text/plain", "application/json"]},
+                "mixed": {"type": "asset", "accepts": ["audio/wav", "video/mp4"]},
+                "opaque": {"type": "asset", "accepts": ["*/*"]},
+            }},
+        }, "outputs": {"result": {"media_type": "text/plain"}}}
+        result = mm.from_contract(manifest)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.input_modalities, ("text", "image"))
+        self.assertEqual(result.to_fields()["architecture"]["input_modalities"], ["text", "image"])
+
+
+# Frozen asset derivations from 1d749a9c9a2a4452e6771a166c6d8c6b4594039b.
+def _base_asset_input_modality(spec: Mapping[str, Any]) -> str | None:
+    """The modality an asset input accepts: the shared kind of its ``accepts`` list (a schema 1 ``media_type`` counts as a
+    one-item list). None when it names no single kind."""
+    accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
+    majors = {str(item).split("/", 1)[0].strip().lower() for item in accepted if str(item).strip()}
+    major = next(iter(majors)) if len(majors) == 1 else ""
+    return major if major in mm.INPUT_MODALITIES else None
+
+
+def _base_asset_media_type(spec: Mapping[str, Any]) -> str | None:
+    """Media kind of one asset input, as ``image/*``. The document says it by what the input accepts: one type as it is,
+    several as their shared kind; an input that accepts nothing it can name has no media type."""
+    accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
+    if len(accepted) == 1:
+        return accepted[0]
+    majors = {item.split("/", 1)[0].lower() for item in accepted}
+    if len(majors) == 1 and next(iter(majors)) in mm.INPUT_MODALITIES:
+        return f"{next(iter(majors))}/*"
+    return None
+
+
+class ShippedModelMetadataBaseParityTests(unittest.TestCase):
+    def test_all_shipped_model_metadata_and_asset_media_types_match_base(self) -> None:
+        import yaml
+
+        folder = ROOT / "manifests" / "workflows"
+        paths = sorted(path for path in folder.rglob("*") if path.suffix in {".yml", ".yaml"})
+        self.assertTrue(paths, "No shipped manifests found; parity must not pass vacuously")
+        for path in paths:
+            with self.subTest(manifest=str(path.relative_to(ROOT))):
+                manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertIsInstance(manifest, dict)
+                current = mm.from_contract(manifest)
+                with patch.object(mm, "_asset_input_modality", _base_asset_input_modality):
+                    base = mm.from_contract(manifest)
+                self.assertEqual(current, base)
+                self.assertEqual(current.to_fields() if current else None,
+                                 base.to_fields() if base else None)
+                for leaf in mm._asset_inputs(manifest):
+                    with self.subTest(asset=leaf):
+                        self.assertEqual(mm.asset_media_type(leaf), _base_asset_media_type(leaf))
 
 
 class OverrideTests(unittest.TestCase):
@@ -395,3 +493,100 @@ def test_operations_of_matches_the_operation_metadata_by_type_and_inputs():
     assert of("language", ["text"], among=engines) == ()
     assert of(None, ["text"], among=engines) == ()
     assert of("language", ["text"]) == ("chat",)
+
+
+# Pin all existing exact/family rows both with their declared I/O and with no I/O.
+_CAPABILITY_ROWS = [
+    *[(intent, metadata) for intent, metadata in mm._CAPABILITY_INTENTS.items()],
+    *[(prefix + "unfamiliar", metadata) for prefix, metadata in mm._CAPABILITY_INTENT_FAMILIES.items()],
+]
+
+
+@pytest.mark.parametrize("intent,expected", _CAPABILITY_ROWS, ids=[row[0] for row in _CAPABILITY_ROWS])
+@pytest.mark.parametrize("declared", [True, False], ids=["declared-io", "empty-io"])
+def test_capability_table_rows_keep_exact_metadata(intent, expected, declared):
+    inputs = expected.input_modalities if declared else ()
+    outputs = expected.output_modalities if declared else ()
+    actual = mm.from_capability(intent, inputs, outputs)
+    assert actual == expected
+
+
+def _capability_pair_types():
+    pairs = {}
+    for _, metadata in _CAPABILITY_ROWS:
+        pair = (metadata.input_modalities, metadata.output_modalities)
+        pairs.setdefault(pair, set()).add(metadata.type)
+    return pairs
+
+
+@pytest.mark.parametrize(
+    "inputs,outputs,expected",
+    [(inputs, outputs, next(iter(types)))
+     for (inputs, outputs), types in _capability_pair_types().items() if len(types) == 1],
+)
+def test_unfamiliar_capability_uses_each_unambiguous_pair(inputs, outputs, expected):
+    actual = mm.from_capability("smell.infer", inputs, outputs)
+    assert actual == mm.ModelMetadata(expected, inputs, outputs)
+
+
+@pytest.mark.parametrize("intent,inputs,outputs,expected", [
+    ("image.sonify", ("text",), ("audio",), "audio"),
+    ("image.sonify", ("audio",), ("text",), "audio"),
+    ("audio.describe", ("image",), ("text",), "image"),
+    ("video.rank", ("text",), ("embedding",), "embedding"),
+    ("chat.completions", ("text",), ("audio",), "audio"),
+    ("decision.classify", ("text",), ("image",), "image"),
+])
+def test_unambiguous_declared_pair_overrides_exact_or_family_intent(intent, inputs, outputs, expected):
+    assert mm.from_capability(intent, inputs, outputs) == mm.ModelMetadata(expected, inputs, outputs)
+
+
+@pytest.mark.parametrize("intent,expected", [
+    ("chat.completions", "language"),
+    ("text.rerank", "reranking"),
+    ("decision.choose", "decision"),
+    ("smell.infer", "language"),
+])
+def test_ambiguous_text_pair_uses_intent_then_type_of(intent, expected):
+    assert mm.from_capability(intent, ["text"], ["text"]) == mm.ModelMetadata(
+        expected, ("text",), ("text",),
+    )
+
+
+@pytest.mark.parametrize("intent,inputs,outputs,expected", [
+    ("image.generate", (), ("audio",), mm.ModelMetadata("image", ("text",), ("audio",))),
+    ("image.generate", ("audio",), (), mm.ModelMetadata("image", ("audio",), ("image",))),
+    ("smell.infer", (), (), None),
+    (None, (), (), None),
+])
+def test_empty_modalities_keep_intent_defaults_or_unknown(intent, inputs, outputs, expected):
+    assert mm.from_capability(intent, inputs, outputs) == expected
+
+
+@pytest.mark.parametrize("intent,expected", [
+    ("chat.completions", "language"),
+    ("smell.infer", "video"),
+])
+def test_unlisted_pair_uses_intent_then_type_of(intent, expected):
+    assert mm.from_capability(intent, ["video"], ["text"]) == mm.ModelMetadata(
+        expected, ("video",), ("text",),
+    )
+
+
+def test_declared_pair_is_a_set_and_one_shot_inputs_are_consumed_once():
+    assert mm.from_capability(
+        "smell.infer", iter([" IMAGE ", "text", "image"]), iter([" IMAGE ", "image"]),
+    ) == mm.ModelMetadata("image", ("text", "image"), ("image",))
+
+
+def test_io_index_is_derived_from_both_tables_without_ambiguous_pairs(monkeypatch):
+    first = mm.ModelMetadata("audio", ("image",), ("audio",))
+    conflict = mm.ModelMetadata("video", ("image",), ("audio",))
+    family_only = mm.ModelMetadata("embedding", ("audio",), ("embedding",))
+    monkeypatch.setattr(mm, "_CAPABILITY_INTENTS", {"unfamiliar.exact": first})
+    monkeypatch.setattr(mm, "_CAPABILITY_INTENT_FAMILIES", {
+        "unfamiliar.conflict.": conflict, "unfamiliar.family.": family_only,
+    })
+    assert mm._capability_types_by_io() == {
+        (frozenset({"audio"}), frozenset({"embedding"})): "embedding",
+    }

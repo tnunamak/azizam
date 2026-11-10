@@ -6,6 +6,9 @@ import sys
 import textwrap
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -17,6 +20,7 @@ from gateway.capabilities import (  # noqa: E402
     UNREVIEWED_WORKFLOW_CAVEAT,
     Capability,
     ResourceEstimate,
+    _derive_input_modalities,
     capability_from_workflow_record,
     capability_with_policy_view,
     summarize_capabilities,
@@ -44,6 +48,7 @@ CHAT_WORKFLOW_YAML = textwrap.dedent(
         required: true
       source_image:
         type: asset
+        accepts: [image/png]
         required: true
       denoise:
         type: number
@@ -314,6 +319,266 @@ class SummarizeCapabilitiesOrderingTests(unittest.TestCase):
         first = summarize_capabilities([a, b, c], audience="admin")
         second = summarize_capabilities([c, b, a], audience="admin")
         self.assertEqual(first, second)
+
+
+class InputModalityTests(unittest.TestCase):
+    def test_declared_accepts_do_not_depend_on_intent_name(self) -> None:
+        inputs = {"source": {"type": "asset", "accepts": ["audio/wav"]}}
+        for intent in ("smell.infer", "image.transcribe", "audio.transcribe"):
+            with self.subTest(intent=intent):
+                self.assertEqual(
+                    _derive_input_modalities(inputs, intent=intent), ("audio",)
+                )
+
+    def test_audio_asset_under_image_intent_reaches_both_capability_fields(self) -> None:
+        manifest = yaml.safe_load(CHAT_WORKFLOW_YAML)
+        manifest["inputs"]["source_image"].update(
+            accepts=["audio/wav"], recordable=True
+        )
+        cap = capability_from_workflow_record(_record(yaml.safe_dump(manifest)))
+        self.assertEqual(cap.input_modalities, ("text", "audio"))
+        self.assertEqual(cap.recordable_inputs, ("audio",))
+
+    def test_nested_assets_preserve_first_seen_order_and_deduplicate(self) -> None:
+        for list_type in ("list", "array"):
+            with self.subTest(list_type=list_type):
+                inputs = {
+                    "prompt": {"type": "string"},
+                    "payload": {
+                        "type": "object",
+                        "properties": {
+                            "clip": {"type": "asset", "accepts": ["video/mp4"]},
+                            "tracks": {
+                                "type": list_type,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "source": {
+                                            "type": "asset",
+                                            "accepts": [
+                                                "audio/wav", "image/png", "audio/mpeg"
+                                            ],
+                                        },
+                                        "caption": {"type": "string"},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    "duplicate": {"type": "asset", "accepts": ["video/webm"]},
+                    "count": {"type": "integer"},
+                }
+                self.assertEqual(
+                    _derive_input_modalities(inputs, intent="smell.infer"),
+                    ("text", "video", "audio", "image"),
+                )
+
+    def test_media_types_use_existing_mapping_without_intent_fallback(self) -> None:
+        inputs = {
+            "source": {
+                "type": "asset",
+                "accepts": ["text/plain", "application/json", "application/octet-stream"],
+            }
+        }
+        self.assertEqual(
+            _derive_input_modalities(inputs, intent="image.transcribe"),
+            ("text", "asset"),
+        )
+
+    def test_asset_without_accepts_never_guesses_from_intent(self) -> None:
+        for intent in ("image.edit", "audio.transcribe", "speech.recognize",
+                       "sound.analyze", "music.analyze", "video.edit", "smell.infer"):
+            for spec in ({"type": "asset"}, {"type": "asset", "accepts": []}):
+                with self.subTest(intent=intent, spec=spec):
+                    self.assertEqual(
+                        _derive_input_modalities({"source": spec}, intent=intent),
+                        ("asset",),
+                    )
+
+    def test_asset_leaf_families_are_shared_and_ordered(self) -> None:
+        # Import inside the test: the base lacks this helper, rather than failing collection.
+        from gateway.manifests import asset_input_modalities
+
+        cases = (
+            ({"accepts": "image/png"}, ("image",)),
+            ({"accepts": ["audio/wav", "image/png", "audio/mpeg", "video/mp4"]},
+             ("audio", "image", "video")),
+            ({"accepts": ["*/*"]}, ("asset",)),
+            ({"accepts": ["image/png", "*/*", "application/pdf"]}, ("image", "asset")),
+            ({"accepts": ["text/plain", "application/json"]}, ("text",)),
+            ({"accepts": "application/json"}, ("text",)),
+            ({"media_type": "video/mp4"}, ("video",)),
+            ({"accepts": [], "media_type": "audio/wav"}, ("audio",)),
+            ({"accepts": ["image/png"], "media_type": "audio/wav"}, ("image",)),
+            ({}, ("asset",)),
+        )
+        for declaration, expected in cases:
+            spec = {"type": "asset", **declaration}
+            with self.subTest(spec=spec):
+                self.assertEqual(asset_input_modalities(spec), expected)
+                self.assertEqual(
+                    _derive_input_modalities({"source": spec}, intent="smell.infer"),
+                    expected,
+                )
+
+    def test_schema_one_media_type_is_not_named_by_intent(self) -> None:
+        self.assertEqual(
+            _derive_input_modalities(
+                {"source": {"type": "asset", "media_type": "audio/wav"}},
+                intent="image.edit",
+            ),
+            ("audio",),
+        )
+
+    def test_nested_scalar_and_generic_assets_reach_required_modalities(self) -> None:
+        from gateway.home_api import _required_input_modalities
+
+        manifest = yaml.safe_load(CHAT_WORKFLOW_YAML)
+        manifest["inputs"] = {
+            "payload": {"type": "object", "required": True, "properties": {
+                "frames": {"type": "array", "items": {"type": "asset", "accepts": "image/png"}},
+                "opaque": {"type": "asset"},
+            }},
+            "optional_audio": {"type": "asset", "accepts": ["audio/wav"]},
+        }
+        cap = Capability(intent="video.edit", backend="fixture", workflow="fixture",
+                         input_modalities=_derive_input_modalities(manifest["inputs"], intent="video.edit"))
+        self.assertEqual(cap.input_modalities, ("image", "asset", "audio"))
+        record = SimpleNamespace(id="fixture", contract=manifest)
+        self.assertEqual(_required_input_modalities(cap, [record]), ["image", "asset"])
+
+
+class ShippedManifestInputModalityTests(unittest.TestCase):
+    """Shipped manifests: an asset's declared accepts names its modality."""
+
+    EXPECTED = {
+        "mesh.generate.trellis-2.yml": ("image", "text"),
+        "video-ltx-2.5-i2v.yml": ("text", "image"),
+        "video-ltx-2.5-keyframes-mid.yml": ("text", "image"),
+        "video-ltx-2.5-keyframes.yml": ("text", "image"),
+        "video-minimax-h3-i2v.yml": ("text", "image"),
+        "video-minimax-h3-keyframes-mid.yml": ("text", "image"),
+        "video-minimax-h3-keyframes.yml": ("text", "image"),
+        "video-scail-2-replace.yml": ("image", "video", "text"),
+    }
+
+    def test_image_inputs_are_not_named_by_the_intent_family(self) -> None:
+        folder = ROOT / "manifests" / "workflows"
+        for name, expected in self.EXPECTED.items():
+            with self.subTest(manifest=name):
+                doc = yaml.safe_load((folder / name).read_text())
+                self.assertEqual(
+                    _derive_input_modalities(doc["inputs"], intent=doc["intent"]),
+                    expected,
+                )
+
+    def test_every_shipped_asset_with_accepts_maps_to_its_media_family(self) -> None:
+        folder = ROOT / "manifests" / "workflows"
+        checked = 0
+        for path in sorted(folder.glob("*.yml")):
+            doc = yaml.safe_load(path.read_text())
+            inputs = doc.get("inputs") if isinstance(doc, dict) else None
+            if not isinstance(inputs, dict):
+                continue
+            for key, spec in inputs.items():
+                accepts = spec.get("accepts") if isinstance(spec, dict) else None
+                if not (isinstance(spec, dict) and spec.get("type") == "asset" and accepts):
+                    continue
+                families = {str(m).split("/", 1)[0] for m in (accepts if isinstance(accepts, list) else [accepts])}
+                got = _derive_input_modalities({key: spec}, intent=str(doc.get("intent") or ""))
+                with self.subTest(manifest=path.name, input=key):
+                    self.assertEqual(set(got), families & {"image", "audio", "video", "text"} or {"asset"})
+                checked += 1
+        self.assertGreater(checked, 0)
+
+
+# Frozen derivation from 1d749a9c9a2a4452e6771a166c6d8c6b4594039b.
+# Keep this oracle independent of the shared helper; a new derivation must not bless itself.
+def _base_input_modalities(
+    inputs: dict[str, Any], *, intent: str
+) -> tuple[str, ...]:
+    modalities: list[str] = []
+
+    def add(modality: str) -> None:
+        if modality not in modalities:
+            modalities.append(modality)
+
+    def visit(spec: Any) -> None:
+        if not isinstance(spec, dict):
+            return
+        type_name = str(spec.get("type") or "string")
+        if type_name == "string":
+            add("text")
+        elif type_name == "asset":
+            accepts = spec.get("accepts")
+            if not accepts:
+                add(_base_intent_asset_modality(intent) or "asset")
+            else:
+                media_types = accepts if isinstance(accepts, list) else [accepts]
+                for media_type in media_types:
+                    add(_base_media_type_modality(str(media_type)) or "asset")
+        elif type_name == "object":
+            properties = spec.get("properties")
+            if isinstance(properties, dict):
+                for child in properties.values():
+                    visit(child)
+        elif type_name in {"list", "array"}:
+            visit(spec.get("items"))
+
+    for spec in inputs.values():
+        visit(spec)
+    return tuple(modalities)
+
+
+def _base_media_type_modality(media_type: str) -> str | None:
+    if media_type.startswith("image/"):
+        return "image"
+    if media_type.startswith("audio/"):
+        return "audio"
+    if media_type.startswith("video/"):
+        return "video"
+    if media_type.startswith("text/") or media_type in {"application/json"}:
+        return "text"
+    return None
+
+
+def _base_intent_asset_modality(intent: str) -> str | None:
+    if intent.startswith("image."):
+        return "image"
+    if intent.startswith("audio.") or intent.startswith("speech.") or intent.startswith("sound.") or intent.startswith("music."):
+        return "audio"
+    if intent.startswith("video."):
+        return "video"
+    return None
+
+
+class ShippedManifestBaseParityTests(unittest.TestCase):
+    def test_all_shipped_capability_and_required_inputs_match_base(self) -> None:
+        from gateway import capabilities, home_api
+
+        folder = ROOT / "manifests" / "workflows"
+        paths = sorted(path for path in folder.rglob("*") if path.suffix in {".yml", ".yaml"})
+        self.assertTrue(paths, "No shipped manifests found; parity must not pass vacuously")
+        for path in paths:
+            with self.subTest(manifest=str(path.relative_to(ROOT))):
+                doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertIsInstance(doc, dict)
+                record = SimpleNamespace(
+                    id=doc["id"], intent=doc["intent"], contract=doc,
+                    supported_backends=tuple(sorted(doc["bindings"])),
+                    identity=Provenance(True, "local"), facts=STANDARD_FACTS,
+                )
+                current = capability_from_workflow_record(record)
+                current_required = home_api._required_input_modalities(current, [record])
+                with patch.object(capabilities, "_derive_input_modalities", _base_input_modalities), \
+                     patch.object(home_api, "_derive_input_modalities", _base_input_modalities):
+                    base = capability_from_workflow_record(record)
+                    base_required = home_api._required_input_modalities(base, [record])
+                self.assertEqual(current.input_modalities, base.input_modalities)
+                self.assertEqual(current_required, base_required)
+                self.assertEqual(current.recordable_inputs, base.recordable_inputs)
+                # All remaining capability fields are unchanged too.
+                self.assertEqual(current, base)
 
 
 class WorkflowDerivedCapabilityTests(unittest.TestCase):

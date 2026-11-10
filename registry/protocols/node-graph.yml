@@ -30,7 +30,7 @@ binding_fields:
   edge_only_inputs: {kind: input_list}
   route_bound_inputs: {kind: input_list}
   mask_to_source_alpha: {kind: boolean}
-  result_processing: {kind: enum_list, values: [source_alpha_mask, post_composite_mask, background_fallback, offset_inpaint]}
+  result_processing: {kind: enum_list, values: [source_alpha_mask, post_composite_mask, background_fallback, offset_inpaint, strip_audio, attach_provenance]}
 result_selectors:
   version: 1
   identity: [node, key, from]

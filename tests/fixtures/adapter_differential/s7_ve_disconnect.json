@@ -32,6 +32,7 @@
   "description": "S7 golden: POST /v1/videos/edits, outcome disconnect, recorded on the unchanged route",
   "engine_requests": [],
   "gateway_sleeps": [],
+  "job_prefixes": [],
   "media_jobs": {
     "media_jobs_schema_version": [
       {

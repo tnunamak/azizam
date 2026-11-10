@@ -12,6 +12,10 @@
 #   load      outcome, evidence_ref (optional), incarnation (optional)
 #   query     outcome, evidence_ref (optional), incarnation (optional)
 # `outcome` is one of: success, no_change, partial, failed, unknown. Anything else reads as unknown.
+#
+# Failure semantics: a `release:` or `load:` block may declare `failure_semantics: no_change` to attest that a
+# declared "failed" left the engine as it was. This profile declares none, so a failed release or load is
+# partial and holds the gate (no protocol description in this repository promises more).
 profile_version: 1
 id: declared-ops-v1
 title: Operations declared in the engine's protocol description

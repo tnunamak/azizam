@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -31,12 +33,14 @@ import { modelDisplayName, prettifyModelId } from "@/lib/model-name";
 import type { CapabilityStateKey, CapabilityView } from "@/lib/capability-state";
 import type { HomeCapability } from "./home-api";
 import { rememberMade, storeHomeHandoff } from "./handoff";
-import { AttachFileButton, HomeMediaInput, PickedFileChip, type PasteTakers, type PickedFrom } from "./home-media-input";
+import { AttachFileButton, HomeMediaInput, PickedFileChip, SlotControl, type PasteTakers, type PickedFrom } from "./home-media-input";
 import {
   capabilityIs,
   capabilityLabel,
   composerInputs,
   mediaPhrase,
+  mediaInputKey,
+  joinNames,
   fitsMediaInput,
   kindOf,
   actionLabel,
@@ -209,20 +213,19 @@ export function HomeComposer({
   const cost = facts?.cost_hint?.kind;
   const runnable = !loading && selected !== null && USABLE.has(view?.state ?? "ready") && !(paidOff && cost === "paid");
   const verb = actionLabel(selected);
-  // What the chosen capability asks for comes from its declared input modalities: text, and a file for each
-  // modality a request must carry. Files are kept per kind of work, so choosing another kind and back keeps them.
+  // What the chosen capability asks for comes from its declarations: text and each named media slot. Files are kept per kind of work, so choosing another kind and back keeps them.
   const inputs = composerInputs(selected);
   const [files, setFiles] = useState<Record<string, File | null>>({});
-  const fileFor = (modality: string) => files[`${kind}:${modality}`] ?? null;
+  const fileFor = (slot: string) => files[`${kind}:${slot}`] ?? null;
   // What the Library called a file picked from it; it names the chip only while that is still the file held.
   const [fromLibrary, setFromLibrary] = useState<Record<string, { file: File; title: string }>>({});
-  const titleFor = (modality: string) => {
-    const entry = fromLibrary[`${kind}:${modality}`];
-    return entry && entry.file === fileFor(modality) ? entry.title : null;
+  const titleFor = (slot: string) => {
+    const entry = fromLibrary[`${kind}:${slot}`];
+    return entry && entry.file === fileFor(slot) ? entry.title : null;
   };
   /** A file chosen by the input's own controls (the dialog, a drop, the Library), with what the Library called it. */
-  const chooseFile = (modality: string) => (file: File | null, from?: PickedFrom) => {
-    const key = `${kind}:${modality}`;
+  const chooseFile = (slot: string) => (file: File | null, from?: PickedFrom) => {
+    const key = `${kind}:${slot}`;
     setFiles((current) => ({ ...current, [key]: file }));
     setFromLibrary((current) => {
       const next = { ...current };
@@ -231,24 +234,31 @@ export function HomeComposer({
       return next;
     });
   };
-  // Each file input registers how to take a pasted file, and the attach buttons how to be focused, by modality.
+  // Each file input registers its paste taker and focus target by slot, not by media kind.
   const takers = useRef<PasteTakers["current"]>({});
   const attachButtons = useRef<Record<string, HTMLButtonElement | null>>({});
-  const missingInput = inputs.media.find((input) => !fileFor(input.modality)) ?? null;
+  // Each slot owns a stable portal destination, in declaration order, including while it is empty.
+  const [chipHosts, setChipHosts] = useState<Record<string, HTMLDivElement | null>>({});
+  const registerChipHost = useCallback((slot: string, node: HTMLDivElement | null) => {
+    setChipHosts((current) => current[slot] === node ? current : { ...current, [slot]: node });
+  }, []);
+  const missingInputs = inputs.media.filter((input) => !fileFor(mediaInputKey(input)));
+  const missingInput = missingInputs[0] ?? null;
   // A Library pick is still arriving for one of the inputs: Make waits, as it would for a missing file.
   const [arriving, setArriving] = useState<Record<string, boolean>>({});
-  const pickArriving = Object.values(arriving).some(Boolean);
-  const arrivingFor = (input: { modality: string }) => (pending: boolean) =>
+  const pickArriving = inputs.media.some((input) => arriving[`${kind}:${mediaInputKey(input)}`]);
+  const arrivingFor = (input: (typeof inputs.media)[number]) => (pending: boolean) =>
     setArriving((current) =>
-      current[`${kind}:${input.modality}`] === pending ? current : { ...current, [`${kind}:${input.modality}`]: pending },
+      current[`${kind}:${mediaInputKey(input)}`] === pending ? current : { ...current, [`${kind}:${mediaInputKey(input)}`]: pending },
     );
   // When words are the main input and a file is the second thing it takes (an edit), the file is a chip above the
   // words with an attach button in the toolbar. The large drop zone is for a capability whose inputs have no words.
-  const filesBesideWords = inputs.text === "required" && inputs.media.length > 0;
+  const multipleFiles = inputs.media.length > 1;
+  const filesBesideWords = multipleFiles || (inputs.text === "required" && inputs.media.length > 0);
   const textReady = inputs.text !== "required" || prompt.trim().length > 0;
   const canMake = runnable && missingInput === null && !pickArriving && textReady && model !== null;
-  // Why Make waits, said where the person looks and on the button itself: the first input the capability needs.
-  const waitingFor = missingInput ? `Add ${mediaPhrase(missingInput)} to start` : !textReady ? "Write what you want to start" : null;
+  // Why Make waits, naming each missing slot in declaration order.
+  const waitingFor = missingInput ? `Add ${joinNames(missingInputs.map(mediaPhrase))} to start` : !textReady ? "Write what you want to start" : null;
   // A capability that needs a picture can start from words: they become a picture first, in Try, when a capability
   // that makes pictures from words is usable. The offer shows only while the words are typed and no picture is chosen.
   const needsImage = inputs.media.some((input) => input.modality === "image");
@@ -261,7 +271,7 @@ export function HomeComposer({
     USABLE.has(viewByKind.get(pictureKind ?? "")?.state ?? "ready") &&
     !(paidOff && pictureRow.cost_hint?.kind === "paid");
   const offerPictureFirst =
-    inputs.text !== "none" && needsImage && !fileFor("image") && pictureReady && prompt.trim().length > 0;
+    inputs.text !== "none" && missingInputs.some((input) => input.modality === "image") && pictureReady && prompt.trim().length > 0;
 
   const options: SegmentOption<string>[] = rows.map((row) => {
     const state = viewByKind.get(kindOf(row));
@@ -288,8 +298,8 @@ export function HomeComposer({
     event?.preventDefault();
     if (!canMake || !model || !selected) return;
     const text = inputs.text === "none" ? "" : prompt.trim();
-    const chosen = inputs.media.map((input) => fileFor(input.modality)).filter((file): file is File => file !== null);
-    storeHomeHandoff({ capability: kind, model, prompt: text, files: chosen });
+    const chosen = inputs.media.map((input) => fileFor(mediaInputKey(input))).filter((file): file is File => file !== null);
+    storeHomeHandoff({ capability: kind, model, prompt: text, files: chosen, file_inputs: inputs.media.map(mediaInputKey) });
     if (text) rememberMade({ capability: kind, prompt: text });
     pushToTry(kind, model, model === recommended ? (selected.workflow ?? null) : (catalogRowFor(model)?.workflow ?? null));
   }
@@ -301,21 +311,35 @@ export function HomeComposer({
     pushToTry(kind, model, model === recommended ? (selected.workflow ?? null) : (catalogRowFor(model)?.workflow ?? null));
   }
 
-  // A pasted file (a screenshot, a copied picture) goes to the first file input it fits that is still empty, so a
-  // picture never needs the file dialog. Pasted words are left alone.
-  function onPaste(event: ClipboardEvent<HTMLDivElement>) {
-    const pasted = Array.from(event.clipboardData.files);
-    if (!pasted.length || !runnable) return;
+  // A drop or paste fills the first empty slot whose declared filter fits. Its own picker keeps
+  // type checks and cancellation of an arriving Library pick identical to a dialog selection.
+  function takeFiles(candidates: File[]): boolean {
+    if (!candidates.length || !runnable) return false;
     for (const input of inputs.media) {
-      const match = fileFor(input.modality) ? undefined : pasted.find((file) => fitsMediaInput(file, input));
+      const slot = mediaInputKey(input);
+      const match = fileFor(slot) ? undefined : candidates.find((file) => fitsMediaInput(file, input));
       if (!match) continue;
-      event.preventDefault();
-      // Through the input's own pick, so a paste is checked as a chosen file is and ends a Library pick still arriving.
-      const take = takers.current[input.modality];
-      if (take) take(match);
-      else chooseFile(input.modality)(match);
-      return;
+      takers.current[slot]?.(match);
+      return true;
     }
+    // A wrong-type file gets the existing picker's alert, even when all slots are full.
+    // Compatible files never replace an already filled slot merely because they were pasted.
+    const wrong = candidates.find((file) => !inputs.media.some((input) => fitsMediaInput(file, input)));
+    const target = missingInput ?? inputs.media[0];
+    if (wrong && target) {
+      takers.current[mediaInputKey(target)]?.(wrong);
+      return true;
+    }
+    return false;
+  }
+
+  function onPaste(event: ClipboardEvent<HTMLDivElement>) {
+    if (takeFiles(Array.from(event.clipboardData.files))) event.preventDefault();
+  }
+
+  function onDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    takeFiles(Array.from(event.dataTransfer.files));
   }
 
   function makePictureFirst() {
@@ -395,7 +419,7 @@ export function HomeComposer({
 
   return (
     <div className="mx-auto w-full max-w-(--content-composer) min-w-0 space-y-3">
-      <ComposerFrame onPaste={onPaste}>
+      <ComposerFrame onPaste={onPaste} onDrop={onDrop}>
         {notice ? (
           <p role="status" className="text-meta flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pt-4">
             <span>{notice.text}</span>
@@ -410,29 +434,39 @@ export function HomeComposer({
             ) : null}
           </p>
         ) : null}
-        {filesBesideWords
+        {multipleFiles ? (
+          <div className="flex flex-col">
+            {inputs.media.map((input) => (
+              <SlotChipHost
+                key={`${kind}:${mediaInputKey(input)}`}
+                slot={`${kind}:${mediaInputKey(input)}`}
+                onHost={registerChipHost}
+              />
+            ))}
+          </div>
+        ) : filesBesideWords
           ? inputs.media.map((input) => {
-              const picked = fileFor(input.modality);
+              const picked = fileFor(mediaInputKey(input));
               return picked ? (
                 <PickedFileChip
-                  key={`${kind}:${input.modality}`}
+                  key={`${kind}:${mediaInputKey(input)}`}
                   input={input}
                   file={picked}
-                  title={titleFor(input.modality)}
+                  title={titleFor(mediaInputKey(input))}
                   onRemove={() => {
-                    chooseFile(input.modality)(null);
+                    chooseFile(mediaInputKey(input))(null);
                     // The chip is gone; focus goes to the attach button, the way to choose again.
-                    attachButtons.current[input.modality]?.focus();
+                    attachButtons.current[mediaInputKey(input)]?.focus();
                   }}
                 />
               ) : null;
             })
           : inputs.media.map((input) => (
           <HomeMediaInput
-            key={`${kind}:${input.modality}`}
+            key={`${kind}:${mediaInputKey(input)}`}
             input={input}
-            file={fileFor(input.modality)}
-            onFile={chooseFile(input.modality)}
+            file={fileFor(mediaInputKey(input))}
+            onFile={chooseFile(mediaInputKey(input))}
             disabled={!runnable}
             onPendingChange={arrivingFor(input)}
             takers={takers}
@@ -481,23 +515,40 @@ export function HomeComposer({
             </button>
           </div>
         ) : null}
-        <form onSubmit={startWork} className="flex items-center gap-2 px-3 pb-3">
+        <form onSubmit={startWork} className={cn("flex gap-2 px-3 pb-3", multipleFiles ? "items-end max-sm:flex-wrap" : "items-center")}>
           {/* The model and what a run costs read as one group; on a phone the facts sit under the model. */}
-          <div className="flex min-w-0 flex-1 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <div className={cn("flex min-w-0 flex-1 flex-col items-start gap-1", multipleFiles ? "max-sm:basis-full" : "sm:flex-row sm:items-center sm:gap-3")}>
             {/* The attach button and the model chip share a line, so a phone does not give the button a row of its own. */}
-            <div className="flex max-w-full min-w-0 items-center gap-2 max-sm:flex-wrap sm:max-w-[60%]">
-            {filesBesideWords
+            <div className={cn("flex max-w-full min-w-0 items-center gap-2 max-sm:flex-wrap", multipleFiles ? "flex-wrap max-sm:w-full" : "sm:max-w-[60%]")}>
+            {multipleFiles
+              ? inputs.media.map((input) => (
+                  <SlotControl
+                    key={`${kind}:${mediaInputKey(input)}`}
+                    input={input}
+                    title={titleFor(mediaInputKey(input))}
+                    file={fileFor(mediaInputKey(input))}
+                    onFile={chooseFile(mediaInputKey(input))}
+                    disabled={!runnable}
+                    onPendingChange={arrivingFor(input)}
+                    takers={takers}
+                    chipHost={chipHosts[`${kind}:${mediaInputKey(input)}`] ?? null}
+                    buttonRef={(node) => {
+                      attachButtons.current[mediaInputKey(input)] = node;
+                    }}
+                  />
+                ))
+              : filesBesideWords
               ? inputs.media.map((input) => (
                   <AttachFileButton
-                    key={`${kind}:${input.modality}`}
+                    key={`${kind}:${mediaInputKey(input)}`}
                     input={input}
-                    file={fileFor(input.modality)}
-                    onFile={chooseFile(input.modality)}
+                    file={fileFor(mediaInputKey(input))}
+                    onFile={chooseFile(mediaInputKey(input))}
                     disabled={!runnable}
                     onPendingChange={arrivingFor(input)}
                     takers={takers}
                     buttonRef={(node) => {
-                      attachButtons.current[input.modality] = node;
+                      attachButtons.current[mediaInputKey(input)] = node;
                     }}
                   />
                 ))
@@ -528,7 +579,7 @@ export function HomeComposer({
             )}
             </div>
             {runnable && missingInput ? (
-              <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:px-1">{waitingFor}</p>
+              <p className={cn("text-muted-foreground text-meta min-w-0 max-sm:px-1", multipleFiles ? "text-pretty" : "truncate")}>{waitingFor}</p>
             ) : factsLine ? (
               <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:px-1">{factsLine}</p>
             ) : null}
@@ -542,7 +593,7 @@ export function HomeComposer({
             onClick={(event) => {
               if (!canMake) event.preventDefault();
             }}
-            className={cn(MAKE, canMake ? MAKE_READY : MAKE_RESTING)}
+            className={cn(MAKE, canMake ? MAKE_READY : MAKE_RESTING, multipleFiles && "max-sm:ml-auto")}
           >
             {verb}
             <ArrowUp aria-hidden="true" className="size-4" />
@@ -552,6 +603,15 @@ export function HomeComposer({
       {chooser ? chips : null}
     </div>
   );
+}
+
+/** Stable host refs avoid detaching a chip on each file or prompt update. */
+function SlotChipHost({ slot, onHost }: {
+  slot: string;
+  onHost: (slot: string, node: HTMLDivElement | null) => void;
+}) {
+  const ref = useCallback((node: HTMLDivElement | null) => onHost(slot, node), [slot, onHost]);
+  return <div ref={ref} />;
 }
 
 /** A pill in the composer's world: the model chip, the chooser's More and (in Segmented) the chooser. */
@@ -573,11 +633,19 @@ const MAKE_READY = "bg-make text-make-foreground hover:bg-make/90 cursor-pointer
  * edge on hover. Dark: a surface 5% lighter than the page, with no edge. Both show the focus colour while
  * someone is typing in it.
  */
-function ComposerFrame({ children, onPaste }: { children: ReactNode; onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void }) {
+function ComposerFrame({
+  children, onPaste, onDrop,
+}: {
+  children: ReactNode;
+  onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
+  onDrop?: (event: DragEvent<HTMLDivElement>) => void;
+}) {
   return (
     <div
       data-slot="composer"
       onPaste={onPaste}
+      onDrop={onDrop}
+      onDragOver={(event) => event.preventDefault()}
       className="bg-composer border-composer-edge hover:border-composer-edge-hover focus-within:border-ring! rounded-composer shadow-composer w-full min-w-0 border transition-colors duration-(--motion-fast)"
     >
       {children}

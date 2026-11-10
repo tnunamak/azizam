@@ -148,3 +148,26 @@ def test_chat_alias_does_not_hide_same_named_concrete_embedding_model():
     assert catalog["aliases"][0]["resolves_to"] == {"chat": "chat-model"}
     embedding = next(row for row in catalog["models"] if row["id"] == "fast")
     assert [cap["intent"] for cap in embedding["capabilities"]] == ["text.embeddings"]
+
+def test_home_contract_round_trips_optional_required_media_inputs():
+    from gateway.home_api import _capability_rows
+    from gateway.product_contracts import HomeCapability
+
+    row, = _capability_rows([Capability(intent="chat.completions", backend="service", model="demo")], {})
+    adapter = TypeAdapter(HomeCapability)
+    assert "required_media_inputs" not in adapter.dump_python(adapter.validate_python(row))
+    media = [
+        {"name": "image", "label": "a starting picture", "modality": "image", "accepts": ["image/*"]},
+        {"name": "last_frame", "label": "an ending picture", "modality": "image", "accepts": ["image/*"]},
+    ]
+    with_media = {**row, "required_media_inputs": media}
+    assert adapter.dump_python(adapter.validate_python(with_media)) == with_media
+    schema = adapter.json_schema()
+    assert "required_media_inputs" in schema["properties"]
+    assert "required_media_inputs" not in schema.get("required", [])
+
+
+def test_browser_types_expose_required_media_input_fields():
+    types = (Path(__file__).resolve().parents[1] / "web/src/lib/product-api-types.ts").read_text()
+    assert "export interface RequiredMediaInput {" in types
+    assert "  required_media_inputs?: Array<RequiredMediaInput>;" in types

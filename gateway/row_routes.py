@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 from dataclasses import dataclass
 from collections.abc import Sequence
 from typing import Any, AsyncContextManager, Awaitable, Callable, ContextManager, Iterable, Mapping
@@ -30,10 +31,13 @@ from starlette.responses import Response
 
 from gateway import operation_security, request_history_capture
 from gateway.access_plans import capability_for_intent
-from gateway.frontend_shapes import build_shape, bundled_rows
+from gateway.frontend_shapes import _wire, build_shape, bundled_rows
+from gateway.frontend_shapes._base import LegacyRoute
 from gateway.workflow_run import RUN_INTENT
 from gateway.workflow_runtime_types import (
-    FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
+    JOB_NOT_CREATED, FrontendRow, JobService, RegistrySnapshot, RequestSpool, RunJobView, RunRefused)
+
+log = logging.getLogger(__name__)
 
 PREFER_ASYNC = "respond-async"
 REQUEST_ID_HEADER = "x-request-id"
@@ -73,6 +77,17 @@ class RowRouteDeps:
     # record_facts(owner, facts): what the shape adjusted, each as (name, value, warning): the receipt keeps the value under
     # ``metadata[name]`` and raises the warning.
     record_facts: Callable[[Any, Sequence[tuple[str, Any, str | None]]], None] | None = None
+    # legacy: the handlers a shape may hand a request to (``LegacyRoute.name``), each ``handler(request, caller, body)``, which enforces the route policy and owns its receipt itself ->
+    # the answer. They exist for requests the data path does not serve yet; ``tests/test_legacy_video_ratchet.py`` counts them.
+    # openapi: the OpenAPI operation documents of rows, by row id (the request and answer schemas the generic route does not know).
+    openapi: Mapping[str, Mapping[str, Any]] = dataclasses.field(default_factory=dict)
+    legacy: Mapping[str, Callable[[Request, Any, Mapping[str, Any]], Awaitable[Response]]] = dataclasses.field(default_factory=dict)
+    # record_refusal(owner, caller, refused): the receipt of a request the run core refused keeps the evidence of why the
+    # service could not take it (the resource decision), as an admission refusal would have left it.
+    record_refusal: Callable[[Any, Any, RunRefused], None] | None = None
+    # job_record(request, caller, request_id) -> what the old job route stored on the job row besides the run's own fields
+    # (``RunRequest.job_record``), for a row that declares ``run_receipt_path``.
+    job_record: Callable[[Request, Any, str], Awaitable[Mapping[str, Any]]] | None = None
 
 
 def row_paths(row_ids: Iterable[str]) -> tuple[str, ...]:
@@ -96,9 +111,10 @@ def mount_rows(app: FastAPI, deps: RowRouteDeps, row_ids: Iterable[str]) -> None
         row = rows[row_id]
         shape = build_shape(row)
         for route in row.routes:
-            app.add_api_route(route.canonical, _handler(deps, row, shape, route.canonical), methods=list(route.methods),
-                              include_in_schema=True, name=f"row:{row.id}:{route.canonical}",
-                              openapi_extra=operation_security.openapi_extra(operation_security.APP_KEY))
+            for path in (route.canonical, *route.aliases):      # an alias answers as the canonical path: same policy and receipt
+                app.add_api_route(path, _handler(deps, row, shape, route.canonical), methods=list(route.methods),
+                                  include_in_schema=True, name=f"row:{row.id}:{path}",
+                                  openapi_extra={**deps.openapi.get(row.id, {}), **operation_security.openapi_extra(operation_security.APP_KEY)})
 
 
 def run_facts(workflow_id: str, contract: Mapping[str, Any]) -> dict[str, str]:
@@ -126,6 +142,13 @@ def _outcome(view: RunJobView | None, *, waited: bool = True) -> tuple[str, str]
     return "failed", "wait_timeout"
 
 
+def refusal_status(row: FrontendRow, http_status: int) -> str:
+    """How a refusal closes the row's receipt. A refusal of the request (a 4xx) closes with the word the row declares
+    (``refusal_receipt``: ``failed`` by default, ``rejected`` where the old route wrote it); a refusal by the service or the
+    gateway (a 5xx) is always ``failed``."""
+    return row.refusal_receipt if 400 <= int(http_status) < 500 else "failed"
+
+
 def route_backend(row: FrontendRow, path: str) -> str | None:
     """The service the matched route declares its receipt files under (``runtime_policy.backend``); None when it declares none."""
     route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
@@ -144,13 +167,20 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         caller = await asyncio.to_thread(deps.authenticate, request, canonical)
         if isinstance(caller, Response):
             return caller
+        request.state.caller = caller            # the shapes that look a stored source up read it here
+        handoff = await shape.legacy_route(request, row, deps.snapshot()) if deps.core() is not None else None
+        if handoff is not None:
+            # The old handler alone enforces the policy and owns the one receipt and request id: no row receipt exists yet.
+            handler = deps.legacy.get(handoff.name)
+            if handler is not None:
+                return await handler(request, caller, handoff.body)
         request_id = deps.new_request_id()
         if row.receipt_opens == "before_policy":
             # The receipt is open when the policy decides, so a denial leaves a closed receipt behind it.
             async with deps.open_receipt(caller, request_id, canonical, row) as owner:
                 denied = await asyncio.to_thread(deps.enforce_policy, caller, canonical)
                 if denied is not None:
-                    owner.report(status="failed", reason="policy_denied")
+                    owner.report(status=refusal_status(row, denied.status_code), reason="policy_denied")
                     denied.headers[REQUEST_ID_HEADER] = request_id
                     return denied
                 response = await answer(request, caller, owner, request_id)
@@ -168,44 +198,80 @@ def _handler(deps: RowRouteDeps, row: FrontendRow, shape: Any, canonical: str) -
         core = deps.core()
         if core is None:
             response = deps.refused(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
-            owner.report(status="failed", reason="workflow_runtime_unavailable")
+            owner.report(status=refusal_status(row, response.status_code), reason="workflow_runtime_unavailable")
             return response
         snapshot = deps.snapshot()
         spool = deps.new_spool()
         wants_async = prefers_async(request.headers.get("prefer"))
         answered = dataclasses.replace(row, mode="job") if wants_async else row
         return await _serve_open(deps, row, answered, shape, core, request, caller, snapshot, spool, owner,
-                                 request_id, wants_async, route_intent(row, canonical))
+                                 request_id, wants_async, route_intent(row, canonical), route_backend(row, canonical))
 
     return serve
 
 
 async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRow, shape: Any, core: Any,
                       request: Request, caller: Any, snapshot: RegistrySnapshot, spool: RequestSpool, owner: Any,
-                      request_id: str, wants_async: bool, intent: str) -> Response:
+                      request_id: str, wants_async: bool, intent: str, backend: str | None) -> Response:
     """The steps after the receipt opens. Each exit reports the outcome, or hands the receipt to the core."""
+    if row.unconfigured is not None and not _wire.candidates(snapshot, row):
+        # The deployment configures no workflow for this route: the row says what that is told.
+        owner.report(status="failed", reason=str(row.unconfigured["code"]))
+        return _wire.error_response(int(row.unconfigured["status"]), str(row.unconfigured["message"]),
+                                    code=str(row.unconfigured["code"]))
     with deps.scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         record_inputs(deps, owner, request)
+        if isinstance(run_request, LegacyRoute):         # the shape must have said so in ``legacy_route``; never a second owner
+            owner.report(status="failed", reason="legacy_handoff_late")
+            return _wire.error_response(500, "This request is not served", kind="api_error")
         if isinstance(run_request, Response):
-            owner.report(status="failed", reason=f"http_{run_request.status_code}")
+            owner.report(status=refusal_status(row, run_request.status_code), reason=f"http_{run_request.status_code}")
             return run_request
         entry = snapshot.get(run_request.workflow_id)
         facts: dict[str, str] = {}
-        if entry is not None:
+        if entry is not None and row.receipt_closes == "terminal":
             deps.name_receipt(owner, entry.id, entry.record_revision, entry.contract_digest)
+        if entry is not None and row.history_facts:
             facts = run_facts(entry.id, entry.contract)
             setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
         run_request = dataclasses.replace(run_request, request_id=request_id, intent=intent)
+        if row.run_receipt_path and deps.job_record is not None:
+            run_request = dataclasses.replace(run_request, run_receipt_path=row.run_receipt_path,
+                                              job_record=await deps.job_record(request, caller, request_id))
+            if run_request.run_refusal:
+                # The refusal is made when the job runs: it takes the row's words for a refused request then.
+                run_request = dataclasses.replace(run_request, run_refusal={**run_request.run_refusal, "receipt": row.refusal_receipt})
         # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
         # finished job still answers that job when its backend has become unavailable (S7 parity 6.2).
-        outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
+        try:
+            outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
+        except Exception:  # noqa: BLE001 - the store failed: nothing was kept, and the client gets a fixed sentence
+            log.exception("a run could not be stored")
+            outcome = RunRefused(500, JOB_NOT_CREATED, "the job could not be created")
     if isinstance(outcome, RunRefused):
+        if deps.record_refusal is not None:
+            deps.record_refusal(owner, caller, outcome)
         refusal = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
-        owner.report(status="failed", reason=outcome.code)
+        owner.report(status=refusal_status(row, refusal.status_code), reason=outcome.code)
         return refusal
+    if row.backend_at_run:                                # the run exists: the service it runs on is now the receipt's
+        owner.dispatching(backend)
+    await shape.after_submit(request, outcome, caller)
     if outcome.disposition == "replay":
-        facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome)
+        facts = await asyncio.to_thread(_name_pinned, deps, owner, request, outcome, row)
+    if row.receipt_closes == "submit" and outcome.disposition == "new":
+        # The receipt is a submit receipt: it closes now, as the queued answer goes out, and the job never touches it.
+        response = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
+        owner.receipt.job_id = outcome.job_id                # the one thing a submit receipt adds: it names the job it queued
+        owner.receipt.metadata["status_code"] = response.status_code
+        owner.report(status="succeeded", reason=f"http_{response.status_code}")
+        return response
+    if answered.mode == "job" and row.run_receipt_path:
+        # The run files a receipt of its own. This one is the submit's: it closes with the answer to the submit, on a replay too,
+        # and never with the outcome of the job a replay names (that stays on the run's receipt).
+        owner.report(status="succeeded", reason="accepted")
+        return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
     if answered.mode == "job" and outcome.disposition == "new":
         # The core closes the receipt when the job ends; nothing may await between this call and leaving the receipt.
         owner.handoff()
@@ -219,7 +285,7 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
     owner.report(status=status, reason=reason)
     if view is not None and view.status == "succeeded" and answered.mode != "job":
         asset = next((ref.asset_id for ref in (view.results or ()) if ref.asset_id), None)
-        if asset:
+        if asset and row.history_facts:
             setattr(request.state, request_history_capture.RUN_STATE_KEY, {**facts, "asset_id": asset})
     return response
 
@@ -234,21 +300,25 @@ def record_inputs(deps: RowRouteDeps, owner: Any, request: Request) -> None:
         deps.record_facts(owner, facts)
 
 
-def _name_pinned(deps: RowRouteDeps, owner: Any, request: Request, view: RunJobView) -> dict[str, str]:
+def _name_pinned(deps: RowRouteDeps, owner: Any, request: Request, view: RunJobView, row: FrontendRow) -> dict[str, str]:
     """A replay answers the job that was made, not the record as it is now: the receipt and the kept request name what the
     job pinned. A fact the job does not hold stays unknown."""
     try:
         pin = deps.pinned(view.job_id)
     except Exception:  # noqa: BLE001 - an unreadable pin leaves the facts unknown
         pin = None
+    named = row.receipt_closes == "terminal"
     if pin is None:
-        deps.name_receipt(owner, view.workflow_id, view.record_revision, None)
+        if named:
+            deps.name_receipt(owner, view.workflow_id, view.record_revision, None)
         facts = {"workflow": view.workflow_id}
     else:
         envelope = pin.envelope
-        deps.name_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
+        if named:
+            deps.name_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
         facts = run_facts(envelope.source_id, pin.contract)
-    setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
+    if row.history_facts:
+        setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
     return facts
 
 

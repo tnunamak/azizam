@@ -1,0 +1,132 @@
+# Capability rows are in display order. Route intents list only extra words.
+schema_version: 1
+capabilities:
+  - id: chat
+    label: Chat
+    recommended_alias: default
+  - id: image
+    label: Images
+    recommended_alias: image
+    summary: Generate or edit images from your prompts.
+    policy_protocol: openai.images
+  - id: video
+    label: Video
+    recommended_alias: video
+    summary: Video from a prompt or image.
+    policy_protocol: openai.video
+  - id: speech
+    label: Voice
+    recommended_alias: tts
+    summary: Turn text into spoken audio.
+    policy_protocol: openai.audio
+  - id: transcribe
+    label: Transcription
+    recommended_alias: stt
+    summary: Turn recorded speech into text.
+    policy_protocol: openai.audio
+  - id: music
+    label: Music
+    recommended_alias: music
+    summary: Songs and instrumentals from a prompt.
+    policy_protocol: openai.audio
+  - id: sfx
+    label: Sound effects
+    recommended_alias: sfx
+    summary: Sound effects from a description.
+    policy_protocol: openai.audio
+  - id: audio
+    label: Audio
+    hidden_by: [speech, transcribe, music, sfx]
+    icon: sfx
+    summary: Generate audio from your prompts.
+    policy_protocol: openai.audio
+  - id: decide
+    label: Decisions
+    recommended_alias: decide
+    summary: Choose an outcome from your options.
+  - id: embed
+    label: Document search
+    recommended_alias: embed
+    summary: Create vectors for search and similarity.
+    policy_protocol: openai.embeddings
+  - id: rerank
+    label: Reranking
+    recommended_alias: rerank
+    summary: Order search results by relevance.
+  - id: mesh
+    label: 3D models
+    summary: A 3D model from one picture.
+    policy_protocol: openai.mesh
+protocol_words:
+  "llm.execution": "chat"
+  "typesafe-systemone": "decide"
+  "chat": "chat"
+  "completions": "chat"
+  "chat.completions": "chat"
+  "vision": "chat"
+  "speech": "speech"
+  "tts": "speech"
+  "audio.speech": "speech"
+  "speech.synthesis": "speech"
+  "transcriptions": "transcribe"
+  "transcription": "transcribe"
+  "stt": "transcribe"
+  "audio.transcriptions": "transcribe"
+  "speech.transcription": "transcribe"
+  "speech.translation": "transcribe"
+  "images": "image"
+  "image": "image"
+  "generations": "image"
+  "image.generate": "image"
+  "image.edit": "image"
+  "videos": "video"
+  "video": "video"
+  "video.generate": "video"
+  "embeddings": "embed"
+  "text.embeddings": "embed"
+  "rerank": "rerank"
+  "text.rerank": "rerank"
+  "decisions": "decide"
+  "decision.systemone": "decide"
+  "music": "music"
+  "sfx": "sfx"
+  "audio": "audio"
+  "audio.generate": "audio"
+  "mesh": "mesh"
+route_intents:
+  "text.completions": "chat"
+  "chat.responses": "chat"
+  "chat.generate": "chat"
+  "chat.messages": "chat"
+  "chat.messages.count_tokens": "chat"
+  "music.generate": "music"
+  "sfx.generate": "sfx"
+  "image.variation": "image"
+  "video.remix": "video"
+  "video.edit": "video"
+  "video.extend": "video"
+  "image.analyze": "image"
+  "mesh.generate": "mesh"
+  "embedding": "embed"
+  "images.generate": "image"
+  "images.generations": "image"
+  "images.edit": "image"
+  "images.edits": "image"
+  "audio.transcribe": "transcribe"
+  "audio.translations": "transcribe"
+  "videos.generate": "video"
+
+type_capabilities:
+  language: chat
+  image: image
+  video: video
+  embedding: embed
+  reranking: rerank
+  decision: decide
+audio_rule:
+  type: audio
+  input: audio
+  absent_output: audio
+  result: transcribe
+  subtypes: [music, sfx, speech]
+  fallback: audio

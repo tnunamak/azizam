@@ -15,11 +15,11 @@ import type { HomeCapability, HomeChat, HomeCreation, HomeReceipt } from "./home
  * (a placeholder, a verb), keyed by the kind the rows carry, with a plain default.
  */
 
-export type MakingKind = "image" | "video" | "audio";
+export type MakingKind = string;
 
-/** The kind a capability row makes: its icon key, the same word the URL and Try use. */
+/** A capability's identity comes from the API; icon_key only names its drawing. */
 export function kindOf(row: HomeCapability): string {
-  return row.icon_key ?? row.capability;
+  return row.capability;
 }
 
 /** The chooser offers what a person makes; apps' plumbing (search, decisions) never appears. */
@@ -33,11 +33,11 @@ export function capabilityLabel(row: HomeCapability): string {
 }
 
 /** How often, and when last, this person got a result from each kind of work. */
-function taskUse(receipts: HomeReceipt[]) {
+function taskUse(receipts: HomeReceipt[], rows: HomeCapability[]) {
   const uses = new Map<string, { count: number; last: number }>();
   for (const receipt of receipts) {
     if (!isSuccess(receipt.status)) continue;
-    const kind = requestCapability(receipt.intent, receipt.path);
+    const kind = receiptRow(receipt, rows)?.capability ?? requestCapability(receipt.intent, receipt.path);
     if (!kind) continue;
     const at = receipt.accepted_at_ms
       ? receipt.accepted_at_ms / 1000
@@ -50,7 +50,7 @@ function taskUse(receipts: HomeReceipt[]) {
 
 /** The person's most-used kinds first, then the gateway's own order. */
 export function orderChooser(rows: HomeCapability[], receipts: HomeReceipt[]): HomeCapability[] {
-  const uses = taskUse(receipts);
+  const uses = taskUse(receipts, rows);
   return rows
     .map((row, index) => ({ row, index, use: uses.get(kindOf(row)) }))
     .sort(
@@ -137,6 +137,10 @@ export function tryHasOwnTab(kind: string): boolean {
 
 /** One kind of file a capability takes, as its declared input modality says. */
 export interface MediaInput {
+  /** A manifest input, when the row names each required file separately. */
+  name?: string;
+  /** The input’s own phrase, including its article, such as "an ending picture". */
+  label?: string;
   /** The modality as the data names it ("image", "audio", or any other word a new engine declares). */
   modality: string;
   /** What the person is asked for, in a word: the gateway's input word for the modality, else the modality itself. */
@@ -172,12 +176,21 @@ export interface ComposerInputs {
  */
 export function composerInputs(row: HomeCapability | null): ComposerInputs {
   const takes = (row?.input_modalities ?? []).map((modality) => modality.toLowerCase());
-  if (!takes.length) return { text: "required", media: [] };
+  if (!takes.length && row?.required_media_inputs === undefined) return { text: "required", media: [] };
   const required = new Set(
     (row?.required_input_modalities ?? (takes.includes("text") ? ["text"] : takes)).map((modality) => modality.toLowerCase()),
   );
   const acceptsText = takes.includes("text");
-  const media = takes
+  const media = row?.required_media_inputs !== undefined
+    ? row.required_media_inputs.slice(0, 3).map((input): MediaInput => ({
+        name: input.name,
+        label: input.label,
+        modality: input.modality,
+        word: row.input_words?.[input.modality] ?? input.modality,
+        accept: input.accepts.length ? input.accepts.join(",") : undefined,
+        required: true,
+      }))
+    : takes
     .filter((modality) => modality !== "text")
     .map((modality): MediaInput => ({
       modality,
@@ -189,14 +202,19 @@ export function composerInputs(row: HomeCapability | null): ComposerInputs {
   return { text: !acceptsText ? "none" : required.has("text") ? "required" : "optional", media };
 }
 
-/** The input's word with its article, for a sentence: "a picture", "a recording". */
+/** Stable per-slot identity; old rows still keep one file per modality. */
+export function mediaInputKey(input: MediaInput): string {
+  return input.name ?? input.modality;
+}
+
+/** The input's label, or its old word with an article: "a picture", "a recording". */
 export function mediaPhrase(input: MediaInput): string {
-  return `${/^[aeiou]/i.test(input.word) ? "an" : "a"} ${input.word}`;
+  return input.label ?? `${/^[aeiou]/i.test(input.word) ? "an" : "a"} ${input.word}`;
 }
 
 /** Whether a file can be given to a media input: its type fits the accept filter, or the input takes any file. */
 export function fitsMediaInput(file: File, input: MediaInput): boolean {
-  return fileFitsTypes(file, input.accept ? [input.accept] : undefined);
+  return fileFitsTypes(file, input.accept ? input.accept.split(",") : undefined);
 }
 
 /** The capability row that can make a picture from words alone, so a typed description can become the picture a
@@ -221,13 +239,25 @@ export function parseEpochSeconds(value: number | string | null | undefined): nu
   return null;
 }
 
-function inFlightKind(receipt: HomeReceipt): MakingKind | null {
+/** Prefer a declared intent match; older partial rows still match the legacy request key. */
+function receiptRow(receipt: HomeReceipt, rows: HomeCapability[]): HomeCapability | undefined {
+  const byIntent = receipt.intent ? rows.find((row) => row.intent === receipt.intent) : undefined;
+  return byIntent ?? rows.find((row) => row.capability === requestCapability(receipt.intent, receipt.path));
+}
+
+function inFlightKind(receipt: HomeReceipt, row: HomeCapability | undefined): MakingKind | null {
+  // Declared outputs speak for the receipt only when the row is the receipt's own intent. A row found by the legacy
+  // kind alone (image.analyze for an image.generate receipt) can make something else.
+  if (row?.output_modalities?.length && receipt.intent && row.intent === receipt.intent) {
+    return row.output_modalities.find((output) => ["image", "video", "audio"].includes(output)) ?? "item";
+  }
+  // Otherwise the established media presentation names the kind.
   const intent = String(receipt.intent ?? "").toLowerCase();
   const path = String(receipt.path ?? "").toLowerCase();
   if (intent.startsWith("image") || path.includes("/images/")) return "image";
   if (intent.startsWith("video") || path.includes("/videos")) return "video";
   if (intent.startsWith("audio") || intent.startsWith("speech") || path.includes("/audio/")) return "audio";
-  return null;
+  return row ? "item" : null;
 }
 
 export type RecentItem =
@@ -254,14 +284,13 @@ export function recentItems(input: {
   chats: HomeChat[];
   rows: HomeCapability[];
 }): RecentItem[] {
-  const typical = (kind: string | null) =>
-    input.rows.find((row) => kindOf(row) === kind)?.typical_seconds ?? null;
   const making: Extract<RecentItem, { kind: "making" }>[] = [];
   for (const receipt of input.receipts) {
     if (!isInFlight(receipt.status)) continue;
-    const kind = inFlightKind(receipt);
+    const row = receiptRow(receipt, input.rows);
+    const kind = inFlightKind(receipt, row);
     if (!kind) continue;
-    const capability = requestCapability(receipt.intent, receipt.path);
+    const capability = row?.capability ?? requestCapability(receipt.intent, receipt.path);
     const startedAt = receipt.accepted_at_ms
       ? receipt.accepted_at_ms / 1000
       : (receipt._stored_at ?? null);
@@ -270,7 +299,7 @@ export function recentItems(input: {
       key: `making:${receipt.request_id}`,
       making: kind,
       startedAt,
-      typicalSeconds: typical(capability),
+      typicalSeconds: row?.typical_seconds ?? null,
       capability,
     });
   }

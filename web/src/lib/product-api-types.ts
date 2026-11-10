@@ -3,8 +3,6 @@
 
 export type AvailabilityStatus = "ready" | "idle" | "starting" | "busy" | "degraded" | "unknown" | "unavailable";
 
-export type CapabilityIconKey = "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
-
 export type SetupEvent = "settings_copied" | "external_client_confirmed" | "receipt_viewed";
 
 export type ModelType = "language" | "embedding" | "reranking" | "image" | "video" | "audio" | "decision";
@@ -52,7 +50,7 @@ export interface CatalogAvailability {
 
 export interface CapabilitySummary {
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
+  icon_key?: string;
   recommended_model?: string;
   use_names?: Array<string>;
   summary?: string;
@@ -94,9 +92,16 @@ export interface CostHint {
   price_usd: number | null;
 }
 
+export interface RequiredMediaInput {
+  name: string;
+  label: string;
+  modality: string;
+  accepts: Array<string>;
+}
+
 export interface HomeCapability {
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
+  icon_key?: string;
   recommended_model?: string;
   use_names?: Array<string>;
   summary?: string;
@@ -130,6 +135,7 @@ export interface HomeCapability {
   typical_seconds: number | null;
   cost_hint: CostHint;
   required_input_modalities: Array<string>;
+  required_media_inputs?: Array<RequiredMediaInput>;
   action_label: string;
   prompt_hint: string | null;
   input_words: Record<string, string>;
@@ -245,7 +251,7 @@ export interface MemberStatusAvailability {
 
 export interface MemberStatusCapability {
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
+  icon_key?: string;
   recommended_model?: string;
   use_names?: Array<string>;
   summary?: string;
@@ -282,7 +288,7 @@ export interface MemberStatus {
 }
 
 export interface CatalogCapability {
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
+  icon_key?: string;
   capability: string;
   intent: string;
   label: string;
@@ -350,7 +356,7 @@ export interface CatalogRow {
   capability?: string;
   recommended?: boolean;
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
+  icon_key?: string;
   recommended_model?: string;
   use_names?: Array<string>;
   title?: string;

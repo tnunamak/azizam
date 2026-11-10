@@ -1,0 +1,43 @@
+schema_version: 1
+exact:
+  - intent: image.generate
+    model_metadata: {type: image, input_modalities: [text], output_modalities: [image]}
+  - intent: image.edit
+    model_metadata: {type: image, input_modalities: [text, image], output_modalities: [image]}
+  - intent: image.analyze
+    model_metadata: {type: image, input_modalities: [image], output_modalities: [text]}
+  - intent: video.generate
+    model_metadata: {type: video, input_modalities: [text], output_modalities: [video]}
+  - intent: video.edit
+    model_metadata: {type: video, input_modalities: [text, video], output_modalities: [video]}
+  - intent: audio.generate
+    model_metadata: {type: audio, input_modalities: [text], output_modalities: [audio]}
+  - intent: text.embeddings
+    model_metadata: {type: embedding, input_modalities: [text], output_modalities: [embedding]}
+  - intent: chat.completions
+    operation: chat
+  - intent: text.completions
+    operation: chat
+  - intent: text.rerank
+    operation: rerank
+  - intent: speech.synthesis
+    operation: speech
+  - intent: speech.transcription
+    operation: transcriptions
+  - intent: speech.translation
+    operation: transcriptions
+families:
+  - prefix: chat.
+    operation: chat
+  - prefix: responses.
+    operation: chat
+  - prefix: decision.
+    operation: decisions
+  - prefix: image.
+    model_metadata: {type: image, input_modalities: [text], output_modalities: [image]}
+  - prefix: video.
+    model_metadata: {type: video, input_modalities: [text], output_modalities: [video]}
+  - prefix: speech.
+    operation: speech
+  - prefix: audio.
+    model_metadata: {type: audio, input_modalities: [text], output_modalities: [audio]}

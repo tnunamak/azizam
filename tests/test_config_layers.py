@@ -528,3 +528,32 @@ def test_nothing_below_a_scalar_entry_is_an_entry():
     assert section.index.rule_for("/extra") is not None
     assert section.index.rule_for("/extra/x") is None, "/extra and /extra/x would be a path_conflict on load"
     assert [p.code for p in layers.check_override(section, put("/extra/x", 2))] == ["not_an_entry"]
+
+
+# -- a retired delete hides nothing under a declared entry (S8b review of train 35b) ------------------------------------
+
+@pytest.mark.parametrize("present", [True, False])
+@pytest.mark.parametrize("pointer", ["/tags/0", "/pair/left", "/pair/left/x", "/token/x", "/aliases/default/target",
+                                     "/aliases/new/target"])
+def test_an_interior_delete_of_a_declared_entry_stays_rejected_whether_or_not_the_default_is_present(pointer, present):
+    # tags and pair are optional entries. With the release default absent, the walk used to find "nothing there" and
+    # call a delete beneath the entry inert, so an invalid delete went unreported.
+    defaults = copy.deepcopy(DEFAULTS)
+    if not present:
+        for key in ("tags", "pair", "aliases"):
+            defaults.pop(key)
+    result = layers.build_section(make_section(defaults), [drop(pointer)])
+    assert [item.override.pointer for item in result.rejected] == [pointer]
+
+
+@pytest.mark.parametrize("pointer", ["/retired~2key", "/retired~", "/limits/x~", "/a~3"])
+def test_a_malformed_escape_in_a_delete_is_rejected_not_swallowed(pointer):
+    # RFC 6901 allows only ~0 and ~1 after a tilde.
+    result = layers.build_section(make_section(), [drop(pointer)])
+    assert [item.override.pointer for item in result.rejected] == [pointer]
+
+
+@pytest.mark.parametrize("pointer", ["/retired~1key", "/retired~0key", "/limits/old~1name"])
+def test_a_legitimately_escaped_retired_key_stays_inert(pointer):
+    result = layers.build_section(make_section(), [drop(pointer)])
+    assert result.rejected == ()

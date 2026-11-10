@@ -1,5 +1,29 @@
 {
-  "assets": [],
+  "assets": [
+    {
+      "json": {
+        "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+        "origin": {
+          "request_id": "<req:1>",
+          "takes_text": true,
+          "workflow_name": "LTX 2.5"
+        },
+        "owner_key_hashes": [
+          "app:app_test"
+        ],
+        "updated_at": "<time>"
+      },
+      "name": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99.meta.json",
+      "size": 262,
+      "suffix": ".json"
+    },
+    {
+      "name": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99.mp4",
+      "sha256": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+      "size": 11572,
+      "suffix": ".mp4"
+    }
+  ],
   "caller": [
     {
       "label": "create the source video",
@@ -19,11 +43,12 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"model\": \"ltx-2.5-t2v\", \"azizam_resolved_model\": \"video-ltx-2.5-t2v\", \"status\": \"queued\", \"progress\": 0, \"created_at\": \"<time>\", \"completed_at\": null, \"expires_at\": \"<time>\", \"prompt\": \"waves at dusk\", \"remixed_from_video_id\": null, \"error\": null, \"size\": \"960x512\", \"seconds\": \"5\", \"actual_seconds\": 5.0417}"
+          "text": "{\"id\":\"video_<job:1>\",\"object\":\"video\",\"model\":\"ltx-2.5-t2v\",\"azizam_resolved_model\":\"video-ltx-2.5-t2v\",\"status\":\"queued\",\"progress\":0,\"created_at\":\"<time>\",\"completed_at\":null,\"expires_at\":\"<time>\",\"prompt\":\"waves at dusk\",\"remixed_from_video_id\":null,\"error\":null,\"size\":\"960x512\",\"seconds\":\"5\",\"actual_seconds\":5.0417}"
         },
         "headers": {
-          "content-length": "<346 after normalisation>",
+          "content-length": "<322 after normalisation>",
           "content-type": "application/json",
+          "x-duration-adjusted": "requested=5 actual=5.0417 reason=frame_count_stride",
           "x-request-id": "<req:1>"
         },
         "status": 200
@@ -37,16 +62,16 @@
         },
         "headers": {},
         "method": "GET",
-        "path": "/v1/videos/video_p1",
+        "path": "/v1/videos/video_<job:1>",
         "query": []
       },
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"azizam_object\": \"video.generation\", \"status\": \"completed\", \"azizam_status\": \"succeeded\", \"progress\": 100, \"completed_at\": \"<time>\", \"expires_at\": \"<time>\", \"prompt\": null, \"remixed_from_video_id\": null, \"error\": null, \"model\": \"ltx-2.5-t2v\", \"size\": \"960x512\", \"seconds\": \"5\", \"actual_seconds\": 5.0417, \"created_at\": \"<time>\", \"azizam_resolved_model\": \"video-ltx-2.5-t2v\", \"updated_at\": \"<time>\"}"
+          "text": "{\"id\":\"video_<job:1>\",\"object\":\"video\",\"azizam_object\":\"video.generation\",\"status\":\"completed\",\"azizam_status\":\"succeeded\",\"progress\":100,\"created_at\":\"<time>\",\"completed_at\":\"<time>\",\"expires_at\":\"<time>\",\"prompt\":null,\"remixed_from_video_id\":null,\"error\":null,\"updated_at\":\"<time>\",\"model\":\"ltx-2.5-t2v\",\"size\":\"960x512\",\"seconds\":\"5\",\"actual_seconds\":5.0417,\"azizam_resolved_model\":\"video-ltx-2.5-t2v\"}"
         },
         "headers": {
-          "content-length": "<435 after normalisation>",
+          "content-length": "<405 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -57,10 +82,10 @@
       "request": {
         "body": {
           "kind": "json",
-          "text": "{\"video\":{\"id\":\"video_p1\"},\"prompt\":\"more waves\",\"seconds\":\"2\"}"
+          "text": "{\"video\":{\"id\":\"video_<job:1>\"},\"prompt\":\"more waves\",\"seconds\":\"2\"}"
         },
         "headers": {
-          "content-length": "63",
+          "content-length": "<68 after normalisation>",
           "content-type": "application/json"
         },
         "method": "POST",
@@ -70,10 +95,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"model\": \"ltx-2.5-t2v\", \"azizam_resolved_model\": \"video-ltx-2.5-long\", \"status\": \"queued\", \"progress\": 0, \"created_at\": \"<time>\", \"completed_at\": null, \"expires_at\": \"<time>\", \"prompt\": \"more waves\", \"remixed_from_video_id\": \"video_p1\", \"error\": null, \"size\": \"64x64\", \"seconds\": \"3.6\", \"actual_seconds\": 3.6, \"extended_from_video_id\": \"video_p1\", \"total_seconds\": 3.6, \"segments\": 1}"
+          "text": "{\"id\": \"video_p1\", \"object\": \"video\", \"model\": \"video-long\", \"azizam_resolved_model\": \"video-ltx-2.5-long\", \"status\": \"queued\", \"progress\": 0, \"created_at\": \"<time>\", \"completed_at\": null, \"expires_at\": \"<time>\", \"prompt\": \"more waves\", \"remixed_from_video_id\": \"video_<job:1>\", \"error\": null, \"size\": \"64x64\", \"seconds\": \"3.6\", \"actual_seconds\": 3.6, \"extended_from_video_id\": \"video_<job:1>\", \"total_seconds\": 3.6, \"segments\": 1}"
         },
         "headers": {
-          "content-length": "<422 after normalisation>",
+          "content-length": "<431 after normalisation>",
           "content-type": "application/json",
           "x-duration-adjusted": "requested=4 actual=3.6000 reason=ltx_latent_8np1_stride",
           "x-request-id": "<req:2>"
@@ -87,13 +112,13 @@
     {
       "body": {
         "kind": "json",
-        "text": "{\"prompt\":{\"1\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors\",\"weight_dtype\":\"default\"}},\"2\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-video-vae-bf16.safetensors\"}},\"3\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-audio-vae-bf16.safetensors\"}},\"4\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors\",\"type\":\"ltxv\",\"device\":\"default\"}},\"5\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"4\",0],\"text\":\"waves at dusk\"}},\"6\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"4\",0],\"text\":\"pc game, console game, video game, cartoon, childish, ugly\"}},\"7\":{\"class_type\":\"LTXVConditioning\",\"inputs\":{\"positive\":[\"5\",0],\"negative\":[\"6\",0],\"frame_rate\":[\"24\",0]}},\"20\":{\"class_type\":\"INTConstant\",\"inputs\":{\"value\":960},\"_meta\":{\"title\":\"Width (final)\"}},\"21\":{\"class_type\":\"INTConstant\",\"inputs\":{\"value\":512},\"_meta\":{\"title\":\"Height (final)\"}},\"22\":{\"class_type\":\"PrimitiveInt\",\"inputs\":{\"value\":121},\"_meta\":{\"title\":\"Length (frames, 8k+1)\"}},\"23\":{\"class_type\":\"PrimitiveInt\",\"inputs\":{\"value\":24.0},\"_meta\":{\"title\":\"Frame Rate (int)\"}},\"24\":{\"class_type\":\"PrimitiveFloat\",\"inputs\":{\"value\":24.0},\"_meta\":{\"title\":\"Frame Rate (float)\"}},\"25\":{\"class_type\":\"ComfyMathExpression\",\"inputs\":{\"expression\":\"a/2\",\"values.a\":[\"20\",0]}},\"26\":{\"class_type\":\"ComfyMathExpression\",\"inputs\":{\"expression\":\"a/2\",\"values.a\":[\"21\",0]}},\"10\":{\"class_type\":\"EmptyLTXVLatentVideo\",\"inputs\":{\"width\":[\"25\",1],\"height\":[\"26\",1],\"length\":[\"22\",0],\"batch_size\":1}},\"11\":{\"class_type\":\"LTXVEmptyLatentAudio\",\"inputs\":{\"frames_number\":[\"22\",0],\"frame_rate\":[\"23\",0],\"batch_size\":1,\"audio_vae\":[\"3\",0]}},\"12\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"10\",0],\"audio_latent\":[\"11\",0]}},\"13\":{\"class_type\":\"LTXVDualCFGGuider\",\"inputs\":{\"model\":[\"1\",0],\"positive\":[\"7\",0],\"negative\":[\"7\",1],\"video_cfg\":1.0,\"audio_cfg\":1.0}},\"14\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler_ancestral\"}},\"15\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0\"}},\"30\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":192058881}},\"16\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"30\",0],\"guider\":[\"13\",0],\"sampler\":[\"14\",0],\"sigmas\":[\"15\",0],\"latent_image\":[\"12\",0]}},\"17\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"16\",0]}},\"40\":{\"class_type\":\"LatentUpscaleModelLoader\",\"inputs\":{\"model_name\":\"ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors\"}},\"41\":{\"class_type\":\"LTXVLatentUpsampler\",\"inputs\":{\"samples\":[\"17\",0],\"upscale_model\":[\"40\",0],\"vae\":[\"2\",0]}},\"42\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"41\",0],\"audio_latent\":[\"17\",1]}},\"43\":{\"class_type\":\"LTXVDualCFGGuider\",\"inputs\":{\"model\":[\"1\",0],\"positive\":[\"7\",0],\"negative\":[\"7\",1],\"video_cfg\":1.0,\"audio_cfg\":1.0}},\"44\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"0.85, 0.7250, 0.4219, 0.0\"}},\"31\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":192058881}},\"45\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"31\",0],\"guider\":[\"43\",0],\"sampler\":[\"14\",0],\"sigmas\":[\"44\",0],\"latent_image\":[\"42\",0]}},\"46\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"45\",0]}},\"47\":{\"class_type\":\"VAEDecodeTiled\",\"inputs\":{\"samples\":[\"46\",0],\"vae\":[\"2\",0],\"tile_size\":512,\"overlap\":64,\"temporal_size\":64,\"temporal_overlap\":16}},\"48\":{\"class_type\":\"LTXVAudioVAEDecode\",\"inputs\":{\"samples\":[\"46\",1],\"audio_vae\":[\"3\",0]}},\"58\":{\"class_type\":\"CreateVideo\",\"inputs\":{\"images\":[\"47\",0],\"fps\":[\"24\",0],\"audio\":[\"48\",0]}},\"60\":{\"class_type\":\"SaveVideo\",\"inputs\":{\"video\":[\"58\",0],\"filename_prefix\":\"video/ltx-2.5-t2v\",\"format\":\"mp4\",\"codec\":\"auto\"}}},\"client_id\":\"<hex32:1>\"}"
+        "text": "{\"prompt\":{\"1\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors\",\"weight_dtype\":\"default\"}},\"2\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-video-vae-bf16.safetensors\"}},\"3\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-audio-vae-bf16.safetensors\"}},\"4\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors\",\"type\":\"ltxv\",\"device\":\"default\"}},\"5\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"4\",0],\"text\":\"waves at dusk\"}},\"6\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"4\",0],\"text\":\"pc game, console game, video game, cartoon, childish, ugly\"}},\"7\":{\"class_type\":\"LTXVConditioning\",\"inputs\":{\"positive\":[\"5\",0],\"negative\":[\"6\",0],\"frame_rate\":[\"24\",0]}},\"20\":{\"class_type\":\"INTConstant\",\"inputs\":{\"value\":960},\"_meta\":{\"title\":\"Width (final)\"}},\"21\":{\"class_type\":\"INTConstant\",\"inputs\":{\"value\":512},\"_meta\":{\"title\":\"Height (final)\"}},\"22\":{\"class_type\":\"PrimitiveInt\",\"inputs\":{\"value\":121},\"_meta\":{\"title\":\"Length (frames, 8k+1)\"}},\"23\":{\"class_type\":\"PrimitiveInt\",\"inputs\":{\"value\":24},\"_meta\":{\"title\":\"Frame Rate (int)\"}},\"24\":{\"class_type\":\"PrimitiveFloat\",\"inputs\":{\"value\":24},\"_meta\":{\"title\":\"Frame Rate (float)\"}},\"25\":{\"class_type\":\"ComfyMathExpression\",\"inputs\":{\"expression\":\"a/2\",\"values.a\":[\"20\",0]}},\"26\":{\"class_type\":\"ComfyMathExpression\",\"inputs\":{\"expression\":\"a/2\",\"values.a\":[\"21\",0]}},\"10\":{\"class_type\":\"EmptyLTXVLatentVideo\",\"inputs\":{\"width\":[\"25\",1],\"height\":[\"26\",1],\"length\":[\"22\",0],\"batch_size\":1}},\"11\":{\"class_type\":\"LTXVEmptyLatentAudio\",\"inputs\":{\"frames_number\":[\"22\",0],\"frame_rate\":[\"23\",0],\"batch_size\":1,\"audio_vae\":[\"3\",0]}},\"12\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"10\",0],\"audio_latent\":[\"11\",0]}},\"13\":{\"class_type\":\"LTXVDualCFGGuider\",\"inputs\":{\"model\":[\"1\",0],\"positive\":[\"7\",0],\"negative\":[\"7\",1],\"video_cfg\":1.0,\"audio_cfg\":1.0}},\"14\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler_ancestral\"}},\"15\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0\"}},\"30\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":192058881}},\"16\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"30\",0],\"guider\":[\"13\",0],\"sampler\":[\"14\",0],\"sigmas\":[\"15\",0],\"latent_image\":[\"12\",0]}},\"17\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"16\",0]}},\"40\":{\"class_type\":\"LatentUpscaleModelLoader\",\"inputs\":{\"model_name\":\"ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors\"}},\"41\":{\"class_type\":\"LTXVLatentUpsampler\",\"inputs\":{\"samples\":[\"17\",0],\"upscale_model\":[\"40\",0],\"vae\":[\"2\",0]}},\"42\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"41\",0],\"audio_latent\":[\"17\",1]}},\"43\":{\"class_type\":\"LTXVDualCFGGuider\",\"inputs\":{\"model\":[\"1\",0],\"positive\":[\"7\",0],\"negative\":[\"7\",1],\"video_cfg\":1.0,\"audio_cfg\":1.0}},\"44\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"0.85, 0.7250, 0.4219, 0.0\"}},\"31\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":192058881}},\"45\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"31\",0],\"guider\":[\"43\",0],\"sampler\":[\"14\",0],\"sigmas\":[\"44\",0],\"latent_image\":[\"42\",0]}},\"46\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"45\",0]}},\"47\":{\"class_type\":\"VAEDecodeTiled\",\"inputs\":{\"samples\":[\"46\",0],\"vae\":[\"2\",0],\"tile_size\":512,\"overlap\":64,\"temporal_size\":64,\"temporal_overlap\":16}},\"48\":{\"class_type\":\"LTXVAudioVAEDecode\",\"inputs\":{\"samples\":[\"46\",1],\"audio_vae\":[\"3\",0]}},\"58\":{\"class_type\":\"CreateVideo\",\"inputs\":{\"images\":[\"47\",0],\"fps\":[\"24\",0],\"audio\":[\"48\",0]}},\"60\":{\"class_type\":\"SaveVideo\",\"inputs\":{\"video\":[\"58\",0],\"filename_prefix\":\"video/ltx-2.5-t2v\",\"format\":\"mp4\",\"codec\":\"auto\"}}},\"client_id\":\"<hex32:1>\"}"
       },
       "headers": {
         "accept": "*/*",
         "accept-encoding": "gzip, deflate, br",
         "connection": "keep-alive",
-        "content-length": "<3815 after normalisation>",
+        "content-length": "<3811 after normalisation>",
         "content-type": "application/json",
         "host": "comfy.fk.test"
       },
@@ -122,7 +147,7 @@
       },
       "path": "/history/p1",
       "query": [],
-      "step": 1,
+      "step": 0,
       "to": "comfy.fk.test"
     },
     {
@@ -132,25 +157,6 @@
       "headers": {
         "accept": "*/*",
         "accept-encoding": "gzip, deflate, br",
-        "connection": "keep-alive",
-        "host": "comfy.fk.test"
-      },
-      "method": "GET",
-      "outcome": {
-        "status": 200
-      },
-      "path": "/history/p1",
-      "query": [],
-      "step": 2,
-      "to": "comfy.fk.test"
-    },
-    {
-      "body": {
-        "kind": "empty"
-      },
-      "headers": {
-        "accept": "*/*",
-        "accept-encoding": "identity",
         "connection": "keep-alive",
         "host": "comfy.fk.test"
       },
@@ -169,7 +175,7 @@
           "output"
         ]
       ],
-      "step": 2,
+      "step": 0,
       "to": "comfy.fk.test"
     },
     {
@@ -183,10 +189,10 @@
               "kind": "binary",
               "len": 11572,
               "magic": "0000001c66747970",
-              "sha256": "d91ecbffb482b763bc4f367beab1f05883d4753e74e82f392a4da61633ba10d4"
+              "sha256": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99"
             },
             "crlf_after_body": true,
-            "headers": "Content-Disposition: form-data; name=\"image\"; filename=\"clip.mp4\"\r\nContent-Type: video/mp4"
+            "headers": "Content-Disposition: form-data; name=\"image\"; filename=\"video_<job:1>.mp4\"\r\nContent-Type: video/mp4"
           }
         ],
         "preamble": ""
@@ -195,7 +201,7 @@
         "accept": "*/*",
         "accept-encoding": "gzip, deflate, br",
         "connection": "keep-alive",
-        "content-length": "11742",
+        "content-length": "11779",
         "content-type": "multipart/form-data; boundary=<boundary>",
         "host": "comfy.fk.test"
       },
@@ -211,7 +217,7 @@
     {
       "body": {
         "kind": "json",
-        "text": "{\"prompt\":{\"unet\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors\",\"weight_dtype\":\"default\"}},\"vae\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-video-vae-bf16.safetensors\"}},\"avae\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-audio-vae-bf16.safetensors\"}},\"clip\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors\",\"type\":\"ltxv\",\"device\":\"default\"}},\"neg\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"clip\",0],\"text\":\"text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, glitches, watermark, signature, distorted sound, saturated sound\"}},\"sampler\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler_ancestral\"}},\"sigmas\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0\"}},\"src_file\":{\"class_type\":\"LoadVideo\",\"inputs\":{\"file\":\"uploaded.png\"}},\"src_parts\":{\"class_type\":\"GetVideoComponents\",\"inputs\":{\"video\":[\"src_file\",0]}},\"s0_text\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"clip\",0],\"text\":\"more waves\"}},\"s0_cond\":{\"class_type\":\"LTXVConditioning\",\"inputs\":{\"positive\":[\"s0_text\",0],\"negative\":[\"neg\",0],\"frame_rate\":10.0}},\"s0_alat\":{\"class_type\":\"LTXVEmptyLatentAudio\",\"inputs\":{\"frames_number\":25,\"frame_rate\":10,\"batch_size\":1,\"audio_vae\":[\"avae\",0]}},\"s0_tail\":{\"class_type\":\"ImageFromBatch\",\"inputs\":{\"image\":[\"src_parts\",0],\"batch_index\":11,\"length\":9}},\"s0_enc\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"s0_tail\",0],\"vae\":[\"vae\",0]}},\"s0_vlat\":{\"class_type\":\"EmptyLTXVLatentVideo\",\"inputs\":{\"width\":64,\"height\":64,\"length\":25,\"batch_size\":1}},\"s0_guide\":{\"class_type\":\"LTXVAddLatentGuide\",\"inputs\":{\"positive\":[\"s0_cond\",0],\"negative\":[\"s0_cond\",1],\"vae\":[\"vae\",0],\"latent\":[\"s0_vlat\",0],\"guiding_latent\":[\"s0_enc\",0],\"latent_idx\":0,\"strength\":0.9}},\"s0_av\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"s0_guide\",2],\"audio_latent\":[\"s0_alat\",0]}},\"s0_guider\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"model\":[\"unet\",0],\"positive\":[\"s0_guide\",0],\"negative\":[\"s0_guide\",1],\"cfg\":1.0}},\"s0_noise\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":27837429}},\"s0_sample\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"s0_noise\",0],\"guider\":[\"s0_guider\",0],\"sampler\":[\"sampler\",0],\"sigmas\":[\"sigmas\",0],\"latent_image\":[\"s0_av\",0]}},\"s0_sep\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"s0_sample\",0]}},\"s0_crop\":{\"class_type\":\"LTXVCropGuides\",\"inputs\":{\"positive\":[\"s0_guide\",0],\"negative\":[\"s0_guide\",1],\"latent\":[\"s0_sep\",0]}},\"s0_decode\":{\"class_type\":\"VAEDecodeTiled\",\"inputs\":{\"samples\":[\"s0_crop\",2],\"vae\":[\"vae\",0],\"tile_size\":512,\"overlap\":64,\"temporal_size\":64,\"temporal_overlap\":16}},\"s0_new\":{\"class_type\":\"ImageFromBatch\",\"inputs\":{\"image\":[\"s0_decode\",0],\"batch_index\":9,\"length\":16}},\"s0_cat\":{\"class_type\":\"ImageBatch\",\"inputs\":{\"image1\":[\"src_parts\",0],\"image2\":[\"s0_new\",0]}},\"create\":{\"class_type\":\"CreateVideo\",\"inputs\":{\"images\":[\"s0_cat\",0],\"fps\":10.0}},\"save\":{\"class_type\":\"SaveVideo\",\"inputs\":{\"video\":[\"create\",0],\"filename_prefix\":\"video/ltx-2.5-long\",\"format\":\"mp4\",\"codec\":\"auto\"}}},\"client_id\":\"<hex32:1>\"}"
+        "text": "{\"prompt\":{\"unet\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"unet_name\":\"ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors\",\"weight_dtype\":\"default\"}},\"vae\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-video-vae-bf16.safetensors\"}},\"avae\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"ltx-2.5-audio-vae-bf16.safetensors\"}},\"clip\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors\",\"type\":\"ltxv\",\"device\":\"default\"}},\"neg\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"clip\",0],\"text\":\"text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, glitches, watermark, signature, distorted sound, saturated sound\"}},\"sampler\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler_ancestral\"}},\"sigmas\":{\"class_type\":\"ManualSigmas\",\"inputs\":{\"sigmas\":\"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0\"}},\"src_file\":{\"class_type\":\"LoadVideo\",\"inputs\":{\"file\":\"uploaded.png\"}},\"src_parts\":{\"class_type\":\"GetVideoComponents\",\"inputs\":{\"video\":[\"src_file\",0]}},\"s0_text\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"clip\":[\"clip\",0],\"text\":\"more waves\"}},\"s0_cond\":{\"class_type\":\"LTXVConditioning\",\"inputs\":{\"positive\":[\"s0_text\",0],\"negative\":[\"neg\",0],\"frame_rate\":10.0}},\"s0_alat\":{\"class_type\":\"LTXVEmptyLatentAudio\",\"inputs\":{\"frames_number\":25,\"frame_rate\":10,\"batch_size\":1,\"audio_vae\":[\"avae\",0]}},\"s0_tail\":{\"class_type\":\"ImageFromBatch\",\"inputs\":{\"image\":[\"src_parts\",0],\"batch_index\":11,\"length\":9}},\"s0_enc\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"s0_tail\",0],\"vae\":[\"vae\",0]}},\"s0_vlat\":{\"class_type\":\"EmptyLTXVLatentVideo\",\"inputs\":{\"width\":64,\"height\":64,\"length\":25,\"batch_size\":1}},\"s0_guide\":{\"class_type\":\"LTXVAddLatentGuide\",\"inputs\":{\"positive\":[\"s0_cond\",0],\"negative\":[\"s0_cond\",1],\"vae\":[\"vae\",0],\"latent\":[\"s0_vlat\",0],\"guiding_latent\":[\"s0_enc\",0],\"latent_idx\":0,\"strength\":0.9}},\"s0_av\":{\"class_type\":\"LTXVConcatAVLatent\",\"inputs\":{\"video_latent\":[\"s0_guide\",2],\"audio_latent\":[\"s0_alat\",0]}},\"s0_guider\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"model\":[\"unet\",0],\"positive\":[\"s0_guide\",0],\"negative\":[\"s0_guide\",1],\"cfg\":1.0}},\"s0_noise\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":27837429}},\"s0_sample\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"noise\":[\"s0_noise\",0],\"guider\":[\"s0_guider\",0],\"sampler\":[\"sampler\",0],\"sigmas\":[\"sigmas\",0],\"latent_image\":[\"s0_av\",0]}},\"s0_sep\":{\"class_type\":\"LTXVSeparateAVLatent\",\"inputs\":{\"av_latent\":[\"s0_sample\",0]}},\"s0_crop\":{\"class_type\":\"LTXVCropGuides\",\"inputs\":{\"positive\":[\"s0_guide\",0],\"negative\":[\"s0_guide\",1],\"latent\":[\"s0_sep\",0]}},\"s0_decode\":{\"class_type\":\"VAEDecodeTiled\",\"inputs\":{\"samples\":[\"s0_crop\",2],\"vae\":[\"vae\",0],\"tile_size\":512,\"overlap\":64,\"temporal_size\":64,\"temporal_overlap\":16}},\"s0_new\":{\"class_type\":\"ImageFromBatch\",\"inputs\":{\"image\":[\"s0_decode\",0],\"batch_index\":9,\"length\":16}},\"s0_cat\":{\"class_type\":\"ImageBatch\",\"inputs\":{\"image1\":[\"src_parts\",0],\"image2\":[\"s0_new\",0]}},\"create\":{\"class_type\":\"CreateVideo\",\"inputs\":{\"images\":[\"s0_cat\",0],\"fps\":10.0}},\"save\":{\"class_type\":\"SaveVideo\",\"inputs\":{\"video\":[\"create\",0],\"filename_prefix\":\"video/ltx-2.5-long\",\"format\":\"mp4\",\"codec\":\"auto\"}}},\"client_id\":\"<hex32:2>\"}"
       },
       "headers": {
         "accept": "*/*",
@@ -231,9 +237,292 @@
       "to": "comfy.fk.test"
     }
   ],
-  "gateway_sleeps": [],
-  "job_prefixes": [],
+  "gateway_sleeps": [
+    {
+      "after_engine_requests": 1,
+      "delay": 5.0,
+      "step": 0
+    }
+  ],
+  "job_prefixes": [
+    "mj"
+  ],
   "media_jobs": {
+    "definition_blob": [
+      {
+        "body": {
+          "kind": "binary",
+          "len": 3255,
+          "magic": "7b2262696e64696e",
+          "sha256": "f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e"
+        },
+        "created": "<time>",
+        "sha": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e"
+      },
+      {
+        "body": {
+          "kind": "binary",
+          "len": 1014,
+          "magic": "7b226d6170223a7b",
+          "sha256": "25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732"
+        },
+        "created": "<time>",
+        "sha": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732"
+      },
+      {
+        "body": {
+          "kind": "binary",
+          "len": 5624,
+          "magic": "7b0a202231223a20",
+          "sha256": "4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
+        },
+        "created": "<time>",
+        "sha": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
+      }
+    ],
+    "definition_ref": [
+      {
+        "blob_sha": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
+      {
+        "blob_sha": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      },
+      {
+        "blob_sha": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+        "holder_kind": "job",
+        "job_id": "<job:1>"
+      }
+    ],
+    "job_envelope": [
+      {
+        "created": "<time>",
+        "envelope_json": {
+          "definitions": {
+            "binding": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
+            "contract": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+            "protocol": {
+              "id": "node-graph",
+              "revision": "sha256:e390b04a5ab58e9e5eb27d44119bc90f3f73c6af4c95d2fec48e9f5dbc9a6fa5"
+            },
+            "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
+          },
+          "envelope_version": 2,
+          "executor": {
+            "adapter_id": "node-graph",
+            "interface_version": 2
+          },
+          "generated": {
+            "seed": {
+              "generator": "random_integer",
+              "value": 192058881
+            }
+          },
+          "results": {
+            "bundle": "bundle:<job:1>:1"
+          },
+          "source": {
+            "binding_key": "comfyui",
+            "id": "video.generate.ltx-2.5-t2v",
+            "incarnation": "bundled",
+            "kind": "workflow",
+            "record_revision": 1,
+            "revision": "sha256:394d2fcb011fa3927e0c88a512a9dd1fe527463dcad19b1e161a9e7a056c9f4f"
+          },
+          "upstream": {
+            "origin_digest": "sha256:fd47323ed65e7a4a38a5ae6b27f4f882b131e0ffe3ca43e6496ad9650efcd371",
+            "service_id": "comfy"
+          }
+        },
+        "job_id": "<job:1>"
+      }
+    ],
+    "media_job_asset_origins": [
+      {
+        "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
+    "media_job_events": [
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "queued",
+        "id": 1,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "phase": "queued",
+          "progress": 0,
+          "status": "queued"
+        },
+        "sequence": 1,
+        "source": "gateway"
+      },
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "started",
+        "id": 2,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "phase": "running",
+          "progress": 5,
+          "status": "running"
+        },
+        "sequence": 2,
+        "source": "gateway"
+      },
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "attempt",
+        "id": 3,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "attempt": 1,
+          "phase": "running",
+          "progress": 5,
+          "status": "running",
+          "total": 1
+        },
+        "sequence": 3,
+        "source": "gateway"
+      },
+      {
+        "attempt_number": 1,
+        "created_at": "<time>",
+        "event_type": "succeeded",
+        "id": 4,
+        "job_id": "<job:1>",
+        "payload_json": {
+          "attempt": 1,
+          "phase": "complete",
+          "progress": 100,
+          "status": "succeeded",
+          "total": 1
+        },
+        "sequence": 4,
+        "source": "gateway"
+      }
+    ],
+    "media_jobs": [
+      {
+        "api_key_name": "test-app",
+        "app_profile": null,
+        "backend": "comfyui",
+        "created_at": "<time>",
+        "error": null,
+        "intent": "video.generate",
+        "job_id": "<job:1>",
+        "job_json": {
+          "accepted_at": "<time>",
+          "api_key_name": "test-app",
+          "app_id": "app_test",
+          "app_profile": null,
+          "assets": [
+            {
+              "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+              "media_type": "video/mp4"
+            }
+          ],
+          "attempt_number": 1,
+          "backend": "comfyui",
+          "cancel_requested": false,
+          "created_at": "<time>",
+          "creating_receipt_id": "<req:1>",
+          "error": null,
+          "error_category": null,
+          "error_code": null,
+          "finished_at": "<time>",
+          "first_output_at": "<time>",
+          "input_hash": "<digest>",
+          "intent": "video.generate",
+          "job_id": "<job:1>",
+          "maker_connection_id": null,
+          "maker_credential_id": "sha256:test",
+          "maker_person_id": null,
+          "metadata": {
+            "attempts": 1,
+            "binding_key": "comfyui",
+            "completed_at": "<time>",
+            "engine_progress": true,
+            "engine_prompt": "p1",
+            "failure_text": "adapter",
+            "frontend": "videos-create",
+            "keep_engine_prompt": true,
+            "last_http_status": 200,
+            "mode": "workflow.run",
+            "protocol_job": "p1",
+            "protocol_submitting": false,
+            "request_facts": {
+              "actual_seconds": 5.0417,
+              "frame_rate": 24.0,
+              "length_frames": 121,
+              "model": "ltx-2.5-t2v",
+              "provenance": {
+                "backend": "comfyui",
+                "created_at": "<iso-time>",
+                "generator": "azizam-gateway",
+                "kind": "video",
+                "model_alias": "ltx-2.5-t2v",
+                "parameters": {
+                  "actual_seconds": 5.0417,
+                  "length_frames": 121,
+                  "seconds": "5",
+                  "size": "960x512"
+                },
+                "receipt": "/gateway/v1/receipts/<req:1>",
+                "request_id": "<req:1>",
+                "requested_model": "ltx-2.5-t2v",
+                "resolved_model": "video-ltx-2.5-t2v",
+                "schema": "azizam.provenance/1",
+                "seed": 192058881,
+                "workflow_id": "video.generate.video-ltx-2.5-t2v"
+              },
+              "resolved_model": "video-ltx-2.5-t2v",
+              "seconds": "5",
+              "seed": 192058881,
+              "size": "960x512"
+            },
+            "resource_class": "video",
+            "result_metadata": {
+              "filename": "clip.mp4",
+              "returned": 1,
+              "rounds": 1,
+              "warnings": []
+            },
+            "retries": "none",
+            "started_at": "<time>"
+          },
+          "owner_key_hash": "app:app_test",
+          "owner_scope": "app:app_test",
+          "parent_request_id": null,
+          "previous_attempts": [],
+          "progress": 100,
+          "queued_at": "<time>",
+          "request_id": "<req:1>",
+          "retryable": null,
+          "started_at": "<time>",
+          "status": "succeeded",
+          "updated_at": "<time>",
+          "upstream_http_status": null,
+          "workflow": "video.generate.ltx-2.5-t2v"
+        },
+        "maker_connection_id": null,
+        "maker_credential_id": "sha256:test",
+        "maker_person_id": null,
+        "parent_request_id": null,
+        "progress": 100,
+        "request_id": "<req:1>",
+        "status": "succeeded",
+        "updated_at": "<time>",
+        "workflow": "video.generate.ltx-2.5-t2v"
+      }
+    ],
     "media_jobs_migrations": [
       {
         "applied_at": "<time>",
@@ -245,39 +534,59 @@
         "version": 6
       }
     ],
+    "result_bundle": [
+      {
+        "attempt": 1,
+        "bundle_ref": "bundle:<job:1>:1",
+        "job_id": "<job:1>",
+        "published_at": "<time>",
+        "receipt_linked_at": "<time>",
+        "summary_json": {
+          "bundle": "bundle:<job:1>:1",
+          "bundle_version": 1,
+          "envelope": {
+            "adapter_id": "node-graph",
+            "binding": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
+            "contract": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+            "interface_version": 2,
+            "source_id": "video.generate.ltx-2.5-t2v",
+            "source_kind": "workflow",
+            "source_revision": "sha256:394d2fcb011fa3927e0c88a512a9dd1fe527463dcad19b1e161a9e7a056c9f4f",
+            "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
+          },
+          "results": [
+            {
+              "count": 1,
+              "kind": "assets",
+              "name": "video",
+              "size_bytes": 11572
+            }
+          ]
+        }
+      }
+    ],
+    "result_stage": [
+      {
+        "attempt": 1,
+        "bytes": 11572,
+        "count": 1,
+        "created": "<time>",
+        "items_json": [
+          {
+            "asset_ref": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+            "media_type": "video/mp4",
+            "size_bytes": 11572
+          }
+        ],
+        "job_id": "<job:1>",
+        "kind": "assets",
+        "name": "video",
+        "ref": "stage:<job:1>:1:video",
+        "sha256": null,
+        "state": "published"
+      }
+    ],
     "retention_fact_destinations": [
-      {
-        "created_at": "<time>",
-        "destination_id": "gateway",
-        "metadata_json": {
-          "kind": "system",
-          "name": "Gateway"
-        },
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "created_at": "<time>",
-        "destination_id": "litellm",
-        "metadata_json": {
-          "kind": "system",
-          "name": "LiteLLM"
-        },
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "created_at": "<time>",
-        "destination_id": "comfyui",
-        "metadata_json": {
-          "address": "127.0.0.1:7890",
-          "kind": "engine",
-          "name": "ComfyUI (Image + Video Generation)",
-          "reach": "Azizam reaches it on this computer"
-        },
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
       {
         "created_at": "<time>",
         "destination_id": "gateway",
@@ -312,54 +621,6 @@
       }
     ],
     "retention_fact_references": [
-      {
-        "destination_id": "gateway",
-        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "gateway",
-        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
-      {
-        "destination_id": "litellm",
-        "revision": "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5",
-        "source_id": "<req:1>",
-        "source_kind": "receipt"
-      },
       {
         "destination_id": "gateway",
         "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
@@ -581,9 +842,9 @@
           "deleted_at": null,
           "error": null,
           "expires_at": "<time>",
-          "extended_from_video_id": "video_p1",
+          "extended_from_video_id": "video_<job:1>",
           "metadata_mode": null,
-          "model": "ltx-2.5-t2v",
+          "model": "video-long",
           "owner_key_hash": "app:app_test",
           "person_id": null,
           "provenance": {
@@ -591,7 +852,7 @@
             "created_at": "<iso-time>",
             "generator": "azizam-gateway",
             "kind": "video",
-            "model_alias": "ltx-2.5-t2v",
+            "model_alias": "video-long",
             "parameters": {
               "actual_seconds": 3.6,
               "length_frames": 36,
@@ -600,13 +861,13 @@
             },
             "receipt": "/gateway/v1/receipts/<req:2>",
             "request_id": "<req:2>",
-            "requested_model": "ltx-2.5-t2v",
+            "requested_model": "video-long",
             "resolved_model": "video-ltx-2.5-long",
             "schema": "azizam.provenance/1",
             "seed": 27837429,
             "workflow_id": "video.generate.video-ltx-2.5-long"
           },
-          "remixed_from_video_id": "video_p1",
+          "remixed_from_video_id": "video_<job:1>",
           "resolved_model": "video-ltx-2.5-long",
           "seconds": "3.6",
           "size": "64x64",
@@ -624,7 +885,7 @@
         "app_profile": "plan_everything",
         "created_at": "<time>",
         "intent": "video.generate",
-        "job_id": null,
+        "job_id": "<job:1>",
         "parent_request_id": null,
         "path": "/v1/videos",
         "protocol": "openai.video",
@@ -646,12 +907,34 @@
           "first_output_at_ms": null,
           "ignored_inputs": {},
           "intent": "video.generate",
-          "job_id": null,
+          "job_id": "<job:1>",
           "latency_ms": "<duration>",
           "manifest_hash": null,
           "manifest_id": null,
           "manifest_version": null,
           "metadata": {
+            "result_bundle": {
+              "bundle": "bundle:<job:1>:1",
+              "bundle_version": 1,
+              "envelope": {
+                "adapter_id": "node-graph",
+                "binding": "sha256:25c2400f35618320b9a13c78a29157f3ef234dd81c7ea6e35cdbdba177da9732",
+                "contract": "sha256:f606943b5a650cb91bf0ea8734f2fbf0a4134c7cfded4e4fac86644855a6e21e",
+                "interface_version": 2,
+                "source_id": "video.generate.ltx-2.5-t2v",
+                "source_kind": "workflow",
+                "source_revision": "sha256:394d2fcb011fa3927e0c88a512a9dd1fe527463dcad19b1e161a9e7a056c9f4f",
+                "template": "sha256:4e9a7a59f24ddbad6d85f007a7cd67c266986bfd69be0f09acb6174618a23f2f"
+              },
+              "results": [
+                {
+                  "count": 1,
+                  "kind": "assets",
+                  "name": "video",
+                  "size_bytes": 11572
+                }
+              ]
+            },
             "status_code": 200,
             "terminal_reason": "http_200"
           },
@@ -660,12 +943,10 @@
           "path": "/v1/videos",
           "policy_decision": "allowed",
           "policy_reasons": [
-            "route_authorized",
-            "allowed by your access plan"
+            "route_authorized"
           ],
           "policy_sources": [
-            "runtime_route_policy",
-            "access_plan:plan_everything"
+            "runtime_route_policy"
           ],
           "protocol": "openai.video",
           "queued_at_ms": null,
@@ -676,6 +957,78 @@
           "requested_workflow": null,
           "resolved_model": null,
           "resolved_workflow": null,
+          "resource_decision": {
+            "facts": [
+              {
+                "name": "available",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "value": true
+              },
+              {
+                "name": "degraded",
+                "observed_at": "<time>",
+                "quality": "declared",
+                "resource_class": "service",
+                "value": false
+              },
+              {
+                "name": "disabled_intents",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "disabled_resource_classes",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "reserved_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "required_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "optional_tokens",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": []
+              },
+              {
+                "name": "requires_gpu",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "policy",
+                "value": true
+              }
+            ],
+            "outcome": "allowed",
+            "reasons": [
+              {
+                "code": "resources_available",
+                "effect": "info",
+                "observed_at": null,
+                "quality": "declared",
+                "resource_class": "resource",
+                "rule": "resources available"
+              }
+            ],
+            "wait_deadline": "<time>"
+          },
           "retention": [
             {
               "decision": "not_kept",
@@ -683,19 +1036,9 @@
               "reason": "no_person"
             }
           ],
-          "retention_facts": [
-            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
-            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
-            "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
-            "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
-            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
-            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
-            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
-            "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
-          ],
           "source_kind": "app",
           "source_label": "test-app",
-          "started_at_ms": "<time>",
+          "started_at_ms": null,
           "status": "succeeded",
           "stream": false,
           "updated_at_ms": "<time>",

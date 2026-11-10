@@ -15,13 +15,14 @@ I5 FrontendRow / FrontendShape / RouteSpec                          routes are r
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gateway.manifests import ContractError, Provenance
 from gateway.result_bundle import ResultLimits
+from gateway.video_controls import AUDIO_CONTROL
 from gateway.workflow_contract import Report
 
 if TYPE_CHECKING:  # the HTTP types are only named, never constructed here
@@ -40,6 +41,8 @@ NameKind = Literal["workflow", "workflow_alias", "model", "model_alias", "fronte
 CallerContext = Any
 
 # Refusal and failure codes the store, the run core and the frontends share (the error vocabulary of this design).
+RESULT_REFUSED_MESSAGE = "The result could not be read within the deployment's limits"   # the text of a run whose result a limit refused
+RUN_STARTED_PROGRESS = 5            # the progress a run is given when it starts, before its engine has reported anything
 WORKFLOW_DISABLED = "workflow_disabled"
 WORKFLOW_DELETED = "workflow_deleted"
 WORKFLOW_EXISTS = "workflow_exists"
@@ -56,6 +59,7 @@ IDEMPOTENCY_CONFLICT = "idempotency_conflict"          # the key was used for a 
 IDEMPOTENCY_IN_PROGRESS = "idempotency_in_progress"    # the key's first request has not finished deciding (409, retry)
 JOB_NOT_FOUND = "job_not_found"                        # absent, or not readable by this caller (the same answer)
 RESULT_UNAVAILABLE = "result_unavailable"              # erased, expired, not yet published, or not the caller's to read
+JOB_NOT_CREATED = "job_not_created"                    # the job store failed while the job was made (500, nothing stored)
 MEDIA_PATH_UNSUPPORTED = "media_path_unsupported"      # a file part addressed below a top-level input name
 # Reasons ``AdapterAvailability.binding_problem`` may return for the live state of the service behind a binding (S7 parity
 # M4). ``target_gate`` turns each into a 503 ``RunRefused`` before a job exists; ``binding_retry_after_s`` gives the delay.
@@ -63,6 +67,9 @@ SERVICE_DISABLED = "service_disabled"
 SERVICE_UNHEALTHY = "service_unhealthy"
 SERVICE_NOT_ADMITTING = "service_not_admitting"
 SERVICE_REASONS = frozenset({SERVICE_DISABLED, SERVICE_UNHEALTHY, SERVICE_NOT_ADMITTING})
+# The service accepted no connection when the binding was asked. Unlike the reasons above it is a 502 whose words name the
+# engine and its address, so ``target_gate`` takes its message from ``AdapterAvailability.unreachable_message``.
+SERVICE_UNREACHABLE = "service_unreachable"
 
 
 # ---------------------------------------------------------------------------------------------------------- I1
@@ -323,6 +330,9 @@ class AdapterAvailability(Protocol):
         """Seconds a caller should wait before retrying after ``binding_problem`` answered a ``SERVICE_*`` reason
         (``service_not_admitting`` has one); None when there is no advice."""
         ...
+    def unreachable_message(self, binding: BindingDef) -> str:
+        """The words of the 502 after ``binding_problem`` answered ``SERVICE_UNREACHABLE``: they name the engine."""
+        ...
 
 
 class Projections(Protocol):
@@ -389,6 +399,9 @@ class RunRequest:
     workflow_id: str
     inputs: Mapping[str, Any]
     media: Mapping[str, tuple[MediaRef, ...]] = field(default_factory=dict)
+    # Files the Library keeps as the result's sources in place of ``media`` for the same input (a wire that changes a file
+    # before the run keeps the caller's own). They are never sent to the engine. Not part of run identity.
+    sources: Mapping[str, tuple[MediaRef, ...]] = field(default_factory=dict)
     binding_key: str | None = None
     idempotency_key: str | None = None
     wait_s: float = 0.0
@@ -399,6 +412,10 @@ class RunRequest:
     # household policy are combined. Part of run identity: a changed decision on a key is a different request, never a
     # replay of a run that was remembered. Empty: the caller took no decision, and identity is what it was.
     prompt_retention: str = ""
+    # How long ``submit_run`` waits, after it schedules a new job, for the engine to take the job (the upstream job id is kept)
+    # or for the job to end. A job the engine refused is then discarded and the call answers 502; no job is kept. 0: do not
+    # wait, the queued job is the answer. Not part of run identity (it changes when the answer is sent, not what runs).
+    submit_wait_s: float = 0.0
     frontend_id: str = "workflows"
     # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
     request_id: str | None = None
@@ -418,6 +435,66 @@ class RunRequest:
     # The intent the job row is filed under: the one the matched route declares (``runtime_policy.intent``), the same value
     # the request receipt records. Empty: the generic run intent. Not part of run identity.
     intent: str = ""
+    # The facts of the request a wire object shows later (``REQUEST_FACT_KEYS``): JSON-safe, no prompt text, no person id.
+    # Written once with the job row, read back through ``JobService.request_facts``. Not part of run identity.
+    facts: Mapping[str, Any] = field(default_factory=dict)
+    # The facts that wait for the job: filled in after the job is accepted (see ``FactRef``). Not part of run identity.
+    fact_refs: tuple["FactRef", ...] = ()
+    # The path the run files its own receipt under (``FrontendRow.run_receipt_path``); empty: the run files none.
+    run_receipt_path: str = ""
+    # A refusal the shape found but leaves to the run: ``status``, ``code``, ``category`` and ``message``. The run fails the
+    # job with it before any engine call. Empty: none. Not part of run identity.
+    run_refusal: Mapping[str, Any] = field(default_factory=dict)
+    # What the old job route stored on the job row besides the run's own fields, for a row that declares a run receipt:
+    # ``app_profile``, ``parent_request_id`` and ``metadata`` (extra keys, merged under the core's). Not part of run identity.
+    job_record: Mapping[str, Any] = field(default_factory=dict)
+
+
+# The keys a job's request facts may hold (video move design 1.2). A key outside this set is refused at write; a key with
+# no value is absent. The prompt and the person id are never stored here (see ``RequestFacts``).
+AUDIO_FACT = AUDIO_CONTROL     # the one fact key a request option of the same name also uses (silent result: false)
+REQUEST_FACT_KEYS = frozenset({
+    "model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate", "seed", AUDIO_FACT,
+    "metadata_mode", "provenance", "remixed_from_video_id", "extended_from_video_id", "source_asset_id", "total_seconds",
+    "warnings"})
+
+
+class RequestFacts(Mapping[str, Any]):
+    """The facts recorded on a job at create, as a read-only mapping over ``REQUEST_FACT_KEYS``.
+
+    ``prompt`` is filled only for the job's maker, and only while the prompt-memory rules still keep the text.
+    ``maker_person_id`` is the maker's own id for the maker, and None for any other reader."""
+
+    __slots__ = ("_values", "prompt", "maker_person_id")
+
+    def __init__(self, values: Mapping[str, Any], *, prompt: str | None = None, maker_person_id: str | None = None) -> None:
+        self._values = dict(values)
+        self.prompt = prompt
+        self.maker_person_id = maker_person_id
+
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __repr__(self) -> str:
+        return f"RequestFacts({self._values!r})"
+
+
+@dataclass(frozen=True)
+class FactRef:
+    """A fact the shape cannot know before the job exists. The producer is the shape (``RunRequest.fact_refs``); the consumer is
+    ``workflow_run.resolve_fact_refs``, which runs after the job is accepted and before it is processed. ``source`` is
+    ``"job_id"`` (``prefix`` + the job id: the id the wire shows) or ``"generated:<input>"`` (the value the core drew for that
+    input). A ref is never part of run identity: a replay without the value is still the same request."""
+
+    path: tuple[str, ...]         # where the value goes in the facts
+    source: str
+    prefix: str = ""
 
 
 @dataclass(frozen=True)
@@ -492,6 +569,13 @@ class RunJobView:
     # Facts the adapter returned with its result (S7 parity M5): a plain mapping the core stores on the job and never
     # interprets. Shapes render headers from it and the receipt writer copies fields from it. Empty until the job succeeds.
     result_metadata: Mapping[str, Any] = field(default_factory=dict)
+    # How far the run is, 0 to 100, from the job row. It never goes down; a succeeded job shows 100.
+    progress: int = 0
+    # The intent the job row is filed under (the route's ``runtime_policy.intent``; empty for a job made without one), so a
+    # wire that serves one kind of job can tell its own jobs from any other readable job of the run core.
+    intent: str = ""
+    # When the job reached a terminal state, set once by the job store; None until then. ``updated_at_s`` moves on every write.
+    finished_at_s: int | None = None
 
 
 @dataclass(frozen=True)
@@ -548,6 +632,20 @@ class JobService(Protocol):
     def open_result(self, job_id: str, ref: ResultRef, caller: CallerContext) -> ResultContent:
         """The content under the result-reader rule. JobNotFound, ResultUnavailable."""
         ...
+    def list(self, caller: CallerContext, *, intents: Sequence[str], limit: int, after_id: str | None = None,
+             after_key: tuple[int, str] | None = None, order: str = "desc") -> tuple[tuple[RunJobView, ...], bool]:
+        """One page of the caller's jobs filed under any of ``intents`` (the intents a row's routes declare), as
+        ``(views, has_more)``. Only jobs the caller may read are listed (the same rule as ``get``); a deleted job is not.
+        ``order`` is ``"asc"`` or ``"desc"`` by creation time, ties by job id. ``after_id`` is the last job of the previous
+        page: the page starts after it, and a cursor that is not one of the caller's listed jobs (absent, deleted, or not
+        theirs) raises JobNotFound, so a client never restarts from page one by mistake. ``after_key`` is a
+        ``(created_at, job_id)`` position instead: the page starts strictly after it in the requested order, and no job
+        has to exist at that position (a boundary taken from another store). Giving both raises ValueError."""
+        ...
+    def request_facts(self, job_id: str, caller: CallerContext) -> RequestFacts | None:
+        """The facts recorded when the job was created; None when the job is absent, deleted or not the caller's, and an
+        empty mapping when the job recorded none. Immutable."""
+        ...
     def delete(self, job_id: str, caller: CallerContext) -> None:
         """Delete one job (S7 parity 6.7). The caller who may cancel it may delete it. Cancels first; when the cancel is
         not confirmed, raises JobDeleteConflict and keeps the job. Then persists a tombstone: the job is gone from get,
@@ -582,6 +680,23 @@ class FrontendRow:
     # Where the receipt opens (S7 parity M1): "before_policy" leaves a closed ``rejected`` receipt when the route policy
     # denies the request; "after_policy" (default) leaves none.
     receipt_opens: Literal["before_policy", "after_policy"] = "after_policy"
+    # When the receipt of a new job closes: "terminal" (the core closes it when the job ends, naming the workflow, its
+    # accepted inputs and its manifest) or "submit" (it closes as succeeded when the queued answer goes out and names
+    # nothing, as a route whose receipt was always a submit receipt wrote it). A later failure of the job never reopens it.
+    receipt_closes: Literal["terminal", "submit"] = "terminal"
+    # Whether the request's History entry carries the run's workflow facts (``run``); a row whose summaries never had a
+    # run block sets false, so the entry stays titled from the body model.
+    history_facts: bool = True
+    # True: the receipt names the service it ran on only once the run is submitted, as a route whose refusals come before any
+    # service is chosen always did (row data: ``backend_at_run``). False: it names the route's service when it opens.
+    backend_at_run: bool = False
+    # How a refusal of the request (a 4xx) closes the receipt: "failed" (default) or "rejected", the word the old image
+    # routes wrote. A refusal by the service or the gateway (a 5xx) closes failed under either word.
+    refusal_receipt: Literal["failed", "rejected"] = "failed"
+    # The path a job of this row files its own run receipt under, when the job route's old handler ran the sync route inside
+    # the job (S7 parity, images): the submit receipt then closes ``succeeded`` at the 202 and a second receipt, opened when
+    # the run starts, closes with the job's outcome. "" (default): one receipt, closed by the run core at the job's end.
+    run_receipt_path: str = ""
     # Which text a failed job of this row stores (see ``RunRequest.failure_text``); one value for all of the row's routes.
     job_failure_text: Literal["adapter", "category_copy"] = "adapter"
     # How many tries a run of this row gets: "binding" (the binding's retry rule) or "none" (one try: a caller who waits
@@ -598,9 +713,18 @@ class FrontendRow:
     # receipt metadata names by metadata key. Row data: ``result_headers`` and ``result_receipt``.
     result_headers: Mapping[str, str] = field(default_factory=dict)
     result_receipt: Mapping[str, str] = field(default_factory=dict)
-    # The words a refusal of this row has for a code the core refused with: ``{code: {"message", "type"}}``. The answer has
-    # that message and type and no code (what the route's callers always saw). Row data: ``refusal_bodies``.
-    refusal_bodies: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    # The words a refusal of this row has for a code the core refused with: ``{code: {"message", "type"?, "code"?,
+    # "retry_after_s"?}}``. The answer has that message, and the type and code only when the row names them (what the
+    # route's callers always saw). Row data: ``refusal_bodies``.
+    refusal_bodies: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # What a row answers when no workflow in the registry is selected by it (``unconfigured``): ``{status, code, message}``.
+    # None: the shape's own refusal for a name that selects nothing. Row data.
+    unconfigured: Mapping[str, Any] | None = None
+    # How long (seconds) a delete of an unfinished job of this row waits for the run to stop after the cancel is requested
+    # (row data: ``cancel_wait_s``). 0: no wait, so a job that does not stop at once is a delete conflict.
+    cancel_wait_s: float = 0.0
+    # The row's receipt opens with the route policy's allowed decision and the plan's detail level (the removed media routes' receipts).
+    receipt_allowed: bool = False
 
 
 class FrontendShape(Protocol):

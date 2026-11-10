@@ -88,7 +88,7 @@
     "/openai/v1/responses/{response_id}": "4a6348b356f1a7a56d160a5fdad9454e759363593c48ee7736f5d59d1d9a1e08",
     "/openai/v1/responses/{response_id}/cancel": "cf07ddfdf0a365d6e8c2972df3e74e15e97055d152e7ef8f22965b005e607f59",
     "/openai/v1/responses/{response_id}/input_items": "6cc1801cc22d3020fd8896eb77ae195bf2826570c32cc6fe98f528b72885d0bc",
-    "/openai/v1/videos": "9e28914268abd0f63bd527a89b08d573f784f897ae0a1728c52fb494690aac14",
+    "/openai/v1/videos": "7e8f098ed4961821be1df5d15f7fcb1caa0a706dd0db65806379bb43d2bb8a04",
     "/openai/v1/videos/edits": "b67a171c365a3e1ba985e0f2be57cd7a8d2c9cca67914afb374127ebb2d69376",
     "/openai/v1/videos/extensions": "b45154cd9138ff58cce6ddce2d92a5ed3cc2fa43ac6dadca5855f766ddb68a2a",
     "/openai/v1/videos/{video_id}": "741321403b5392790679eea1cc7aa46bdcaf5141a6b50e1d2cfd43200f67cd1d",
@@ -125,7 +125,7 @@
     "/v1/responses/{response_id}/input_items": "ddc02e5537768ce4fc7f368019359e499e66acb8ab729fdcff1d2b365a8a6a72",
     "/v1/status": "c3eec99b607a562cf4a8b12548a7e7bfad0454a3fa5275816674e333c4fc7915",
     "/v1/systemone": "185416498257771bdae90e623dee18051c4369731e38cce20a68f0a6b861ac7a",
-    "/v1/videos": "a6d8be09bf654a101ac3ce1f7802f892e56a161be763b8d1421fcab643dfabe3",
+    "/v1/videos": "19921a47445990b8153f16ee7fe872e16fcc057bdabf072c9f2237511727d52d",
     "/v1/videos/edits": "77e5ef79ce050df655e3db794be45d002ec0c4bf04412957e7fdd1413f52f4c3",
     "/v1/videos/extensions": "fd9ef2b85a4cc78bf30db2887058a09efca1988421b0c8c7d3b693aa7398fb62",
     "/v1/videos/{video_id}": "0836551c91ab63553be87b1ec495e3e03bc0d1d1e74a794959dd02ea51b658c2",
@@ -162,7 +162,7 @@
     "WorkflowInputs_image_edit_image_identity": "2a6881abf8b7b078d875f716778e09f1660b673ef76479f25d6623439adae8b1",
     "WorkflowInputs_image_edit_qwen_image_2_1_edit": "79cf5575b0891f1f5355d01801dd845af91868a7a13aab0d4aa7364aa4314614",
     "WorkflowInputs_image_edit_qwen_image_2_1_edit_multiref": "65f6fc97bc4e917b6cb872034131b1d2aee4c343123f08ca6b760dd44ec0c0aa",
-    "WorkflowInputs_image_edit_qwen_image_2_1_inpaint": "089be36262d69df9922b49f62c8970b017334b3e3d647c6d1232f9d515b51036",
+    "WorkflowInputs_image_edit_qwen_image_2_1_inpaint": "04252f3b32bab3ca78ef9194ee6a8fc5844656480f93c303786edc714cfd3009",
     "WorkflowInputs_image_edit_seedvr2_upscale": "5fb3f38a64ce47359cbb6ef464d371ec0c7bd0af52d6b073398a340e5675eef8",
     "WorkflowInputs_image_generate_anima_turbo": "401481a3ac079ac29ab89e56d9525bb7958ce1db37dc101403f78fa2d4384d05",
     "WorkflowInputs_image_generate_flux2_klein_4b": "fdb9d37c2d660017d86438999f993e83f35ccfeebe2a3114b7a80e2194df3dcd",
@@ -172,11 +172,11 @@
     "WorkflowInputs_image_generate_sdxl_seamless_tile": "547473c099a9247d0ad92262cbed2f92f82c90079fe1f80c4d9cf5f64faa18de",
     "WorkflowInputs_video_edit_rife_interpolate": "a1a71400a4c913fe81db1894d059a33fdc312baa8b11ea3b3c151b1a1cb969a4",
     "WorkflowInputs_video_edit_scail_2_replace": "e9084909efe623cb96e59dc07ba22d768ccabc2e10ce1024cdd7425e99ae2a63",
-    "WorkflowInputs_video_generate_ltx_2_5_i2v": "db47d5efd1eda8e696a7e6f6d93b3982133af528a32c74bcfc4b2a44a3a82798",
+    "WorkflowInputs_video_generate_ltx_2_5_i2v": "8008b493d2252c5d3dba35401a1bffb134aca6b8c1891d0052e2fcb8052bd518",
     "WorkflowInputs_video_generate_ltx_2_5_long": "5136f4a0311deefc7197cb0450fc0c684feb7a529778163092aaa8592a7c8c41",
-    "WorkflowInputs_video_generate_ltx_2_5_t2v": "3efc9f022d153b7ae742a631a99238d7a6dec5427bb3b359875a1a789339dd2e",
-    "WorkflowInputs_video_generate_minimax_h3_i2v": "6cdfe9d49db9227ea140574675f47bb69c080e4a766bd25a5f6f3a38603284ec",
+    "WorkflowInputs_video_generate_ltx_2_5_t2v": "c5319efbc9ab8bf555e5281e29920ecc1400064115f3147449fb9cab101ff468",
+    "WorkflowInputs_video_generate_minimax_h3_i2v": "c34d9a3202b90ae5729f06c49818e804827c6e88cb270873b18fb6d34504ece6",
     "WorkflowInputs_video_generate_minimax_h3_long": "95a620bd9b36f5b356fb07f79d053fb3ed9ecc0b3e43a760cdc9fbc28d008b46",
-    "WorkflowInputs_video_generate_minimax_h3_t2v": "4427815800a95b5de444b720dfbea474778041fbbe6964e20aa8bed587744c51"
+    "WorkflowInputs_video_generate_minimax_h3_t2v": "faf62286e74dcf9d197865ca3d93e6c1f94e430bc48549b17a09100bc4bbfa71"
   }
 }

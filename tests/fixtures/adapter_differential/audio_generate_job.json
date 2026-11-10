@@ -62,10 +62,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9\",\"index\":0,\"kind\":\"audio\",\"media_type\":\"audio/wav\",\"size_bytes\":3706}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"audio.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"duration\":4,\"mode\":\"async_audio_generation\",\"model\":\"tangoflux\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"audio.generate.tangoflux\",\"results\":{\"audio\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9\",\"index\":0,\"kind\":\"audio\",\"media_type\":\"audio/wav\",\"size_bytes\":3706,\"asset_url\":\"http://gateway.test/v1/assets/aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"audio.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"duration\":4,\"mode\":\"async_audio_generation\",\"model\":\"tangoflux\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"audio.generate.tangoflux\",\"results\":{\"audio\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
         },
         "headers": {
-          "content-length": "<954 after normalisation>",
+          "content-length": "<1262 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -260,7 +260,7 @@
             "contract": "sha256:0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc",
             "protocol": {
               "id": "node-graph",
-              "revision": "sha256:098f1399ff170d1599e1de1ad80be9cbbab883233627c7d94583ecdf57dad79f"
+              "revision": "sha256:e390b04a5ab58e9e5eb27d44119bc90f3f73c6af4c95d2fec48e9f5dbc9a6fa5"
             },
             "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
           },

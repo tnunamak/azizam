@@ -248,6 +248,40 @@ The private admission evidence gains `service_id`. That ships as its own small c
   checkpoint that fails leaves the engine unchanged; that is what `failure_semantics: no_change` attests.
 - **Bytes come from the reply or the file.** A checkpoint success reports its byte count, or the adapter takes the
   size of the file at the path. With neither, the outcome is unknown and no snapshot is published.
+- **Failure semantics are profile data (S8 part B, 2026-11-09).** Every effect operation (release, load, checkpoint,
+  restore, and restore.reset) may declare `failure_semantics: no_change | unknown` in the reviewed profile; absent means
+  `unknown`. The adapter reads a declared `failed` as `no_change` only where the profile attests it, and as `partial`
+  everywhere else; a query of a step uses that step's semantics; it keeps no per-operation table (a guard test checks
+  this). Live 2026-11-08: a refused checkpoint save wrote nothing, was read as `partial`, and held a gate
+  `failed_closed` for 4 h 52 min.
+  An attested `no_change` means the engine is as it was before the step, and the servable re-check (G7: the
+  profile's `servable_check`, else the source's resident observation) judges it:
+  - confirmed servable: the operation ends `aborted` and the gate reopens;
+  - confirmed not servable: the gate stays `failed_closed`;
+  - unknown (no fresh, incarnation-matched answer): the outcome is recorded `unknown` and the gate is `reconciling`.
+  Release and load (`_EffectStep.settle`), the startup reconcile (`Executor._recover` through `_settle`) and the owner's
+  resolve with outcome `no_change` all use that rule (`no_change_verdict` in `gateway/transition_executor.py`). A
+  `no_change` the profile does not attest holds `failed_closed`, and an owner resolve of it that cannot read the check
+  changes nothing. Two steps keep their own rule, which reads the same profile data: a checkpoint (best_effort goes on
+  cold, required re-checks servable) and a restore (attested `no_change` serves cold with no reset; otherwise the
+  declared reset runs, and a reset that fails is judged by `restore.reset.failure_semantics` and `verify`, G1).
+  The shipped profiles attest only the checkpoint: no protocol description in the repository promises that a failed
+  release, load, restore or reset leaves the engine unchanged.
+- **Recovery keeps the effect's identity (S8c, 2026-11-09).** A reset is recorded under the step `restore` with an effect
+  key ending `:reset`; `StepIntent.effect` and `.profile_block` read that, so a query and a restart judge a reset by
+  `restore.reset.failure_semantics` and a restore by `restore.failure_semantics`, never one by the other. The startup
+  reconcile settles a restore or reset through `RestoreStep.settle`, which is the live path: a restore that failed
+  unchanged serves cold, any other known failure runs the declared reset, and after a reset (live or recovered, a
+  query that says `success` included) only a clean verification serves cold; a dirty target never reopens.
+- **A recorded outcome is judged again, and an unreadable check holds a revalidation (S8c).** If the process stops after a
+  step recorded `no_change` (or a restore recorded `partial`) and before the gate verdict, the restart asks the step:
+  `CheckpointStep.recovered` (best_effort goes on cold, required checks servable), `RestoreStep.recovered` (a recorded
+  cold-start settlement goes on only after the clean evidence is read again; a recorded partial restore still runs
+  its reset), and for release and load the attested servable rule. Only a confirmed false closes the gate. An unreadable
+  check (absent, stale, foreign incarnation or timed out) writes a `<step>:revalidate` intent with an unknown outcome and
+  holds `reconciling`; the settled outcome is never overwritten, and the next restart or the owner's resolve judges it
+  again. `failed_closed` accepts another transition and `reconciling` does not, so the two are not interchangeable.
+- **Every recovery that goes on re-checks the load (G14).** Every resume, from startup, a revalidation or the owner's resolve, runs through `_drive`. A resume past the load checks the load itself at the open boundary, after any skipped or intermediate step, and also when nothing is left to run (the owner resolved the open step): the target must be resident, the offering and ready now; otherwise the operation holds `reconciling` at `open` with `load_unverified_at_resume`. A `reconciling` row with a settled outcome (a crash between the settle and the resume) is resumed on startup through the same path. The clean check of a cold restore or reset is not a load check and does not replace it. A hold is one store write (`write_intent(..., held=)`), so a crash cannot leave the intent without the recorded evidence. The hold shows on `GET .../gate` (`reconciling`, `op_id`) and `GET .../transitions/{op_id}` (`step_outcome: unknown`, `evidence_ref`). Nothing retries on a timer: the next restart or the owner's resolve settles it.
 - **Compatibility is a map of strings.** Unknown means cold: an empty compatibility map never matches a published
   snapshot. A success is never attested for checkpoint, restore or reset.
 - **The new profile.** `declared-snapshot-ops-v1` declares all nine operations and the reviewed checkpoint, restore

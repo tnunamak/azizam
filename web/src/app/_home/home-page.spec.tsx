@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import HomePage from "@/app/_home/home-page";
@@ -957,4 +958,288 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     await screen.findByText("fox.png");
     expect(screen.queryByRole("button", { name: "Make a picture of this first" })).toBeNull();
   });
+  const keyframeInputs = [
+    { name: "image", label: "a starting picture", modality: "image", accepts: ["image/png", "image/jpeg"] },
+    { name: "last_frame", label: "an ending picture", modality: "image", accepts: ["image/*"] },
+  ];
+  const mediaRow = (required_media_inputs = keyframeInputs) => capability("video", {
+    input_modalities: ["image", "video"], required_input_modalities: ["image"],
+    input_words: { image: "picture", video: "clip" }, required_media_inputs,
+  });
+  const composer = () => document.querySelector('[data-slot="composer"]') as HTMLElement;
+
+  it("keyframes labels two compact slots, waits for each, and hands files to Try in slot order", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    const start = fileInput(/^Choose a starting picture$/);
+    const end = fileInput(/^Choose an ending picture$/);
+    expect(start.accept).toBe("image/png,image/jpeg");
+    expect(end.accept).toBe("image/*");
+    expect(start.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector('[data-slot="home-media-input"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "Attach a starting picture" })).toHaveTextContent("Attach a starting picture");
+    expect(screen.getByRole("button", { name: "Attach an ending picture" })).toHaveTextContent("Attach an ending picture");
+    expect(screen.getByText("Add a starting picture and an ending picture to start")).toBeVisible();
+    expect(makeButton()).toHaveAttribute("title", "Add a starting picture and an ending picture to start");
+    const ending = new File(["e"], "end.png", { type: "image/png" });
+    fireEvent.change(end, { target: { files: [ending] } });
+    await screen.findByText("end.png");
+    expect(screen.getByText("Add a starting picture to start")).toBeVisible();
+    const starting = picture();
+    fireEvent.change(start, { target: { files: [starting] } });
+    await screen.findByText("fox.png");
+    expect(makeButton()).toHaveAttribute("aria-disabled", "false");
+    fireEvent.click(makeButton());
+    expect(takeHomeHandoff("video")).toMatchObject({
+      files: [starting, ending], file_inputs: ["image", "last_frame"],
+    });
+  });
+
+  it("drops into the first empty compatible slot, then pastes into the next without replacing the first", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    const starting = picture();
+    const ending = new File(["e"], "end.png", { type: "image/png" });
+    fireEvent.drop(composer(), { dataTransfer: { files: [starting] } });
+    await screen.findByText("fox.png");
+    expect(screen.getByText("Add an ending picture to start")).toBeVisible();
+    fireEvent.paste(composer(), { clipboardData: { files: [ending] } });
+    await screen.findByText("end.png");
+    expect(screen.getByText("fox.png")).toBeVisible();
+    fireEvent.click(makeButton());
+    expect(takeHomeHandoff("video")).toMatchObject({ files: [starting, ending], file_inputs: ["image", "last_frame"] });
+  });
+
+  it("routes by each accepts filter and shows the existing wrong-type alert for unmatched drop or paste", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    const gif = new File(["g"], "end.gif", { type: "image/gif" });
+    fireEvent.drop(composer(), { dataTransfer: { files: [gif] } });
+    await screen.findByText("end.gif");
+    expect(screen.getByText("Add a starting picture to start")).toBeVisible();
+    const wrong = new File(["x"], "notes.txt", { type: "text/plain" });
+    fireEvent.paste(composer(), { clipboardData: { files: [wrong] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a starting picture");
+    expect(screen.queryByText("notes.txt")).toBeNull();
+    fireEvent.drop(composer(), { dataTransfer: { files: [wrong] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a starting picture");
+  });
+
+  it("mid offers three labelled compact slots, including the third file in the handoff", async () => {
+    const inputs = [...keyframeInputs, { name: "mid_frame", label: "a middle picture", modality: "image", accepts: ["image/png"] }];
+    await chooseKind([textRow, mediaRow(inputs)], "Video");
+    expect(Array.from(composer().querySelectorAll('input[type="file"]')).map((input) => input.getAttribute("aria-label")))
+      .toEqual(["Choose a starting picture", "Choose an ending picture", "Choose a middle picture"]);
+    expect(document.querySelector('[data-slot="home-media-input"]')).toBeNull();
+    const files = inputs.map((input) => new File(["p"], input.name + ".png", { type: "image/png" }));
+    for (const [i, input] of inputs.entries()) {
+      fireEvent.change(fileInput(new RegExp("^Choose " + input.label + "$")), { target: { files: [files[i]] } });
+      await screen.findByText(files[i].name);
+    }
+    fireEvent.click(makeButton());
+    expect(takeHomeHandoff("video")).toMatchObject({ files, file_inputs: ["image", "last_frame", "mid_frame"] });
+  });
+
+  it("scail orders picture then video even when the video is dropped first", async () => {
+    const inputs = [
+      { name: "reference_image", label: "a new character", modality: "image", accepts: ["image/png"] },
+      { name: "source_video", label: "a video to change", modality: "video", accepts: ["video/mp4"] },
+    ];
+    await chooseKind([textRow, mediaRow(inputs)], "Video");
+    expect(fileInput(/^Choose a new character$/).accept).toBe("image/png");
+    expect(fileInput(/^Choose a video to change$/).accept).toBe("video/mp4");
+    const video = new File(["v"], "source.mp4", { type: "video/mp4" });
+    fireEvent.drop(composer(), { dataTransfer: { files: [video] } });
+    await screen.findByText("source.mp4");
+    const image = picture();
+    fireEvent.paste(composer(), { clipboardData: { files: [image] } });
+    await screen.findByText("fox.png");
+    fireEvent.click(makeButton());
+    expect(takeHomeHandoff("video")).toMatchObject({ files: [image, video], file_inputs: ["reference_image", "source_video"] });
+  });
+
+  it("each duplicate picture slot keeps its own Library pick", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    const library = withLibrary([PICTURE_ITEM]);
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    const ending = screen.getByRole("button", { name: "Attach an ending picture" });
+    ending.focus();
+    fireEvent.keyDown(ending, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    await screen.findByRole("button", { name: "Remove an ending picture" });
+    expect(screen.getByText("Add a starting picture to start")).toBeVisible();
+    expect(library.listed.every((url) => url.includes("kind=image"))).toBe(true);
+    const starting = picture();
+    fireEvent.change(fileInput(/^Choose a starting picture$/), { target: { files: [starting] } });
+    await screen.findByText("fox.png");
+    fireEvent.click(makeButton());
+    const handoff = takeHomeHandoff("video");
+    expect(handoff?.files?.map((file) => file.name)).toEqual(["fox.png", "library-picture.png"]);
+    expect(handoff?.file_inputs).toEqual(["image", "last_frame"]);
+  });
+
+  it("a filled slot is one chip: Change and Remove carry the slot's label, and no Change pill remains", async () => {
+    await chooseKind([textRow, mediaRow()], "Video");
+    fireEvent.change(fileInput(/^Choose an ending picture$/), { target: { files: [new File(["e"], "end.png", { type: "image/png" })] } });
+    await screen.findByText("end.png");
+    // Filled: its Attach pill is gone and the chip carries the change and remove controls.
+    expect(screen.queryByRole("button", { name: "Attach an ending picture" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Change a/ })).not.toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Change / })).toHaveLength(1);
+    const change = screen.getByRole("button", { name: "Change an ending picture" });
+    expect(change).toHaveTextContent("an ending picture:");
+    expect(change).toHaveTextContent("end.png");
+    expect(screen.getByRole("button", { name: "Remove an ending picture" })).toBeVisible();
+    // The unfilled slot keeps its pill.
+    expect(screen.getByRole("button", { name: "Attach a starting picture" })).toBeVisible();
+    // The chip changes the file: it opens the slot's picker, a choice of the file dialog or the Library.
+    withLibrary([PICTURE_ITEM]);
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    change.focus();
+    fireEvent.keyDown(change, { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Choose from Library" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Choose an ending picture" })).toBeVisible();
+    fireEvent.keyDown(document.activeElement ?? change, { key: "Escape" });
+    // Remove brings the pill back, with focus on it.
+    fireEvent.click(screen.getByRole("button", { name: "Remove an ending picture" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Attach an ending picture" })).toHaveFocus());
+    expect(screen.queryByRole("button", { name: /^Change / })).toBeNull();
+  });
+
+  it("chips keep DOM and Tab order after reverse filling and removing and re-adding Starting", async () => {
+    const user = userEvent.setup();
+    await chooseKind([textRow, mediaRow()], "Video");
+    const ending = new File(["e"], "end.png", { type: "image/png" });
+    fireEvent.change(fileInput(/^Choose an ending picture$/), { target: { files: [ending] } });
+    await screen.findByText("end.png");
+    fireEvent.change(fileInput(/^Choose a starting picture$/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+
+    // Start outside the chips, rather than focusing the expected first chip and masking DOM order.
+    const beforeChips = document.createElement("button");
+    beforeChips.textContent = "Before media slots";
+    composer().before(beforeChips);
+    const expectSlotOrder = async () => {
+      const chips = Array.from(composer().querySelectorAll<HTMLElement>('[data-slot="home-picked-file"]'));
+      expect(chips.map((chip) => chip.textContent)).toEqual([
+        expect.stringContaining("a starting picture"), expect.stringContaining("an ending picture"),
+      ]);
+      const names = [
+        "Change a starting picture", "Remove a starting picture",
+        "Change an ending picture", "Remove an ending picture",
+      ];
+      beforeChips.focus();
+      expect(beforeChips).toHaveFocus();
+      for (const name of names) {
+        await user.tab();
+        const button = screen.getByRole("button", { name });
+        expect(button).toHaveFocus();
+        expect(button.tabIndex).toBe(0);
+      }
+    };
+    try {
+      await expectSlotOrder();
+      await user.click(screen.getByRole("button", { name: "Remove a starting picture" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Attach a starting picture" })).toHaveFocus());
+      expect(screen.getByRole("button", { name: "Change an ending picture" })).toHaveTextContent("end.png");
+      const replacement = new File(["s"], "start-again.png", { type: "image/png" });
+      fireEvent.change(fileInput(/^Choose a starting picture$/), { target: { files: [replacement] } });
+      await screen.findByText("start-again.png");
+      await expectSlotOrder();
+      expect(fileInput(/^Choose a starting picture$/).accept).toBe("image/png,image/jpeg");
+      expect(fileInput(/^Choose an ending picture$/).accept).toBe("image/*");
+      fireEvent.click(makeButton());
+      const handoff = takeHomeHandoff("video");
+      expect(handoff?.files?.map((file) => file.name)).toEqual(["start-again.png", "end.png"]);
+      expect(handoff?.file_inputs).toEqual(["image", "last_frame"]);
+    } finally {
+      beforeChips.remove();
+    }
+  });
+
+  it("an unfilled slot's pill draws its modality's icon, not a paperclip; a single slot keeps the paperclip", async () => {
+    await chooseKind([textRow, mediaRow([
+      { name: "reference_image", label: "a new character", modality: "image", accepts: ["image/png"] },
+      { name: "source_video", label: "a video to change", modality: "video", accepts: ["video/mp4"] },
+    ])], "Video");
+    const icon = (name: string) => screen.getByRole("button", { name }).querySelector("svg")?.getAttribute("class") ?? "";
+    const video = icon("Attach a video to change");
+    const image = icon("Attach a new character");
+    expect(video).not.toContain("paperclip");
+    expect(image).not.toContain("paperclip");
+    expect(video).not.toEqual(image);
+    expect(video).toContain("video");
+    cleanup();
+    await chooseKind([textRow, editRow], "Edit");
+    expect(screen.getByRole("button", { name: "Attach a picture" }).querySelector("svg")?.getAttribute("class")).toContain("paperclip");
+  });
+
+  it("scail's video slot opens a video-filtered Library", async () => {
+    await chooseKind([textRow, mediaRow([
+      { name: "reference_image", label: "a new character", modality: "image", accepts: ["image/png"] },
+      { name: "source_video", label: "a video to change", modality: "video", accepts: ["video/mp4"] },
+    ])], "Video");
+    const library = withLibrary([PICTURE_ITEM, RECORDING_ITEM]);
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    const video = screen.getByRole("button", { name: "Attach a video to change" });
+    video.focus();
+    fireEvent.keyDown(video, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    await waitFor(() => expect(library.listed.length).toBeGreaterThan(0));
+    expect(library.listed.every((url) => url.includes("kind=video"))).toBe(true);
+    expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
+  });
+
+  it("shows only three slots for the guard case and leaves additional inputs to Try", async () => {
+    const inputs = Array.from({ length: 4 }, (_, n) => ({ name: "frame_" + n, label: "picture " + n, modality: "image", accepts: ["image/*"] }));
+    await chooseKind([textRow, mediaRow(inputs)], "Video");
+    expect(composer().querySelectorAll('input[type="file"]')).toHaveLength(3);
+    expect(screen.queryByLabelText("Choose picture 3")).toBeNull();
+    const files = inputs.slice(0, 3).map((input) => new File(["p"], input.name + ".png", { type: "image/png" }));
+    for (let i = 0; i < files.length; i++) {
+      fireEvent.change(fileInput(new RegExp("^Choose picture " + i + "$")), { target: { files: [files[i]] } });
+      await screen.findByText(files[i].name);
+    }
+    fireEvent.click(makeButton());
+    expect(takeHomeHandoff("video")).toMatchObject({ files, file_inputs: ["frame_0", "frame_1", "frame_2"] });
+  });
+
+  it("a present single input and an older row keep the existing single-picture layout and copy", async () => {
+    for (const extra of [{ required_media_inputs: [{ name: "image", label: "a picture", modality: "image", accepts: ["image/*"] }] }, {}]) {
+      await chooseKind([textRow, { ...meshRow, ...extra }], "3D models");
+      expect(document.querySelectorAll('[data-slot="home-media-input"]')).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Choose a picture" })).toBeVisible();
+      expect(screen.getByText("Add a picture to start")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Attach a picture" })).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("a named slot's Library filter follows its modality even without a file filter", async () => {
+    await chooseKind([textRow, mediaRow([
+      { name: "reference_image", label: "a new character", modality: "image", accepts: ["image/png"] },
+      { name: "source_video", label: "a video to change", modality: "video", accepts: [] },
+    ])], "Video");
+    expect(fileInput(/^Choose a video to change$/).getAttribute("accept")).toBeNull();
+    const library = withLibrary([PICTURE_ITEM, RECORDING_ITEM]);
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    const video = screen.getByRole("button", { name: "Attach a video to change" });
+    video.focus();
+    fireEvent.keyDown(video, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    await waitFor(() => expect(library.listed.length).toBeGreaterThan(0));
+    expect(library.listed.every((url) => url.includes("kind=video"))).toBe(true);
+  });
+
+  it("keeps a multi-slot file control visibly labelled when the Library does not support its modality", async () => {
+    await chooseKind([textRow, mediaRow([
+      { name: "first", label: "a first sample", modality: "chemical", accepts: [] },
+      { name: "second", label: "a second sample", modality: "chemical", accepts: [] },
+    ])], "Video");
+    expect(screen.getByRole("button", { name: "Attach a first sample" })).toHaveTextContent("Attach a first sample");
+    expect(screen.getByRole("button", { name: "Attach a second sample" })).toHaveTextContent("Attach a second sample");
+  });
+
 });

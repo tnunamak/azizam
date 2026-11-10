@@ -1042,7 +1042,7 @@
       },
       "WorkflowExtensionInputs_video_edit_video_mux": {
         "additionalProperties": false,
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "properties": {
           "source_audio": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
@@ -1418,7 +1418,7 @@
       },
       "WorkflowForm_video_edit_video_mux": {
         "additionalProperties": false,
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "properties": {
           "source_audio": {
             "description": "The song or sound to put on the video.",
@@ -2128,8 +2128,7 @@
             "type": "integer"
           },
           "mask_feather": {
-            "default": 48,
-            "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.",
+            "description": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).",
             "maximum": 256,
             "minimum": 0,
             "type": "integer"
@@ -2976,7 +2975,7 @@
       },
       "WorkflowInputs_video_edit_video_mux": {
         "additionalProperties": false,
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "properties": {
           "source_audio": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
@@ -3001,6 +3000,12 @@
         "additionalProperties": false,
         "description": "Make a video with sound from a starting picture and a description.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
@@ -3013,6 +3018,14 @@
             "minimum": 0,
             "type": "number"
           },
+          "length": {
+            "description": "Frame count on the 8N+1 grid.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
             "type": "string"
@@ -3024,6 +3037,12 @@
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3046,6 +3065,12 @@
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3090,6 +3115,12 @@
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
+            "type": "integer"
           }
         },
         "required": [
@@ -3112,6 +3143,12 @@
             "type": "integer",
             "x-azizam-offset": 1,
             "x-azizam-step": 8
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3174,6 +3211,12 @@
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
             "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
+            "type": "integer"
           }
         },
         "required": [
@@ -3224,6 +3267,20 @@
         "additionalProperties": false,
         "description": "Make a video with sound from a description or picture.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 704,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "length": {
+            "description": "Frame count on the 8N+1 grid.",
+            "maximum": 241,
+            "minimum": 9,
+            "type": "integer",
+            "x-azizam-offset": 1,
+            "x-azizam-step": 8
+          },
           "negative_prompt": {
             "description": "Describe anything you want left out.",
             "type": "string"
@@ -3235,6 +3292,12 @@
           "seed": {
             "description": "Use the same number to repeat a variation with the same settings.",
             "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1280,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3249,10 +3312,24 @@
         "additionalProperties": false,
         "description": "Make a video with stereo sound from a starting picture and a description.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
+          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
             "type": "string",
             "x-azizam-asset": true
+          },
+          "length": {
+            "description": "Frame count on the 17N+5 grid.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
           },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
@@ -3268,6 +3345,12 @@
             "description": "More steps take longer.",
             "maximum": 50,
             "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3290,6 +3373,12 @@
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3316,6 +3405,12 @@
             "maximum": 50,
             "minimum": 1,
             "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
+            "type": "integer"
           }
         },
         "required": [
@@ -3338,6 +3433,12 @@
             "type": "integer",
             "x-azizam-offset": 5,
             "x-azizam-step": 17
+          },
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
           },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the video starts from.",
@@ -3374,6 +3475,12 @@
             "description": "More steps take longer.",
             "maximum": 50,
             "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -3421,6 +3528,20 @@
         "additionalProperties": false,
         "description": "Make a video with stereo sound from a description.",
         "properties": {
+          "height": {
+            "description": "Video height in pixels.",
+            "maximum": 768,
+            "minimum": 64,
+            "type": "integer"
+          },
+          "length": {
+            "description": "Frame count on the 17N+5 grid.",
+            "maximum": 362,
+            "minimum": 22,
+            "type": "integer",
+            "x-azizam-offset": 5,
+            "x-azizam-step": 17
+          },
           "prompt": {
             "description": "Describe the scene, action, and mood.",
             "type": "string"
@@ -3435,6 +3556,12 @@
             "description": "More steps take longer.",
             "maximum": 50,
             "minimum": 1,
+            "type": "integer"
+          },
+          "width": {
+            "description": "Video width in pixels.",
+            "maximum": 1344,
+            "minimum": 64,
             "type": "integer"
           }
         },
@@ -21516,7 +21643,7 @@
     },
     "/gateway/v1/workflows/video.edit.video-mux/run": {
       "post": {
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "operationId": "run_video_mux",
         "requestBody": {
           "content": {
@@ -26656,8 +26783,7 @@
         "summary": "Videos List"
       },
       "post": {
-        "description": "Sora-shaped video generation submit. Returns {id, status: queued}.",
-        "operationId": "videos_create_openai_v1_videos_post",
+        "operationId": "row_videos_create__openai_v1_videos_openai_v1_videos_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -27125,7 +27251,7 @@
             "AppKeyXApiKey": []
           }
         ],
-        "summary": "Videos Create",
+        "summary": "Row:Videos-Create:/Openai/V1/Videos",
         "x-azizam-async": {
           "content": "GET /v1/videos/{video_id}/content",
           "poll": "GET /v1/videos/{video_id}",
@@ -34220,8 +34346,7 @@
         "summary": "Videos List"
       },
       "post": {
-        "description": "Sora-shaped video generation submit. Returns {id, status: queued}.",
-        "operationId": "videos_create_v1_videos_post",
+        "operationId": "row_videos_create__v1_videos_v1_videos_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -34689,7 +34814,7 @@
             "AppKeyXApiKey": []
           }
         ],
-        "summary": "Videos Create",
+        "summary": "Row:Videos-Create:/V1/Videos",
         "x-azizam-async": {
           "content": "GET /v1/videos/{video_id}/content",
           "poll": "GET /v1/videos/{video_id}",
@@ -37159,7 +37284,10 @@
           "method": "POST",
           "model": "ace-step-1.5-xl-turbo",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.ace-step-1.5-xl-turbo",
@@ -37255,7 +37383,10 @@
           "method": "POST",
           "model": "sa3-small-sfx",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.sa3-small-sfx",
@@ -37373,7 +37504,10 @@
           "method": "POST",
           "model": "tangoflux",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.tangoflux",
@@ -37477,7 +37611,10 @@
           "method": "POST",
           "model": "yue2-song",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.yue2-song",
@@ -37524,7 +37661,10 @@
           },
           "method": "POST",
           "output": "JSON (see the route's response schema)",
-          "path": "/gateway/v1/faces/likeness"
+          "path": "/gateway/v1/faces/likeness",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.analyze.face-likeness",
@@ -37573,7 +37713,10 @@
           "method": "POST",
           "model": "fibo-2-edit-turbo",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.fibo-2-edit-turbo",
@@ -37660,7 +37803,10 @@
           "method": "POST",
           "model": "flux2-klein",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.flux2-klein",
@@ -37747,7 +37893,10 @@
           "method": "POST",
           "model": "flux2-klein-4b",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.flux2-klein-4b",
@@ -37843,7 +37992,10 @@
           "method": "POST",
           "model": "flux2-klein-4b-inpaint",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.flux2-klein-4b-inpaint",
@@ -37969,7 +38121,10 @@
           },
           "method": "POST",
           "output": "JSON (see the route's response schema)",
-          "path": "/gateway/v1/images/identity"
+          "path": "/gateway/v1/images/identity",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.image-identity",
@@ -38033,7 +38188,10 @@
           "method": "POST",
           "model": "qwen-image-2.1-edit",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.qwen-image-2.1-edit",
@@ -38116,7 +38274,10 @@
           "method": "POST",
           "model": "qwen-image-2.1-edit-multiref",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.qwen-image-2.1-edit-multiref",
@@ -38207,7 +38368,10 @@
           "method": "POST",
           "model": "qwen-image-2.1-inpaint",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.qwen-image-2.1-inpaint",
@@ -38274,7 +38438,10 @@
           "method": "POST",
           "model": "seedvr2-upscale",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.seedvr2-upscale",
@@ -38428,7 +38595,10 @@
           "method": "POST",
           "model": "anima-turbo",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.anima-turbo",
@@ -38581,7 +38751,10 @@
           "method": "POST",
           "model": "flux2-klein",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein",
@@ -38736,7 +38909,10 @@
           "method": "POST",
           "model": "flux2-klein-4b",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein-4b",
@@ -38937,7 +39113,10 @@
           "method": "POST",
           "model": "flux2-klein-4b-seamless-tile",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein-4b-seamless-tile",
@@ -39098,7 +39277,10 @@
           "method": "POST",
           "model": "flux2-klein-snofs",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein-snofs",
@@ -39245,7 +39427,10 @@
           "method": "POST",
           "model": "krea2-turbo",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.krea2-turbo",
@@ -39400,7 +39585,10 @@
           "method": "POST",
           "model": "krea2-turbo-snofs",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.krea2-turbo-snofs",
@@ -39537,7 +39725,10 @@
           "method": "POST",
           "model": "moss-image",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.moss-image",
@@ -39674,7 +39865,10 @@
           "method": "POST",
           "model": "moss-image-fast",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.moss-image-fast",
@@ -39819,7 +40013,10 @@
           "method": "POST",
           "model": "moss-image-quality",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.moss-image-quality",
@@ -40004,7 +40201,10 @@
           "method": "POST",
           "model": "sdxl-seamless-tile",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.sdxl-seamless-tile",
@@ -40123,7 +40323,11 @@
           },
           "method": "POST",
           "output": "model/gltf-binary (GLB bytes)",
-          "path": "/v1/3d/generations/glb"
+          "path": "/v1/3d/generations/glb",
+          "response": {
+            "kind": "binary",
+            "media_type": "model/gltf-binary"
+          }
         }
       },
       "id": "mesh.generate.trellis-2",
@@ -40210,7 +40414,12 @@
           },
           "method": "POST",
           "output": "a media job; its content is the video",
-          "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run"
+          "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
         }
       },
       "id": "video.edit.rife-interpolate",
@@ -40224,23 +40433,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "rife-interpolate",
       "typical_seconds": 4.0
     },
@@ -40403,7 +40596,12 @@
           },
           "method": "POST",
           "output": "a media job; its content is the video",
-          "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run"
+          "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
         }
       },
       "id": "video.edit.scail-2-replace",
@@ -40430,7 +40628,7 @@
     },
     {
       "aliases": [],
-      "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+      "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
       "display_name": "Add a Soundtrack to a Video",
       "execution": {
         "async": {
@@ -40489,7 +40687,12 @@
           },
           "method": "POST",
           "output": "a media job; its content is the video",
-          "path": "/gateway/v1/workflows/video.edit.video-mux/run"
+          "path": "/gateway/v1/workflows/video.edit.video-mux/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
         }
       },
       "id": "video.edit.video-mux",
@@ -40503,23 +40706,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "video-mux",
       "typical_seconds": 5.0
     },
@@ -40541,12 +40728,24 @@
             "frame_rate": {
               "in": "none"
             },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
             "image": {
               "field": "input_reference",
               "in": "body"
             },
             "image_strength": {
               "field": "image_strength",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
               "in": "body"
             },
             "negative_prompt": {
@@ -40559,6 +40758,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -40608,23 +40815,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "ltx-2.5-i2v",
       "typical_seconds": 56.0
     },
@@ -40649,6 +40840,14 @@
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -40680,6 +40879,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -40734,13 +40941,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "ltx-2.5-keyframes",
@@ -40767,6 +40967,14 @@
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -40810,6 +41018,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -40864,13 +41080,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "ltx-2.5-keyframes-mid",
@@ -40999,6 +41208,18 @@
             "frame_rate": {
               "in": "none"
             },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
+              "in": "body"
+            },
             "negative_prompt": {
               "field": "negative_prompt",
               "in": "body"
@@ -41009,6 +41230,14 @@
             },
             "seed": {
               "field": "seed",
+              "in": "body"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
               "in": "body"
             }
           },
@@ -41058,23 +41287,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "ltx-2.5-t2v",
       "typical_seconds": 49.0
     },
@@ -41093,8 +41306,23 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
             "image": {
               "field": "input_reference",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
               "in": "body"
             },
             "prompt": {
@@ -41108,6 +41336,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -41156,23 +41392,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "minimax-h3-i2v",
       "typical_seconds": 135.0
     },
@@ -41191,9 +41411,20 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -41214,6 +41445,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -41267,13 +41506,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "minimax-h3-keyframes",
@@ -41294,9 +41526,20 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
             "frames": {
               "field": "frames",
               "in": "extension"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             },
             "image": {
               "field": "input_reference",
@@ -41325,6 +41568,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -41378,13 +41629,6 @@
           "minimum": 1,
           "name": "seconds",
           "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
         }
       ],
       "short_id": "minimax-h3-keyframes-mid",
@@ -41503,6 +41747,21 @@
             "path": "/v1/videos/{video_id}/content"
           },
           "fields": {
+            "frame_rate": {
+              "in": "none"
+            },
+            "height": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
+            },
+            "length": {
+              "field": "seconds",
+              "in": "body"
+            },
             "prompt": {
               "field": "prompt",
               "in": "body"
@@ -41514,6 +41773,14 @@
             "steps": {
               "field": "steps",
               "in": "extension"
+            },
+            "width": {
+              "combine": [
+                "width",
+                "height"
+              ],
+              "field": "size",
+              "in": "body"
             }
           },
           "kind": "video",
@@ -41562,23 +41829,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "minimax-h3-t2v",
       "typical_seconds": 122.0
     }

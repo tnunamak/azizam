@@ -1,0 +1,17 @@
+schema_version: 1
+sites:
+  - file: gateway/media_metadata.py
+    literal: video
+    count: 14
+    category: media_type
+    reason: Names the IANA media type family of a file in suffix and MIME tables and media_kind comparisons.
+  - file: gateway/media_metadata.py
+    literal: audio
+    count: 27
+    category: media_type
+    reason: Names the IANA media type family of a file in suffix and MIME tables and media_kind comparisons.
+  - file: gateway/video_subject.py
+    literal: image
+    count: 11
+    category: engine_node_input
+    reason: Names the ComfyUI node input receiving image data when graph nodes are added or rewired.

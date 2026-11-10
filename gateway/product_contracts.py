@@ -7,7 +7,8 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "unknown", "unavailable"]
-CapabilityIconKey = Literal["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank", "mesh"]
+# An icon key names a capability id from registry/capability_words.yml; the set grows with the rows.
+CapabilityIconKey = str
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
 # The `/v1/models` metadata vocabulary (gateway/model_metadata.py, docs/api/MODEL_METADATA.md).
 ModelType = Literal["language", "embedding", "reranking", "image", "video", "audio", "decision"]
@@ -100,6 +101,13 @@ class CostHint(TypedDict):
     price_usd: float | None
 
 
+class RequiredMediaInput(TypedDict):
+    name: str
+    label: str
+    modality: str
+    accepts: list[str]
+
+
 class HomeCapability(CapabilitySummary):
     capability: str
     status: AvailabilityStatus
@@ -110,6 +118,8 @@ class HomeCapability(CapabilitySummary):
     # The input modalities a request must carry, a subset of input_modalities (the rest are optional). From the
     # workflow manifest's required inputs when there is one; else text if it takes text, else all it takes.
     required_input_modalities: list[str]
+    # One entry per required settable asset, in manifest order. Omitted without a manifest.
+    required_media_inputs: NotRequired[list[RequiredMediaInput]]
     # The word on the button that starts a run: the workflow's own, else read from what it takes and makes.
     action_label: str
     # The hint in the empty box where a person types what they want; null lets the product show its plain default.

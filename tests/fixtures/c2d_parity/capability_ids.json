@@ -1,0 +1,561 @@
+{
+  "capabilities_without_inner_endpoint": {
+    "": [],
+    "  chat  ": [],
+    "CHAT": [],
+    "Chat": [],
+    "audio": [
+      "audio"
+    ],
+    "audio.generate": [
+      "audio.generate"
+    ],
+    "audio.speech": [
+      "audio.speech"
+    ],
+    "audio.transcribe": [
+      "audio.transcribe"
+    ],
+    "audio.transcriptions": [
+      "audio.transcriptions"
+    ],
+    "audio.translations": [
+      "audio.translations"
+    ],
+    "chat": [],
+    "chat.completions": [],
+    "chat.generate": [],
+    "chat.messages": [],
+    "chat.messages.count_tokens": [],
+    "chat.responses": [],
+    "completions": [],
+    "decision.systemone": [
+      "decision.systemone"
+    ],
+    "decisions": [
+      "decisions"
+    ],
+    "embedding": [],
+    "embeddings": [],
+    "frobnicate.widget-9": [],
+    "generations": [
+      "generations"
+    ],
+    "image": [
+      "image"
+    ],
+    "image.analyze": [
+      "image.analyze"
+    ],
+    "image.edit": [
+      "image.edit"
+    ],
+    "image.generate": [
+      "image.generate"
+    ],
+    "image.variation": [
+      "image.variation"
+    ],
+    "images": [
+      "images"
+    ],
+    "images.edit": [
+      "images.edit"
+    ],
+    "images.edits": [
+      "images.edits"
+    ],
+    "images.generate": [
+      "images.generate"
+    ],
+    "images.generations": [
+      "images.generations"
+    ],
+    "llm.execution": [],
+    "mesh": [
+      "mesh"
+    ],
+    "mesh.generate": [
+      "mesh.generate"
+    ],
+    "music": [
+      "music"
+    ],
+    "music.generate": [
+      "music.generate"
+    ],
+    "openai": [],
+    "rerank": [
+      "rerank"
+    ],
+    "sfx": [
+      "sfx"
+    ],
+    "sfx.generate": [
+      "sfx.generate"
+    ],
+    "speech": [
+      "speech"
+    ],
+    "speech.synthesis": [
+      "speech.synthesis"
+    ],
+    "speech.transcription": [
+      "speech.transcription"
+    ],
+    "speech.translation": [
+      "speech.translation"
+    ],
+    "stt": [
+      "stt"
+    ],
+    "text.completions": [],
+    "text.embeddings": [],
+    "text.rerank": [
+      "text.rerank"
+    ],
+    "transcription": [
+      "transcription"
+    ],
+    "transcriptions": [
+      "transcriptions"
+    ],
+    "tts": [
+      "tts"
+    ],
+    "typesafe-systemone": [
+      "typesafe-systemone"
+    ],
+    "video": [
+      "video"
+    ],
+    "video.edit": [
+      "video.edit"
+    ],
+    "video.extend": [
+      "video.extend"
+    ],
+    "video.generate": [
+      "video.generate"
+    ],
+    "video.remix": [
+      "video.remix"
+    ],
+    "videos": [
+      "videos"
+    ],
+    "videos.generate": [
+      "videos.generate"
+    ],
+    "vision": []
+  },
+  "capability_of_word": {
+    "": "",
+    "  chat  ": "chat",
+    "CHAT": "CHAT",
+    "Chat": "Chat",
+    "audio": "audio",
+    "audio.generate": "audio",
+    "audio.speech": "speech",
+    "audio.transcribe": "transcribe",
+    "audio.transcriptions": "transcribe",
+    "audio.translations": "transcribe",
+    "chat": "chat",
+    "chat.completions": "chat",
+    "chat.generate": "chat",
+    "chat.messages": "chat",
+    "chat.messages.count_tokens": "chat",
+    "chat.responses": "chat",
+    "completions": "chat",
+    "decision.systemone": "decide",
+    "decisions": "decide",
+    "embedding": "embed",
+    "embeddings": "embed",
+    "frobnicate.widget-9": "frobnicate.widget-9",
+    "generations": "image",
+    "image": "image",
+    "image.analyze": "image",
+    "image.edit": "image",
+    "image.generate": "image",
+    "image.variation": "image",
+    "images": "image",
+    "images.edit": "image",
+    "images.edits": "image",
+    "images.generate": "image",
+    "images.generations": "image",
+    "llm.execution": "chat",
+    "mesh": "mesh",
+    "mesh.generate": "mesh",
+    "music": "music",
+    "music.generate": "music",
+    "openai": "openai",
+    "rerank": "rerank",
+    "sfx": "sfx",
+    "sfx.generate": "sfx",
+    "speech": "speech",
+    "speech.synthesis": "speech",
+    "speech.transcription": "transcribe",
+    "speech.translation": "transcribe",
+    "stt": "transcribe",
+    "text.completions": "chat",
+    "text.embeddings": "embed",
+    "text.rerank": "rerank",
+    "transcription": "transcribe",
+    "transcriptions": "transcribe",
+    "tts": "speech",
+    "typesafe-systemone": "decide",
+    "video": "video",
+    "video.edit": "video",
+    "video.extend": "video",
+    "video.generate": "video",
+    "video.remix": "video",
+    "videos": "video",
+    "videos.generate": "video",
+    "vision": "chat"
+  },
+  "inner_hop_admission": {
+    "/chat/completions": [
+      "chat.generate",
+      "chat"
+    ],
+    "/completions": [
+      "chat.generate",
+      "chat"
+    ],
+    "/embeddings": [
+      "text.embeddings",
+      "embeddings"
+    ],
+    "/images": [
+      "chat.generate",
+      "chat"
+    ],
+    "/rerank": [
+      "chat.generate",
+      "chat"
+    ],
+    "/unknown": [
+      "chat.generate",
+      "chat"
+    ]
+  },
+  "inner_hop_endpoint_served": {
+    "/chat/completions": true,
+    "/completions": true,
+    "/embeddings": true,
+    "/images": false,
+    "/rerank": false,
+    "/unknown": false
+  },
+  "inner_hop_endpoints_for": {
+    "": [],
+    "  chat  ": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "CHAT": [],
+    "Chat": [],
+    "audio": [],
+    "audio.generate": [],
+    "audio.speech": [],
+    "audio.transcribe": [],
+    "audio.transcriptions": [],
+    "audio.translations": [],
+    "chat": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "chat.completions": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "chat.generate": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "chat.messages": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "chat.messages.count_tokens": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "chat.responses": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "completions": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "decision.systemone": [],
+    "decisions": [],
+    "embedding": [
+      "/embeddings"
+    ],
+    "embeddings": [
+      "/embeddings"
+    ],
+    "frobnicate.widget-9": [],
+    "generations": [],
+    "image": [],
+    "image.analyze": [],
+    "image.edit": [],
+    "image.generate": [],
+    "image.variation": [],
+    "images": [],
+    "images.edit": [],
+    "images.edits": [],
+    "images.generate": [],
+    "images.generations": [],
+    "llm.execution": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "mesh": [],
+    "mesh.generate": [],
+    "music": [],
+    "music.generate": [],
+    "openai": [],
+    "rerank": [],
+    "sfx": [],
+    "sfx.generate": [],
+    "speech": [],
+    "speech.synthesis": [],
+    "speech.transcription": [],
+    "speech.translation": [],
+    "stt": [],
+    "text.completions": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "text.embeddings": [
+      "/embeddings"
+    ],
+    "text.rerank": [],
+    "transcription": [],
+    "transcriptions": [],
+    "tts": [],
+    "typesafe-systemone": [],
+    "video": [],
+    "video.edit": [],
+    "video.extend": [],
+    "video.generate": [],
+    "video.remix": [],
+    "videos": [],
+    "videos.generate": [],
+    "vision": [
+      "/chat/completions",
+      "/completions"
+    ]
+  },
+  "inner_hop_endpoints_for_combined": {
+    "chat+embeddings": [
+      "/chat/completions",
+      "/completions",
+      "/embeddings"
+    ],
+    "none": [],
+    "rerank+image": []
+  },
+  "inner_hop_endpoints_table": {
+    "chat": [
+      "/chat/completions",
+      "/completions"
+    ],
+    "embed": [
+      "/embeddings"
+    ]
+  },
+  "labels": {
+    "CAPABILITY_LABELS": {
+      "audio": "Audio",
+      "chat": "Chat",
+      "decide": "Decisions",
+      "embed": "Document search",
+      "image": "Images",
+      "mesh": "3D models",
+      "music": "Music",
+      "rerank": "Reranking",
+      "sfx": "Sound effects",
+      "speech": "Voice",
+      "transcribe": "Transcription",
+      "video": "Video"
+    },
+    "MODEL_KINDS": [
+      "chat",
+      "embed",
+      "speech",
+      "transcribe"
+    ],
+    "MODEL_KIND_LABELS": {
+      "chat": "Chat",
+      "embed": "Document search",
+      "speech": "Voice",
+      "transcribe": "Transcription"
+    }
+  },
+  "offered_model_kinds": {
+    "": [],
+    "  chat  ": [],
+    "CHAT": [],
+    "Chat": [],
+    "audio": [],
+    "audio.generate": [],
+    "audio.speech": [
+      "speech"
+    ],
+    "audio.transcribe": [],
+    "audio.transcriptions": [
+      "transcribe"
+    ],
+    "audio.translations": [],
+    "chat": [
+      "chat"
+    ],
+    "chat.completions": [
+      "chat"
+    ],
+    "chat.generate": [],
+    "chat.messages": [],
+    "chat.messages.count_tokens": [],
+    "chat.responses": [],
+    "completions": [
+      "chat"
+    ],
+    "decision.systemone": [],
+    "decisions": [],
+    "embedding": [],
+    "embeddings": [
+      "embed"
+    ],
+    "frobnicate.widget-9": [],
+    "generations": [],
+    "image": [],
+    "image.analyze": [],
+    "image.edit": [],
+    "image.generate": [],
+    "image.variation": [],
+    "images": [],
+    "images.edit": [],
+    "images.edits": [],
+    "images.generate": [],
+    "images.generations": [],
+    "llm.execution": [
+      "chat"
+    ],
+    "mesh": [],
+    "mesh.generate": [],
+    "music": [],
+    "music.generate": [],
+    "openai": [],
+    "rerank": [],
+    "sfx": [],
+    "sfx.generate": [],
+    "speech": [
+      "speech"
+    ],
+    "speech.synthesis": [
+      "speech"
+    ],
+    "speech.transcription": [
+      "transcribe"
+    ],
+    "speech.translation": [
+      "transcribe"
+    ],
+    "stt": [
+      "transcribe"
+    ],
+    "text.completions": [],
+    "text.embeddings": [
+      "embed"
+    ],
+    "text.rerank": [],
+    "transcription": [
+      "transcribe"
+    ],
+    "transcriptions": [
+      "transcribe"
+    ],
+    "tts": [
+      "speech"
+    ],
+    "typesafe-systemone": [],
+    "video": [],
+    "video.edit": [],
+    "video.extend": [],
+    "video.generate": [],
+    "video.remix": [],
+    "videos": [],
+    "videos.generate": [],
+    "vision": [
+      "chat"
+    ]
+  },
+  "words": [
+    "",
+    "  chat  ",
+    "CHAT",
+    "Chat",
+    "audio",
+    "audio.generate",
+    "audio.speech",
+    "audio.transcribe",
+    "audio.transcriptions",
+    "audio.translations",
+    "chat",
+    "chat.completions",
+    "chat.generate",
+    "chat.messages",
+    "chat.messages.count_tokens",
+    "chat.responses",
+    "completions",
+    "decision.systemone",
+    "decisions",
+    "embedding",
+    "embeddings",
+    "frobnicate.widget-9",
+    "generations",
+    "image",
+    "image.analyze",
+    "image.edit",
+    "image.generate",
+    "image.variation",
+    "images",
+    "images.edit",
+    "images.edits",
+    "images.generate",
+    "images.generations",
+    "llm.execution",
+    "mesh",
+    "mesh.generate",
+    "music",
+    "music.generate",
+    "openai",
+    "rerank",
+    "sfx",
+    "sfx.generate",
+    "speech",
+    "speech.synthesis",
+    "speech.transcription",
+    "speech.translation",
+    "stt",
+    "text.completions",
+    "text.embeddings",
+    "text.rerank",
+    "transcription",
+    "transcriptions",
+    "tts",
+    "typesafe-systemone",
+    "video",
+    "video.edit",
+    "video.extend",
+    "video.generate",
+    "video.remix",
+    "videos",
+    "videos.generate",
+    "vision"
+  ]
+}

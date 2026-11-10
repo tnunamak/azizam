@@ -1,9 +1,4 @@
 {
-    "_meta": {
-        "name": "rife-interpolate",
-        "description": "2x frame-rate video interpolation via ComfyUI-Frame-Interpolation's native RIFE VFI node (rife49.pth). Doubles frame count and output fps together, so real-time duration is unchanged. Audio passes through unchanged. Published in workflow and capability discovery, but the gateway has no execution route for video-edit uploads yet; this manifest is currently discoverability only.",
-        "seed_node": null
-    },
     "1": {
         "class_type": "LoadVideo",
         "inputs": {

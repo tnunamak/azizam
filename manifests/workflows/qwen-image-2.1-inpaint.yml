@@ -54,8 +54,7 @@ inputs:
     type: integer
     minimum: 0
     maximum: 256
-    default: 48
-    description: Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge.
+    description: Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).
   lanpaint_steps:
     type: integer
     minimum: 0

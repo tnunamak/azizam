@@ -13,17 +13,23 @@ export interface HomeHandoff {
   prompt: string;
   /** The files the person chose on Home, in the order the composer asked for them. Held in memory only. */
   files?: File[];
+  /** Input names parallel to files, in composer slot order. */
+  file_inputs?: string[];
 }
 
 /*
  * A file cannot go through sessionStorage, and Home to Try is one in-page navigation, so the files wait in memory
  * beside the stored words. A reload drops them (and the words with the five-minute limit); Try then opens empty.
  */
-let waitingFiles: { capability: string; files: File[]; at: number } | null = null;
+let waitingFiles: { capability: string; files: File[]; file_inputs?: string[]; at: number } | null = null;
 
 export function storeHomeHandoff(handoff: HomeHandoff): void {
-  const { files, ...words } = handoff;
-  waitingFiles = files?.length ? { capability: handoff.capability, files, at: Date.now() } : null;
+  const { files, file_inputs, ...words } = handoff;
+  waitingFiles = files?.length ? {
+    capability: handoff.capability, files,
+    ...(file_inputs?.length === files.length ? { file_inputs } : {}),
+    at: Date.now(),
+  } : null;
   try {
     sessionStorage.setItem(KEY, JSON.stringify({ ...words, at: Date.now() }));
   } catch {
@@ -51,7 +57,7 @@ export function takeHomeHandoff(capability: string | null): HomeHandoff | null {
       capability: value.capability,
       model: value.model ?? null,
       prompt: String(value.prompt ?? ""),
-      ...(files.length ? { files } : {}),
+      ...(files.length ? { files, ...(held?.file_inputs ? { file_inputs: held.file_inputs } : {}) } : {}),
     };
   } catch {
     return null;

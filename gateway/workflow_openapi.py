@@ -412,6 +412,13 @@ def _native_route_image_inputs(
     return ordered
 
 
+def _carried_by_run_route(record: WorkflowRecord) -> bool:
+    """True when the route a run uses is the generic run route, which takes only its own field mapping."""
+    execution = _execution(record, _typical_seconds(record))
+    route = execution[execution["recommended"]]
+    return bool(route) and route.get("path") == f"/gateway/v1/workflows/{record.id}/run"
+
+
 def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     """Request fields the route owns that the manifest does not list.
 
@@ -422,7 +429,7 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     inputs = settable_inputs(record.contract)
     has_size = "width" in inputs and "height" in inputs
     out: list[dict[str, Any]] = []
-    if gateway_route(record):
+    if gateway_route(record) or _carried_by_run_route(record):
         return out
     if record.intent in ("image.generate", "image.edit"):
         out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
@@ -471,29 +478,34 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
     if native:
         sync = {"method": "POST", "path": native, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
-                "output": "JSON (see the route's response schema)"}
+                "output": "JSON (see the route's response schema)",
+                "response": {"kind": "json"}}
         if intent == "image.edit":
             sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
                                  "note": "options go in extensions['com.azizam.workflow']"}
     elif intent == "image.generate":
         sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
-                "output": "data[].b64_json or data[].url"}
+                "output": "data[].b64_json or data[].url",
+                "response": {"kind": "json"}}
         async_ = job_route("image.generate")
     elif intent == "image.edit":
         sync = {"method": "POST", "path": "/v1/images/edits", "content_type": _MULTIPART,
                 "model": model, "fields": request_mapping(record, "sync"),
                 "extensions_field": "extensions (JSON string)",
-                "output": "data[].b64_json or data[].url"}
+                "output": "data[].b64_json or data[].url",
+                "response": {"kind": "json"}}
     elif intent == "audio.generate":
         sync = {"method": "POST", "path": "/v1/audio/generate", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
-                "output": "audio bytes (see Content-Type)"}
+                "output": "audio bytes (see Content-Type)",
+                "response": {"kind": "binary"}}
         async_ = job_route("audio.generate")
     elif intent == "mesh.generate":
         sync = {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
                 "fields": request_mapping(record, "sync"),
-                "output": "model/gltf-binary (GLB bytes)"}
+                "output": "model/gltf-binary (GLB bytes)",
+                "response": {"kind": "binary", "media_type": "model/gltf-binary"}}
         # The same route answers 202 with a media job when the request says ``Prefer: respond-async`` (RFC 7240). The
         # run takes minutes under load, and a held connection that drops loses the answer; the job does not.
         async_ = {
@@ -524,7 +536,8 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
         if intent == "video.edit":
             sync = {"method": "POST", "path": f"/gateway/v1/workflows/{record.id}/run",
                     "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
-                    "output": "a media job; its content is the video"}
+                    "output": "a media job; its content is the video",
+                    "response": {"kind": "media_job", "poll": JOB_POLL, "content": JOB_CONTENT}}
     if typical_seconds is not None and typical_seconds <= SLOW_SECONDS and sync:
         recommended = "sync"
     elif async_:

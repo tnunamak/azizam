@@ -728,6 +728,9 @@ class Tools:
             if resp.status_code >= 400:
                 raise error_from(resp)
             assets, result = await _assets_from_response(self.deps, self.request, self.auth, resp, stem)
+            job_id = result.get("job_id") if isinstance(result, Mapping) and not assets else None
+            if isinstance(job_id, str) and job_id:  # the route answered with a job, not the output: wait as an async run does
+                return await self._await(job_id, wait, entry)
             return self._done(entry, assets, result)
         route = execution["async"]
         wrap = route["submit"]["body"]["intent"] if route["kind"] == "media_job" else None

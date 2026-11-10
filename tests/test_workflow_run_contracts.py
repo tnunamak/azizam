@@ -11,6 +11,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import sqlite3
 from types import SimpleNamespace
 
 import httpx
@@ -20,7 +21,7 @@ import proxy
 from gateway import workflow_run, discovery, media_jobs, receipt_store, request_spool, service_registry
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol.node_graph import compile_workflow
-from gateway.job_envelope import canonical_bytes
+from gateway.job_envelope import build_job_envelope, canonical_bytes
 from tests.media_test_bytes import mp4_bytes, png_bytes
 from tests.support.fake_upstream import FakeUpstreams, HandlerTransport
 from tests.registry_test_helpers import write_service_registry_for_test
@@ -522,3 +523,295 @@ def test_an_uploaded_source_image_reaches_the_engine_through_the_real_adapter(wo
     assert engine.calls.index("POST /upload/image") < engine.calls.index("POST /prompt")
     node = manifest["bindings"]["comfyui"]["map"]["source_image"][0]
     assert engine.prompts[0]["prompt"][node["node"]]["inputs"][node["input"]] == "staged-input.png"
+
+
+# ----------------------------------------------------------------------------------------- rollback readiness
+
+
+@pytest.fixture
+def rollback_db(tmp_path):
+    path = tmp_path / "rollback.db"
+    media_jobs.init_db(path)
+    return path
+
+
+def _rollback_dump(path):
+    with sqlite3.connect(path) as conn:
+        return "\n".join(conn.iterdump())
+
+
+
+@pytest.fixture(params=["empty", "media_jobs", "job_envelope"])
+def legacy_rollback_db(tmp_path, request):
+    """Historical schemas built without any application initializer."""
+    path = tmp_path / "legacy-rollback.db"
+    with sqlite3.connect(path) as conn:
+        if request.param != "empty":
+            conn.execute("CREATE TABLE media_jobs (job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)")
+            for job_id, status, workflow in [
+                ("z-queued", "queued", "saved.workflow"),
+                ("a-queued", "queued", "saved.workflow"),
+                ("finished", "succeeded", "saved.workflow"),
+                ("other-media", "queued", None),
+            ]:
+                conn.execute("INSERT INTO media_jobs VALUES (?, ?, ?, ?)",
+                             (job_id, workflow, status, json.dumps({"intent": "legacy.media"})))
+        if request.param == "job_envelope":
+            conn.execute("CREATE TABLE job_envelope (job_id TEXT PRIMARY KEY, envelope_json TEXT)")
+            conn.execute("INSERT INTO job_envelope VALUES (?, ?)",
+                         ("a-queued", json.dumps({"envelope_version": 1})))
+    return path, request.param
+
+
+def test_rollback_inventory_reads_uninitialized_and_legacy_schemas(legacy_rollback_db, monkeypatch):
+    path, schema = legacy_rollback_db
+    monkeypatch.setattr(media_jobs, "DB_PATH", path)
+    before = _rollback_dump(path)
+    expected = [] if schema == "empty" else [
+        {"job_id": job_id, "workflow": "saved.workflow", "status": "queued",
+         "envelope_version": 1 if pinned else None,
+         "reason": "v1_compatible" if pinned else "pin_not_recorded"}
+        for job_id, pinned in [("a-queued", schema == "job_envelope"), ("z-queued", False)]
+    ]
+
+    assert workflow_run.rollback_job_inventory() == expected
+    assert _rollback_dump(path) == before
+
+
+def test_rollback_ready_reads_uninitialized_and_legacy_schemas(legacy_rollback_db):
+    path, _ = legacy_rollback_db
+    before = _rollback_dump(path)
+
+    assert workflow_run.assert_rollback_ready(path) is None
+    assert _rollback_dump(path) == before
+
+
+@pytest.mark.parametrize("envelope_json", [json.dumps({"envelope_version": 2, "source": {"kind": "workflow", "id": "w"}}), "not json"])
+def test_rollback_refuses_unreadable_queued_jobs_without_a_tombstone_table(tmp_path, envelope_json):
+    path = tmp_path / "queued-legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE media_jobs (job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)")
+        conn.execute("CREATE TABLE job_envelope (job_id TEXT PRIMARY KEY, envelope_json TEXT)")
+        conn.execute("INSERT INTO media_jobs VALUES ('queued-v2', 'saved.workflow', 'queued', '{}')")
+        conn.execute("INSERT INTO job_envelope VALUES ('queued-v2', ?)", (envelope_json,))
+    before = _rollback_dump(path)
+
+    with pytest.raises(workflow_run.RollbackRefused) as refusal:
+        workflow_run.assert_rollback_ready(path)
+    assert refusal.value.code == "queued_jobs_unreadable_by_older_build"
+    assert refusal.value.job_ids == ["queued-v2"]
+    assert _rollback_dump(path) == before
+
+
+@pytest.mark.parametrize("with_envelope", [False, True])
+def test_rollback_running_jobs_still_refuse_without_a_tombstone_table(tmp_path, with_envelope):
+    path = tmp_path / "running-legacy.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE media_jobs (job_id TEXT PRIMARY KEY, workflow TEXT, status TEXT, job_json TEXT)")
+        conn.executemany("INSERT INTO media_jobs VALUES (?, NULL, ?, '{}')",
+                         [("z-running", "running"), ("a-running", "running"), ("queued", "queued")])
+        if with_envelope:
+            conn.execute("CREATE TABLE job_envelope (job_id TEXT PRIMARY KEY, envelope_json TEXT)")
+    before = _rollback_dump(path)
+
+    with pytest.raises(workflow_run.RollbackRefused) as refusal:
+        workflow_run.assert_rollback_ready(path)
+    assert refusal.value.code == "running_jobs"
+    assert refusal.value.job_ids == ["a-running", "z-running"]
+    assert _rollback_dump(path) == before
+
+
+def _rollback_job(path, job_id, *, status="queued", version=None, identity="intent"):
+    workflow = "saved.workflow" if identity == "saved" else None
+    metadata = {"mode": workflow_run.RUN_INTENT} if identity == "metadata" else {}
+    job = media_jobs.MediaJob(
+        intent=workflow_run.RUN_INTENT if identity == "intent" else "legacy.media",
+        job_id=job_id, workflow=workflow, status=status, metadata=metadata,
+    )
+    pin = None
+    if version is not None:
+        pin = build_job_envelope(
+            source_kind="workflow", source_id="pinned.workflow",
+            contract={"a": 1}, binding={"b": 1}, template=None,
+            protocol_id="p", adapter_id="a", interface_version=1,
+            service_id="s", origin="http://engine.test",
+        )
+    created = media_jobs.create(job, path=path, envelope=pin, require_envelope=pin is not None)
+    if version == 1:
+        # Match the real v1 compatibility fixture in test_workflow_run.py.
+        old = pin.envelope.to_json()
+        old["envelope_version"] = 1
+        old["source"] = {key: old["source"][key] for key in ("kind", "id", "revision")}
+        with sqlite3.connect(path) as conn:
+            conn.execute("UPDATE job_envelope SET envelope_json=? WHERE job_id=?",
+                         (json.dumps(old), created.job_id))
+    return created
+
+
+def test_rollback_inventory_reports_all_versions_and_states_without_changing_rows(rollback_db):
+    expected = []
+    for status in ("queued", "running"):
+        for version in (None, 1, 2):
+            for identity in ("intent", "metadata", "saved", "envelope"):
+                if identity == "envelope" and version is None:
+                    continue
+                job_id = f"{status}-{version}-{identity}"
+                _rollback_job(rollback_db, job_id, status=status, version=version, identity=identity)
+                expected.append({
+                    "job_id": job_id,
+                    "workflow": "saved.workflow" if identity == "saved" else
+                                "pinned.workflow" if version is not None else None,
+                    "status": status, "envelope_version": version,
+                    "reason": "pin_not_recorded" if version is None else
+                              "v1_compatible" if version == 1 else "definition_unavailable",
+                })
+    for status in ("succeeded", "failed", "canceled"):
+        for version in (None, 1, 2):
+            _rollback_job(rollback_db, f"finished-{status}-{version}", status=status, version=version)
+    _rollback_job(rollback_db, "non-workflow", identity="none")
+    before = _rollback_dump(rollback_db)
+
+    rows = workflow_run.rollback_job_inventory(rollback_db)
+
+    assert rows == sorted(expected, key=lambda row: row["job_id"])
+    assert all(set(row) == {"job_id", "workflow", "status", "envelope_version", "reason"} for row in rows)
+    assert _rollback_dump(rollback_db) == before
+
+
+def test_rollback_inventory_is_not_limited_to_a_history_page(rollback_db, monkeypatch):
+    for index in reversed(range(53)):
+        _rollback_job(rollback_db, f"job-{index:03}", version=2)
+    monkeypatch.setattr(media_jobs, "DB_PATH", rollback_db)
+    before = _rollback_dump(rollback_db)
+
+    rows = workflow_run.rollback_job_inventory()
+
+    assert len(rows) == 53
+    assert [row["job_id"] for row in rows] == [f"job-{index:03}" for index in range(53)]
+    assert {row["reason"] for row in rows} == {"definition_unavailable"}
+    assert _rollback_dump(rollback_db) == before
+
+
+def test_rollback_inventory_and_readiness_on_an_empty_database(rollback_db, monkeypatch):
+    monkeypatch.setattr(media_jobs, "DB_PATH", rollback_db)
+    before = _rollback_dump(rollback_db)
+
+    assert workflow_run.rollback_job_inventory() == []
+    assert workflow_run.assert_rollback_ready() is None
+    assert _rollback_dump(rollback_db) == before
+
+
+def test_rollback_refuses_retained_deleted_jobs_until_the_normal_reap(rollback_db):
+    deleted_at = 1_800_000_000
+    _rollback_job(rollback_db, "z-deleted", status="failed", version=2)
+    _rollback_job(rollback_db, "a-deleted", status="succeeded", version=1)
+    _rollback_job(rollback_db, "visible-finished", status="canceled")
+    for job_id in ("z-deleted", "a-deleted"):
+        media_jobs.tombstone_job(job_id, now=deleted_at, path=rollback_db)
+    # An orphan tombstone cannot resurrect a row and must not block rollback.
+    media_jobs.tombstone_job("gone-already", now=deleted_at, path=rollback_db)
+    assert [row["job_id"] for row in media_jobs.recent(path=rollback_db)] == ["visible-finished"]
+    before = _rollback_dump(rollback_db)
+
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "retained_deleted_jobs"
+    assert caught.value.job_ids == ["a-deleted", "z-deleted"]
+    assert _rollback_dump(rollback_db) == before
+
+    retention = workflow_run.TOMBSTONE_RETENTION_S
+    assert retention == 24 * 3600
+    # This is the same cutoff the normal job-service deletion path supplies.
+    now = deleted_at + retention - 1
+    assert media_jobs.reap_tombstones(before=now - retention, path=rollback_db) == 0
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "retained_deleted_jobs"
+    assert caught.value.job_ids == ["a-deleted", "z-deleted"]
+
+    now += 1
+    media_jobs.reap_tombstones(before=now - retention, path=rollback_db)
+    assert workflow_run.assert_rollback_ready(rollback_db) is None
+    assert media_jobs.get("a-deleted", path=rollback_db) is None
+    assert media_jobs.get("z-deleted", path=rollback_db) is None
+    assert [row["job_id"] for row in media_jobs.recent(path=rollback_db)] == ["visible-finished"]
+
+
+def test_rollback_running_media_jobs_take_priority_then_clear_when_finished(rollback_db):
+    _rollback_job(rollback_db, "z-workflow", status="running", version=2)
+    _rollback_job(rollback_db, "a-other-media", status="running", identity="none")
+    _rollback_job(rollback_db, "queued-workflow", version=2)
+    _rollback_job(rollback_db, "retained-delete", status="failed")
+    media_jobs.tombstone_job("retained-delete", now=1, path=rollback_db)
+    before = _rollback_dump(rollback_db)
+
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "running_jobs"
+    assert caught.value.job_ids == ["a-other-media", "z-workflow"]
+    assert _rollback_dump(rollback_db) == before
+
+    media_jobs.update_status("a-other-media", "succeeded", path=rollback_db)
+    media_jobs.update_status("z-workflow", "failed", path=rollback_db)
+    before = _rollback_dump(rollback_db)
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "retained_deleted_jobs"
+    assert caught.value.job_ids == ["retained-delete"]
+    assert _rollback_dump(rollback_db) == before
+
+    media_jobs.reap_tombstones(before=1, path=rollback_db)
+    before = _rollback_dump(rollback_db)
+    # The older build cannot read the queued v2 job and would fail it, so the rollback waits for it.
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "queued_jobs_unreadable_by_older_build"
+    assert caught.value.job_ids == ["queued-workflow"]
+    assert _rollback_dump(rollback_db) == before
+
+    media_jobs.update_status("queued-workflow", "canceled", path=rollback_db)
+    before = _rollback_dump(rollback_db)
+    assert workflow_run.assert_rollback_ready(rollback_db) is None
+    assert _rollback_dump(rollback_db) == before
+
+
+def test_rollback_check_never_creates_a_missing_store(tmp_path):
+    store = tmp_path / "absent" / "media_jobs.db"
+    store.parent.mkdir()
+    assert workflow_run.rollback_job_inventory(store) == []
+    assert workflow_run.assert_rollback_ready(store) is None
+    assert not store.exists()
+
+
+def test_rollback_allows_queued_jobs_with_no_recorded_pin(rollback_db):
+    # On an older store an unpinned queued job is a runnable v1 job, not one the older build cannot read.
+    _rollback_job(rollback_db, "queued-v1", version=1)
+    _rollback_job(rollback_db, "queued-unpinned", version=None)
+    reasons = {row["job_id"]: row["reason"] for row in workflow_run.rollback_job_inventory(rollback_db)}
+    assert reasons == {"queued-unpinned": workflow_run.PIN_NOT_RECORDED, "queued-v1": "v1_compatible"}
+    assert workflow_run.assert_rollback_ready(rollback_db) is None
+
+
+def test_a_run_core_video_job_is_read_and_deleted_through_the_video_routes_by_its_wire_id(world):  # S7 M7
+    manifest = manifest_of(VIDEO_ID)
+    engine = serve_engine(world, FakeGraphEngine(manifest, mp4_bytes(), "video/mp4", "out.mp4"))
+    made = call("post", f"/gateway/v1/workflows/{VIDEO_ID}/run", json={"inputs": {"prompt": "waves at dusk"}},
+                headers={"Prefer": "wait=20"})
+    assert made.status_code == 200 and made.json()["status"] == "succeeded", (made.text, engine.calls)
+    wire_id = f"video_{made.json()['job_id']}"
+    status = call("get", f"/v1/videos/{wire_id}")
+    assert status.status_code == 200, status.text
+    assert (status.json()["id"], status.json()["status"], status.json()["azizam_status"]) == (wire_id, "completed", "succeeded")
+    content = call("get", f"/v1/videos/{wire_id}/content")
+    assert (content.status_code, content.headers["content-type"]) == (200, "video/mp4")
+    assert content.content[4:8] == b"ftyp"          # the stored file, which the core's writer may have re-muxed
+    # This world publishes no workflows of its own, so the derived per-kind policy delete enforces has no entry for the
+    # video kind: give it the policy the GET route of the same path has.
+    world.monkeypatch.setattr(proxy, "_video_route_policy", lambda: {
+        "protocol": "openai.video", "intent": "video.generate", "backend": "comfyui", "capability_exposure": "default",
+        "capability_trust_tier": "stable", "capability_resource_tier": "expensive"})
+    gone = call("delete", f"/v1/videos/{wire_id}")
+    assert (gone.status_code, gone.json()) == (200, {"id": wire_id, "object": "video", "deleted": True})
+    for path in (f"/v1/videos/{wire_id}", f"/v1/videos/{wire_id}/content"):
+        assert call("get", path).status_code in (400, 404)
+    assert call("delete", f"/v1/videos/{wire_id}").status_code in (400, 404)

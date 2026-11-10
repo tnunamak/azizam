@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
-from gateway import runtime_secrets
+from gateway import runtime_secrets, service_registry
 from gateway.engine_observations import ObservationReader
 
 
@@ -91,6 +91,14 @@ def _identifier(service: Mapping[str, Any]) -> str:
     return value
 
 
+def _declared_address(svc: Mapping[str, Any], port: Any) -> str:
+    """The address the record names for its owned process: its connection address, else its host and port ("" when none)."""
+    declared = (svc.get("connection") or {}).get("address")
+    if isinstance(declared, str) and declared:
+        return declared
+    return service_registry.engine_origin(svc) if svc.get("port") == port else ""
+
+
 class ProcessDriver:
     """Own, recover, and stop a single declared process group per engine id."""
 
@@ -145,8 +153,11 @@ class ProcessDriver:
                 await self._stop_async(svc, reset_budget=False)
             if not allowed:
                 return False
-            address = (svc.get("connection") or {}).get("address") or f"http://{svc.get('host', '127.0.0.1')}:{port}"
-            if self._port_in_use(urlsplit(address).hostname or "127.0.0.1", port):
+            address = _declared_address(svc, port)
+            hostname = urlsplit(address).hostname if address else None
+            if not hostname:  # a record that names no address is refused, never assumed to be on this computer
+                return False
+            if self._port_in_use(hostname, port):
                 return False
             if not self._restart_available(ident, cfg):
                 return False
@@ -347,10 +358,8 @@ class ProcessDriver:
             raise ValueError("process.start must be a nonempty argv array")
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
             raise ValueError("process.port.fixed must be a declared TCP port")
-        address = (svc.get("connection") or {}).get("address")
-        if address is None and svc.get("port") == port:
-            address = f"http://{svc.get('host', '127.0.0.1')}:{port}"
-        parsed = urlsplit(address) if isinstance(address, str) else None
+        address = _declared_address(svc, port)
+        parsed = urlsplit(address) if address else None
         if parsed is None or parsed.hostname not in {"127.0.0.1", "::1", "localhost"} or parsed.port != port:
             raise ValueError("process port must match connection address")
         if not isinstance(observations_config(svc).get("process_ready"), Mapping):
@@ -407,7 +416,7 @@ class ProcessDriver:
 
         connection = svc.get("connection") or (svc.get("config") or {}).get("connection")
         if not connection:
-            connection = {"address": f"http://{svc.get('host', '127.0.0.1')}:{svc.get('port')}"}
+            connection = {"address": service_registry.engine_base_address(svc)}
         return {**svc, "connection": connection, "observations": observations_config(svc)}
 
     def _state_path(self, ident: str) -> Path:

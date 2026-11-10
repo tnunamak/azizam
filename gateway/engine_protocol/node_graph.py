@@ -57,6 +57,7 @@ from gateway.engine_protocol.types import (
 )
 from gateway.manifests import bind_backend_request, validate_inputs
 from gateway import binding_registry, engine_egress, output_selectors
+from gateway.service_registry import join_base_path
 
 ADAPTER_ID = "node-graph"
 OPERATIONS = (
@@ -371,7 +372,7 @@ class GraphSession:
         self.client = client
 
     def _url(self, path: str) -> str:
-        return f"{self.conn.address}{path}"
+        return join_base_path(self.conn.address, path)
 
     async def _send(self, call: Any, path: str, *, want_text: bool = False, **kwargs: Any) -> WireReply:
         try:
@@ -453,6 +454,10 @@ class NodeGraphAdapter:
         self.client_id = client_id or uuid.uuid4().hex
         # The UI-format twin embedded in outputs. None means the outputs carry no embedded graph.
         self._derive_ui = derive_ui or (lambda _graph: None)
+
+    def embed_workflow_with(self, derive_ui: Callable[[Mapping[str, Any]], dict | None]) -> None:
+        """Set the source of the UI-format graph the outputs of this adapter embed (the adapter was built without one)."""
+        self._derive_ui = derive_ui
 
     # --- sessions ---------------------------------------------------------------------------
 
@@ -574,9 +579,11 @@ class NodeGraphAdapter:
             raise MalformedResponse("No prompt_id returned")
         return JobRef(op, str(prompt_id))
 
-    def compile(self, op: str, request: CanonicalRequest) -> tuple[dict[str, Any], dict[str, Any]]:
+    def compile(self, op: str, request: CanonicalRequest, *, edit: Callable[[dict[str, Any]], None] | None = None
+                ) -> tuple[dict[str, Any], dict[str, Any]]:
         """The graph a manifest-backed request compiles to, and the prompt body that carries it: ``(graph, payload)``. A
-        round that polls the prompt names nodes of ``graph`` in a failure."""
+        round that polls the prompt names nodes of ``graph`` in a failure. ``edit`` changes the compiled graph before the
+        body is made."""
         manifest = request.params.get("manifest")
         if not isinstance(manifest, Mapping):
             raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
@@ -584,6 +591,8 @@ class NodeGraphAdapter:
         pinned = request.params.get("template")
         template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)
         graph = compile_workflow(manifest, self.binding, template, request.body)
+        if edit is not None:
+            edit(graph)
         return graph, build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
 
     def _workflow_payload(self, op: str, request: CanonicalRequest) -> dict[str, Any]:
@@ -638,6 +647,8 @@ class NodeGraphAdapter:
         if reply.status != 200:
             raise UpstreamError(reply.status, f"The history answered HTTP {reply.status}.")
         history = reply.json()
+        if not isinstance(history, Mapping):      # an answer of another shape says nothing about the prompt: it is not "not there yet"
+            raise ValueError("the history answer is not an object")
         if ref.id not in history:
             return JobStatus(ref, JobState.pending)
         job = history[ref.id]
@@ -736,13 +747,13 @@ class NodeGraphAdapter:
 
     async def fetch_selected(self, conn: Connection, status: JobStatus, block: Mapping[str, Any], outputs: Mapping[str, Any], *,
                              limits: Any, headers: Any = UNSET,
-                             session: GraphSession | None = None) -> dict[str, list[bytes]]:
+                             session: GraphSession | None = None, names: list[str] | None = None) -> dict[str, list[bytes]]:
         """The bytes of each named result of a finished prompt, for a route that delivers files itself.
 
         ``status`` is the ``succeeded`` status that ``poll`` returned: the history entry it read is collected by the
         binding's selectors (``collect``), so no second look at the engine is made. The reads go through
         ``output_selectors.FETCH_GATE`` and are bounded while they are read: the number of files, the bytes of one file and
-        the total are the deployment's ``limits`` (D6). A file that cannot be read is left out. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
+        the total are the deployment's ``limits`` (D6). A file that cannot be read is left out. ``names``, when given, receives the engine's file name of each file kept, in order. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
         Raises ``SelectionRefused`` (a result that is missing, ambiguous, malformed or over a limit, or a fetch that waited too long).
         """
         record = status.record
@@ -765,6 +776,8 @@ class NodeGraphAdapter:
                         if data:
                             total += len(data)
                             chosen[name].append(data)
+                            if names is not None:
+                                names.append(str(file.get("filename") or ""))
         except output_selectors.FetchRefused as refusal:
             raise SelectionRefused(refusal.code, str(refusal)) from refusal
         return chosen

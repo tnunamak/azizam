@@ -126,10 +126,15 @@ def same_value(left: Any, right: Any) -> bool:
     return canonical_json(left) == canonical_json(right)
 
 
+_BAD_ESCAPE = re.compile(r"~(?![01])")
+
+
 def split_pointer(pointer: Any) -> list[str]:
     """The segments of an RFC 6901 pointer. The empty pointer (the whole document) is never an entry."""
     if not isinstance(pointer, str) or not pointer.startswith("/"):
         raise PointerError(f"{pointer!r} is not a JSON Pointer that starts with '/'")
+    if _BAD_ESCAPE.search(pointer):
+        raise PointerError(f"{pointer!r} has an invalid escape; only ~0 and ~1 are allowed")
     return [segment.replace("~1", "/").replace("~0", "~") for segment in pointer[1:].split("/")]
 
 
@@ -666,7 +671,9 @@ def build_section(
 def _retired_delete(section: Section, override: Override, faults: Sequence[Problem]) -> bool:
     """A delete whose only fault is that its pointer is no longer an entry, and that names nothing in the release.
 
-    Only a plain key path counts: every segment non-empty, walked through objects alone. A pointer into a list, a
+    Only a plain key path counts: every segment non-empty, every escape one RFC 6901 allows (``~0``, ``~1``), walked
+    through objects alone, and no prefix of it an entry the schema declares (a list, scalar, atomic or member entry
+    answers for what lies beneath it, whether or not the release holds a default for it). A pointer into a list, a
     container the release still holds, or a malformed pointer stays a rejected override.
     """
     if override.op != OP_DELETE or not all(fault.code == "not_an_entry" for fault in faults):
@@ -677,6 +684,9 @@ def _retired_delete(section: Section, override: Override, faults: Sequence[Probl
         return False
     if any(segment == "" for segment in segments):
         return False
+    for length in range(1, len(segments)):
+        if section.index.rule_for(join_pointer(segments[:length])) is not None:
+            return False
     node: Any = section.defaults
     for segment in segments:
         if not isinstance(node, Mapping):

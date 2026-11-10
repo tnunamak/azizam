@@ -34,6 +34,7 @@ from gateway.result_bundle import ResultLimits
 from gateway.workflow_call import SNIFFED_MEDIA_TYPES
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow.schema.json"
+SECTIONS_DIR = SCHEMA_PATH.parent / "workflow_sections"
 CONTRACT_VERSION = 2
 
 MAX_INPUT_DEPTH = 4
@@ -121,6 +122,21 @@ def _validator() -> jsonschema.Draft202012Validator:
     return jsonschema.Draft202012Validator(json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
 
 
+@lru_cache(maxsize=1)
+def _section_validators() -> Mapping[str, jsonschema.Draft202012Validator]:
+    """The schema of the section a document of each capability may keep under a key named after that capability: one
+    file per capability in ``registry/workflow_sections``, named for it. A capability without a file has no section,
+    and a key of that name is an unknown field like any other."""
+    return {path.name.removesuffix(".schema.json"): jsonschema.Draft202012Validator(json.loads(path.read_text(encoding="utf-8")))
+            for path in sorted(SECTIONS_DIR.glob("*.schema.json"))}
+
+
+def _section_name(doc: Mapping[str, Any]) -> str | None:
+    """The key of the capability section ``doc`` keeps, or None: the capability has a section schema and the key is there."""
+    capability = doc.get("capability")
+    return capability if isinstance(capability, str) and capability in _section_validators() and capability in doc else None
+
+
 _LIMIT_KEYWORDS = frozenset({
     "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "minItems", "maxItems",
     "minProperties", "maxProperties", "uniqueItems",
@@ -129,15 +145,21 @@ _LIMIT_KEYWORDS = frozenset({
 
 def _structural_errors(doc: Mapping[str, Any]) -> list[ContractError]:
     found: dict[tuple[PathPart, ...], ContractError] = {}
-    for error in _validator().iter_errors(doc):
-        for item in _from_schema_error(error):
+    section = _section_name(doc)
+    # The capability section is read against its own schema; the rest of the document against the closed root schema.
+    rest = {key: value for key, value in doc.items() if key != section}
+    errors = [(error, ()) for error in _validator().iter_errors(rest)]
+    if section is not None:
+        errors += [(error, (section,)) for error in _section_validators()[section].iter_errors(doc[section])]
+    for error, prefix in errors:
+        for item in _from_schema_error(error, prefix):
             # One refusal per place: the schema may break two rules there, and fixing the first shows the second.
             found.setdefault(item.path, item)
     return list(found.values())
 
 
-def _from_schema_error(error: jsonschema.ValidationError) -> list[ContractError]:
-    at = tuple(error.path)
+def _from_schema_error(error: jsonschema.ValidationError, prefix: tuple[PathPart, ...] = ()) -> list[ContractError]:
+    at = prefix + tuple(error.path)
     keyword = error.validator
     schema = error.schema if isinstance(error.schema, Mapping) else {}
     if keyword == "additionalProperties" and isinstance(error.instance, Mapping):
@@ -209,6 +231,7 @@ class _Semantic:
         if isinstance(outputs, Mapping):
             for name, output in outputs.items():
                 self.output(("outputs", name), output)
+        self.capability_section(doc)
         if self.annotation_bytes > self.context.annotation_bytes:
             self.errors.add(("annotations",), "annotations_too_large",
                             f"all annotations together hold more than {self.context.annotation_bytes} bytes")
@@ -330,6 +353,51 @@ class _Semantic:
         for index, option in enumerate(spec["enum"]):
             if validate_input_value("enum", option, bare) is not None:
                 self.errors.add(at + ("enum", index), "enum_value_invalid", "an enum value must have the type of its input")
+
+    # -- the section a document keeps for its own capability
+
+    def capability_section(self, doc: Mapping[str, Any]) -> None:
+        """What the section's schema cannot say: a role names an input the document declares and binds, a pair of
+        ``min_x`` and ``max_x`` is not empty, a ``default_x`` lies between them, and a default is not above its ``max``."""
+        name = _section_name(doc)
+        section = doc.get(name) if name is not None else None
+        if not isinstance(section, Mapping) or self._broken_below((name,)):
+            return
+        inputs = doc.get("inputs") if isinstance(doc.get("inputs"), Mapping) else {}
+        bindings = doc.get("bindings") if isinstance(doc.get("bindings"), Mapping) else {}
+        bound = {key for body in bindings.values() if isinstance(body, Mapping) and isinstance(body.get("map"), Mapping)
+                 for key in body["map"]}
+        roles = section.get("roles")
+        for role, input_name in (roles.items() if isinstance(roles, Mapping) else ()):
+            if input_name not in inputs:
+                self.errors.add((name, "roles", role), "role_input_missing", f"role {role} names an input the document does not declare")
+            elif input_name not in bound:
+                self.errors.add((name, "roles", role), "role_input_unbound", f"role {role} names an input that no binding maps")
+        for group_name, group in section.items():
+            if isinstance(group, Mapping):
+                self._ranges((name, group_name), group)
+
+    def _ranges(self, at: tuple[PathPart, ...], group: Mapping[str, Any]) -> None:
+        for key in group:
+            if not (isinstance(key, str) and key.startswith("min_") and "max_" + key[4:] in group):
+                continue
+            kind = key[4:]
+            low, high = group[key], group["max_" + kind]
+            if not (_is_number(low) and _is_number(high)):
+                continue
+            if low > high:
+                self.errors.add(at, "bounds_empty", f"{key} is above max_{kind}")
+            default = group.get("default_" + kind)
+            if _is_number(default) and not low <= default <= high:
+                self.errors.add(at + ("default_" + kind,), "default_invalid", f"default_{kind} lies outside {key} to max_{kind}")
+        default, largest = group.get("default"), group.get("max")
+        if isinstance(default, str) and isinstance(largest, str):
+            try:
+                (dw, dh), (mw, mh) = ([int(side) for side in text.split("x")] for text in (default, largest))
+            except ValueError:
+                return
+            if dw > mw or dh > mh:
+                self.errors.add(at + ("default",), "default_over_max", "the default is larger than the largest allowed")
 
     # -- outputs
 

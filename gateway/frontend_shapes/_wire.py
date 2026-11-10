@@ -88,7 +88,9 @@ def note(name: str, *, rejected: str | None = None, ignored: str | None = None) 
 def error_response(status: int, message: str, *, kind: str = "invalid_request_error", code: str | None = None,
                    headers: Mapping[str, str] | None = None, null_code: bool = False, **extra: Any) -> Response:
     """The OpenAI-shaped error body: ``{"error": {"message", "type", "code"?}}``."""
-    body: dict[str, Any] = {"message": message, "type": kind}
+    body: dict[str, Any] = {"message": message}
+    if kind:
+        body["type"] = kind
     if code:
         body["code"] = code
     elif null_code:             # a wire whose clients saw ``"code": null`` on this refusal
@@ -103,10 +105,12 @@ def refused_response(refused: RunRefused, words: Mapping[str, str] | None = None
     extra: dict[str, Any] = {}
     if refused.problems:
         extra["problems"] = [problem.as_dict() for problem in refused.problems]
-    seconds = client_errors.retry_after(str(refused.retry_after_s))  # None when the core names no time
+    wait_s = words.get("retry_after_s") if words and refused.retry_after_s is None else refused.retry_after_s
+    seconds = client_errors.retry_after(str(wait_s))  # None when neither the core nor the row names a time
     headers = {"Retry-After": seconds} if seconds else None
-    if words:               # the row's own words for this refusal: its message and type, and no code
-        return error_response(refused.http_status, words["message"], kind=words["type"], headers=headers)
+    if words:               # the row's own words for this refusal: its message, and its type and code when it has them
+        return error_response(refused.http_status, words["message"], kind=words.get("type"), code=words.get("code"),
+                              headers=headers)
     kind = "invalid_request_error" if refused.http_status < 500 else "api_error"
     return error_response(refused.http_status, refused.message, kind=kind, code=refused.code, headers=headers, **extra)
 

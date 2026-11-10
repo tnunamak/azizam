@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
+import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -24,6 +26,8 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import media_fetch, media_inputs
 from tests.support.access import access, access_context, authenticated, identity, plan_for
+from tests.support.video_row_engine import declare_graph_engine
+from tests.support.video_row_files import patch_video_row_files_in_a_temporary_tree
 from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
 from tests.test_image_route_receipts import _MultipartRequest, _MultipartUpload
 from tests.test_media_inputs_image_route import (  # noqa: F401  (rig is a fixture)
@@ -138,6 +142,10 @@ def edit_rig(rig):
     from tests._fake_comfy_video import FakeComfy
     comfy = FakeComfy()
     stack = ExitStack()
+    # The engine is declared as a deployment declares one: a service record that names its protocol, which the run core finds.
+    service = rig.registry["services"][proxy._GRAPH_BACKEND_ID]["config"]
+    service["connection"] = {"protocol": "node-graph", "base_url": service["base_url"]}
+    service["enabled"] = True
     for p in comfy.patches():
         stack.enter_context(p)
     generate = AsyncMock(return_value=proxy.Response(status_code=200))
@@ -213,20 +221,26 @@ def test_edit_route_to_an_engine_the_plan_does_not_list_sends_nothing(edit_rig):
 
 
 @pytest.fixture
-def video_rig(rig, isolated_receipts):
+def video_rig(rig, isolated_receipts, monkeypatch):
+    """A video create over the run core: the engine is declared as a service record that names its protocol, and the create's
+    hold for the engine is cut to a moment. The fake engine never finishes the prompt it is given."""
     from tests._fake_comfy_video import FakeComfy
     comfy = FakeComfy()
     stack = ExitStack()
+    declare_graph_engine(rig.registry)
     for p in comfy.patches():
         stack.enter_context(p)
     stack.enter_context(authenticated(identity(**OWNER)))
     stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
-    for name in ("_video_job_records", "_video_progress", "_video_workflows"):
-        saved = dict(getattr(proxy, name))
-        getattr(proxy, name).clear()
-        stack.callback(lambda n=name, s=saved: (getattr(proxy, n).clear(), getattr(proxy, n).update(s)))
+    patch_video_row_files_in_a_temporary_tree(stack)
     rig.comfy = comfy
-    rig.client = TestClient(proxy.app)
+
+    @contextlib.asynccontextmanager
+    async def no_lifespan(_app):
+        yield
+
+    stack.enter_context(patch.object(proxy.app.router, "lifespan_context", no_lifespan))
+    rig.client = stack.enter_context(TestClient(proxy.app))      # entered: the portal (and a run in flight) outlives each request
     yield rig
     stack.close()
 
@@ -234,11 +248,25 @@ def video_rig(rig, isolated_receipts):
 VIDEO_MODEL = "video-minimax-h3-i2v"
 
 
-def post_video(rig, reference=None, *, files=None):
+def post_video(rig, reference=None, *, files=None, settle: bool = True):
+    """Create a video and, unless ``settle`` is off, wait for the run core to stage the file: the create answers at once and the
+    run goes on in the app's loop (the fixture keeps that loop alive between requests)."""
     body = {"model": VIDEO_MODEL, "prompt": "a lighthouse", "seconds": 5, "seed": 7}
     if files is not None:
-        return rig.client.post("/v1/videos", data={k: str(v) for k, v in body.items()}, files=files)
-    return rig.client.post("/v1/videos", json={**body, "input_reference": reference})
+        response = rig.client.post("/v1/videos", data={k: str(v) for k, v in body.items()}, files=files)
+    else:
+        response = rig.client.post("/v1/videos", json={**body, "input_reference": reference})
+    if settle and response.status_code == 200:
+        settled_uploads(rig)
+    return response
+
+
+def settled_uploads(rig, count: int = 1, *, wait_s: float = 5.0) -> list:
+    """The files the engine was sent: the run core stages the file a moment after the create answered."""
+    deadline = time.monotonic() + wait_s
+    while len(rig.comfy.uploads) < count and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return rig.comfy.uploads
 
 
 def data_uri(raw: bytes, mime: str = "image/png") -> str:
@@ -246,27 +274,29 @@ def data_uri(raw: bytes, mime: str = "image/png") -> str:
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_data_uri_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     response = post_video(video_rig, data_uri(data, f"image/{fmt.lower()}"))
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
-    assert video_rig.comfy.uploads == [(f"input_reference.{ext}", data, "image/png")]
-    assert resolver_calls == ["resolve_upload"] and ended(video_rig)
+    # Delta video_reference_declared_type: the engine is told the type the caller declared, not a fixed image/png.
+    assert video_rig.comfy.uploads == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
+    assert ended(video_rig)
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_upload_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     response = post_video(video_rig, files={"input_reference": (f"ref{SUFFIX[fmt]}", data, f"image/{fmt.lower()}")})
     assert response.status_code == 200, response.text
     ext = {"JPEG": "jpg"}.get(fmt, fmt.lower())
-    assert video_rig.comfy.uploads == [(f"input_reference.{ext}", data, "image/png")]
-    assert resolver_calls == ["resolve_upload"] and ended(video_rig)
+    # Delta video_reference_declared_type: the engine is told the type the caller declared, not a fixed image/png.
+    assert video_rig.comfy.uploads == [(f"input.{ext}", data, f"image/{fmt.lower()}")]
+    assert ended(video_rig)
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_asset_id_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_asset_id_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     asset_id = stored(data)
     suffix = proxy.asset_cache_path(asset_id).suffix  # type: ignore[union-attr]
@@ -275,11 +305,11 @@ def test_video_reference_asset_id_reaches_the_engine_as_before(video_rig, fmt, r
     old_bytes, old_name = proxy._resolve_cached_image_asset(
         asset_id, access_context(app_id=OWNER_APP["app_id"], key_hash=OWNER_APP["key_hash"]))
     assert video_rig.comfy.uploads == [(old_name, old_bytes, "image/png")] and old_name == f"{asset_id}{suffix}"
-    assert resolver_calls == ["resolve_asset"] and live_rows() == 0
+    assert live_rows() == 0
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-def test_video_reference_url_goes_through_the_fetcher_and_reaches_the_engine_as_before(video_rig, fmt, resolver_calls):
+def test_video_reference_url_goes_through_the_fetcher_and_reaches_the_engine_as_before(video_rig, fmt):
     data = image_bytes(fmt)
     fetched = media_fetch.FetchedMedia(data, f"remote{SUFFIX[fmt]}", f"image/{fmt.lower()}")
     with patch.object(proxy, "_fetch_media_url", AsyncMock(return_value=fetched)) as fetch:
@@ -287,7 +317,7 @@ def test_video_reference_url_goes_through_the_fetcher_and_reaches_the_engine_as_
     assert response.status_code == 200, response.text
     fetch.assert_awaited_once()
     assert video_rig.comfy.uploads == [(f"remote{SUFFIX[fmt]}", data, "image/png")]
-    assert resolver_calls == ["resolve_url"] and ended(video_rig)
+    assert ended(video_rig)
 
 
 # Revert: the ``resolve_upload`` call in ``_resolve_input_reference``.
@@ -324,21 +354,17 @@ def test_video_reference_to_an_engine_the_plan_does_not_list_is_refused_before_a
     assert video_rig.comfy.uploads == [] and lease_rows() == 0 and stored_files(video_rig) == []
 
 
-def test_video_reference_lease_is_released_when_the_engine_upload_fails(video_rig, resolver_calls):
-    """The picture is resolved, then the request fails at the engine: the lease still ends with the request."""
-    original = proxy._graph
-
-    class Refusing:
-        def __init__(self, inner):
-            self._inner = inner
-
-        async def upload(self, files, headers=None):
-            return SimpleNamespace(status=500, json=lambda: {})
-
-        def __getattr__(self, name):
-            return getattr(self._inner, name)
-
-    with patch.object(proxy, "_graph", lambda *a, **k: Refusing(original(*a, **k))):
-        response = post_video(video_rig, data_uri(image_bytes("PNG")))
-    assert response.status_code == 502
-    assert resolver_calls == ["resolve_upload"] and ended(video_rig)
+def test_video_reference_lease_is_released_when_the_engine_upload_fails(video_rig):
+    """The picture is resolved, then the run fails at the engine: nothing of the picture stays behind. The create has already
+    answered (it never waits for the engine), so the failure shows in the job."""
+    video_rig.comfy.upload_status = 500
+    response = post_video(video_rig, data_uri(image_bytes("PNG")), settle=False)
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 5
+    status = {}
+    while status.get("status") != "failed" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        status = video_rig.client.get(f"/v1/videos/{response.json()['id']}").json()
+    assert status.get("status") == "failed", status
+    assert video_rig.comfy.submitted == []
+    assert ended(video_rig)

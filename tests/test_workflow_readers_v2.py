@@ -25,9 +25,22 @@ Re-captured at S7 (builder D4): the mesh route moved from ``/v1/meshes/generate`
 mesh ``openapi_catalog`` and ``member_catalog`` entries changed, and only the route path in them (11 strings, the path
 field and the three code examples). Every other byte is as before.
 
+Re-captured for the run-route video edits (video-mux, rife-interpolate): the generic run route refuses ``seconds`` and
+``size``, so ``route_inputs`` is empty for both, and the two inputs left their ``member_catalog`` input rows and
+``openapi_catalog`` entries. Every other byte is as before.
+
 Re-captured at the train 35 gate: the generic run route takes full ids, so the two video-edit workflows' sync path in
 their ``openapi_catalog`` and ``member_catalog`` entries (and rife-interpolate's example request and code examples) name
 the full id, and their sync ``output`` says the route answers a media job. Every other byte is as before.
+
+Re-captured when asset inputs took their modality from declared accepts, not the intent name. Eight workflows moved, and
+only their input modalities in ``capabilities``, ``member_catalog``, ``home`` and ``projected``: the mesh picture input
+``asset`` to ``image``; the six image-to-video and keyframe workflows ``video`` to ``image``; scail-2-replace gains
+``image``. Every other entry is as before.
+
+Re-captured when the job-run examples, the declared response kinds and the rollback-readiness checks were merged: 28
+workflows moved, and only their ``openapi_catalog`` and ``member_catalog`` entries (the published examples for a job
+that returns media, and the response kind of a sync route). Every other entry is as before.
 """
 
 from __future__ import annotations

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import manifests, workflow_call  # noqa: E402
+from gateway import manifests, video_grid, workflow_call  # noqa: E402
 from tests.support.access import access_context  # noqa: E402
 from tests.media_test_bytes import png_bytes  # noqa: E402
 
@@ -63,23 +63,23 @@ def test_ltx_frame_rate_is_integer_and_manifest_routes_reject_other_types() -> N
 
 class SizeAndLengthRuleTests(unittest.TestCase):
     def test_default_size_rule_is_unchanged(self) -> None:
-        self.assertEqual(proxy._parse_size_clamped("1280x720", "1280x720"), (1280, 704))
-        self.assertEqual(proxy._parse_size_clamped("1000x600", "1280x720"), (992, 576))
+        self.assertEqual(video_grid.resolve_size("1280x720", video_grid.SizeSpec(default="", max="1280x720", multiple=32)), (1280, 704))
+        self.assertEqual(video_grid.resolve_size("1000x600", video_grid.SizeSpec(default="", max="1280x720", multiple=32)), (992, 576))
 
     def test_size_multiple_64_floors_and_clamps_to_max(self) -> None:
-        self.assertEqual(proxy._parse_size_clamped("1280x720", "1280x704", 64), (1280, 704))
-        self.assertEqual(proxy._parse_size_clamped("1000x600", "1280x704", 64), (960, 576))
-        self.assertEqual(proxy._parse_size_clamped("1920x1080", "1280x704", 64), (1280, 704))
-        self.assertEqual(proxy._parse_size_clamped("960x544", "1280x704", 64), (960, 512))
-        self.assertEqual(proxy._parse_size_clamped("10x10", "1280x704", 64), (64, 64))
+        self.assertEqual(video_grid.resolve_size("1280x720", video_grid.SizeSpec(default="", max="1280x704", multiple=64)), (1280, 704))
+        self.assertEqual(video_grid.resolve_size("1000x600", video_grid.SizeSpec(default="", max="1280x704", multiple=64)), (960, 576))
+        self.assertEqual(video_grid.resolve_size("1920x1080", video_grid.SizeSpec(default="", max="1280x704", multiple=64)), (1280, 704))
+        self.assertEqual(video_grid.resolve_size("960x544", video_grid.SizeSpec(default="", max="1280x704", multiple=64)), (960, 512))
+        self.assertEqual(video_grid.resolve_size("10x10", video_grid.SizeSpec(default="", max="1280x704", multiple=64)), (64, 64))
 
     def test_length_rule_ltx_is_8k_plus_1(self) -> None:
-        self.assertEqual(proxy._seconds_to_length(5, 24), 121)
+        self.assertEqual(video_grid.seconds_to_length(5, 24), 121)
 
     def test_length_rule_h3_is_17k_plus_5(self) -> None:
-        self.assertEqual(proxy._seconds_to_length(5, 24, step=17, offset=5), 124)
+        self.assertEqual(video_grid.seconds_to_length(5, 24, step=17, offset=5), 124)
         for seconds in (2, 3, 4, 6, 8, 10):
-            length = proxy._seconds_to_length(seconds, 24, step=17, offset=5)
+            length = video_grid.seconds_to_length(seconds, 24, step=17, offset=5)
             self.assertEqual((length - 5) % 17, 0, (seconds, length))
 
 

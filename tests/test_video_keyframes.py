@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.video_row_files import patch_video_row_files  # noqa: E402
 from gateway import media_ingestion, media_jobs, media_metadata  # noqa: E402
 from gateway.workflow_openapi import ROOT_EXTENSION, schema_name  # noqa: E402
 from gateway.manifests import load_workflow_manifest  # noqa: E402
@@ -329,6 +330,9 @@ class KeyframeRouteBase(unittest.TestCase):
             self.stack.enter_context(p)
         self.stack.enter_context(authenticated())
         self.stack.enter_context(patch.object(proxy, "_enforce_runtime_route_policy", return_value=None))
+        spool = tempfile.TemporaryDirectory()
+        self.addCleanup(spool.cleanup)
+        patch_video_row_files(self.stack, Path(spool.name))
         for name in ("_video_job_records", "_video_progress", "_video_workflows"):
             saved = dict(getattr(proxy, name))
             getattr(proxy, name).clear()
@@ -723,6 +727,9 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
             graph[node]["inputs"].update(fields)
         return graph
 
+    # V5c: a first-picture-only create runs the row path. Two named deltas to the engine's graph, neither a change of meaning:
+    # the manifest types frame_rate as an integer, so a float node carries 24 where the old route wrote 24.0; and the run
+    # stages the picture under the name "input" + suffix, as every run of the job runner does, not "input_reference.png".
     def test_ltx_i2v_graph_is_the_stored_graph_with_only_the_request_values(self) -> None:
         r = self.client.post("/v1/videos", json={
             "model": "video-ltx-2.5-i2v", "prompt": "p", "seconds": 5, "seed": 3, "size": "1280x704",
@@ -730,8 +737,8 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         self.assertEqual(r.status_code, 200, r.text)
         expected = self._expected("video-ltx-2.5-i2v", {
             "5": {"text": "p"}, "20": {"value": 1280}, "21": {"value": 704}, "22": {"value": 121},
-            "23": {"value": 24.0}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
-            "70": {"image": "up1_input_reference.png"}, "79": {"value": 0.7},
+            "23": {"value": 24}, "24": {"value": 24}, "30": {"noise_seed": 3}, "31": {"noise_seed": 3},
+            "70": {"image": "up1_input.png"}, "79": {"value": 0.7},
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
 
@@ -742,7 +749,7 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
         self.assertEqual(r.status_code, 200, r.text)
         expected = self._expected("video-minimax-h3-i2v", {
             "9": {"prompt": "p"}, "6": {"value": 960}, "7": {"value": 544}, "8": {"value": 124},
-            "17": {"fps": 24.0}, "10": {"noise_seed": 3}, "20": {"image": "up1_input_reference.png"},
+            "17": {"fps": 24}, "10": {"noise_seed": 3}, "20": {"image": "up1_input.png"},
         })
         self.assertEqual(json.dumps(self.graph, sort_keys=True), json.dumps(expected, sort_keys=True))
 
@@ -1037,7 +1044,7 @@ class KeyframeCatalogTests(unittest.TestCase):
             extension_name = "WorkflowExtensionInputs_" + wid.replace(".", "_").replace("-", "_")
             properties = schemas[extension_name]["properties"]
             for name in _manifest(model)["inputs"]:
-                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength", "frame_rate"):
+                if name in ("prompt", "negative_prompt", "seed", "image", "image_strength", "frame_rate", "width", "height", "length"):
                     self.assertNotIn(name, properties, (model, name))
                 else:
                     self.assertIn(name, properties, (model, name))
@@ -1135,3 +1142,11 @@ def test_the_shipped_node_roles_satisfy_the_schema_including_a_numeric_option_de
 ])
 def test_a_node_role_that_is_not_a_node_id_or_a_list_of_ids_is_refused_by_the_schema(key, value):
     assert _videos_schema_errors(lambda roles: roles.update({key: value}))
+
+
+def test_no_video_graph_file_carries_its_own_node_roles():
+    """A video graph is the engine's graph and nothing else: the node roles live in its videos entry (``node_roles``),
+    and the name and description live in its manifest. A top-level ``_meta`` block is a second home for them."""
+    carrying = sorted(path.name for path in (ROOT / "workflows/videos").glob("*.json")
+                      if "_meta" in json.loads(path.read_text()))
+    assert carrying == []

@@ -138,7 +138,7 @@ def submit(core: FakeRunCore, req: Any, snap: FakeSnapshot) -> Any:
 
 
 def test_the_bundled_rows_are_valid_and_each_selects_a_bundled_workflow() -> None:
-    assert len(ROWS) == len(bundled_rows()) == 9
+    assert len(ROWS) == len(bundled_rows()) == 10
     every = {n: contract(n) for n in ("flux2-klein", "qwen-image-2.1-edit", "tangoflux", "video-ltx-2.5-t2v", "mesh.generate.trellis-2")}
     every["edit"] = VIDEO_EDIT
     for row in ROWS.values():
@@ -278,11 +278,19 @@ def test_an_unknown_file_field_is_a_400() -> None:
     assert response.status_code == 400 and json.loads(response.body)["error"]["param"] in ("a", "b")
 
 
-def test_a_video_edit_names_its_source_video_and_fills_the_asset_input_by_reference() -> None:
+def test_a_video_edit_names_its_source_video_and_fills_the_asset_input_by_reference(monkeypatch) -> None:
+    from gateway.frontend_shapes import shapes
+    from gateway.video_source import VideoSource
+
+    class Hooks(shapes.VideoHooks):
+        async def source(self, job_id, wire_id, caller):
+            return VideoSource(wire_id, "ast_9", None, None, None, None, None, None)
+
+    monkeypatch.setattr(shapes, "VIDEO_HOOKS", Hooks())
     snap = FakeSnapshot(1, MappingProxyType({"video.edit.demo": entry(VIDEO_EDIT)}))
-    run = run_request("videos-edit", json_request({"prompt": "night", "video": {"id": "vid_9"}}), snap)
+    run = run_request("videos-edit", json_request({"prompt": "night", "video": {"id": "video_9"}}), snap)
     assert run.workflow_id == "video.edit.demo" and run.inputs == {"prompt": "night"}
-    assert run.media["video"][0].asset_id == "vid_9"
+    assert run.media["video"][0].asset_id == "ast_9"
     missing = run_request("videos-edit", json_request({"prompt": "night"}), snap)
     assert missing.status_code == 400 and json.loads(missing.body)["error"]["param"] == "video"
 
@@ -339,13 +347,6 @@ def test_the_audio_row_answers_with_the_bytes_and_their_type() -> None:
     finish(core, view.job_id, "audio", "audio/wav", b"RIFF")
     response = answer("audio-generate", view, FakeJobService(core))
     assert response.body == b"RIFF" and response.headers["content-type"] == "audio/wav"
-
-
-def test_the_video_create_row_answers_with_a_queued_video_object() -> None:
-    snap, core = snapshot("video-ltx-2.5-t2v"), FakeRunCore()
-    view = submit(core, run_request("videos-create", json_request({"prompt": "waves"}), snap), snap)
-    body = json.loads(answer("videos-create", view, FakeJobService(core)).body)
-    assert body["object"] == "video" and body["status"] == "queued" and body["id"] == "job-1"
 
 
 @pytest.mark.parametrize("row_id,shape_output", [("mesh-generations", None), ("mesh-glb", None)])

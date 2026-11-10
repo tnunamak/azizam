@@ -5,6 +5,8 @@ import {
   chooserRows,
   composerInputs,
   firstNameOf,
+  fitsMediaInput,
+  mediaPhrase,
   formatWait,
   gatewayNeeds,
   greetingFor,
@@ -396,5 +398,55 @@ describe("wordsToMediaRow finds a capability that makes the modality from words 
     const draw = make("draw", ["text"], ["image"]);
     expect(wordsToMediaRow([mesh, edit, draw], "image")).toBe(draw);
     expect(wordsToMediaRow([mesh, edit], "image")).toBeNull();
+  });
+});
+
+describe("composerInputs keeps named required media slots", () => {
+  const keyframes = [
+    { name: "image", label: "a starting picture", modality: "image", accepts: ["image/png", "image/jpeg"] },
+    { name: "last_frame", label: "an ending picture", modality: "image", accepts: ["image/*"] },
+  ];
+  const declared = (required_media_inputs = keyframes) => row({
+    icon_key: "video", input_modalities: ["text", "image"], required_input_modalities: ["image"],
+    input_words: { image: "picture", video: "clip" }, required_media_inputs,
+  });
+
+  it("keyframes has two separately named picture slots, in declaration order", () => {
+    const inputs = composerInputs(declared());
+    expect(inputs.text).toBe("optional");
+    expect(inputs.media).toEqual([
+      { name: "image", label: "a starting picture", modality: "image", word: "picture", accept: "image/png,image/jpeg", required: true },
+      { name: "last_frame", label: "an ending picture", modality: "image", word: "picture", accept: "image/*", required: true },
+    ]);
+    expect(inputs.media.map(mediaPhrase)).toEqual(["a starting picture", "an ending picture"]);
+    expect(fitsMediaInput(new File(["p"], "p.jpg", { type: "image/jpeg" }), inputs.media[0])).toBe(true);
+    expect(fitsMediaInput(new File(["p"], "p.gif", { type: "image/gif" }), inputs.media[0])).toBe(false);
+  });
+
+  it("mid keeps a third picture and scail keeps picture then video, with each input's filter", () => {
+    const mid = [...keyframes, { name: "mid_frame", label: "a middle picture", modality: "image", accepts: ["image/png"] }];
+    expect(composerInputs(declared(mid)).media.map((input) => input.name)).toEqual(["image", "last_frame", "mid_frame"]);
+    const scail = [
+      { name: "reference_image", label: "a new character", modality: "image", accepts: ["image/png"] },
+      { name: "source_video", label: "a video to change", modality: "video", accepts: ["video/mp4"] },
+    ];
+    expect(composerInputs(declared(scail)).media).toEqual([
+      { name: "reference_image", label: "a new character", modality: "image", word: "picture", accept: "image/png", required: true },
+      { name: "source_video", label: "a video to change", modality: "video", word: "clip", accept: "video/mp4", required: true },
+    ]);
+  });
+
+  it("caps explicit slots at three, and a present empty list does not fall back to modalities", () => {
+    const many = Array.from({ length: 4 }, (_, n) => ({ name: "frame_" + n, label: "picture " + n, modality: "image", accepts: ["image/*"] }));
+    expect(composerInputs(declared(many)).media.map((input) => input.name)).toEqual(["frame_0", "frame_1", "frame_2"]);
+    expect(composerInputs(declared([])).media).toEqual([]);
+  });
+
+  it("keeps the old single-input shape when the field is absent", () => {
+    const old = declared();
+    delete old.required_media_inputs;
+    expect(composerInputs(old)).toEqual({
+      text: "optional", media: [{ modality: "image", word: "picture", accept: "image/*", required: true }],
+    });
   });
 });

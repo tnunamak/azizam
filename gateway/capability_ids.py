@@ -4,14 +4,187 @@ A leaf module: the catalog (``model_presentation``) and the access-plan
 evaluator (``access_plans``) both read it, so neither imports the other.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
-CAPABILITY_LABELS = {
-    "chat": "Chat", "image": "Images", "video": "Video", "speech": "Voice",
-    "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
-    "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Reranking",
-    "mesh": "3D models",
-}
+import yaml
+
+# Labels, presentation, optional policy protocols and capability spellings are shipped data.
+# Callers share read-only tables loaded once at import, in file order.
+CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "capability_words.yml"
+
+
+def _load_capability_tables(path: Path) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
+    Mapping[str, str], Mapping[str, str], Mapping[str, str],
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
+]:
+    """Validate capability, presentation and classification rows together."""
+    def invalid(word: object, reason: str) -> ValueError:
+        return ValueError(f"{path.name}: word {word!r} {reason}")
+
+    def invalid_row(row: object, reason: str) -> ValueError:
+        return ValueError(f"{path.name}: row {row!r} in capabilities {reason}")
+
+    def invalid_table(section: str, row: object, reason: str) -> ValueError:
+        return ValueError(f"{path.name}: row {row!r} in {section} {reason}")
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise invalid("<document>", f"could not be loaded: {error}") from error
+    if not isinstance(document, dict):
+        raise invalid("<document>", "must be a mapping")
+    for key in document:
+        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule"}:
+            raise invalid_table("document", key, "is an unknown top-level key")
+    if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+        raise invalid("schema_version", "must be the integer 1")
+
+    rows = document.get("capabilities")
+    if not isinstance(rows, list) or not rows:
+        raise invalid_row("capabilities", "must be a non-empty list")
+    labels: dict[str, str] = {}
+    policy_protocols: dict[str, str] = {}
+    icons: dict[str, str] = {}
+    aliases: dict[str, str] = {}
+    summaries: dict[str, str] = {}
+    hidden_by: dict[str, tuple[str, ...]] = {}
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise invalid_row(index, "must be a mapping")
+        for key in row:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by"}:
+                raise invalid_row(index, f"has unknown key {key!r}")
+        capability = row.get("id")
+        if not isinstance(capability, str) or not capability.strip():
+            raise invalid_row(index, "id must be a non-empty string")
+        if capability in labels:
+            raise invalid_row(index, f"has duplicate id {capability!r}")
+        label = row.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise invalid_row(index, "label must be a non-empty string")
+        labels[capability] = label
+        if "policy_protocol" in row:
+            protocol = row["policy_protocol"]
+            if not isinstance(protocol, str):
+                raise invalid_row(index, "policy_protocol must be a string")
+            policy_protocols[capability] = protocol
+        for field in ("icon", "recommended_alias", "summary"):
+            if field in row and (not isinstance(row[field], str) or not row[field].strip()):
+                raise invalid_row(index, f"{field} must be a non-empty string")
+        icons[capability] = row.get("icon", capability)
+        if "recommended_alias" in row:
+            aliases[capability] = row["recommended_alias"]
+        if "summary" in row:
+            summaries[capability] = row["summary"]
+        if "hidden_by" in row:
+            hidden = row["hidden_by"]
+            if not isinstance(hidden, list):
+                raise invalid_row(index, "hidden_by must be a list of capability ids")
+            hidden_by[capability] = tuple(hidden)
+
+    # References may point forward to a capability declared later in the file.
+    for index, icon in enumerate(icons.values(), start=1):
+        if icon not in labels:
+            raise invalid_row(index, f"icon names unknown capability {icon!r}")
+
+    for index, row in enumerate(rows, start=1):
+        for capability in hidden_by.get(row["id"], ()):
+            if not isinstance(capability, str) or capability not in labels:
+                raise invalid_row(index, f"hidden_by names unknown capability {capability!r}")
+
+    types = document.get("type_capabilities", {})
+    if not isinstance(types, dict):
+        raise invalid_table("type_capabilities", 0, "must be a mapping")
+    for kind, capability in types.items():
+        if not isinstance(kind, str) or not kind.strip():
+            raise invalid_table("type_capabilities", kind, "type must be a non-empty string")
+        if not isinstance(capability, str) or capability not in labels:
+            raise invalid_table("type_capabilities", kind, f"names unknown capability {capability!r}")
+
+    audio = {}
+    if "audio_rule" in document:
+        rule = document["audio_rule"]
+        if not isinstance(rule, dict):
+            raise invalid_table("audio_rule", 0, "must be a mapping")
+        required = {"type", "input", "absent_output", "result", "subtypes", "fallback"}
+        missing, unknown = required - rule.keys(), rule.keys() - required
+        if missing:
+            raise invalid_table("audio_rule", 0, f"missing fields: {', '.join(sorted(missing))}")
+        if unknown:
+            raise invalid_table("audio_rule", 0, f"unknown fields: {', '.join(sorted(map(str, unknown)))}")
+        for field in ("type", "input", "absent_output", "result", "fallback"):
+            value = rule[field]
+            if not isinstance(value, str) or not value.strip():
+                raise invalid_table("audio_rule", field, "must be a non-empty string")
+            if field in {"result", "fallback"} and value not in labels:
+                raise invalid_table("audio_rule", field, f"names unknown capability {value!r}")
+            audio[field] = value
+        subtypes = rule["subtypes"]
+        if not isinstance(subtypes, list) or not subtypes:
+            raise invalid_table("audio_rule", "subtypes", "must be a non-empty list of capability ids")
+        for capability in subtypes:
+            if not isinstance(capability, str) or capability not in labels:
+                raise invalid_table("audio_rule", "subtypes", f"names unknown capability {capability!r}")
+        audio["subtypes"] = tuple(subtypes)
+
+    tables: list[dict[str, str]] = []
+    for section in ("protocol_words", "route_intents"):
+        words = document.get(section)
+        if not isinstance(words, dict):
+            raise invalid(section, "must be a mapping")
+        table: dict[str, str] = {}
+        for word, capability in words.items():
+            if not isinstance(word, str) or not word.strip():
+                raise invalid(word, f"in {section} must be a non-empty string")
+            if not isinstance(capability, str) or capability not in labels:
+                raise invalid(word, f"in {section} names unknown capability {capability!r}")
+            table[word] = capability
+        tables.append(table)
+    protocol, extra_intents = tables
+    for word, capability in extra_intents.items():
+        if word in protocol and protocol[word] != capability:
+            raise invalid(word, "has conflicting capabilities in protocol_words and route_intents")
+    return (MappingProxyType(labels), MappingProxyType(policy_protocols),
+            MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
+            MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
+            MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by))
+
+
+def _load_capability_data(path: Path) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str]
+]:
+    """Preserve the four-map loader shape while validating every row field."""
+    return _load_capability_tables(path)[:4]
+
+
+def load_capability_presentation(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str]
+]:
+    """Read immutable icon, recommended-alias and summary maps from capability rows."""
+    return _load_capability_tables(path)[4:7]
+
+
+def load_capability_classification(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
+]:
+    """Read immutable type, audio and suppression decisions; omitted sections are empty."""
+    return _load_capability_tables(path)[7:]
+
+
+def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
+    """Read the word maps after validating their capability rows; preserve the two-map API."""
+    _, _, protocol, intents = _load_capability_data(path)
+    return protocol, intents
+
+
+(CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
+ CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
+ TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's
 # word. The catalog and engine pages use the same capability label.
@@ -23,50 +196,6 @@ MODEL_KIND_LABELS = {
     "speech": CAPABILITY_LABELS["speech"], "transcribe": CAPABILITY_LABELS["transcribe"],
 }
 MODEL_KINDS = tuple(MODEL_KIND_LABELS)
-PROTOCOL_CAPABILITIES = {
-    "llm.execution": "chat", "typesafe-systemone": "decide",
-    "chat": "chat", "completions": "chat", "chat.completions": "chat", "vision": "chat",
-    "speech": "speech", "tts": "speech", "audio.speech": "speech", "speech.synthesis": "speech",
-    "transcriptions": "transcribe", "transcription": "transcribe", "stt": "transcribe",
-    "audio.transcriptions": "transcribe", "speech.transcription": "transcribe",
-    "speech.translation": "transcribe", "images": "image", "image": "image", "generations": "image",
-    "image.generate": "image", "image.edit": "image", "videos": "video", "video": "video",
-    "video.generate": "video", "embeddings": "embed", "text.embeddings": "embed",
-    "rerank": "rerank", "text.rerank": "rerank", "decisions": "decide",
-    "decision.systemone": "decide", "music": "music", "sfx": "sfx", "audio": "audio",
-    "audio.generate": "audio", "mesh": "mesh",
-}
-
-# The one mapping from a route intent to a capability (design §2.2, RT M4).
-# The catalog's service capability names, plus the intents routes emit that
-# the catalog does not name. tests/test_access_plans.py fails if a route emits
-# an intent missing here.
-INTENT_CAPABILITIES = {
-    **PROTOCOL_CAPABILITIES,
-    "text.completions": "chat",
-    "chat.responses": "chat",
-    "chat.generate": "chat",
-    "chat.messages": "chat",
-    "chat.messages.count_tokens": "chat",
-    "music.generate": "music",
-    "sfx.generate": "sfx",
-    "audio.transcriptions": "transcribe",
-    "image.variation": "image",
-    "video.remix": "video",
-    "video.edit": "video",
-    "video.extend": "video",
-    "image.analyze": "image",
-    "mesh.generate": "mesh",
-    # Route spellings protocol frontends use for the same work.
-    "embedding": "embed",
-    "images.generate": "image",
-    "images.generations": "image",
-    "images.edit": "image",
-    "images.edits": "image",
-    "audio.transcribe": "transcribe",
-    "audio.translations": "transcribe",
-    "videos.generate": "video",
-}
 
 
 # The OpenAI-compatible endpoints the gateway's lifecycle hop serves (``/internal/litellm/local/{backend}/v1<path>``),

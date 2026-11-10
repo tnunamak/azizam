@@ -1,0 +1,8559 @@
+{
+  "annotate": {
+    "annotated": [
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "azizam_intent": "audio.generate",
+        "azizam_workflow_id": "audio.generate.ace-step-1.5-xl-turbo",
+        "id": "wf-audio.generate",
+        "type": "audio"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "image.analyze",
+        "azizam_workflow_id": "image.analyze.face-likeness",
+        "id": "wf-image.analyze",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_intent": "image.edit",
+        "azizam_workflow_id": "image.edit.fibo-2-edit-turbo",
+        "id": "wf-image.edit",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_intent": "image.generate",
+        "azizam_workflow_id": "image.generate.anima-turbo",
+        "id": "wf-image.generate",
+        "type": "image"
+      },
+      {
+        "azizam_intent": "mesh.generate",
+        "azizam_workflow_id": "mesh.generate.trellis-2",
+        "id": "wf-mesh.generate"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "azizam_intent": "video.edit",
+        "azizam_workflow_id": "video.edit.rife-interpolate",
+        "id": "wf-video.edit",
+        "type": "video"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "azizam_intent": "video.generate",
+        "azizam_workflow_id": "video.generate.ltx-2.5-i2v",
+        "id": "wf-video.generate",
+        "type": "video"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "azizam_intent": "audio.generate",
+        "id": "cap-audio.generate",
+        "type": "audio"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "chat.completions",
+        "id": "cap-chat.completions",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "image.analyze",
+        "id": "cap-image.analyze",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_intent": "image.edit",
+        "id": "cap-image.edit",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_intent": "image.generate",
+        "id": "cap-image.generate",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "azizam_intent": "speech.synthesis",
+        "id": "cap-speech.synthesis",
+        "type": "audio"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "speech.transcription",
+        "id": "cap-speech.transcription",
+        "type": "audio"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "speech.translation",
+        "id": "cap-speech.translation",
+        "type": "audio"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "text.completions",
+        "id": "cap-text.completions",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "azizam_intent": "text.embeddings",
+        "id": "cap-text.embeddings",
+        "type": "embedding"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "text.rerank",
+        "id": "cap-text.rerank",
+        "type": "reranking"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "azizam_intent": "video.edit",
+        "id": "cap-video.edit",
+        "type": "video"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "azizam_intent": "video.generate",
+        "id": "cap-video.generate",
+        "type": "video"
+      },
+      {
+        "azizam_intent": "frobnicate.widget-9",
+        "id": "cap-unfamiliar"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "chat.responses-x",
+        "id": "cap-family",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_intent": "image.generate",
+        "azizam_workflow_id": "no-such-workflow",
+        "id": "wf-unknown-manifest",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "origin-llm",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "origin-decision",
+        "type": "decision"
+      },
+      {
+        "id": "origin-other"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_current_loaded": true,
+        "id": "current",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "svc-chat",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "svc-vision",
+        "tags": [
+          "vision"
+        ],
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "id": "svc-embed",
+        "type": "embedding"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "svc-rerank",
+        "type": "reranking"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "svc-decisions",
+        "type": "decision"
+      },
+      {
+        "id": "svc-none"
+      },
+      {
+        "id": "untyped"
+      },
+      {
+        "id": ""
+      },
+      "not-a-dict",
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "declared-lang",
+        "max_tokens": 32000,
+        "tags": [
+          "reasoning",
+          "vision"
+        ],
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_intent": "image.generate",
+        "id": "declared-media",
+        "max_tokens": 5,
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "azizam_intent": "text.embeddings",
+        "id": "declared-bad",
+        "type": "embedding"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_intent": "chat.completions",
+        "id": "declared-image-input",
+        "tags": [
+          "vision"
+        ],
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "inherited-alias",
+        "max_tokens": 99,
+        "tags": [
+          "reasoning"
+        ],
+        "type": "language"
+      },
+      {
+        "id": "dyn-current"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_resolves_to": {
+          "chat": "cap-chat.completions"
+        },
+        "id": "alias-listed",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_resolves_to": {
+          "image_edits": "cap-image.edit",
+          "images": "cap-image.generate"
+        },
+        "id": "alias-two-listed",
+        "type": "image"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "azizam_resolves_to": {
+          "videos": "wf-model-video"
+        },
+        "id": "alias-workflow",
+        "type": "video"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "azizam_resolves_to": {
+          "speech": "not-listed"
+        },
+        "id": "alias-operation",
+        "type": "audio"
+      },
+      {
+        "azizam_resolves_to": {
+          "chat": "cap-chat.completions",
+          "images": "cap-image.generate"
+        },
+        "id": "alias-mixed"
+      },
+      {
+        "azizam_resolves_to": {
+          "chat": "alias-self"
+        },
+        "id": "alias-self"
+      },
+      {
+        "azizam_resolves_to": {
+          "chat": ""
+        },
+        "id": "alias-empty"
+      },
+      {
+        "azizam_resolves_to": "chat",
+        "id": "alias-not-mapping"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_resolves_to": {
+          "chat": "cap-chat.completions"
+        },
+        "id": "alias-declared",
+        "max_tokens": 1000,
+        "type": "language"
+      },
+      {
+        "azizam_resolves_to": {
+          "mesh": "nowhere"
+        },
+        "id": "alias-unresolvable"
+      }
+    ],
+    "annotated_narrowed_with_catalog": [
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "svc-chat",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_resolves_to": {
+          "chat": "cap-chat.completions"
+        },
+        "id": "alias-listed",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_resolves_to": {
+          "image_edits": "cap-image.edit",
+          "images": "cap-image.generate"
+        },
+        "id": "alias-two-listed",
+        "type": "image"
+      }
+    ],
+    "annotated_narrowed_without_catalog": [
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "id": "svc-chat",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "azizam_resolves_to": {
+          "chat": "cap-chat.completions"
+        },
+        "id": "alias-listed",
+        "type": "language"
+      },
+      {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "azizam_resolves_to": {
+          "image_edits": "cap-image.edit",
+          "images": "cap-image.generate"
+        },
+        "id": "alias-two-listed",
+        "type": "image"
+      }
+    ],
+    "base_metadata": {
+      "": null,
+      "alias-declared": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [],
+            "output_modalities": []
+          },
+          "max_tokens": 1000,
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [],
+          "max_tokens": 1000,
+          "output_modalities": [],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "alias-empty": null,
+      "alias-listed": null,
+      "alias-mixed": null,
+      "alias-not-mapping": null,
+      "alias-operation": null,
+      "alias-self": null,
+      "alias-two-listed": null,
+      "alias-unresolvable": null,
+      "alias-workflow": null,
+      "cap-audio.generate": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "audio"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "audio"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "cap-chat.completions": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "cap-family": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "cap-image.analyze": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "cap-image.edit": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "cap-image.generate": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "cap-speech.synthesis": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "audio"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "audio"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "cap-speech.transcription": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "audio"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "audio"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "cap-speech.translation": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "audio"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "audio"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "cap-text.completions": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "cap-text.embeddings": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "embedding"
+            ]
+          },
+          "type": "embedding"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "embedding"
+          ],
+          "tags": [],
+          "type": "embedding"
+        }
+      },
+      "cap-text.rerank": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "reranking"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "reranking"
+        }
+      },
+      "cap-unfamiliar": null,
+      "cap-video.edit": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "video"
+            ],
+            "output_modalities": [
+              "video"
+            ]
+          },
+          "type": "video"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "video"
+          ],
+          "tags": [],
+          "type": "video"
+        }
+      },
+      "cap-video.generate": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "video"
+            ]
+          },
+          "type": "video"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "video"
+          ],
+          "tags": [],
+          "type": "video"
+        }
+      },
+      "current": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "declared-bad": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [],
+            "output_modalities": [
+              "embedding"
+            ]
+          },
+          "type": "embedding"
+        },
+        "record": {
+          "input_modalities": [],
+          "max_tokens": null,
+          "output_modalities": [
+            "embedding"
+          ],
+          "tags": [],
+          "type": "embedding"
+        }
+      },
+      "declared-image-input": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "declared-lang": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 32000,
+          "tags": [
+            "reasoning",
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": 32000,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "reasoning",
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "declared-media": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "max_tokens": 5,
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": 5,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "dyn-current": null,
+      "inherited-alias": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 99,
+          "tags": [
+            "reasoning"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": 99,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "reasoning"
+          ],
+          "type": "language"
+        }
+      },
+      "origin-decision": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "decision"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "decision"
+        }
+      },
+      "origin-llm": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "origin-other": null,
+      "svc-chat": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "svc-decisions": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "decision"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "decision"
+        }
+      },
+      "svc-embed": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "embedding"
+            ]
+          },
+          "type": "embedding"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "embedding"
+          ],
+          "tags": [],
+          "type": "embedding"
+        }
+      },
+      "svc-none": null,
+      "svc-rerank": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "reranking"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "reranking"
+        }
+      },
+      "svc-vision": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "untyped": null,
+      "wf-audio.generate": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "audio"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "audio"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "wf-image.analyze": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "wf-image.edit": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "wf-image.generate": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "wf-mesh.generate": null,
+      "wf-unknown-manifest": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "wf-video.edit": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "video"
+            ],
+            "output_modalities": [
+              "video"
+            ]
+          },
+          "type": "video"
+        },
+        "record": {
+          "input_modalities": [
+            "video"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "video"
+          ],
+          "tags": [],
+          "type": "video"
+        }
+      },
+      "wf-video.generate": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "video"
+            ]
+          },
+          "type": "video"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "video"
+          ],
+          "tags": [],
+          "type": "video"
+        }
+      }
+    },
+    "metadata_index": {
+      "alias-declared": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "max_tokens": 1000,
+        "type": "language"
+      },
+      "alias-empty": {},
+      "alias-listed": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "alias-mixed": {},
+      "alias-not-mapping": {},
+      "alias-operation": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "alias-self": {},
+      "alias-two-listed": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "alias-unresolvable": {},
+      "alias-workflow": {
+        "architecture": {
+          "input_modalities": [
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "cap-audio.generate": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "cap-chat.completions": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "cap-family": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "cap-image.analyze": {
+        "architecture": {
+          "input_modalities": [
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "cap-image.edit": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "cap-image.generate": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "cap-speech.synthesis": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "cap-speech.transcription": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "cap-speech.translation": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "cap-text.completions": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "cap-text.embeddings": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "cap-text.rerank": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "cap-unfamiliar": {},
+      "cap-video.edit": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "cap-video.generate": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "current": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "declared-bad": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "declared-image-input": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "tags": [
+          "vision"
+        ],
+        "type": "language"
+      },
+      "declared-lang": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "max_tokens": 32000,
+        "tags": [
+          "reasoning",
+          "vision"
+        ],
+        "type": "language"
+      },
+      "declared-media": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "max_tokens": 5,
+        "type": "image"
+      },
+      "dyn-current": {},
+      "inherited-alias": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "max_tokens": 99,
+        "tags": [
+          "reasoning"
+        ],
+        "type": "language"
+      },
+      "origin-decision": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "origin-llm": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "origin-other": {},
+      "svc-chat": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "svc-decisions": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "svc-embed": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "svc-none": {},
+      "svc-rerank": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "svc-vision": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "tags": [
+          "vision"
+        ],
+        "type": "language"
+      },
+      "untyped": {},
+      "wf-audio.generate": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "wf-image.analyze": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "wf-image.edit": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "wf-image.generate": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "wf-mesh.generate": {},
+      "wf-unknown-manifest": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "wf-video.edit": {
+        "architecture": {
+          "input_modalities": [
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "wf-video.generate": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      }
+    }
+  },
+  "capability_intent_families": [
+    [
+      "chat.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      }
+    ],
+    [
+      "responses.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      }
+    ],
+    [
+      "decision.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "decision"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "decision"
+        }
+      }
+    ],
+    [
+      "image.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      }
+    ],
+    [
+      "video.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "video"
+            ]
+          },
+          "type": "video"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "video"
+          ],
+          "tags": [],
+          "type": "video"
+        }
+      }
+    ],
+    [
+      "speech.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "audio"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "audio"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      }
+    ],
+    [
+      "audio.",
+      {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "audio"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "audio"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      }
+    ]
+  ],
+  "capability_intent_table": {
+    "audio.generate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "chat.completions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "image.analyze": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "speech.synthesis": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.transcription": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.translation": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "text.completions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "text.embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "text.rerank": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "video.edit": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    }
+  },
+  "capability_intents": [
+    "",
+    " image.generate ",
+    "Chat.completions",
+    "audio",
+    "audio.generate",
+    "audio.other",
+    "chat",
+    "chat.completions",
+    "chat.completions.stream",
+    "chat.other",
+    "decision",
+    "decision.other",
+    "decision.systemone",
+    "frobnicate.widget-9",
+    "image",
+    "image.analyze",
+    "image.edit",
+    "image.generate",
+    "image.other",
+    "responses",
+    "responses.create",
+    "responses.other",
+    "speech",
+    "speech.other",
+    "speech.synthesis",
+    "speech.transcription",
+    "speech.translation",
+    "text.completions",
+    "text.embeddings",
+    "text.rerank",
+    "video",
+    "video.edit",
+    "video.generate",
+    "video.other"
+  ],
+  "combinators": {
+    "apply_declared": {
+      "chat|empty": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|image input adds vision tag": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "chat|max_tokens bool": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|max_tokens negative": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|max_tokens ok": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 10,
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": 10,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|modalities not a list": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|none": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|not a mapping": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|tags on language": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "tags": [
+            "reasoning"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "reasoning"
+          ],
+          "type": "language"
+        }
+      },
+      "chat|tags on media": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "chat|type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "chat|unknown type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "chat|vision tag adds image input": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "image|empty": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|image input adds vision tag": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|max_tokens bool": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|max_tokens negative": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|max_tokens ok": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "max_tokens": 10,
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": 10,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|modalities not a list": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|none": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|not a mapping": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|tags on language": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|tags on media": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "image|type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|unknown type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "image|vision tag adds image input": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ]
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "image"
+          ],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "none|empty": null,
+      "none|image input adds vision tag": null,
+      "none|max_tokens bool": null,
+      "none|max_tokens negative": null,
+      "none|max_tokens ok": null,
+      "none|modalities not a list": null,
+      "none|none": null,
+      "none|not a mapping": null,
+      "none|tags on language": null,
+      "none|tags on media": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [],
+            "output_modalities": []
+          },
+          "type": "audio"
+        },
+        "record": {
+          "input_modalities": [],
+          "max_tokens": null,
+          "output_modalities": [],
+          "tags": [],
+          "type": "audio"
+        }
+      },
+      "none|type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [],
+            "output_modalities": []
+          },
+          "type": "image"
+        },
+        "record": {
+          "input_modalities": [],
+          "max_tokens": null,
+          "output_modalities": [],
+          "tags": [],
+          "type": "image"
+        }
+      },
+      "none|unknown type": null,
+      "none|vision tag adds image input": null
+    },
+    "asset_media_type": {
+      "blank": null,
+      "mixed kinds": null,
+      "none": null,
+      "one": "image/png",
+      "same kind": "image/*",
+      "unknown kind": "model/gltf"
+    },
+    "common": {
+      "different types": null,
+      "differing max_tokens": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "none": null,
+      "one": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "only none": null,
+      "same type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 8000,
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": 8000,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "untyped member": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      }
+    },
+    "loaded_model_metadata": {
+      "blank": null,
+      "declared lang": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 32000,
+          "tags": [
+            "reasoning",
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": 32000,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "reasoning",
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "none": null,
+      "one": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 2048,
+          "tags": [
+            "tool-use"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": 2048,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "tool-use"
+          ],
+          "type": "language"
+        }
+      },
+      "two": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 2048,
+          "tags": [
+            "tool-use"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": 2048,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "tool-use"
+          ],
+          "type": "language"
+        }
+      },
+      "undeclared": null
+    },
+    "merge": {
+      "different types": null,
+      "differing max_tokens": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "none": null,
+      "one": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      },
+      "only none": null,
+      "same type": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "max_tokens": 8000,
+          "tags": [
+            "tool-use",
+            "reasoning",
+            "vision"
+          ],
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "max_tokens": 8000,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [
+            "tool-use",
+            "reasoning",
+            "vision"
+          ],
+          "type": "language"
+        }
+      },
+      "untyped member": {
+        "fields": {
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "type": "language"
+        },
+        "record": {
+          "input_modalities": [
+            "text"
+          ],
+          "max_tokens": null,
+          "output_modalities": [
+            "text"
+          ],
+          "tags": [],
+          "type": "language"
+        }
+      }
+    },
+    "type_of": {
+      "['audio']>['text']": "audio",
+      "['image']>['text']": "image",
+      "['text']>['embedding']": "embedding",
+      "['text']>['image']": "image",
+      "['text']>['text', 'audio']": "audio",
+      "['text']>['text']": "language",
+      "['video']>['text']": "video",
+      "[]>[]": null
+    },
+    "without_reasoning": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "max_tokens": 8000,
+        "tags": [
+          "tool-use"
+        ],
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": 8000,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [
+          "tool-use"
+        ],
+        "type": "language"
+      }
+    }
+  },
+  "from_capability": {
+    " image.generate |declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    " image.generate |declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    " image.generate |defaults": null,
+    " image.generate |unknown and non-string values": null,
+    "Chat.completions|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "Chat.completions|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "Chat.completions|defaults": null,
+    "Chat.completions|unknown and non-string values": null,
+    "audio.generate|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "audio|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "audio|defaults": null,
+    "audio|unknown and non-string values": null,
+    "chat.completions.stream|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions.stream|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions.stream|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions.stream|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.completions|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "chat|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "chat|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "chat|defaults": null,
+    "chat|unknown and non-string values": null,
+    "decision.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.systemone|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.systemone|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.systemone|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision.systemone|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "decision|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "decision|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "decision|defaults": null,
+    "decision|unknown and non-string values": null,
+    "frobnicate.widget-9|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "frobnicate.widget-9|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "frobnicate.widget-9|defaults": null,
+    "frobnicate.widget-9|unknown and non-string values": null,
+    "image.analyze|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.analyze|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.analyze|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.analyze|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image|defaults": null,
+    "image|unknown and non-string values": null,
+    "responses.create|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.create|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.create|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.create|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "responses|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "responses|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "responses|defaults": null,
+    "responses|unknown and non-string values": null,
+    "speech.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.synthesis|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.synthesis|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.synthesis|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.synthesis|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.transcription|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.transcription|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.transcription|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.transcription|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.translation|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.translation|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.translation|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech.translation|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "speech|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "speech|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "speech|defaults": null,
+    "speech|unknown and non-string values": null,
+    "text.completions|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "text.completions|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "text.completions|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "text.completions|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "text.embeddings|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "text.embeddings|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "text.embeddings|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "text.embeddings|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "text.rerank|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "text.rerank|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "text.rerank|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "text.rerank|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "video.edit|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.edit|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.edit|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.edit|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.other|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.other|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.other|defaults": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.other|unknown and non-string values": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "video|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "video|defaults": null,
+    "video|unknown and non-string values": null,
+    "|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "|defaults": null,
+    "|unknown and non-string values": null
+  },
+  "from_contract": {
+    "audio.generate.ace-step-1.5-xl-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate.sa3-small-sfx": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate.tangoflux": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "audio.generate.yue2-song": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "image.analyze.face-likeness": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.fibo-2-edit-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.flux2-klein": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.flux2-klein-4b": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.flux2-klein-4b-inpaint": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.image-identity": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.qwen-image-2.1-edit": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.qwen-image-2.1-edit-multiref": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.qwen-image-2.1-inpaint": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.edit.seedvr2-upscale": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.anima-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-4b": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-4b-seamless-tile": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.flux2-klein-snofs": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.krea2-turbo": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.krea2-turbo-snofs": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.moss-image": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.moss-image-fast": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.moss-image-quality": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image.generate.sdxl-seamless-tile": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "mesh.generate.trellis-2": null,
+    "video.edit.rife-interpolate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.edit.scail-2-replace": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.edit.video-mux": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio",
+            "video"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "audio",
+          "video"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-i2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-keyframes": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-keyframes-mid": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-long": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.ltx-2.5-t2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-i2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-keyframes": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-keyframes-mid": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-long": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    },
+    "video.generate.minimax-h3-t2v": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    }
+  },
+  "from_contract_non_mapping": {
+    "empty mapping": null,
+    "int": null,
+    "list": null,
+    "none": null,
+    "string": null
+  },
+  "from_fields": {
+    "architecture not a mapping": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "empty": null,
+    "full language": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "max_tokens": 4096,
+        "tags": [
+          "tool-use",
+          "reasoning",
+          "vision"
+        ],
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": 4096,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [
+          "tool-use",
+          "reasoning",
+          "vision"
+        ],
+        "type": "language"
+      }
+    },
+    "list": null,
+    "max_tokens bool": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "max_tokens string": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "max_tokens zero": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "max_tokens": 0,
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": 0,
+        "output_modalities": [],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "modalities out of order, upper case, unknown": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "none": null,
+    "null architecture lists": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "string": null,
+    "tags not a list": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "tags unknown, out of order": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "tags": [
+          "tool-use",
+          "vision",
+          "file-input"
+        ],
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [
+          "tool-use",
+          "vision",
+          "file-input"
+        ],
+        "type": "language"
+      }
+    },
+    "type only": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [],
+          "output_modalities": []
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [],
+        "max_tokens": null,
+        "output_modalities": [],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "unknown type": null
+  },
+  "from_fields_cases": [
+    "architecture not a mapping",
+    "empty",
+    "full language",
+    "list",
+    "max_tokens bool",
+    "max_tokens string",
+    "max_tokens zero",
+    "modalities out of order, upper case, unknown",
+    "none",
+    "null architecture lists",
+    "string",
+    "tags not a list",
+    "tags unknown, out of order",
+    "type only",
+    "unknown type"
+  ],
+  "from_operation": {
+    "": null,
+    "audio_generate": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "chat": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "decisions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "image_edits": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "images": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "mesh": null,
+    "rerank": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "speech": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "audio"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "audio"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "transcriptions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "audio"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "audio"
+      }
+    },
+    "unknown-operation": null,
+    "videos": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "video"
+          ]
+        },
+        "type": "video"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "video"
+        ],
+        "tags": [],
+        "type": "video"
+      }
+    }
+  },
+  "from_origin": {
+    "None": null,
+    "decision": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "llm-catalog": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "other": null
+  },
+  "from_service_capabilities": {
+    "chat": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "completions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "decisions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "decision"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "decision"
+      }
+    },
+    "embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    },
+    "empty": null,
+    "first match wins (rerank before chat in the list)": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "non-string members": null,
+    "none": null,
+    "openai marker": null,
+    "rerank": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "reranking"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "reranking"
+      }
+    },
+    "table order wins over list order": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "unknown": null,
+    "uppercase": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "vision alone": null,
+    "vision+chat": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "vision+completions": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "language"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "language"
+      }
+    },
+    "vision+embeddings": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text"
+          ],
+          "output_modalities": [
+            "embedding"
+          ]
+        },
+        "type": "embedding"
+      },
+      "record": {
+        "input_modalities": [
+          "text"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "embedding"
+        ],
+        "tags": [],
+        "type": "embedding"
+      }
+    }
+  },
+  "operations": [
+    "",
+    "audio_generate",
+    "chat",
+    "decisions",
+    "embeddings",
+    "image_edits",
+    "images",
+    "mesh",
+    "rerank",
+    "speech",
+    "transcriptions",
+    "unknown-operation",
+    "videos"
+  ],
+  "operations_of": {
+    "audio|among chat+images": [],
+    "audio|among with unknown": [],
+    "audio|audio": [
+      "transcriptions"
+    ],
+    "audio|empty list": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|image+text (order)": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|no inputs": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|string not list": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|text": [
+      "speech",
+      "audio_generate"
+    ],
+    "audio|text+image": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "audio|video (matches none)": [
+      "speech",
+      "transcriptions",
+      "audio_generate"
+    ],
+    "decision|among chat+images": [],
+    "decision|among with unknown": [],
+    "decision|audio": [
+      "decisions"
+    ],
+    "decision|empty list": [
+      "decisions"
+    ],
+    "decision|image+text (order)": [
+      "decisions"
+    ],
+    "decision|no inputs": [
+      "decisions"
+    ],
+    "decision|string not list": [
+      "decisions"
+    ],
+    "decision|text": [
+      "decisions"
+    ],
+    "decision|text+image": [
+      "decisions"
+    ],
+    "decision|video (matches none)": [
+      "decisions"
+    ],
+    "embedding|among chat+images": [],
+    "embedding|among with unknown": [],
+    "embedding|audio": [
+      "embeddings"
+    ],
+    "embedding|empty list": [
+      "embeddings"
+    ],
+    "embedding|image+text (order)": [
+      "embeddings"
+    ],
+    "embedding|no inputs": [
+      "embeddings"
+    ],
+    "embedding|string not list": [
+      "embeddings"
+    ],
+    "embedding|text": [
+      "embeddings"
+    ],
+    "embedding|text+image": [
+      "embeddings"
+    ],
+    "embedding|video (matches none)": [
+      "embeddings"
+    ],
+    "image|among chat+images": [
+      "images"
+    ],
+    "image|among with unknown": [
+      "images"
+    ],
+    "image|audio": [
+      "images",
+      "image_edits"
+    ],
+    "image|empty list": [
+      "images",
+      "image_edits"
+    ],
+    "image|image+text (order)": [
+      "image_edits"
+    ],
+    "image|no inputs": [
+      "images",
+      "image_edits"
+    ],
+    "image|string not list": [
+      "images",
+      "image_edits"
+    ],
+    "image|text": [
+      "images"
+    ],
+    "image|text+image": [
+      "image_edits"
+    ],
+    "image|video (matches none)": [
+      "images",
+      "image_edits"
+    ],
+    "language|among chat+images": [
+      "chat"
+    ],
+    "language|among with unknown": [],
+    "language|audio": [
+      "chat"
+    ],
+    "language|empty list": [
+      "chat"
+    ],
+    "language|image+text (order)": [
+      "chat"
+    ],
+    "language|no inputs": [
+      "chat"
+    ],
+    "language|string not list": [
+      "chat"
+    ],
+    "language|text": [
+      "chat"
+    ],
+    "language|text+image": [
+      "chat"
+    ],
+    "language|video (matches none)": [
+      "chat"
+    ],
+    "reranking|among chat+images": [],
+    "reranking|among with unknown": [],
+    "reranking|audio": [
+      "rerank"
+    ],
+    "reranking|empty list": [
+      "rerank"
+    ],
+    "reranking|image+text (order)": [
+      "rerank"
+    ],
+    "reranking|no inputs": [
+      "rerank"
+    ],
+    "reranking|string not list": [
+      "rerank"
+    ],
+    "reranking|text": [
+      "rerank"
+    ],
+    "reranking|text+image": [
+      "rerank"
+    ],
+    "reranking|video (matches none)": [
+      "rerank"
+    ],
+    "unknown-type|among chat+images": [],
+    "unknown-type|among with unknown": [],
+    "unknown-type|audio": [],
+    "unknown-type|empty list": [],
+    "unknown-type|image+text (order)": [],
+    "unknown-type|no inputs": [],
+    "unknown-type|string not list": [],
+    "unknown-type|text": [],
+    "unknown-type|text+image": [],
+    "unknown-type|video (matches none)": [],
+    "video|among chat+images": [],
+    "video|among with unknown": [],
+    "video|audio": [
+      "videos"
+    ],
+    "video|empty list": [
+      "videos"
+    ],
+    "video|image+text (order)": [
+      "videos"
+    ],
+    "video|no inputs": [
+      "videos"
+    ],
+    "video|string not list": [
+      "videos"
+    ],
+    "video|text": [
+      "videos"
+    ],
+    "video|text+image": [
+      "videos"
+    ],
+    "video|video (matches none)": [
+      "videos"
+    ]
+  },
+  "operations_of_non_string_type": [],
+  "service_capability_cases": [
+    "chat",
+    "completions",
+    "decisions",
+    "embeddings",
+    "empty",
+    "first match wins (rerank before chat in the list)",
+    "non-string members",
+    "none",
+    "openai marker",
+    "rerank",
+    "table order wins over list order",
+    "unknown",
+    "uppercase",
+    "vision alone",
+    "vision+chat",
+    "vision+completions",
+    "vision+embeddings"
+  ],
+  "types": [
+    "language",
+    "embedding",
+    "reranking",
+    "image",
+    "video",
+    "audio",
+    "decision",
+    "unknown-type"
+  ],
+  "workflow_ids": [
+    "audio.generate.ace-step-1.5-xl-turbo",
+    "audio.generate.sa3-small-sfx",
+    "audio.generate.tangoflux",
+    "audio.generate.yue2-song",
+    "image.analyze.face-likeness",
+    "image.edit.fibo-2-edit-turbo",
+    "image.edit.flux2-klein",
+    "image.edit.flux2-klein-4b",
+    "image.edit.flux2-klein-4b-inpaint",
+    "image.edit.image-identity",
+    "image.edit.qwen-image-2.1-edit",
+    "image.edit.qwen-image-2.1-edit-multiref",
+    "image.edit.qwen-image-2.1-inpaint",
+    "image.edit.seedvr2-upscale",
+    "image.generate.anima-turbo",
+    "image.generate.flux2-klein",
+    "image.generate.flux2-klein-4b",
+    "image.generate.flux2-klein-4b-seamless-tile",
+    "image.generate.flux2-klein-snofs",
+    "image.generate.krea2-turbo",
+    "image.generate.krea2-turbo-snofs",
+    "image.generate.moss-image",
+    "image.generate.moss-image-fast",
+    "image.generate.moss-image-quality",
+    "image.generate.sdxl-seamless-tile",
+    "mesh.generate.trellis-2",
+    "video.edit.rife-interpolate",
+    "video.edit.scail-2-replace",
+    "video.edit.video-mux",
+    "video.generate.ltx-2.5-i2v",
+    "video.generate.ltx-2.5-keyframes",
+    "video.generate.ltx-2.5-keyframes-mid",
+    "video.generate.ltx-2.5-long",
+    "video.generate.ltx-2.5-t2v",
+    "video.generate.minimax-h3-i2v",
+    "video.generate.minimax-h3-keyframes",
+    "video.generate.minimax-h3-keyframes-mid",
+    "video.generate.minimax-h3-long",
+    "video.generate.minimax-h3-t2v"
+  ]
+}

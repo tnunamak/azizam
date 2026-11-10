@@ -142,6 +142,21 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 if spec["type"] == "asset":
                     self.assertEqual(form["properties"][name]["format"], "binary")
 
+    def test_video_edit_sync_declares_a_job_without_rewriting_the_upload(self) -> None:
+        edits = [row for row in self.catalog.values() if row["intent"] == "video.edit"
+                 and row["execution"]["sync"]["path"] == f"/gateway/v1/workflows/{row['id']}/run"]
+        self.assertTrue(edits)
+        for row in edits:
+            with self.subTest(workflow=row["id"]):
+                route = row["execution"]["sync"]
+                self.assertEqual(route["content_type"], "multipart/form-data")
+                self.assertNotEqual(route.get("kind"), "media_job")
+                self.assertEqual(route["response"], {
+                    "kind": "media_job",
+                    "poll": "/gateway/v1/media/jobs/{job_id}",
+                    "content": "/gateway/v1/media/jobs/{job_id}/content",
+                })
+
     def test_other_native_routes_are_typed(self) -> None:
         paths = self.spec["paths"]
         submit = paths["/gateway/v1/media/jobs"]["post"]
@@ -175,8 +190,11 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_route_inputs_cover_what_manifests_omit(self) -> None:
         by_name = {n: {r["name"] for r in e["route_inputs"]} for n, e in self.catalog.items()}
-        self.assertIn("seconds", by_name["video.generate.ltx-2.5-t2v"])
-        self.assertIn("size", by_name["video.generate.ltx-2.5-t2v"])
+        # A video manifest that declares width, height and length takes size and seconds from them (CODE_TO_DATA S7, V5a);
+        # the chain workflow has no length input, so the route still owns its seconds.
+        self.assertNotIn("seconds", by_name["video.generate.ltx-2.5-t2v"])
+        self.assertNotIn("size", by_name["video.generate.ltx-2.5-t2v"])
+        self.assertIn("seconds", by_name["video.generate.ltx-2.5-long"])
         self.assertNotIn("size", by_name["image.generate.krea2-turbo"])  # has width/height
         self.assertIn("n", by_name["image.generate.krea2-turbo"])
         self.assertEqual(by_name["audio.generate.sa3-small-sfx"], set())
@@ -400,6 +418,47 @@ class RequestMappingTypeTests(unittest.TestCase):
                 self.assertEqual(request_mapping(record, "sync"), {"photo": {"in": "form", "field": "photo"}})
 
 
+
+
+class WorkflowResponseKindDeclarationTests(unittest.TestCase):
+    def test_every_sync_route_declares_its_response_beside_unchanged_output_text(self) -> None:
+        from types import SimpleNamespace
+        from gateway.workflow_openapi import _execution
+
+        cases = (
+            ("unfamiliar.render", "/native-fixture",
+             {"kind": "json"}, "JSON (see the route's response schema)"),
+            ("image.generate", None, {"kind": "json"}, "data[].b64_json or data[].url"),
+            ("image.edit", None, {"kind": "json"}, "data[].b64_json or data[].url"),
+            ("audio.generate", None, {"kind": "binary"}, "audio bytes (see Content-Type)"),
+            ("mesh.generate", None, {"kind": "binary", "media_type": "model/gltf-binary"},
+             "model/gltf-binary (GLB bytes)"),
+            ("video.edit", None,
+             {"kind": "media_job", "poll": "/gateway/v1/media/jobs/{job_id}",
+              "content": "/gateway/v1/media/jobs/{job_id}/content"},
+             "a media job; its content is the video"),
+        )
+        for intent, native, response, output in cases:
+            with self.subTest(intent=intent, native=native):
+                record = SimpleNamespace(
+                    id=f"{intent}.fixture", intent=intent,
+                    contract={"inputs": {}, "bindings": {"gateway": {"route": native}} if native else {}},
+                )
+                route = _execution(record, 1)["sync"]
+                self.assertEqual(route["output"], output)
+                self.assertEqual(route["response"], response)
+
+    def test_all_shipped_sync_routes_have_a_supported_response_kind(self) -> None:
+        from gateway.workflow_openapi import _execution
+
+        registry = WorkflowRegistry.from_directory(MANIFESTS)
+        self.assertEqual(registry.errors, [])
+        self.assertTrue(registry.records())
+        for record in registry.records():
+            with self.subTest(workflow=record.id):
+                route = _execution(record, 1)["sync"]
+                if route:
+                    self.assertIn(route["response"]["kind"], {"json", "binary", "media_job"})
 if __name__ == "__main__":
     unittest.main()
 

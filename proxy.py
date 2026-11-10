@@ -16,8 +16,10 @@ Features:
 """
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
-from gateway import engine_egress
+from gateway import engine_egress, engine_record_defaults
 from gateway.frontend_shapes import media_job as media_job_shape
+from gateway.frontend_shapes.video_views import VideoViews
+from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
 from gateway import registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_projections import SnapshotRegistry
@@ -116,6 +118,7 @@ from gateway import request_history, request_history_api, request_history_captur
 from gateway.http_tls import tls_context
 from gateway import asset_types, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
+from gateway import video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
@@ -123,9 +126,10 @@ from gateway import pinned_runtime, request_spool, workflow_run
 from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
+from gateway.frontend_shapes import video_create as frontend_video_create
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
-    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
+    SERVICE_DISABLED, SERVICE_NOT_ADMITTING, SERVICE_REASONS, JobDeleteConflict, JobNotFound, MediaRef, ResultUnavailable, RunRefused)
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
@@ -250,7 +254,7 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
-from gateway.availability import availability_evidence_snapshot, model_availability, project_capabilities
+from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -874,11 +878,9 @@ def _backend_host_map(backends: Mapping[str, Any] | None, listed: Callable[[str,
     for bid, bcfg in (backends or {}).items():
         if not isinstance(bcfg, Mapping) or not listed(bid, bcfg):
             continue
-        host = bcfg.get("host", "127.0.0.1")
-        port = bcfg.get("port")
-        if not port:
-            continue
-        result[bid] = f"http://{host}:{port}"
+        origin = service_registry.host_port_origin(bcfg)
+        if origin:  # a record that names no address is not listed
+            result[bid] = origin
     return result
 
 
@@ -1027,7 +1029,7 @@ def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | N
 def host_for_capability(capability: str) -> str | None:
     """Return the host URL of the highest-priority enabled backend for *capability*.
 
-    Returns the first backend's ``http://host:port`` from backends_for_capability,
+    Returns the first backend's base address (scheme, host, port or base URL) from backends_for_capability,
     or None if no enabled backend declares the capability.  Health-checking is
     out of scope for this step; the caller should fall back to the legacy constant
     when None is returned.
@@ -1035,7 +1037,7 @@ def host_for_capability(capability: str) -> str | None:
     selected = service_for_capability(capability)
     if selected is not None:
         _service_id, service = selected
-        return f"http://{service.get('host')}:{service.get('port')}"
+        return service_registry.engine_base_address(service) or None
     return None
 
 
@@ -1419,15 +1421,20 @@ def _stored_registry_for_boot() -> dict[str, Any] | None:
         return None
 
 
-def _workflows_directory(configured: Any, default: str) -> Path:
-    """A workflow directory from a registry record: absolute as given, else relative to proxy.py."""
-    path = Path(str(configured if configured is not None else default))
+def _record_default(service_id: str, record: Mapping[str, Any], key: str) -> Any:
+    """The record's own value for *key*, else the release default (registry/engine_record_defaults.yml)."""
+    return engine_record_defaults.record_value(service_id, record, key)
+
+
+def _workflows_directory(configured: Any) -> Path:
+    """A workflow directory from a registry record or the release default: absolute as given, else relative to proxy.py."""
+    path = Path(str(configured))
     return path if path.is_absolute() else (Path(__file__).parent / path).resolve()
 
 
 def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
     """The model id the embeddings service's record names (its default when the record names none)."""
-    return ((backends or {}).get("embeddings") or {}).get("model_id", "nomic-embed-text-v1.5")
+    return engine_record_defaults.record_value("embeddings", (backends or {}).get("embeddings"), "model_id")
 
 
 def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
@@ -1447,27 +1454,28 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
     return {
-        "TTS_HOST": f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}",
-        "STT_HOST": f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}",
-        "EMBEDDINGS_HOST": f"http://{emb_c.get('host', '127.0.0.1')}:{emb_c.get('port', 5061)}",
-        "COMFY_HOST": f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}",
-        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True),
-        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True),
-        "STT_TIMEOUT": int(stt_c.get("timeout", 120)),
-        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)),
-        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True),
+        # A record that names no address gives "" here and the engine is not configured: nothing is dialed.
+        "TTS_HOST": service_registry.engine_base_address(tts_c),
+        "STT_HOST": service_registry.engine_base_address(stt_c),
+        "EMBEDDINGS_HOST": service_registry.engine_base_address(emb_c),
+        "COMFY_HOST": service_registry.engine_base_address(cfy_c),
+        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
+        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
+        "STT_TIMEOUT": int(_record_default("stt", stt_c, "timeout")),
+        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
+        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_base_address(cfy_c)),
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
-        "TTS_TIMEOUT": int(tts_c.get("timeout", 120)),
-        "EMBEDDINGS_HEALTH_ENDPOINT": emb_c.get("health_endpoint", "/health"),
-        "EMBEDDINGS_TIMEOUT": int(emb_c.get("timeout", 120)),
+        "TTS_TIMEOUT": int(_record_default("tts", tts_c, "timeout")),
+        "EMBEDDINGS_HEALTH_ENDPOINT": _record_default("embeddings", emb_c, "health_endpoint"),
+        "EMBEDDINGS_TIMEOUT": int(_record_default("embeddings", emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": int(cfy_c.get("timeout", 300)),
-        "COMFY_DEFAULT_MODEL": cfy_c.get("default_model", "flux2-klein-4b"),
-        "COMFY_VIDEO_TIMEOUT": int(cfy_c.get("video_timeout", 1800)),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(cfy_c.get("workflows_dir"), "./workflows/images"),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(cfy_c.get("video_workflows_dir"), "./workflows"),
+        "COMFY_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "timeout")),
+        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_BACKEND_ID, cfy_c, "default_model"),
+        "COMFY_VIDEO_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_timeout")),
+        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "workflows_dir")),
+        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_workflows_dir")),
         "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(cfy_c, "images").binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
@@ -1934,11 +1942,10 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
 
 
 def _backend_base_url(backend: str) -> str:
-    """The service's own base URL: the registry-derived host, else its record's host and port."""
+    """The service's own base URL: the registry-derived host, else the address its record names ("" when none)."""
     if backend in DERIVED.LLM_BACKEND_HOSTS:
         return DERIVED.LLM_BACKEND_HOSTS[backend]
-    cfg = (config.get("backends") or {}).get(backend) or {}
-    return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
+    return service_registry.host_port_origin((config.get("backends") or {}).get(backend) or {})
 
 
 def _engine_probe(backend: str, endpoint: str) -> tuple[str, dict[str, str]] | None:
@@ -4374,11 +4381,19 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
     return None
 
 
+def _backend_banner_lines(derived: Mapping[str, Any]) -> list[str]:
+    """The startup lines for the speech, transcription and ComfyUI backends; each address is shown without user info or query."""
+    return [
+        f"[proxy] {label} backend: {projection.public_url(str(derived[key + '_HOST'] or ''))} (enabled: {derived[key + '_ENABLED']})"
+        for label, key in (("TTS", "TTS"), ("STT", "STT"), ("ComfyUI", "COMFY"))
+    ]
+
+
 def _probe_join(base: str, path: str) -> str:
     """How the resource probe puts a health path on its address: an absolute URL as it is, else the two joined by one slash."""
     if path.startswith(("http://", "https://")):
         return path
-    return f"{base.rstrip('/')}/{path.lstrip('/')}"
+    return service_registry.join_base_path(base, path)
 
 
 def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
@@ -4393,11 +4408,7 @@ def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
         env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
         base_url = (env_base_url or runtime_secrets.first_url(service_config)).strip()
         if not base_url:
-            host = str(service_config.get("host") or "127.0.0.1").strip()
-            port = service_config.get("port")
-            if host and port not in (None, ""):
-                scheme = str(service_config.get("scheme") or "http").strip() or "http"
-                base_url = f"{scheme}://{host}:{port}"
+            base_url = service_registry.host_port_origin(service_config)
         dialed = runtime_secrets.url(service_config, "health_endpoint", base=base_url, join=_probe_join).strip()
         if not dialed:
             return _probe_join(base_url, "/health") if base_url else ""
@@ -4609,10 +4620,14 @@ def _speech_engine_endpoint(engine_id: str) -> tuple[str, str] | None:
     if not isinstance(spec, Mapping) or not _alias_engine_available_for("speech")(engine_id, spec):
         return None  # unknown, or disabled in the registry: never start a disabled engine's unit
     service_id = str(spec.get("service") or "")
+    base = _speech_service_base(service_id)
+    return (service_id, base) if base else None
+
+
+def _speech_service_base(service_id: str) -> str:
+    """The base address a speech service's record names, or ``""`` when the record is missing or names none."""
     service = (config.get("backends") or {}).get(service_id)
-    if not isinstance(service, Mapping) or not service.get("host") or not service.get("port"):
-        return None
-    return service_id, f"http://{service['host']}:{service['port']}"
+    return service_registry.engine_base_address(service) if isinstance(service, Mapping) else ""
 
 
 async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
@@ -4699,7 +4714,7 @@ async def _reference_transcript(
     if meta.get("transcript"):
         return str(meta["transcript"])
     stt = (config.get("backends") or {}).get("stt")
-    if not isinstance(stt, Mapping) or not stt.get("host"):
+    if not isinstance(stt, Mapping) or not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
         raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
     if receipt is not None:
         receipt.metadata.setdefault("stt", {"field_count": 1, "file_count": 1, "attempts_started": 0, "chunked": False})
@@ -4719,7 +4734,7 @@ async def _reference_transcript(
         )
         _require_egress_lease("stt")
         resp = await _stt_adapter(stt).invoke(
-            AdapterConnection(address=f"http://{stt['host']}:{stt['port']}",
+            AdapterConnection(address=service_registry.engine_base_address(stt),
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
             "stt.transcribe", clip,
         )
@@ -5053,9 +5068,26 @@ async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | N
     return accepting, notes, accepting[0][0] if accepting[0][0] != alias.engine else None
 
 
+def _speech_alias_service_with_address(body: bytes, model_override: str | None) -> str | None:
+    """The speech service the request's model alias names, when it is not "tts" and its record names an address."""
+    try:
+        requested = model_override or json.loads(body).get("model", "tts-1")
+        resolution = resolve_model_for_operation("speech", requested)
+    except (ValueError, AttributeError, ModelCompatibilityError):
+        return None
+    alias = resolution.alias
+    service = (alias.service or "") if alias is not None and alias.engine_spec is not None else ""
+    return service if service and service != "tts" and _speech_service_base(service) else None
+
+
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
-    if not DERIVED.TTS_ENABLED:
+    body = await request.body()
+    # A model whose alias names another speech service with an address does not need the "tts" record to name an
+    # address: that service is dialed instead. The speech route's own admission and the operator's "tts" override
+    # still apply to every speech request, as before.
+    alias_service = _speech_alias_service_with_address(body, model_override)
+    if alias_service is None and not DERIVED.TTS_ENABLED:
         return openai_error_response(
             "TTS not enabled",
             status_code=503,
@@ -5063,7 +5095,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         )
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id="tts",
-        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or alias_service is not None, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5072,7 +5104,6 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
-    body = await request.body()
     headers = prepare_downstream_headers(request.headers, auth_context, "tts")
     tts_service_id = "tts"
 
@@ -5182,7 +5213,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED, resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class='audio', receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5197,17 +5228,18 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
     _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
     if tts_service_id != "tts":
-        _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
-        _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
+        _tts_host = _speech_service_base(tts_service_id)
         _tts_host_service = tts_service_id
+        if not _tts_host:
+            return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
 
-    url = f"{_tts_host}/v1/audio/speech"
+    url = service_registry.join_base_path(_tts_host, "/v1/audio/speech")
     if receipt is not None:
         receipt.backend = tts_service_id
         receipt.resolved_model = body_json.get("model") if isinstance(body_json, dict) else None
@@ -5378,11 +5410,21 @@ def _stt_execution_snapshot(
         if selected is None:
             return None
         service_id, service_config = selected
-    return stt_chunking.SttExecutionConfig.from_service(
+    execution = stt_chunking.SttExecutionConfig.from_service(
         service_id=service_id,
         service_config=stt_measurement.trial_config(service_id, service_config),
         config_directory=CONFIG_PATH.parent,
     )
+    if not execution.host:
+        raise stt_chunking.SttNotConfigured(f"The STT service {service_id!r} is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
+    return execution
+
+
+def _stt_configuration_refusal(error: stt_chunking.SttConfigurationError) -> Response:
+    """The 503 for a service whose limits are invalid, or whose record names no address (said plainly)."""
+    if isinstance(error, stt_chunking.SttNotConfigured):
+        return _stt_error(str(error), status_code=503, code="stt_not_configured")
+    return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
 
 
 _SAFE_STT_RECEIPT_INPUTS = frozenset(
@@ -5620,8 +5662,8 @@ async def _dispatch_selected_stt_route(
                 skipped_notes = _speech_skipped_engine_notes(peeked)
     try:
         execution = _stt_execution_snapshot(operation, selected_service)
-    except stt_chunking.SttConfigurationError:
-        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+    except stt_chunking.SttConfigurationError as error:
+        return _stt_configuration_refusal(error)
     if execution is None:
         # No service can be dispatched. Preserve the generic route gate for
         # this no-target case; once a target exists, policy always uses its id.
@@ -5892,8 +5934,8 @@ async def proxy_stt_request(
     if execution_snapshot is None:
         try:
             execution = _stt_execution_snapshot(operation)
-        except stt_chunking.SttConfigurationError:
-            return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+        except stt_chunking.SttConfigurationError as error:
+            return _stt_configuration_refusal(error)
     else:
         execution = execution_snapshot
     if execution is None:
@@ -5977,8 +6019,8 @@ async def proxy_stt_request(
                 if service_changed:
                     try:
                         target_execution = _stt_execution_snapshot(operation, target_service)
-                    except stt_chunking.SttConfigurationError:
-                        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+                    except stt_chunking.SttConfigurationError as error:
+                        return _stt_configuration_refusal(error)
                     if target_execution is None:
                         return _stt_error("The selected STT service is unavailable.", status_code=503, code="stt_backend_unavailable")
                     # The parsed upload keeps its original workspace after alias routing.
@@ -8124,6 +8166,13 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
            else _sign_asset_token(asset_id, expires, mode))
     return f"{proto}://{host}/v1/assets/{asset_id}/content?expires={expires}&md={mode}&sig={sig}{binding}"
+
+
+def _job_file_urls(request: Request, asset_id: str) -> dict[str, str]:
+    """The URLs a job read gives a file: ``asset_url`` as every route signs it, and ``url`` in the form the old image job stored
+    (an image id names the image route)."""
+    signed = build_signed_asset_url(request, asset_id)
+    return {"asset_url": signed, "url": build_signed_image_url(request, asset_id) if asset_id.startswith("img_") else signed}
 
 
 def build_signed_image_url(request: Request, image_id: str, metadata_mode: str | None = None) -> str:
@@ -10911,48 +10960,6 @@ def _find_video_manifest(workflow_name: str, workflow_cfg: dict) -> Optional[dic
     return None
 
 
-def _parse_size_clamped(size_str: str, max_size_str: str, multiple: int = 32) -> tuple[int, int]:
-    """Parse 'WxH', clamp to per-workflow max_size, floor to a multiple.
-
-    `multiple` is 32 for most workflows; LTX-2.5 needs 64 (its first
-    stage runs at half size, which must itself be a multiple of 32). Sizes are
-    floored (not rejected) so any OpenAI-style size string stays usable; the
-    created job reports the size actually used.
-    """
-    width, height = parse_size(size_str or "1280x720")
-    if max_size_str:
-        try:
-            mw, mh = parse_size(max_size_str)
-            if mw and mh:
-                width = min(width, mw)
-                height = min(height, mh)
-        except Exception:
-            pass
-    multiple = max(1, int(multiple))
-    width = max(64, (width // multiple) * multiple)
-    height = max(64, (height // multiple) * multiple)
-    return width, height
-
-
-def _seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offset: int = 1) -> int:
-    """Translate request `seconds` to a latent `length` of the form step*k+offset.
-
-    Defaults are the LTX rule (8k+1). MiniMax H3 uses step=17, offset=5.
-
-    Rounds to the *nearest* representable 8k+1 length (vs flooring). For
-    fps=24 this gives ~0.333s granularity, so a request like seconds=3
-    produces length=73 (3.0417s actual, +0.0417s drift) instead of the
-    old length=65 (2.7083s, -0.2917s drift). Callers should compare
-    `length / frame_rate` against `seconds` to decide whether to surface
-    `X-Duration-Adjusted`.
-    """
-    frames = max(1, int(round(seconds * frame_rate)))
-    # LTX latent length convention: lengths of form 8k+1 (1, 9, 17, ...)
-    # Round to nearest k, not floor.
-    k = max(1, int(round((frames - offset) / float(step))))
-    return k * step + offset
-
-
 def _video_id_from_prompt_id(prompt_id: str) -> str:
     return f"{VIDEO_ID_PREFIX}{prompt_id}"
 
@@ -11420,6 +11427,26 @@ def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
     return response
 
 
+async def _run_core_video_source(video_id: str, auth_context: AuthContext | None) -> "video_source.VideoSource | video_source.SourceRefused | None":
+    """The source a run-core video id names (the job store's form), or None for an older engine-prompt id."""
+    shape = _video_wire_shape()
+    if shape is None or not _names_a_video_job(shape, video_id):
+        return None
+    job_id = shape.job_id_of(video_id)
+    if job_id is None:
+        return None
+    return await video_source.resolve_source(job_id, video_id, auth_context, _workflow_job_service())
+
+
+async def _video_source_unknown(video_id: str, prompt_id: str, auth_context: AuthContext | None) -> bool:
+    """True when the caller must get 404 for a source id: the job store does not hold it for them, or (older id) the
+    older record is hidden from them."""
+    found = await _run_core_video_source(video_id, auth_context)
+    if found is None:
+        return _video_job_blocked(prompt_id, auth_context)
+    return isinstance(found, video_source.SourceRefused) and found.http_status == 404
+
+
 async def _load_completed_video_bytes(
     video_id: str,
     auth_context: AuthContext | None,
@@ -11435,6 +11462,14 @@ async def _load_completed_video_bytes(
     prompt_id = _prompt_id_from_video_id(video_id)
     if not prompt_id:
         raise _VideoAssetError("invalid video_id", param=param)
+    core = await _run_core_video_source(video_id, auth_context)
+    if isinstance(core, video_source.SourceRefused):
+        raise _VideoAssetError(core.message, param=param, status=core.http_status, code=core.code)
+    if core is not None:
+        data = await asyncio.to_thread(_WORKFLOW_RUN_PORT.read_asset, core.asset_id, auth_context)
+        if data is None:
+            raise _VideoAssetError("Source video has no output", param=param, status=404)
+        return data, f"{video_id}.mp4"
     if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
@@ -12234,16 +12269,13 @@ async def _proxy_graph_video_create(
         )
 
     size = size_from_body or workflow_cfg.get("default_size") or "1280x720"
-    width, height = _parse_size_clamped(
-        size,
-        workflow_cfg.get("max_size", "1280x720"),
-        int(workflow_cfg.get("size_multiple", 32)),
-    )
+    width, height = video_grid.resolve_size(size, video_grid.SizeSpec(
+        default="", max=workflow_cfg.get("max_size", "1280x720"), multiple=int(workflow_cfg.get("size_multiple", 32))))
     # The output keeps the source clip's frame rate for video-conditioned workflows.
     frame_rate = float(source_fps or workflow_cfg.get("frame_rate", 25))
     # Frame count must be step*k+offset (LTX: 8k+1; MiniMax H3: 17k+5; Wan: 4k+1).
     length_step = int(workflow_cfg.get("length_step", 8))
-    length = _seconds_to_length(
+    length = video_grid.seconds_to_length(
         seconds_val,
         frame_rate,
         step=length_step,
@@ -12850,9 +12882,10 @@ async def _submit_video_chain(
     size = body.get("size")
     if not size and probe is not None:
         size = f"{probe.width}x{probe.height}"
-    width, height = _parse_size_clamped(
+    width, height = video_grid.resolve_size(
         str(size or workflow_cfg.get("default_size") or "960x512"),
-        workflow_cfg.get("max_size", "1280x720"), int(workflow_cfg.get("size_multiple", 32)))
+        video_grid.SizeSpec(default="", max=workflow_cfg.get("max_size", "1280x720"),
+                            multiple=int(workflow_cfg.get("size_multiple", 32))))
 
     try:
         seed_val = int(body["seed"]) if body.get("seed") is not None else random.randint(0, 2**32 - 1)
@@ -12996,12 +13029,14 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
         if not prompt_id:
             return _json_error(400, "invalid video id", param="video")
         async with _video_progress_lock:
-            if _video_job_blocked(prompt_id, auth_context):
+            if await _video_source_unknown(source_id, prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
     # Without `model`, a video is extended by the model that made it (when that
     # model can extend), else by the configured default.
+    core_source = await _run_core_video_source(source_id, auth_context) if source_id else None
     source_model = (
-        (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model")
+        (core_source.model if isinstance(core_source, video_source.VideoSource)
+         else (_video_job_records.get(_prompt_id_from_video_id(source_id) or "") or {}).get("model"))
         if source_id else None)
     requested = body.get("model")
     if not requested:
@@ -13424,61 +13459,50 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
         )
 
     after = query.get("after")
-    after_prompt_id = _prompt_id_from_video_id(after) if after else None
-    if after and after_prompt_id is None:
+    shape = _video_wire_shape()
+    if after and shape.job_id_of(after) is None:
         return Response(
             content=json.dumps({"error": {"message": "invalid after cursor", "type": "invalid_request_error", "param": "after"}}),
             status_code=400,
             media_type="application/json",
         )
-
-    async with _video_progress_lock:
-        records = [
-            (pid, dict(rec))
-            for pid, rec in _video_job_records.items()
-            if _video_job_visible(pid, auth_context)
-        ]
-    records.sort(key=lambda item: item[1].get("created_at") or 0, reverse=(order == "desc"))
-
-    if after_prompt_id is not None:
-        ids_in_order = [pid for pid, _ in records]
-        if after_prompt_id in ids_in_order:
-            records = records[ids_in_order.index(after_prompt_id) + 1:]
-        else:
-            # The cursor doesn't resolve against this caller's current page
-            # set -- it was evicted (past _video_job_records' own retention),
-            # deleted, or never existed for this owner. Silently restarting
-            # from page one here would look like forward progress to a
-            # paginating client while actually re-serving the first page
-            # forever; an explicit error is the honest response when we
-            # cannot determine where in the ordering to resume.
-            return Response(
-                content=json.dumps({"error": {
-                    "message": (
-                        "after cursor does not reference a currently known "
-                        "video job (it may have been deleted or evicted)"
-                    ),
-                    "type": "invalid_request_error",
-                    "param": "after",
-                    "code": "cursor_not_found",
-                }}),
-                status_code=400,
-                media_type="application/json",
-            )
-
-    page = records[:limit]
-    has_more = len(records) > len(page)
+    try:
+        listed = await asyncio.to_thread(_video_ledger(shape).page, auth_context, limit, after or None, order)
+    except CursorNotFound:
+        # The cursor doesn't resolve against this caller's current items -- it was evicted, deleted, or never existed
+        # for this owner. Silently restarting from page one would look like forward progress to a paginating client
+        # while re-serving the first page forever; an explicit error is the honest response.
+        return Response(
+            content=json.dumps({"error": {
+                "message": (
+                    "after cursor does not reference a currently known "
+                    "video job (it may have been deleted or evicted)"
+                ),
+                "type": "invalid_request_error",
+                "param": "after",
+                "code": "cursor_not_found",
+            }}),
+            status_code=400,
+            media_type="application/json",
+        )
+    page = [(hit.raw_id, dict(hit.record)) if isinstance(hit, LegacyHit) else hit for hit in listed.items]
+    has_more = listed.has_more
 
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     data: list[dict[str, Any]] = []
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
-            for prompt_id, record in page:
+            for item in page:
+                if isinstance(item, JobHit):
+                    facts = await asyncio.to_thread(_workflow_job_service().request_facts, item.view.job_id, auth_context)
+                    data.append(shape.list_item(item.view, facts))
+                    continue
+                prompt_id, record = item
                 video_id = _video_id_from_prompt_id(prompt_id)
                 job = await _graph_history(client, prompt_id, headers)
                 entry: dict[str, Any] = {
                     "id": video_id,
-                    "object": "video",
+                    "object": shape.wire_name,
                     "model": record.get("model"),
                     "size": record.get("size"),
                     "seconds": record.get("seconds"),
@@ -13513,17 +13537,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
             raise
         return _graph_video_unavailable_response()
 
-    return Response(
-        content=json.dumps({
-            "object": "list",
-            "data": data,
-            "first_id": data[0]["id"] if data else None,
-            "last_id": data[-1]["id"] if data else None,
-            "has_more": has_more,
-        }),
-        status_code=200,
-        media_type="application/json",
-    )
+    return shape.render_listing(data, has_more)
 
 
 async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> Response:
@@ -13805,7 +13819,7 @@ async def proxy_graph_video_remix(
             media_type="application/json"
         )
     async with _video_progress_lock:
-        if _video_job_blocked(prompt_id, auth_context):
+        if await _video_source_unknown(video_id, prompt_id, auth_context):
             return _json_error(404, "video_id not found", kind="not_found")
     if not _video_remix_workflow():
         return _json_error(
@@ -13866,7 +13880,7 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
         if not prompt_id:
             return _json_error(400, "invalid video id", param="video")
         async with _video_progress_lock:
-            if _video_job_blocked(prompt_id, auth_context):
+            if await _video_source_unknown(source_id, prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
         source: Any = {"video_id": source_id}
     else:
@@ -14098,9 +14112,8 @@ async def _serve(app: FastAPI):
     from gateway.lifecycle_drivers import _process_driver
     await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
-    print(f"[proxy] TTS backend: {DERIVED.TTS_HOST} (enabled: {DERIVED.TTS_ENABLED})", flush=True)
-    print(f"[proxy] STT backend: {DERIVED.STT_HOST} (enabled: {DERIVED.STT_ENABLED})", flush=True)
-    print(f"[proxy] ComfyUI backend: {DERIVED.COMFY_HOST} (enabled: {DERIVED.COMFY_ENABLED})", flush=True)
+    for line in _backend_banner_lines(runtime().derived):
+        print(line, flush=True)
     print(f"[proxy] Model compatibility: {'enabled' if model_compat_enabled() else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
@@ -15235,7 +15248,18 @@ async def _build_status_snapshot() -> dict[str, Any]:
 
 async def _status_payload_with_availability() -> Mapping[str, Any]:
     """The admin status and Home read the snapshot. Nothing here probes, and no request waits for a build."""
-    return await status_endpoint.get_cached_status(config)
+    payload = await status_endpoint.get_cached_status(config)
+    cached = payload.get("_availability_evidence") if isinstance(payload, Mapping) else None
+    if not isinstance(cached, Mapping):
+        return payload
+    # The snapshot is rebuilt on a timer; requests finished since then are merged in, as the capability list does.
+    try:
+        current = await asyncio.to_thread(
+            evidence_with_current_receipts, cached, receipt_store_path=receipt_store.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] status receipt overlay skipped: {type(exc).__name__}", flush=True)
+        return payload
+    return {**payload, "_availability_evidence": current}
 
 
 async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -15695,6 +15719,7 @@ app.include_router(
         resource_lister=_gateway_resource_lister,
         asset_url_ttl_s=image_signed_url_ttl,
         asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
+        asset_url_signer=_job_file_urls,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
@@ -16567,6 +16592,23 @@ def _live_service_registry() -> dict | None:
         return None
 
 
+def _store_workflow_sources(inputs: Iterable[asset_types.OutputInput], owner: Any, maker: Any) -> list[dict[str, str]]:
+    """The Library notes (``asset_id`` and the file's stem) of the files a workflow was given. They keep no prompt. A file
+    that cannot be stored is left out: a missing source note never costs the caller a finished output."""
+    sources: list[dict[str, str]] = []
+    for item in inputs:
+        try:
+            source_id = store_asset_bytes(
+                item.data, kind=asset_types.asset_prefix_for_media_type(item.media_type),
+                suffix=asset_types.suffix_for_media_type(item.media_type),
+                owner_key_hash=owner, maker_person_id=maker, keep_prompt=False)
+        except Exception:  # noqa: BLE001
+            logging.getLogger("gateway.assets").exception("a workflow input was not stored")
+            continue
+        sources.append({"asset_id": source_id, "name": Path(item.name).stem or "source"})
+    return sources
+
+
 def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
     """Store a file a workflow made, and the files it was given, with what made it (``origin`` in its sidecar).
 
@@ -16577,17 +16619,7 @@ def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
     owner = _asset_owner_key(context)
     # Without a signed-in person the run's own maker (the media delivery) stands.
     maker = _auth_person_id(context) or _CURRENT_MAKER
-    sources: list[dict[str, str]] = []
-    for item in output.inputs:
-        try:
-            source_id = store_asset_bytes(
-                item.data, kind=asset_types.asset_prefix_for_media_type(item.media_type),
-                suffix=asset_types.suffix_for_media_type(item.media_type),
-                owner_key_hash=owner, maker_person_id=maker, keep_prompt=False)
-        except Exception:  # noqa: BLE001 - a missing source note never costs the caller a finished output
-            logging.getLogger("gateway.assets").exception("a workflow input was not stored")
-            continue
-        sources.append({"asset_id": source_id, "name": Path(item.name).stem or "source"})
+    sources = _store_workflow_sources(output.inputs, owner, maker)
     origin = {"workflow_name": output.workflow_name, "request_id": output.request_id, "sources": sources,
               "takes_text": output.takes_text}
     return store_asset_bytes(
@@ -16631,6 +16663,7 @@ workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
 
 
 _MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts
+_MOUNTED_VIDEO_ROW_IDS = ("videos-create",)
 
 
 def _mount_3d_rows(app: FastAPI) -> None:
@@ -16639,6 +16672,13 @@ def _mount_3d_rows(app: FastAPI) -> None:
 
 
 FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
+
+
+def _mount_video_rows(app: FastAPI) -> None:
+    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, _MOUNTED_VIDEO_ROW_IDS)
+
+
+FRONTEND_TRANSLATORS.register_owned("videos", _mount_video_rows)
 
 
 def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
@@ -16691,10 +16731,10 @@ def _identity_face_client() -> identity_api.FaceServiceClient:
     transition-enabled domain never names it, and the check keeps a future declared domain from reaching it unleased."""
     _require_egress_lease(_IDENTITY_FACE_SERVICE_ID)
     bcfg = _identity_face_cfg()
-    return identity_api.FaceServiceClient(
-        f"http://{bcfg.get('host', '127.0.0.1')}:{bcfg.get('port', 8021)}",
-        timeout=float(bcfg.get("timeout", 120)),
-    )
+    origin = service_registry.engine_base_address(bcfg)
+    if not origin:
+        raise identity_api.FaceServiceNotConfigured(f"The face service is not configured: {service_registry.NOT_CONFIGURED_REASON}.")
+    return identity_api.FaceServiceClient(origin, timeout=float(bcfg.get("timeout", 120)))
 
 
 async def _identity_ensure_face_service() -> Response | None:
@@ -16702,9 +16742,10 @@ async def _identity_ensure_face_service() -> Response | None:
     from gateway.lifecycle_drivers import driver_for_service
 
     bcfg = dict(_identity_face_cfg())
-    if not bcfg:
+    if not service_registry.engine_base_address(bcfg):
+        reason = "" if not bcfg else f": {service_registry.NOT_CONFIGURED_REASON}"
         return Response(
-            content=json.dumps({"error": {"message": "The face service is not configured.", "type": "service_unavailable"}}),
+            content=json.dumps({"error": {"message": f"The face service is not configured{reason}.", "type": "service_unavailable"}}),
             status_code=503, media_type="application/json",
         )
     driver = driver_for_service("faces", {"faces": bcfg})
@@ -20249,7 +20290,13 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
         if now - int(last_progress) > stall_after:
             continue
         count += 1
-    return count
+    return count + _running_video_run_jobs()
+
+
+def _running_video_run_jobs() -> int:
+    """Jobs of the run core on the video wire's intents that are still running: a restart would cut them off too."""
+    intents = set(_video_intents())
+    return sum(1 for job in media_jobs.unfinished() if job.get("intent") in intents and job.get("status") == media_jobs.STATUS_RUNNING)
 
 
 DRAIN_STATE.register_job_counter("openai_video", _unfinished_openai_video_jobs)
@@ -20297,7 +20344,7 @@ async def admin_drain_status(request: Request):
     denied = await asyncio.to_thread(_drain_authorize, request, write=False)
     if denied is not None:
         return denied
-    return JSONResponse(DRAIN_STATE.snapshot())
+    return JSONResponse(await asyncio.to_thread(DRAIN_STATE.snapshot))
 
 
 @app.post("/admin/api/drain", include_in_schema=False)
@@ -20331,7 +20378,7 @@ async def admin_drain_set(request: Request):
         + (f" reason={reason[:80]!r}" if draining and reason else ""),
         flush=True,
     )
-    return JSONResponse(DRAIN_STATE.snapshot())
+    return JSONResponse(await asyncio.to_thread(DRAIN_STATE.snapshot))
 
 
 
@@ -21010,7 +21057,8 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         return await _deny_realtime(websocket, denied)
 
     service = (config.get("backends") or {}).get(_REALTIME_SERVICE_ID)
-    if not service or not service.get("port"):
+    if (not service or not service.get("port") or not service.get("host")
+            or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     admission = _dispatch_admission_response(
         "audio.realtime", auth_context=auth_context, resource_class="audio",
@@ -21030,7 +21078,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         _require_egress_lease(_REALTIME_SERVICE_ID)
     except TransitionUnavailable as refused:
         return await _fail_open_realtime(websocket, "The Realtime service is not admitting sessions.", _transition_error_code(refused))
-    url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
+    url = realtime_proxy.upstream_url(str(service["host"]), int(service["port"]), dict(websocket.query_params))
     try:
         upstream = await ws_connect(
             url, max_size=realtime_proxy.MAX_FRAME_BYTES, compression=None, open_timeout=10, ping_interval=20, ping_timeout=60,
@@ -21259,6 +21307,17 @@ def _open_image_for_route(content: bytes, *, param: str):
             param=param,
             code="invalid_image",
         )
+
+
+def _is_readable_picture(content: bytes) -> bool:
+    try:
+        from PIL import Image
+        import io
+
+        Image.open(io.BytesIO(content)).load()
+        return True
+    except Exception:
+        return False
 
 
 def _edit_mask_from_image(mask_image) -> tuple[Any, str]:
@@ -23457,6 +23516,16 @@ def _image_media_job_request_id(
         digest = _image_job_request_digest(body, auth_context)
         return f"imgjob_seeded_{digest[:40]}", digest, "seeded_request"
     return fallback_request_id, uuid.uuid4().hex + uuid.uuid4().hex, "request"
+
+
+def _image_job_body_with_short_model(body: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A full workflow id names the same workflow as its short name; the job runs it by the short name the image route takes."""
+    requested_name = body.get("model")
+    if isinstance(requested_name, str) and requested_name.startswith("image.generate."):
+        short_name = requested_name.removeprefix("image.generate.")
+        if _find_image_manifest("image.generate", short_name) is not None:
+            return {**body, "model": short_name}
+    return body
 
 
 def _safe_image_media_job_metadata(
@@ -25851,13 +25920,7 @@ async def gateway_image_generations_media_job(request: Request):
     if invalid_controls is not None:
         await run_receipt_write(finish_image_route_receipt, receipt, invalid_controls)
         return invalid_controls
-    # A full workflow id names the same workflow as its short name; the job
-    # runs it by the short name the image route takes.
-    requested_name = body.get("model")
-    if isinstance(requested_name, str) and requested_name.startswith("image.generate."):
-        short_name = requested_name.removeprefix("image.generate.")
-        if _find_image_manifest("image.generate", short_name) is not None:
-            body = {**body, "model": short_name}
+    body = _image_job_body_with_short_model(body)
     request_id, request_hash, idempotency = _image_media_job_request_id(
         body=body,
         auth_context=auth_context,
@@ -26522,7 +26585,19 @@ def _signed_asset_content_response(
         return Response(status_code=304, headers=headers)
     data = cache_path.read_bytes()
     if md_raw == provenance.METADATA_FULL:
-        data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
+        try:
+            data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
+        except media_metadata.MediaMetadataError as exc:
+            # The stored prompt is the maker's own text; the reason names only its cause, never its content.
+            print(f"[proxy] full metadata restore failed for {asset_id}: {exc}", flush=True)
+            return Response(
+                content=json.dumps({"error": {
+                    "message": "This file cannot hold its stored prompt as metadata. "
+                               "Download it with md=provenance or md=none instead.",
+                    "type": "api_error"}}),
+                status_code=502,
+                media_type="application/json",
+            )
     try:
         data = media_delivery.deliver_bytes(
             data, cache_path.suffix, md_raw or provenance.METADATA_NONE
@@ -26600,8 +26675,7 @@ def _result_reader_for(auth_context: AuthContext) -> result_bundle.Reader | None
 
 
 def _backend_address(record: Mapping[str, Any]) -> str | None:
-    host, port = record.get("host"), record.get("port")
-    return f"http://{host}:{port}" if host and port else None
+    return service_registry.engine_base_address(record) or None
 
 
 def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
@@ -26745,7 +26819,8 @@ class _WorkflowRunPort:
 
     def admission_refusal(self, resource_class: str, caller: AuthContext, *, count_queue: bool) -> RunRefused | None:
         response = _media_job_admission_response(
-            workflow_run.RUN_INTENT, count_queue=count_queue, auth_context=caller, resource_class=resource_class)
+            workflow_run.RUN_INTENT, count_queue=count_queue, auth_context=caller, resource_class=resource_class,
+            receipt=_ROW_REQUEST_RECEIPT.get())
         return None if response is None else _refused_from_response(response)
 
     def result_limits(self) -> result_bundle.ResultLimits:
@@ -26842,16 +26917,14 @@ class _WorkflowRunPort:
         if stage is None:
             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
         staged: dict[str, str] = {}
+        kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
         for name, refs in ctx.media.items():
+            if name in kept_off_engine:
+                continue
             if len(refs) != 1:
                 raise ProtocolError("The adapter for this job takes one file for an input.", code="media_input_unsupported")
             ref = refs[0]
-            if ref.spool_key is not None:
-                data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
-            else:
-                data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
-                if data is None:
-                    raise ProtocolError("An input file is no longer available.", code="input_unavailable")
+            data = await self.read_media(ctx, ref)
             suffix = asset_types.suffix_for_media_type(ref.media_type)
             try:
                 staged[name] = await stage(connection(), filename="input" + suffix, data=data,
@@ -26861,6 +26934,15 @@ class _WorkflowRunPort:
                 reason = "upload_no_name" if getattr(exc, "status", None) == 200 else "upload_failed"
                 raise node_graph_runner.RunFailed(reason, "upstream", client_errors.REASONS[reason], upstream_status=502) from exc
         return staged
+
+    async def read_media(self, ctx: workflow_run.RunContext, ref: Any) -> bytes:
+        """The bytes of one file the run was given (held in its spool, or named from the Library)."""
+        if ref.spool_key is not None:
+            return await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
+        data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
+        if data is None:
+            raise ProtocolError("An input file is no longer available.", code="input_unavailable")
+        return data
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
         path = asset_cache_path(asset_id)
@@ -26877,6 +26959,22 @@ class _WorkflowRunPort:
         """Startup recovery settled a run from its committed result: close the receipt a stopped gateway left open, unless
         it was opened after recovery began."""
         receipt_store.close_recovered(request_id, status, reason, among=_RECOVERY_OPEN_RECEIPTS)
+
+    async def open_run_receipt(self, job: Mapping[str, Any], caller: AuthContext | None) -> str | None:
+        """Open the receipt a run files for itself (the row's ``run_receipt_path``) and keep it for the core to close when
+        the job ends. Its id is the one the Library names as the origin of the run's files."""
+        row = next((r for r in frontend_shapes.bundled_rows() if r.id == (job.get("metadata") or {}).get("frontend")), None)
+        path = (job.get("metadata") or {}).get("run_receipt_path")
+        if row is None or not path or caller is None:
+            return None
+        owner = _row_receipt_owner(caller, new_request_id(), str(path), row, declared_at=row.routes[0].canonical)
+        owner.receipt.job_id = str(job["job_id"])
+        pin = _pinned_of_job(str(job["job_id"]))
+        if pin is not None:
+            envelope = pin.envelope
+            _name_row_receipt(owner, envelope.source_id, envelope.record_revision, envelope.contract)
+        owner.handoff()
+        return owner.receipt.request_id
 
     async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
         """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
@@ -26988,14 +27086,54 @@ def _graph_binding_problem(binding: Any) -> str | None:
     return None
 
 
+def _binding_ui_twin(binding: Mapping[str, Any]) -> dict | None:
+    """The hand-authored UI twin that sits next to the binding's graph file, or None (the fallback when none can be derived)."""
+    artifact = binding.get("workflow")
+    if not artifact:
+        return None
+    try:
+        return _load_ui_workflow(_resolve_workflow_artifact_path(None, str(artifact)))
+    except Exception:  # noqa: BLE001 - a twin is only a fallback
+        return None
+
+
+# The stages a binding's ``result_processing`` may name, by name: ``(ctx, files) -> files``. Each is added where its code is.
+_RESULT_STAGES: dict[str, Callable[..., Awaitable[list[bytes]]]] = {}
+
+
 def _graph_runner_host() -> node_graph_runner.GraphHost:
-    def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext) -> Any:
+    def adapter(record: Mapping[str, Any], protocol: Any, ctx: workflow_run.RunContext, sources: Sequence[Mapping[str, str]] = ()) -> Any:
         from gateway.engine_protocol.media import GatewayAssetStore
         owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
-        return reviewed_adapters.adapter_for_backend(
+        origin = workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)
+        built = reviewed_adapters.adapter_for_backend(
             record, next(iter(protocol.serves), ""),
             assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
-                                     origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
+                                     origin={**origin, "sources": [dict(item) for item in sources]} if sources else origin))
+        embed = getattr(built, "embed_workflow_with", None)
+        if embed is not None:       # the output carries the graph that made it, as the first-party routes' outputs do
+            twin = _binding_ui_twin(ctx.pin.binding)
+            embed(lambda graph: _derive_ui_workflow(graph) or twin)
+        return built
+
+    async def run_sources(ctx: workflow_run.RunContext) -> list[dict[str, str]]:
+        """The files the run was given, kept in the Library so each result can say what it was made from."""
+        if ctx.caller is None:
+            return []
+        given: list[asset_types.OutputInput] = []
+        kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())   # a mask is not a source of the result
+        for name, refs in ctx.media.items():
+            if name in kept_off_engine:
+                continue
+            for ref in ctx.sources.get(name, refs):
+                if ref.spool_key is not None:
+                    data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
+                else:
+                    data = await asyncio.to_thread(_WORKFLOW_RUN_PORT.read_asset, str(ref.asset_id), ctx.caller)
+                if data:
+                    given.append(asset_types.OutputInput(data, ref.filename or "input", ref.media_type))
+        context = ctx.caller if isinstance(ctx.caller, AuthContext) else None
+        return await asyncio.to_thread(_store_workflow_sources, given, _asset_owner_key(context), _auth_person_id(context))
 
     def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
         return _graph_service_connection(service_id, record)
@@ -27015,8 +27153,10 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
         max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
-        batching=_graph_runner_batching, stages={}, say=lambda text: print(f"[proxy] {text}", flush=True),
-        stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect))
+        batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
+        sources=run_sources,
+        stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
+        wire_id=lambda job_id: _job_wire_id(job_id))
 
 
 def _register_graph_runner() -> None:
@@ -27039,13 +27179,87 @@ frontend_wire_shapes.DEFAULT_WORKFLOWS[
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
 def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
     """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
+    # A picture that is no readable file is refused as the upload check refuses it, before the mask is read.
+    if not _is_readable_picture(image):
+        return _refuse_edit_image(None, media_inputs.MediaInputError(
+            media_inputs.UNSUPPORTED, "the input is not a file type this model accepts"))
     context, error = _prepare_image_edit_mask_context(source_image_content=image, mask_content=mask)
     if error is not None:
         return error
     return _apply_edit_mask_as_source_alpha(context), context.mask_mode
 
 
+def _mask_mode(picture: bytes, mask: bytes) -> Any:
+    """How an edit mask reads against its picture (the mode), or the refusal of a bad picture or mask."""
+    context, error = _prepare_image_edit_mask_context(source_image_content=picture, mask_content=mask)
+    return error if error is not None else context.mask_mode
+
+
+async def _stage_post_composite_mask(ctx: workflow_run.RunContext, files: list[bytes]) -> list[bytes]:
+    """Each result file with the given picture kept where the mask preserves it. The mask is the run's file for an input
+    the binding keeps off the engine; the picture is the run's other file."""
+    kept = set(ctx.pin.binding.get("edge_only_inputs") or ())
+    mask_ref = next((refs[0] for name, refs in ctx.media.items() if name in kept and refs), None)
+    source_ref = next((refs[0] for name, refs in ctx.media.items() if name not in kept and refs), None)
+    if mask_ref is None or source_ref is None:
+        return files
+    picture = await _WORKFLOW_RUN_PORT.read_media(ctx, source_ref)
+    mask = await _WORKFLOW_RUN_PORT.read_media(ctx, mask_ref)
+    context, error = _prepare_image_edit_mask_context(source_image_content=picture, mask_content=mask)
+    if error is not None:
+        raise node_graph_runner.RunFailed("mask_unreadable", "internal", "The mask of this run can no longer be read.")
+    return [await asyncio.to_thread(_apply_image_edit_mask_composite, context, raw) for raw in files]
+
+
+_RESULT_STAGES["post_composite_mask"] = _stage_post_composite_mask
+
+
+async def _graph_variant(ctx: workflow_run.RunContext) -> node_graph_runner.Variant | None:
+    """Which graph a run of a picture workflow submits: the one with the cutout step, or the one without. The caller's
+    ``background`` choice (or the language model's answer when it left the choice open) decides; a request with a mask never
+    asks for a cutout. A workflow whose template has no second graph reports that, and runs the one it has."""
+    media = (spec for spec in (ctx.pin.contract.get("outputs") or {}).values() if isinstance(spec, Mapping))
+    if not any(str(spec.get("media_type") or "").startswith("image/") for spec in media):
+        return None
+    options = (ctx.payload.get("body") or {}).get("options") or {}
+    decision = await resolve_image_background_decision(
+        options.get("background") or "auto", str(ctx.inputs.get("prompt") or ""),
+        auth_context=ctx.caller or NO_AUTH_CONTEXT, force_bypass=bool(options.get("masked")))
+    template = ctx.pin.graph()
+    meta = template.get("_meta") if isinstance(template, Mapping) else None
+    meta = meta if isinstance(meta, dict) else {}
+
+    def on(graph: dict[str, Any]) -> None:
+        set_workflow_background_removal(graph, meta, True)
+
+    def off(graph: dict[str, Any]) -> None:
+        set_workflow_background_removal(graph, meta, False)
+
+    removed = decision.remove_background
+    source = decision.source
+    if removed and not set_workflow_background_removal(copy.deepcopy(dict(template)), meta, True):
+        firehose_metrics.record_event("image_background_removal_fallback", "workflow has no RMBG wiring")
+        removed, source = False, "workflow_unsupported"
+    if removed:
+        return node_graph_runner.Variant(
+            on, {"background_removal": True, "background_removal_source": source},
+            {"background_removal": False, "background_removal_source": "rmbg_fallback"}, fallback_edit=off,
+            cutout_required=str(options.get("background") or "") == "transparent")
+    return node_graph_runner.Variant(off, {"background_removal": False, "background_removal_source": source})
+
+
+def _picture_size(data: bytes) -> tuple[int, int] | None:
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as picture:
+            return picture.size
+    except Exception:  # noqa: BLE001 - a file that is no picture has no size; the upload check refuses it
+        return None
+
+
 frontend_wire_shapes.MASKING["source_alpha"] = _mask_into_source_alpha
+frontend_wire_shapes.MASKING["post_composite"] = _mask_mode
+frontend_wire_shapes.PICTURE_SIZE["picture"] = _picture_size
 frontend_wire_shapes.JOB_DOCUMENT["job"] = lambda job_id: (
     _image_media_job_client_payload(job, None) if (job := media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)) else None)
 # What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
@@ -27068,7 +27282,8 @@ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
 
 
 def _workflow_job_service() -> workflow_run.WorkflowJobService:
-    return workflow_run.WorkflowJobService(port=_WORKFLOW_RUN_PORT, path=media_jobs.DB_PATH)
+    return workflow_run.WorkflowJobService(port=_WORKFLOW_RUN_PORT, path=media_jobs.DB_PATH,
+                                           prompt_lookup=_job_prompt_text, wire_id=_job_wire_id)
 
 
 async def _run_workflow_job(job_id: str) -> None:
@@ -27147,10 +27362,18 @@ def _new_row_spool() -> request_spool.FileRequestSpool:
 _RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
 
 
+# The receipt of the row request being served, so admission files its decision on the receipt the request already has.
+_ROW_REQUEST_RECEIPT: contextvars.ContextVar[RouteReceipt | None] = contextvars.ContextVar("row_request_receipt", default=None)
+
+
 class _RunReceiptOwner(ReceiptLifecycleOwner):
     """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
 
     short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
+
+    def dispatching(self, backend: str | None) -> None:
+        """The run is submitted: the receipt names the service it runs on (a row with ``backend_at_run``)."""
+        self.receipt.backend = backend
 
     def handoff(self) -> "_RunReceiptOwner":
         super().handoff()
@@ -27158,18 +27381,56 @@ class _RunReceiptOwner(ReceiptLifecycleOwner):
         return self
 
 
+_ROW_RECEIPT: contextvars.ContextVar[Any] = contextvars.ContextVar("row_receipt", default=None)   # the open row request's receipt
+
+
+def _row_receipt_owner(auth: AuthContext, request_id: str, path: str, row: Any, *, declared_at: str | None = None) -> _RunReceiptOwner:
+    """``declared_at`` names the route of the row whose policy declares the receipt's intent and service, when the receipt's
+    own path is not one of the row's routes (the receipt a run files under another path)."""
+    identity = auth.identity
+    declared_at = declared_at or path
+    # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
+    # activity read their capability from it. A route that declares none records the generic run intent.
+    receipt = RouteReceipt(
+        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, declared_at), path=path, request_id=request_id,
+        backend=None if row.backend_at_run else row_routes.route_backend(row, declared_at), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None)
+    if row.receipt_allowed:
+        # The route's policy allowed the request before this receipt opened (as the removed media routes' receipts said, with
+        # the plan's detail level); the receipt is opened with that, since its visibility cannot change once it is begun.
+        receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
+        if identity is not None:
+            receipt.visibility = identity.access.receipt_detail
+    owner = _RunReceiptOwner(receipt)
+    owner.short_names = row.receipt_names == "short"
+    _ROW_RECEIPT.set(owner.receipt)
+    return owner
+
+
 def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
     """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
     (``_name_row_receipt``)."""
-    identity = auth.identity
-    # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
-    # activity read their capability from it. A route that declares none records the generic run intent.
-    owner = _RunReceiptOwner(RouteReceipt(
-        protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
-        backend=row_routes.route_backend(row, path), app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
-        api_key_name=identity.name if identity else None))
-    owner.short_names = row.receipt_names == "short"
+    owner = _row_receipt_owner(auth, request_id, path, row)
+    _ROW_REQUEST_RECEIPT.set(owner.receipt)
     return owner
+
+
+async def _row_job_record(request: Request, auth: AuthContext, request_id: str) -> dict[str, Any]:
+    """What the old image job route stored on the job row besides the run's own fields: the caller's plan, the submit's
+    request id, and the request's identity and size facts. The mode is the run core's, so it is left out."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - the shape already refused a body that is not JSON
+        body = {}
+    if not isinstance(body, Mapping):
+        body = {}
+    body = _image_job_body_with_short_model(body)
+    key = request.headers.get("idempotency-key")
+    _, request_hash, idempotency = _image_media_job_request_id(
+        body=body, auth_context=auth, idempotency_key=key.strip() if key else None, fallback_request_id=request_id)
+    metadata = _safe_image_media_job_metadata(body=body, request_hash=request_hash, idempotency=idempotency)
+    metadata.pop("mode")
+    return {"app_profile": plan_ref(auth.identity), "parent_request_id": request_id, "metadata": metadata}
 
 
 def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
@@ -27178,9 +27439,22 @@ def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
                             ignored_reason=(reason or kind) if kind == "ignored" else None)
 
 
+def _record_row_refusal(owner: _RunReceiptOwner, caller: AuthContext, refused: RunRefused) -> None:
+    """A run refused because the service behind it cannot take work: the receipt keeps the resource decision the route's
+    admission would have recorded."""
+    if refused.code in SERVICE_REASONS:
+        _media_job_admission_response(owner.receipt.intent, count_queue=False, receipt=owner.receipt, auth_context=caller)
+
+
+_RECEIPT_FIELD_FACTS = frozenset({"requested_model"})      # facts a shape states that the receipt holds as a field, not in its metadata
+
+
 def _record_row_facts(owner: _RunReceiptOwner, facts: Any) -> None:
     for name, value, warning in facts:
-        owner.receipt.metadata[name] = value
+        if name in _RECEIPT_FIELD_FACTS:
+            setattr(owner.receipt, name, value)
+        elif name:
+            owner.receipt.metadata[name] = value
         if warning:
             owner.receipt.add_warning(warning)
 
@@ -27220,6 +27494,69 @@ def _row_route_policy(path: str) -> dict[str, Any] | None:
     return None
 
 
+class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
+    """What this gateway adds to a video create that the wire shape cannot know: the public model aliases, the delivery
+    controls of the body, and the prompt memory."""
+
+    def resolve_model(self, name: str) -> Any:
+        try:
+            resolution = resolve_model_for_operation("videos", name)
+        except ModelCompatibilityError as error:
+            return model_compatibility_error(error)
+        effective = resolution.effective_model if resolution.is_openai_alias else name
+        candidate = str(effective).strip()
+        if candidate and candidate not in _video_workflow_table():       # the operator's ``videos.aliases``, as the old route read them
+            return VIDEO_ALIASES.get(candidate.lower(), effective)
+        return effective
+
+    def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
+        _begin_media_delivery(caller, _ROW_RECEIPT.get())
+        return _note_media_metadata_body(body)
+
+    def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> str:
+        return _workflow_run_prompt_retention(caller, body.get("extensions") if isinstance(body.get("extensions"), Mapping) else {})
+
+    def check_reference(self, caller: Any, data: bytes, contract: Mapping[str, Any], input_name: str) -> Any:
+        """The refusals the removed route gave a reference picture, with its 400 body, before the file is staged anywhere."""
+        try:
+            accepts = _input_accepts({"inputs": contract.get("inputs")}, input_name)
+            _media_input_resolver().check_upload(
+                caller, data, destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts)
+        except _InputReferenceError as error:
+            message = str(error)
+        except media_inputs.MediaInputError as error:
+            message = error.message
+        else:
+            return None
+        return Response(content=json.dumps({"error": {"message": message, "type": "invalid_request_error"}}),
+                        status_code=400, media_type="application/json")
+
+    async def source(self, job_id: str, wire_id: str, caller: Any) -> Any:
+        return await video_source.resolve_source(job_id, wire_id, caller, _workflow_job_service())
+
+    def keep_prompt(self, caller: Any, key: str, prompt: str) -> bool:
+        context = media_delivery.current()
+        memory = context.prompt_decision if context is not None else None
+        if memory is None or not memory.keep or not context.prompt_text:
+            return False
+        return bool(prompt_memory.safe_put(key, memory.person_id, context.prompt_text, kept_until=memory.kept_until,
+                                           admin_path=ADMIN_STORE.path, created_at=memory.created_at))
+
+
+async def _legacy_video_create(request: Request, caller: AuthContext, body: Mapping[str, Any]) -> Response:
+    """A create the wire shape hands back (chains, workflow extensions, references it cannot read): the old pipeline on the body
+    already read. It enforces the route policy and opens its one receipt itself, as the removed route did, because the row has
+    opened none. ``tests/test_legacy_video_ratchet.py`` counts these hand-offs."""
+    policy_response = await asyncio.to_thread(
+        lambda: _enforce_runtime_route_policy(caller, "/v1/videos", policy=DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/videos") or _row_route_policy("/v1/videos")))
+    if policy_response is not None:
+        return policy_response
+    return await proxy_graph_video_create(request, caller, body_override=body)
+
+
+frontend_wire_shapes.VIDEO_HOOKS = _DeploymentVideoHooks()
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIVideoCreate.shape_id] = lambda: _video_default_workflow()
+
 frontend_wire_shapes.ASSET_URLS.update({
     "asset": lambda ref, request: build_signed_asset_url(request, ref.asset_id),
     "link": lambda ref, request: build_signed_image_url(request, ref.asset_id),
@@ -27241,6 +27578,10 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     pinned=_pinned_of_job,
     record_inputs=_record_row_inputs,
     record_facts=_record_row_facts,
+    legacy={frontend_video_create.LEGACY_CREATE: _legacy_video_create},
+    openapi={_MOUNTED_VIDEO_ROW_IDS[0]: VIDEOS_CREATE_OPENAPI},
+    record_refusal=_record_row_refusal,
+    job_record=_row_job_record,
 )
 
 
@@ -27358,15 +27699,106 @@ async def _run_workflow_open(workflow_id: str, request: Request, auth_context: A
     return _workflow_run_response(view)
 
 
-async def videos_create(request: Request):
-    """Sora-shaped video generation submit. Returns {id, status: queued}."""
-    auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos"))
-    if isinstance(auth_context, Response):
-        return auth_context
-    policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos"))
-    if policy_response is not None:
-        return policy_response
-    return await proxy_graph_video_create(request, auth_context)
+def _video_row():
+    """The frontend row that owns the video create route."""
+    return next((r for r in frontend_shapes.bundled_rows() if any(route.canonical == "/v1/videos" and "POST" in route.methods for route in r.routes)), None)
+
+
+def _video_wire_shape():
+    """The wire shape that answers the create route, found by the route it owns; the lifecycle routes render job views with it."""
+    row = _video_row()
+    return frontend_shapes.build_shape(row) if row is not None else None
+
+
+async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
+    """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
+    file stops being reachable there. A job the engine never took has none; a failure is not the caller's."""
+    job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
+    kept = (job or {}).get("metadata") or {}
+    prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
+    if not prompt_id:
+        return
+    try:
+        headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
+            await _graph(client, "videos").delete_history([str(prompt_id)], headers=headers)
+    except Exception:  # noqa: BLE001 - best effort
+        pass
+
+
+async def _stop_video_run(shape, video_id: str, auth_context: AuthContext) -> None:
+    """Ask the run of an unfinished video to stop and wait for it, for at most the row's ``cancel_wait_s``. The wait is an
+    asyncio wait on the job's wake-up; it holds no thread. A run that has not stopped is left for the delete to refuse."""
+    row = _video_row()
+    wait_s = row.cancel_wait_s if row is not None else 0.0
+    ledger = _video_ledger(shape)
+    hit = await asyncio.to_thread(ledger.lookup, video_id, auth_context)
+    if not isinstance(hit, JobHit) or media_jobs.is_terminal(hit.view.status) or wait_s <= 0:
+        return
+    jobs = _workflow_job_service()
+    job_id = hit.view.job_id
+    await asyncio.to_thread(jobs.cancel, job_id, auth_context)
+    await jobs.wait(job_id, auth_context, wait_s)
+
+
+def _job_wire_id(job_id: str) -> str:
+    """The id a caller sees for a job, as its create wire writes it."""
+    return _video_wire_shape().wire_id(job_id)
+
+
+def _job_prompt_text(job_id: str, person_id: str) -> str | None:
+    """The prompt text the prompt-memory rules still keep for a job's maker, or None."""
+    saved = prompt_memory.get(_job_wire_id(job_id), person_id)
+    return saved["prompt_text"] if saved else None
+
+
+def _video_intents() -> tuple[str, ...]:
+    """The intents the video wire's routes file their jobs under (a row's ``runtime_policy.intent``)."""
+    rows = [r for r in frontend_shapes.bundled_rows() if issubclass(frontend_shapes.SHAPE_CLASSES[r.shape], VideoViews)]
+    return tuple(dict.fromkeys(str(route.runtime_policy["intent"]) for r in rows for route in r.routes if route.runtime_policy.get("intent")))
+
+
+def _video_workflow_ids(shape) -> tuple[str, ...]:
+    """The workflows whose record declares an output of the wire's media family (``shape.output_prefix``): data from the record."""
+    if WORKFLOW_SNAPSHOTS is None:
+        return ()
+    return tuple(entry.id for entry in WORKFLOW_SNAPSHOTS.current().workflows.values()
+                 if any(str((spec or {}).get("media_type") or "").startswith(shape.output_prefix)
+                        for spec in (entry.contract.get("outputs") or {}).values() if isinstance(spec, Mapping)))
+
+
+class _LegacyVideoRecords:
+    """The older video records, as the ledger reads them: only what the caller may see and that is not deleted."""
+
+    def find(self, raw_id, caller):
+        return _video_job_records.get(raw_id) if _video_job_visible(raw_id, caller) else None
+
+    def visible(self, caller):
+        return [(pid, rec) for pid, rec in list(_video_job_records.items()) if _video_job_visible(pid, caller)]
+
+
+def _video_ledger(shape) -> VideoLedger:
+    return VideoLedger(_workflow_job_service(), shape.job_id_of, _video_intents(), _LegacyVideoRecords(), media_jobs.is_job_id,
+                       lambda: _video_workflow_ids(shape))
+
+
+async def _video_job_view(shape, video_id: str, auth_context: AuthContext):
+    """The job a wire id names, or None when the id is not a job of the run core (an old record answers it instead)."""
+    if shape is None:
+        return None
+    hit = await asyncio.to_thread(_video_ledger(shape).lookup, video_id, auth_context)
+    return hit.view if isinstance(hit, JobHit) else None
+
+
+def _names_a_video_job(shape, video_id: str) -> bool:
+    """True when the id has the job store's form: a job that is not found is unknown, never an older record."""
+    return shape is not None and _video_ledger(shape).names_a_job(video_id)
+
+
+def _index_video_job_delivery(wire_id: str, asset_id: str, filename: str, media_type: str, facts) -> None:
+    from gateway import media_ingestion
+    media_ingestion.index_video_delivery(video_id=wire_id, asset_id=asset_id, filename=filename or asset_id,
+                                         media_type=media_type, record=facts)
 
 
 async def videos_status(video_id: str, request: Request):
@@ -27377,6 +27809,13 @@ async def videos_status(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}"))
     if policy_response is not None:
         return policy_response
+    shape = _video_wire_shape()
+    view = await _video_job_view(shape, video_id, auth_context)
+    if view is not None:
+        facts = await asyncio.to_thread(_workflow_job_service().request_facts, view.job_id, auth_context)
+        return shape.render_status(view, facts)
+    if _names_a_video_job(shape, video_id):
+        return shape.unknown_id()
     return await proxy_graph_video_status(video_id, auth_context)
 
 
@@ -27392,6 +27831,18 @@ async def videos_content(video_id: str, request: Request):
     metadata_error = _note_media_metadata_query(request)
     if metadata_error is not None:
         return metadata_error
+    shape = _video_wire_shape()
+    view = await _video_job_view(shape, video_id, auth_context)
+    if view is not None:
+        delivery = media_delivery.current()
+        household = await asyncio.to_thread(prompt_memory.household_settings, admin_path=ADMIN_STORE.path)
+        return await asyncio.to_thread(
+            shape.render_bytes, view, _workflow_job_service(), auth_context,
+            metadata_mode=delivery.requested_mode if delivery is not None else None,
+            caller_person_id=_auth_person_id(auth_context), never_keep=bool(household["never_keep"]),
+            on_delivered=_index_video_job_delivery)
+    if _names_a_video_job(shape, video_id):
+        return shape.unknown_id()
     prompt_id = _prompt_id_from_video_id(video_id)
     record = _video_job_records.get(prompt_id) if prompt_id else None
     delivery = media_delivery.current()
@@ -27429,6 +27880,25 @@ async def videos_delete(video_id: str, request: Request):
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/v1/videos/{video_id}", policy=_video_route_policy()))
     if policy_response is not None:
         return policy_response
+    shape = _video_wire_shape()
+    try:
+        if shape is not None:
+            await _stop_video_run(shape, video_id, auth_context)
+        hit = await asyncio.to_thread(_video_ledger(shape).delete, video_id, auth_context) if shape is not None else None
+        if isinstance(hit, JobHit):
+            await _forget_video_history(hit.view.job_id, auth_context)
+    except JobDeleteConflict:
+        return shape.render_delete_conflict()
+    except JobNotFound:
+        return shape.unknown_id()
+    if isinstance(hit, JobHit):
+        await asyncio.to_thread(prompt_memory.delete_asset, shape.wire_id(hit.view.job_id))
+        for ref in hit.view.results or ():
+            if ref.asset_id:
+                await asyncio.to_thread(prompt_memory.delete_asset, ref.asset_id)
+        return shape.render_deleted(hit.view.job_id)
+    if _names_a_video_job(shape, video_id):
+        return shape.unknown_id()
     return await proxy_graph_video_delete(video_id, auth_context)
 
 
@@ -33984,7 +34454,7 @@ def _provider_native_host_from_config(provider: str, cfg: Mapping[str, Any]) -> 
     raw_url = str(cfg.get("url") or cfg.get("base_url") or "").strip()
     if raw_url:
         return raw_url.rstrip("/")
-    host = str(cfg.get("host", "127.0.0.1")).strip()
+    host = str(cfg.get("host") or "").strip()  # a record with no host names no address
     port = cfg.get("port")
     if not host or port is None:
         return ""
@@ -34787,7 +35257,6 @@ FRONTEND_TRANSLATORS.register("identity", {
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.delete": SelfAuthOp(assets_delete, frozenset({"DELETE"}), openapi_extra={**ASSETS_DELETE_OPENAPI}, auth=operation_security.APP_KEY),
-    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
     "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.APP_KEY),

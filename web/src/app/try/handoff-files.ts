@@ -6,18 +6,42 @@ export interface HandoffFileSlot {
 }
 
 /**
- * Sets the files Home sent on a workflow's file inputs. Each file takes the first input still empty whose media type
- * family it matches (an input that declares none takes any file), required inputs first.
+ * Names bind before fallback files, so an unnamed file cannot steal a named input.
+ * Unknown or absent names keep the original required-first, family-matching order.
  */
-export function assignHandoffFiles(files: File[], slots: HandoffFileSlot[]): Record<string, File | null> {
+export function assignHandoffFiles(
+  files: File[],
+  slots: HandoffFileSlot[],
+  fileInputs?: string[],
+): Record<string, File | null> {
   const chosen: Record<string, File | null> = {};
   const ordered = [...slots].sort((a, b) => Number(b.required) - Number(a.required));
-  for (const file of files) {
-    const family = file.type.split("/")[0];
-    const slot = ordered.find((item) => !chosen[item.inputName] && (!item.family || item.family === family));
+  const fits = (file: File, slot: HandoffFileSlot) =>
+    !slot.family || slot.family === file.type.split("/")[0];
+  const fallback: File[] = [];
+  files.forEach((file, index) => {
+    const name = fileInputs?.[index];
+    const slot = name ? slots.find((item) => item.inputName === name) : undefined;
+    if (!slot) {
+      fallback.push(file);
+    } else if (!chosen[slot.inputName] && fits(file, slot)) {
+      chosen[slot.inputName] = file;
+    }
+    // A known name with the wrong family (or a duplicate) cannot move elsewhere.
+  });
+  for (const file of fallback) {
+    const slot = ordered.find((item) => !chosen[item.inputName] && fits(file, item));
     if (slot) chosen[slot.inputName] = file;
   }
   return chosen;
+}
+
+/** A partial hand-off waits in the form until every required input has a file. */
+export function hasRequiredHandoffFiles(
+  slots: readonly { inputName: string; required?: boolean }[],
+  chosen: Readonly<Record<string, File | null | undefined>>,
+): boolean {
+  return slots.every((slot) => !slot.required || Boolean(chosen[slot.inputName]));
 }
 
 /**

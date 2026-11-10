@@ -233,6 +233,16 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # POST /v1/3d/generations/glb arrived (see REMOVED_PATHS and ADDED_PATHS); the mesh workflow's documented sync and
         # async paths moved to /v1/3d/generations/glb (tests/fixtures/headless_openapi.json shows the same changes).
         # Before it the digest was 501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8.
+        # Re-captured 2026-11-08 for S7 (V5a): the video workflows declare their width, height and length (and, for H3, its
+        # frame rate) as inputs, so their input schemas and the route inputs the catalog lists for them moved; nothing else
+        # did (tests/fixtures/headless_openapi.json shows the same changes). Before it the digest was
+        # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5. Re-captured again for S7 (V5c): POST /v1/videos and
+        # POST /openai/v1/videos are rows now, so their operation id and summary moved; nothing else did. Before it the digest
+        # was 33821a54e784de1c8076b989415d3670e85a0acbe8246a4c9d3569da5932d97f.
+        # Re-captured 2026-11-09 for the merge of the image rows (I2) with the video rows (V5a to V5c): each side's document
+        # change is in tests/fixtures/headless_openapi.json, which merged without a conflict. Before it the digests were
+        # 14ce7dfb5ffa910de2b633e42712afc201dbafde2da2a7f7517e9805932f1aae (video side) and
+        # c4a9451c273b6939ab712658a9aec1dca0778dd9d27a579b67a813c5c604640d (image side).
         # Re-captured 2026-11-08 for the generic run route (S6): each video-edit workflow's concrete run path names its
         # full id, and the run route documents the media job it answers (202, ``Location``) instead of video bytes;
         # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the digest was
@@ -240,7 +250,17 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-09 for the problem-report admin routes under /admin/api/problem-reports (see ADDED_PATHS):
         # only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing else).
         # Before it the digest was 78dec8a0e5e1d3dcc0b2f74ba44fb14ac552d8a9d8eb0a04ccf185358775b158.
-        assert route_graph.openapi_digest(proxy.app) == "08a9bb3cd24fc180577b69df6a6c7acc5f4fc456b8d7b25bf09ba650a49b2dd7"
+        # Re-captured 2026-11-09 for the run-route video edits (video-mux, rife-interpolate): their advertised
+        # ``route_inputs`` lost ``seconds`` and ``size``, which the generic run route refuses; nothing else moved
+        # (tests/fixtures/headless_openapi.json shows the same two removals). Before it the digest was
+        # 08a9bb3cd24fc180577b69df6a6c7acc5f4fc456b8d7b25bf09ba650a49b2dd7.
+        # Re-captured 2026-11-09 for the combined train 38: the c2d-38 changes, the video-mux record and the emptied run-route
+        # inputs together (tests/fixtures/headless_openapi.json and the reader golden show the same). Before it the digest was
+        # e44b69d8a1013a609d0b67973a0b29f2981aad8e490041585ec542db831fa8fb.
+        # Re-captured 2026-11-09 for the combined train 38 (video-int, the video ship checks and release/c2d-38 merged): the
+        # create-video operation now comes from the videos-create frontend row and the data-only registered_routes row.
+        # Before it the digest was 28560d4c8bd8c5ed2313bc28ddb54f06ed9796e3a801f5c2207b8837cab628c1.
+        assert route_graph.openapi_digest(proxy.app) == "bcc462e4b8a834d514c523692450ac6023ff53a237f11e49ed8c41ee08005c08"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -279,7 +299,16 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # POST /v1/3d/generations/glb arrived with the same App key security; the mesh workflow's documented paths moved.
     # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the frozen digest was
     # b62d42d37489df105cda9f0d730000d9ea8dba85e958df91ecfa7b21d629e6ad.
+    # Re-captured 2026-11-08 for S7 (V5a): the same video workflow input changes (its own digest note is above).
     # Re-captured 2026-11-08 for the generic run route (S6): the video-edit run paths name full ids and the run route
     # documents the media job it answers. Before it the frozen digest was
     # 31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1.
+    # Re-captured 2026-11-09 for the video mux description (the length rule measured on live): only that text moved
+    # (tests/fixtures/headless_openapi.json shows the same change). Before it the frozen digest was
+    # 0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4.
+    # Re-captured 2026-11-09 for the run-route video edits: ``seconds`` and ``size`` left their ``route_inputs`` (see the
+    # note above). Before it the frozen digest was 0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4.
+    # Re-captured 2026-11-09 for the combined train 38: the c2d-38 sync response kinds, the mux description and the
+    # emptied run-route inputs together (tests/fixtures/headless_openapi.json shows the same). Before it the frozen digest was
+    # 30f9e05266fff448eb90a25b494ab5181e4001237b87a96ac0c65ca62d379232.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

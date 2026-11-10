@@ -2721,10 +2721,10 @@
   "/openai/v1/videos": {
    "DELETE": "/{path:path} unmatched_route",
    "GET": "/openai/v1/videos videos_list",
-   "HEAD": "405 allow=POST via /openai/v1/videos videos_create",
+   "HEAD": "405 allow=POST via /openai/v1/videos serve",
    "OPTIONS": "/{path:path} unmatched_route",
    "PATCH": "/{path:path} unmatched_route",
-   "POST": "/openai/v1/videos videos_create",
+   "POST": "/openai/v1/videos serve",
    "PUT": "/{path:path} unmatched_route"
   },
   "/openai/v1/videos/edits": {
@@ -3567,10 +3567,10 @@
   "/v1/videos": {
    "DELETE": "/{path:path} unmatched_route",
    "GET": "/v1/videos videos_list",
-   "HEAD": "405 allow=POST via /v1/videos videos_create",
+   "HEAD": "405 allow=POST via /v1/videos serve",
    "OPTIONS": "/{path:path} unmatched_route",
    "PATCH": "/{path:path} unmatched_route",
-   "POST": "/v1/videos videos_create",
+   "POST": "/v1/videos serve",
    "PUT": "/{path:path} unmatched_route"
   },
   "/v1/videos/edits": {
@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4",
+ "openapi_sha256": "4cef2c2e7fcf5af3ac078c0ff313515c88aaec5ff1e2d2781c048ef115e301e4",
  "policy": {
   "aliases": [
    {
@@ -4166,14 +4166,6 @@
    "/v1/systemone": {
     "intent": "decision.systemone",
     "protocol": "typesafe.systemone"
-   },
-   "/v1/videos": {
-    "backend": "comfyui",
-    "capability_exposure": "default",
-    "capability_resource_tier": "expensive",
-    "capability_trust_tier": "stable",
-    "intent": "video.generate",
-    "protocol": "openai.video"
    },
    "/v1/videos/edits": {
     "backend": "comfyui",
@@ -9269,12 +9261,12 @@
    "type": "APIRoute"
   },
   {
-   "endpoint": "proxy.videos_create",
+   "endpoint": "gateway.row_routes._handler.<locals>.serve",
    "include_in_schema": true,
    "methods": [
     "POST"
    ],
-   "name": "videos_create",
+   "name": "row:videos-create:/openai/v1/videos",
    "openapi_extra": "95fcc8a88718ccf1df75e6b55974e5a53f867d1a3cfc630702da32a905bb3b8f",
    "path": "/openai/v1/videos",
    "response_class": null,
@@ -9282,12 +9274,12 @@
    "type": "APIRoute"
   },
   {
-   "endpoint": "proxy.videos_create",
+   "endpoint": "gateway.row_routes._handler.<locals>.serve",
    "include_in_schema": true,
    "methods": [
     "POST"
    ],
-   "name": "videos_create",
+   "name": "row:videos-create:/v1/videos",
    "openapi_extra": "95fcc8a88718ccf1df75e6b55974e5a53f867d1a3cfc630702da32a905bb3b8f",
    "path": "/v1/videos",
    "response_class": null,

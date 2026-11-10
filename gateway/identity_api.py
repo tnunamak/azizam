@@ -27,7 +27,7 @@ from gateway import likeness, request_forms
 from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest
 from gateway.likeness import LikenessError
 from gateway.extensions import ExtensionError, multipart_extensions
-from gateway import engine_egress
+from gateway import engine_egress, service_registry
 
 LIKENESS_PATH = "/gateway/v1/faces/likeness"
 IDENTITY_PATH = "/gateway/v1/images/identity"
@@ -40,17 +40,21 @@ binding_registry.register_role("identity_scene", binding_registry.Entry.EDIT, id
 binding_registry.register_role("face_likeness", binding_registry.Entry.ANALYSIS, likeness.check_likeness)
 
 
+class FaceServiceNotConfigured(RuntimeError):
+    """The face service's record names no address, so there is nowhere to send an image."""
+
+
 class FaceServiceClient:
     """Async client for ``services/face-service`` (POST /v1/faces/analyze)."""
 
     def __init__(self, base_url: str, *, timeout: float = 120.0) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = base_url
         self.timeout = timeout
 
     async def analyze(self, image: bytes, model: str) -> list[dict[str, Any]]:
         async with engine_egress.async_client(timeout=httpx.Timeout(self.timeout, connect=10)) as client:
             response = await client.post(
-                f"{self.base_url}/v1/faces/analyze",
+                service_registry.join_base_path(self.base_url, "/v1/faces/analyze"),
                 files={"image": ("image", image, "application/octet-stream")},
                 data={"model": model},
             )

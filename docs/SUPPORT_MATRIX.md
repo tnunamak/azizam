@@ -169,7 +169,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/openai/v1/responses/{response_id}/cancel` | unsupported | 400 unsupported_operation; no local tokenizer or cancellation | [proxy.py](../proxy.py) `cancel_response` |
 | `GET` | `/openai/v1/responses/{response_id}/input_items` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `list_response_input_items` |
 | `GET` | `/openai/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_list` |
-| `POST` | `/openai/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_create` |
+| `POST` | `/openai/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/row_routes.py](../gateway/row_routes.py) `serve` |
 | `POST` | `/openai/v1/videos/edits` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_edit` |
 | `POST` | `/openai/v1/videos/extensions` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_extend` |
 | `DELETE` | `/openai/v1/videos/{video_id}` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_delete` |
@@ -262,7 +262,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/v1/status` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `v1_status` |
 | `POST` | `/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `GET` | `/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_list` |
-| `POST` | `/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_create` |
+| `POST` | `/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/row_routes.py](../gateway/row_routes.py) `serve` |
 | `POST` | `/v1/videos/edits` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_edit` |
 | `POST` | `/v1/videos/extensions` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_extend` |
 | `DELETE` | `/v1/videos/{video_id}` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_delete` |

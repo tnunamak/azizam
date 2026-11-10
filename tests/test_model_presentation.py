@@ -165,7 +165,9 @@ def test_catalog_preserves_keyed_substrate_identity_without_claiming_local_cost(
 @pytest.mark.parametrize("connection, expected", [
     ({"host": "127.0.0.1", "port": 18001, "base_path": "/v1", "health_endpoint": "/health"}, "http://127.0.0.1:18001/health"),
     ({"host": "::1", "port": 18001, "base_path": "/v1", "health_endpoint": "health"}, "http://[::1]:18001/v1/health"),
-    ({"host": "example.test", "scheme": "https", "health_endpoint": "/health"}, "https://example.test/health"),
+    ({"host": "example.test", "port": 443, "scheme": "https", "health_endpoint": "/health"}, "https://example.test:443/health"),
+    # A host without a port names no address (docs/design/CODE_TO_DATA.md S8), so no health path resolves.
+    ({"host": "example.test", "scheme": "https", "health_endpoint": "/health"}, None),
     ({"base_url": "http://example.test/v1", "health_endpoint": "health"}, "http://example.test/v1/health"),
     ({"health_endpoint": "http://example.test/health"}, "http://example.test/health"),
     ({"host": "example.test"}, None),
@@ -695,6 +697,7 @@ def test_remote_concrete_profile_override_remains_operator_authored():
 
 def test_classification_follows_the_model_list_type():
     from gateway.model_presentation import LISTED_METADATA_KEY, product_capability
+    # This pins the contract path only; declared-only classification is tested separately below.
     # A declared kind cannot contradict the intent's type; it only splits audio.
     assert product_capability(Capability(intent="chat.completions", backend="one", capability="music")) == "chat"
     assert product_capability(Capability(intent="audio.generate", backend="one", capability="chat")) == "audio"
@@ -706,6 +709,21 @@ def test_classification_follows_the_model_list_type():
     # The listed `/v1/models` fields win over the capability's intent.
     listed = {"type": "reranking", "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}}
     assert product_capability(Capability(intent="chat.completions", backend="one"), {LISTED_METADATA_KEY: listed}) == "rerank"
+
+
+def test_an_undeclared_audio_subtype_comes_from_the_shipped_capability_words(monkeypatch):
+    from gateway import model_presentation
+    from gateway.model_presentation import product_capability
+    # Both shipped speech words name speech.
+    assert product_capability(Capability(intent="audio.speech", backend="one")) == "speech"
+    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "speech"
+    # A word the table does not list stays generic audio, whatever its spelling.
+    assert product_capability(Capability(intent="speech.voice_check", backend="one")) == "audio"
+    # The table decides, not the intent's spelling.
+    monkeypatch.setattr(model_presentation, "INTENT_CAPABILITIES", {"speech.synthesis": "audio"})
+    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "audio"
+    monkeypatch.setattr(model_presentation, "INTENT_CAPABILITIES", {"audio.generate": "sfx"})
+    assert product_capability(Capability(intent="audio.generate", backend="one")) == "sfx"
 
 
 def test_embeddings_capability_uses_the_voice_glossary_label():
@@ -724,3 +742,38 @@ def test_embeddings_label_passes_the_member_jargon_sweep_list():
                 for line in map(str.strip, lines) if line and not line.startswith("#")]
     label = CAPABILITY_LABELS["embed"]
     assert [p.pattern for p in patterns if p.search(label)] == []
+
+
+def test_undeclared_intent_family_never_reaches_product_wire():
+    from gateway.model_presentation import capability_presentation, product_capability
+
+    capability = Capability(intent="smell.infer", backend="one")
+    kind = product_capability(capability)
+    assert kind == "other"
+    row = capability_presentation(capability)
+    assert row["capability"] == kind
+    assert row["capability_title"] == "AI"
+    assert row["icon_key"] == "chat"
+
+
+def test_without_a_contract_the_declared_capability_decides():
+    from gateway.model_presentation import capability_presentation, product_capability
+
+    # Mesh has no /v1/models type; its manifest declares capability: mesh.
+    mesh = Capability(intent="mesh.generate", backend="one", input_modalities=("asset", "text"), capability="mesh")
+    assert product_capability(mesh) == "mesh"
+    assert capability_presentation(mesh)["capability_title"] == "3D models"
+    # The intent family differs, so an intent-prefix fallback cannot satisfy these assertions.
+    assert product_capability(Capability(intent="asset.generate", backend="one", capability="mesh")) == "mesh"
+    assert product_capability("asset.generate", {"capability": "mesh"}) == "mesh"
+    # A declared word outside the product vocabulary is not trusted onto the wire.
+    odd = Capability(intent="mesh.generate", backend="one", capability="smell")
+    assert product_capability(odd) == "other"
+
+
+@pytest.mark.parametrize("declared", [["mesh"], {"kind": "mesh"}], ids=["list", "dict"])
+def test_without_a_contract_non_string_declared_capability_is_unclassified(declared):
+    from gateway.model_presentation import product_capability
+
+    capability = Capability(intent="mesh.generate", backend="one")
+    assert product_capability(capability, {"capability": declared}) == "other"

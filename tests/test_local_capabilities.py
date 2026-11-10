@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway.capabilities import summarize_capabilities  # noqa: E402
+from tests.support import c2d_parity  # noqa: E402
 from gateway.local_capabilities import (  # noqa: E402
     INTENT_AUDIO_GENERATE,
     INTENT_CHAT,
@@ -323,6 +327,252 @@ class SummarySafetyTest(unittest.TestCase):
             self.assertNotIn("backend", entry)
             self.assertNotIn("policy_sources", entry)
             self.assertNotIn("policy_reasons", entry)
+
+
+# ---------------------------------------------------------------------------
+# Parity golden (tests/fixtures/c2d_parity/local_capabilities.json): the full ordered
+# Capability list for REPRESENTATIVE_CONFIG with default flags, as dataclasses.asdict
+# per record, in Capability.sort_key order (the order is the contract: discovery sorts
+# by it). Stubbed helper: gateway.model_files._is_installed (the one disk read behind
+# model_file_availability and missing_model_file_caveat), once absent and once present,
+# because REPRESENTATIVE_CONFIG names weight files that exist on no machine.
+# The golden is written only by tests/fixtures/c2d_parity/capture.py.
+
+
+def capture_local_capabilities() -> dict:
+    out = {}
+    for label, stub in (("files_absent", c2d_parity.model_files_absent), ("files_present", c2d_parity.model_files_present)):
+        with stub():
+            caps = sorted(build_local_capabilities(REPRESENTATIVE_CONFIG), key=lambda c: c.sort_key)
+        out[label] = [dataclasses.asdict(cap) for cap in caps]
+    return c2d_parity.as_golden(out)
+
+
+@pytest.mark.parametrize("label", ["files_absent", "files_present"])
+def test_local_capabilities_match_golden(label):
+    golden = c2d_parity.load_golden("local_capabilities")
+    actual = capture_local_capabilities()
+    assert len(actual[label]) == len(golden[label]), "capability count changed"
+    for index, (got, want) in enumerate(zip(actual[label], golden[label])):
+        for field in sorted(set(got) | set(want)):
+            assert got.get(field) == want.get(field), f"record {index} ({want['intent']}/{want['backend']}/{want['model']}) field {field}"
+
+
+def test_local_capabilities_golden_has_no_paths_or_secrets():
+    blob = c2d_parity.canonical(c2d_parity.load_golden("local_capabilities"))
+    assert "/secret/" not in blob
+
+# Workflow families bind only to a declared backend in the effective backend map.
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+def test_workflow_family_absent_comfyui_has_no_capabilities(family, intent):
+    config = {
+        "backends": {},
+        family: {"workflows": {"sample": {"file": "sample.json"}}},
+    }
+
+    assert _by_intent(build_local_capabilities(config), intent) == []
+
+
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+def test_workflow_family_uses_configured_backend(family, intent):
+    config = {
+        "backends": {
+            "comfyui": {"name": "ComfyUI"},
+            "other": {"name": "Another workflow backend"},
+        },
+        family: {
+            "backend": "other",
+            "workflows": {"sample": {"file": "sample.json"}},
+        },
+    }
+
+    caps = _by_intent(build_local_capabilities(config), intent)
+    assert len(caps) == 1
+    assert caps[0].workflow == "sample"
+    assert caps[0].backend == "other"
+
+
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+def test_workflow_family_configured_backend_must_be_present(family, intent):
+    config = {
+        "backends": {"comfyui": {"name": "ComfyUI"}},
+        family: {
+            "backend": "missing",
+            "workflows": {"sample": {"file": "sample.json"}},
+        },
+    }
+
+    assert _by_intent(build_local_capabilities(config), intent) == []
+
+
+@pytest.mark.parametrize(
+    ("family", "intent"),
+    [("videos", "video.generate"), ("audio", "audio.generate")],
+)
+def test_workflow_family_uses_backend_present_only_in_override(family, intent):
+    config = {
+        "backends": {},
+        family: {"workflows": {"sample": {"file": "sample.json"}}},
+    }
+    live_backends = {"comfyui": {"name": "Live ComfyUI"}}
+
+    caps = _by_intent(
+        build_local_capabilities(config, backends=live_backends), intent
+    )
+
+    assert len(caps) == 1
+    assert caps[0].workflow == "sample"
+    assert caps[0].backend == "comfyui"
+    assert config["backends"] == {}
+
+
+def test_image_family_requires_comfyui_control():
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    del config["backends"]["comfyui"]
+
+    without_comfyui = build_local_capabilities(config)
+    assert _by_intent(without_comfyui, "image.generate") == []
+    assert _by_intent(without_comfyui, "image.edit") == []
+
+    # Positive control rules out a fixture which never advertised images.
+    with_comfyui = build_local_capabilities(REPRESENTATIVE_CONFIG)
+    assert [c.model for c in _by_intent(with_comfyui, "image.generate")] == [
+        "flux2-klein-4b",
+    ]
+    assert [c.model for c in _by_intent(with_comfyui, "image.edit")] == [
+        "flux2-klein-4b-edit",
+    ]
+
+
+@pytest.mark.parametrize("family", ["videos", "audio", "images"])
+@pytest.mark.parametrize("backend", [None, "", ["other"]])
+def test_family_backend_rejects_malformed_declared_value(family, backend):
+    config = {
+        "backends": {"comfyui": {"default_model": "image-model"}},
+        family: {
+            "backend": backend,
+            "workflows": {"sample": {"file": "sample.json"}},
+        },
+    }
+
+    with pytest.raises(ValueError) as error:
+        build_local_capabilities(config)
+
+    assert str(error.value) == (
+        f"{family}.backend must be a non-empty string; got {backend!r}"
+    )
+
+
+def test_image_family_uses_declared_backend_and_model_defaults():
+    config = {
+        "backends": {"other": {"name": "Other workflow backend"}},
+        "images": {"backend": "other"},
+        "model_compatibility": {
+            "defaults": {"images": "image-model", "image_edits": "edit-model"},
+        },
+    }
+
+    caps = build_local_capabilities(config)
+
+    assert [(cap.intent, cap.backend, cap.model) for cap in caps] == [
+        ("image.generate", "other", "image-model"),
+        ("image.edit", "other", "edit-model"),
+    ]
+
+
+def test_image_family_reads_metadata_from_selected_backend():
+    config = {
+        "backends": {
+            "comfyui": {"default_model": "wrong-backend-model"},
+            "other": {
+                "default_model": "selected-model",
+                "workflows_dir": "./selected-workflows",
+            },
+        },
+        "images": {"backend": "other"},
+        "model_compatibility": {
+            "defaults": {"images": "fallback-model", "image_edits": "edit-model"},
+        },
+    }
+
+    caps = build_local_capabilities(config)
+
+    assert [(cap.intent, cap.backend, cap.model, cap.caveats) for cap in caps] == [
+        ("image.generate", "other", "selected-model", ()),
+        ("image.edit", "other", "edit-model", ()),
+    ]
+
+
+def test_image_family_default_backend_preserves_rows():
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    assert "images" not in config
+    caps = [
+        cap for cap in build_local_capabilities(config)
+        if cap.intent in ("image.generate", "image.edit")
+    ]
+
+    assert [
+        (
+            cap.intent, cap.backend, cap.model, cap.input_modalities,
+            cap.output_modalities, cap.execution, cap.streaming,
+            cap.resource_tier, cap.resources.gpu_required, cap.caveats,
+        )
+        for cap in caps
+    ] == [
+        (
+            "image.generate", "comfyui", "flux2-klein-4b", ("text",),
+            ("image",), "job", False, "batch", True, (),
+        ),
+        (
+            "image.edit", "comfyui", "flux2-klein-4b-edit", ("text", "image"),
+            ("image",), "job", False, "batch", True, (),
+        ),
+    ]
+
+    # Preserve the existing default behavior for an empty backend record too.
+    config["backends"]["comfyui"] = {}
+    assert _by_intent(build_local_capabilities(config), "image.generate") == []
+    assert _by_intent(build_local_capabilities(config), "image.edit") == []
+
+
+def test_image_family_missing_declared_backend_does_not_fall_back():
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    config["images"] = {"backend": "missing"}
+
+    caps = build_local_capabilities(config)
+
+    assert _by_intent(caps, "image.generate") == []
+    assert _by_intent(caps, "image.edit") == []
+
+
+def test_image_family_uses_effective_backend_override():
+    config = {
+        "backends": {"other": {"default_model": "frozen-model"}},
+        "images": {"backend": "other"},
+        "model_compatibility": {
+            "defaults": {"images": "image-model", "image_edits": "edit-model"},
+        },
+    }
+
+    caps = build_local_capabilities(
+        config, backends={"other": {"name": "Live workflow backend"}}
+    )
+
+    assert [(cap.intent, cap.backend, cap.model) for cap in caps] == [
+        ("image.generate", "other", "image-model"),
+        ("image.edit", "other", "edit-model"),
+    ]
+    assert build_local_capabilities(config, backends={}) == []
+    assert config["backends"] == {"other": {"default_model": "frozen-model"}}
 
 
 if __name__ == "__main__":

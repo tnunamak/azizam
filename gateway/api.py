@@ -338,6 +338,23 @@ def _build_media_job_providers(
     )
 
 
+def _with_file_urls(row: dict[str, Any], request: Request,
+                    signer: Callable[[Request, str], Mapping[str, str]] | None) -> dict[str, Any]:
+    """The job as read, each available file given the ``asset_url`` and ``url`` of the reading request. A job that stored its
+    own URLs (an old image job) keeps them. Nothing is stored: a signed URL expires and names a host, so it is made when the
+    job is read."""
+    if signer is None or not isinstance(row.get("assets"), list):
+        return row
+    files = []
+    for stored in row["assets"]:
+        file = dict(stored) if isinstance(stored, Mapping) else stored
+        if (isinstance(file, dict) and isinstance(file.get("asset_id"), str) and file.get("available") is not False
+                and not (file.get("asset_url") or file.get("url"))):
+            file.update(signer(request, file["asset_id"]))
+        files.append(file)
+    return {**row, "assets": files}
+
+
 def create_gateway_router(
     provider: SnapshotProvider,
     *,
@@ -350,6 +367,7 @@ def create_gateway_router(
     resource_lister: ResourceLister | None = None,
     asset_url_ttl_s: int | Callable[[], int] | None = None,
     asset_path_resolver: output_availability.AssetPathResolver | None = None,
+    asset_url_signer: Callable[[Request, str], Mapping[str, str]] | None = None,
     media_job_creator: MediaJobCreator | None = None,
     media_job_getter: MediaJobGetter | None = None,
     media_job_lister: MediaJobLister | None = None,
@@ -752,7 +770,8 @@ def create_gateway_router(
                         **(record_scope_provider(request) if record_scope_provider else {}),
                     )
                 )
-                rows = scoped_rows(rows, media_job_getter, request, "media_job", audience)
+                rows = [_with_file_urls(row, request, asset_url_signer)
+                        for row in scoped_rows(rows, media_job_getter, request, "media_job", audience)]
         except ValueError as exc:
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -790,7 +809,7 @@ def create_gateway_router(
             )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={**row, "asset_url_ttl_s": _asset_url_ttl()},
+            content={**_with_file_urls(row, request, asset_url_signer), "asset_url_ttl_s": _asset_url_ttl()},
         )
 
     @router.get("/media/jobs/{job_id}/results/{name:path}")
