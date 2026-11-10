@@ -240,7 +240,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-09 for the problem-report admin routes under /admin/api/problem-reports (see ADDED_PATHS):
         # only those paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing else).
         # Before it the digest was 78dec8a0e5e1d3dcc0b2f74ba44fb14ac552d8a9d8eb0a04ccf185358775b158.
-        assert route_graph.openapi_digest(proxy.app) == "08a9bb3cd24fc180577b69df6a6c7acc5f4fc456b8d7b25bf09ba650a49b2dd7"
+        # Re-captured 2026-11-09 for the run-route video edits (video-mux, rife-interpolate): their advertised
+        # ``route_inputs`` lost ``seconds`` and ``size``, which the generic run route refuses; nothing else moved
+        # (tests/fixtures/headless_openapi.json shows the same two removals). Before it the digest was
+        # 08a9bb3cd24fc180577b69df6a6c7acc5f4fc456b8d7b25bf09ba650a49b2dd7.
+        assert route_graph.openapi_digest(proxy.app) == "e44b69d8a1013a609d0b67973a0b29f2981aad8e490041585ec542db831fa8fb"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -282,4 +286,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-08 for the generic run route (S6): the video-edit run paths name full ids and the run route
     # documents the media job it answers. Before it the frozen digest was
     # 31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1.
+    # Re-captured 2026-11-09 for the run-route video edits: ``seconds`` and ``size`` left their ``route_inputs`` (see the
+    # note above). Before it the frozen digest was 0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
