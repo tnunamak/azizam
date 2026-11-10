@@ -36,6 +36,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Mapping
 
+import yaml
+
 __all__ = [
     "MediaMetadataError",
     "media_kind",
@@ -54,43 +56,91 @@ class MediaMetadataError(RuntimeError):
     """Raised when media metadata cannot be stripped/embedded safely."""
 
 
-_SUFFIX_KIND = {
-    ".png": "png",
-    ".jpg": "jpeg", ".jpeg": "jpeg", ".jpe": "jpeg", ".jfif": "jpeg",
-    ".webp": "webp",
-    ".mp4": "video", ".m4v": "video", ".mov": "video", ".webm": "video",
-    ".mkv": "video", ".avi": "video", ".gif": None,
-    ".wav": "audio", ".flac": "audio", ".mp3": "audio", ".ogg": "audio",
-    ".oga": "audio", ".opus": "audio", ".m4a": "audio", ".aac": "audio",
-    ".mka": "audio",
-}
-_MIME_KIND = {
-    "image/png": "png", "image/jpeg": "jpeg", "image/jpg": "jpeg",
-    "image/webp": "webp",
-    "video/mp4": "video", "video/webm": "video", "video/quicktime": "video",
-    "video/x-matroska": "video", "video/x-msvideo": "video",
-    "audio/wav": "audio", "audio/x-wav": "audio", "audio/wave": "audio",
-    "audio/vnd.wave": "audio", "audio/flac": "audio", "audio/x-flac": "audio",
-    "audio/mpeg": "audio", "audio/mp3": "audio", "audio/ogg": "audio",
-    "audio/opus": "audio", "audio/mp4": "audio", "audio/x-m4a": "audio",
-    "audio/m4a": "audio", "audio/aac": "audio", "audio/x-matroska": "audio",
-}
-# suffix -> ffmpeg muxer
-_MUXER = {
-    ".mp4": "mp4", ".m4v": "mp4", ".m4a": "mp4", ".mov": "mov",
-    ".webm": "webm", ".mkv": "matroska", ".mka": "matroska", ".avi": "avi",
-    ".wav": "wav", ".flac": "flac", ".mp3": "mp3", ".ogg": "ogg",
-    ".oga": "ogg", ".opus": "ogg", ".aac": "adts",
-}
-_MIME_SUFFIX = {
-    "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
-    "video/x-matroska": ".mkv", "video/x-msvideo": ".avi",
-    "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav",
-    "audio/vnd.wave": ".wav", "audio/flac": ".flac", "audio/x-flac": ".flac",
-    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/ogg": ".ogg",
-    "audio/opus": ".ogg", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a",
-    "audio/m4a": ".m4a", "audio/aac": ".aac", "audio/x-matroska": ".mka",
-}
+_FORMAT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "media_metadata_formats.yml"
+
+
+def load_media_metadata_formats(
+    path: Path | str = _FORMAT_ROWS_PATH,
+) -> tuple[dict[str, str | None], dict[str, str | None], dict[str, str], dict[str, str]]:
+    """Load container rows; a muxer's first suffix is its MIME processing suffix."""
+    source = Path(path)
+
+    def fail(where: str, message: str) -> None:
+        raise ValueError(f"{source}: {where}: {message}")
+
+    def fields(value, required: set[str], optional: set[str], where: str) -> None:
+        if not isinstance(value, dict):
+            fail(where, "must be a mapping")
+        missing = required - value.keys()
+        unknown = value.keys() - required - optional
+        if missing:
+            fail(where, f"missing fields: {', '.join(sorted(missing))}")
+        if unknown:
+            fail(where, f"unknown fields: {', '.join(sorted(map(str, unknown)))}")
+
+    def token(value, where: str, field: str) -> str:
+        if (
+            not isinstance(value, str) or not value
+            or value != value.strip().lower() or any(char.isspace() for char in value)
+        ):
+            fail(where, f"{field} must be a nonempty lowercase token without whitespace")
+        return value
+
+    def tokens(row, field: str, where: str) -> list[str]:
+        values = row[field]
+        if not isinstance(values, list):
+            fail(where, f"{field} must be a list")
+        return [token(value, where, field) for value in values]
+
+    try:
+        document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        fail("document", f"could not read format rows: {error}")
+    fields(document, {"schema_version", "formats"}, set(), "document")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        fail("document", "schema_version must be 1")
+    if not isinstance(document["formats"], list):
+        fail("document", "formats must be a list")
+
+    suffix_kind: dict[str, str | None] = {}
+    mime_kind: dict[str, str | None] = {}
+    muxers: dict[str, str] = {}
+    mime_suffix: dict[str, str] = {}
+    for number, row in enumerate(document["formats"], start=1):
+        where = f"formats row {number}"
+        fields(row, {"handler", "suffixes", "mime_types"}, {"muxer"}, where)
+        handler = row["handler"]
+        if handler is not None:
+            handler = token(handler, where, "handler")
+        suffixes = tokens(row, "suffixes", where)
+        mime_types = tokens(row, "mime_types", where)
+        for suffix in suffixes:
+            if not suffix.startswith(".") or len(suffix) == 1 or "/" in suffix or ";" in suffix:
+                fail(where, f"invalid suffix: {suffix!r}")
+        for mime_type in mime_types:
+            if mime_type.count("/") != 1 or not all(mime_type.split("/")) or ";" in mime_type:
+                fail(where, f"invalid MIME type: {mime_type!r}")
+        muxer = token(row["muxer"], where, "muxer") if "muxer" in row else None
+        if muxer is not None and not suffixes:
+            fail(where, "muxer requires at least one suffix")
+        if not suffixes and not mime_types:
+            fail(where, "at least one suffix or MIME type is required")
+        for suffix in suffixes:
+            if suffix in suffix_kind:
+                fail(where, f"duplicate suffix: {suffix!r}")
+            suffix_kind[suffix] = handler
+            if muxer is not None:
+                muxers[suffix] = muxer
+        for mime_type in mime_types:
+            if mime_type in mime_kind:
+                fail(where, f"duplicate MIME type: {mime_type!r}")
+            mime_kind[mime_type] = handler
+            if muxer is not None:
+                mime_suffix[mime_type] = suffixes[0]
+    return suffix_kind, mime_kind, muxers, mime_suffix
+
+
+_SUFFIX_KIND, _MIME_KIND, _MUXER, _MIME_SUFFIX = load_media_metadata_formats()
 
 
 def _norm(suffix_or_mime: str) -> str:
