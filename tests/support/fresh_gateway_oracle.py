@@ -258,7 +258,8 @@ async def _path_case(scratch: Path, path: str, state: str) -> dict:
                     source = scratch / "reference.wav"
                     source.write_bytes(b"fixture audio")
                     reference_service = {**record, "default_model": "test"}
-                    with patch.dict(proxy.config, {"backends": {"stt": reference_service}}), \
+                    from tests.support import speech_roles
+                    with patch.dict(proxy.config, {"backends": speech_roles.declared({"stt": reference_service})}), \
                          patch.object(proxy, "_voice_store"):
                         try:
                             await proxy._reference_transcript(None, {"id": "test"}, source)

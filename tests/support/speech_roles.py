@@ -20,3 +20,17 @@ def declared(backends: Mapping[str, Any]) -> dict[str, Any]:
             record.setdefault("capabilities", list(ROLE_CAPABILITIES[service_id]))
         out[service_id] = record
     return out
+
+
+def sole_transcription(backends: Mapping[str, Any], record: Mapping[str, Any], service_id: str = "stt") -> dict[str, Any]:
+    """*backends* with *record*, as *service_id*, the only transcription service; other records stay as they are.
+
+    Patch it in with ``patch.dict(..., clear=True)``: a transcription record the base config holds would otherwise stay
+    selectable beside the fixture's record.
+    """
+    import proxy
+
+    others = set(proxy.backends_for_capability("audio.transcriptions", backends=backends, include_disabled=True))
+    out = {key: value for key, value in backends.items() if key not in others}
+    out.update(declared({service_id: record}))
+    return out

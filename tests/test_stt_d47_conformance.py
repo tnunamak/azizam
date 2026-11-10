@@ -14,6 +14,7 @@ import pytest
 from starlette.requests import Request
 
 import proxy
+from tests.support.speech_roles import sole_transcription
 from gateway import custom_voices, stt_chunking as stt
 from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter, SttRun
 from tests.support.access import access_context
@@ -243,7 +244,7 @@ def test_reference_transcription_refuses_known_over_limit_audio(tmp_path, fake_u
                "chunking": {"target_seconds": 0.25, "max_segment_seconds": 0.3,
                             "spool_dir": str(tmp_path / "spool")}}
     receipt = proxy.RouteReceipt(path="/v1/audio/speech", protocol="openai.audio", intent="speech.synthesis")
-    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+    with patch.dict(proxy.config["backends"], sole_transcription(proxy.config["backends"], service), clear=True), patch.object(proxy, "_voice_store"), \
          patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()):
         with pytest.raises(custom_voices.VoiceError, match="STT service limits"):
             asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source, receipt=receipt))
@@ -273,7 +274,7 @@ def test_internal_reference_attempt_is_counted_once(tmp_path, fake_upstreams, re
         service = {"host": "reference.fk.test", "port": 9876, "default_model": "test",
                    "chunking": {"spool_dir": str(tmp_path / "spool")}}
         receipt = proxy.RouteReceipt(path="/v1/audio/speech", protocol="openai.audio", intent="speech.synthesis")
-        with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+        with patch.dict(proxy.config["backends"], sole_transcription(proxy.config["backends"], service), clear=True), patch.object(proxy, "_voice_store"), \
              patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()):
             task = asyncio.create_task(proxy._reference_transcript(None, {"id": "test"}, source, receipt=receipt))
             if result == "cancel":
@@ -439,7 +440,7 @@ def test_reference_without_guard_survives_unhealthy_spool(tmp_path, fake_upstrea
     service = {"host": "reference.fk.test", "port": 9876, "default_model": "test", "chunking": {
         "spool_dir": str(spool), "max_segment_seconds": 0.3 if native else None,
         "target_seconds": 0.25, "native_long_audio_offline": native}}
-    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+    with patch.dict(proxy.config["backends"], sole_transcription(proxy.config["backends"], service), clear=True), patch.object(proxy, "_voice_store"), \
          patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()), \
          patch.object(stt, "create_request_workspace", wraps=stt.create_request_workspace) as create:
         assert asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source)) == "words"
@@ -466,7 +467,7 @@ def test_reference_decode_holds_and_releases_resource_lease(tmp_path, fake_upstr
             lambda request: httpx.Response(200, json={"text": "words"})))
         service = {"host": "reference.fk.test", "port": 9876, "default_model": "test", "chunking": {
             "spool_dir": str(tmp_path / "spool"), "max_segment_seconds": 0.3, "target_seconds": 0.25}}
-        with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"), \
+        with patch.dict(proxy.config["backends"], sole_transcription(proxy.config["backends"], service), clear=True), patch.object(proxy, "_voice_store"), \
              patch.object(proxy, "_stt_adapter", return_value=ChunkedSttAdapter()), \
              patch.object(stt, "GLOBAL_STT_RESOURCE_GATE", gate), patch.object(stt, "decode_planning_pcm", side_effect=decode):
             if result == "success":
