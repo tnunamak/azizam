@@ -1008,6 +1008,24 @@ class ExecutionDataTests(unittest.TestCase):
             contract={"inputs": {}, "bindings": {"gateway": {"route": native}} if native else {}},
         )
 
+    def test_new_video_family_intent_has_async_execution(self):
+        from gateway.workflow_openapi import _execution, workflow_catalog
+
+        record = self.record("video.interpolate")
+        self.assertEqual(record.id, "video.interpolate.fixture")
+        self.assertEqual(record.contract["bindings"], {})
+        execution = _execution(record, None)
+        self.assertIsNone(execution["sync"])
+        self.assertIsNotNone(execution["async"])
+        self.assertEqual(execution["recommended"], "async")
+        self.assertEqual(execution["async"]["kind"], "video")
+        self.assertEqual(execution["async"]["submit"]["path"], "/v1/videos")
+        self.assertEqual(execution["async"]["submit"]["model"], "video-fixture")
+        self.assertEqual(execution["async"]["poll"]["path"], "/v1/videos/{video_id}")
+        self.assertEqual(execution["async"]["content"]["path"], "/v1/videos/{video_id}/content")
+        self.assertEqual(execution["async"]["cancel"]["path"], "/v1/videos/{video_id}")
+        self.assertEqual(workflow_catalog([record])[0]["execution"], execution)
+
     def test_execution_reader_rejects_malformed_rows_with_filename(self):
         # Each mutation must fail in the reader, before any projection happens.
         cases = [

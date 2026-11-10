@@ -329,6 +329,15 @@ execution:
       terminal: [completed, failed]
       fields: {from: fields, mode: async}
 
+  # Exact intent rows override these family defaults.
+  families:
+    video:
+      model_prefix: video-
+      route_inputs: [duration, size_body]
+      sync: null
+      async: video_resource
+      native_alternate: null
+
   intents:
     image.generate:
       model_prefix: ""

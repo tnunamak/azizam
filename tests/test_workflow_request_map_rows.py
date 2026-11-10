@@ -276,3 +276,80 @@ def test_every_row_is_chosen_by_a_bundled_record() -> None:
     assert sorted(chosen) == list(range(1, len(maps().rows) + 1)), (
         f"every bundled row is chosen by a bundled record and mode; chosen: {chosen}"
     )
+
+
+def execution_document() -> dict:
+    return yaml.safe_load(workflow_request_maps.DEFAULT_PATH.read_text(encoding="utf-8"))
+
+
+def load_execution_document(tmp_path: Path, document: dict, **kwargs):
+    path = tmp_path / "workflow_request_maps.yml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return workflow_request_maps.load(path, **kwargs)
+
+
+def test_execution_row_falls_back_to_family() -> None:
+    row = workflow_request_maps.execution_row("video.interpolate")
+    assert row is not None
+    assert row == workflow_request_maps.execution_row("video.generate")
+    assert row.model_prefix == "video-"
+    assert row.route_inputs == ("duration", "size_body")
+    assert row.sync is None
+    assert row.async_["submit"]["path"] == "/v1/videos"
+    assert workflow_request_maps.execution_row("speech.example") is None
+
+
+def test_exact_execution_row_overrides_family() -> None:
+    row = workflow_request_maps.execution_row("video.edit")
+    assert row is not None
+    assert row.sync is not None
+    assert row != workflow_request_maps.execution_row("video.interpolate")
+
+
+@pytest.mark.parametrize("fault", ["dotted", "template", "field", "duplicate_output"])
+def test_execution_family_refusals_name_the_row(tmp_path: Path, fault: str) -> None:
+    document = execution_document()
+    execution = document["execution"]
+    family = "video.interpolate" if fault == "dotted" else "video"
+    row = dict(execution["intents"]["video.generate"])
+    execution["families"] = {family: row}
+    if fault == "template":
+        row["async"] = "absent"
+    elif fault == "field":
+        row["route_inputs"] = ["absent"]
+    elif fault == "duplicate_output":
+        row["route_inputs"] = ["size_body", "size_form"]
+    with pytest.raises(ValueError) as caught:
+        load_execution_document(tmp_path, document)
+    message = str(caught.value)
+    assert str(tmp_path / "workflow_request_maps.yml") in message
+    assert f"execution.families.{family}" in message
+    expected = {
+        "dotted": "family key must not contain a dot",
+        "template": "unknown template",
+        "field": "unknown field row",
+        "duplicate_output": "duplicate output field",
+    }
+    assert expected[fault] in message
+
+
+def test_execution_family_is_used_for_record_validation(tmp_path: Path) -> None:
+    document = execution_document()
+    row = dict(document["execution"]["intents"]["video.generate"])
+    row["async"] = None
+    document["execution"]["families"] = {"video": row}
+    record = synthetic_record({
+        "id": "video.interpolate.fixture", "intent": "video.interpolate",
+        "inputs": {}, "bindings": {},
+    })
+    with pytest.raises(ValueError, match="needs a native binding"):
+        load_execution_document(tmp_path, document, records=[record])
+
+
+def test_execution_families_are_optional(tmp_path: Path, monkeypatch) -> None:
+    document = execution_document()
+    document["execution"].pop("families", None)
+    loaded = load_execution_document(tmp_path, document)
+    monkeypatch.setattr(workflow_request_maps, "_MAPS", loaded)
+    assert workflow_request_maps.execution_row("video.interpolate") is None
+    assert workflow_request_maps.execution_row("video.generate") is not None

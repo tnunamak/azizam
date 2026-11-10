@@ -416,10 +416,12 @@ class ExecutionMaps:
     sync_templates: Mapping[str, Mapping[str, Any]]
     async_templates: Mapping[str, Mapping[str, Any]]
     intents: Mapping[str, ExecutionRow]
+    families: Mapping[str, ExecutionRow]
 
     def row(self, intent: str) -> ExecutionRow | None:
-        """The row for ``intent``; None means the intent has no templated routes (only a native or run route)."""
-        return self.intents.get(intent)
+        """Prefer an exact intent row, then its family; otherwise no templated routes."""
+        row = self.intents.get(intent)
+        return row if row is not None else self.families.get(intent.partition(".")[0])
 
     def validate_records(self, records: Any) -> None:
         for record in records:
@@ -674,7 +676,7 @@ class _ExecutionReader:
     def read(self, raw: Any) -> ExecutionMaps:
         raw = self.obj(raw, "execution", {
             "field_rows", "native_sync", "sync_templates", "async_templates", "intents",
-        })
+        }, {"families"})
         fields = self.named(raw["field_rows"], "execution.field_rows")
         for name, value in fields.items():
             self.field(value, f"execution.field_rows.{name}")
@@ -686,39 +688,47 @@ class _ExecutionReader:
         for name, value in async_.items():
             self.async_template(value, f"execution.async_templates.{name}")
         sync, async_ = _freeze_execution(sync), _freeze_execution(async_)
-        intents: dict[str, ExecutionRow] = {}
-        for intent, value in self.named(raw["intents"], "execution.intents").items():
-            label = f"execution.intents.{intent}"
-            value = self.obj(value, label, {"model_prefix", "route_inputs", "sync", "async", "native_alternate"})
-            prefix = self.text(value["model_prefix"], label + ".model_prefix", empty=True)
-            refs = self.words(value["route_inputs"], label + ".route_inputs")
-            output_names: set[str] = set()
-            for ref in refs:
-                if ref not in fields:
-                    self.fail(label + ".route_inputs", f"unknown field row {ref!r}")
-                name = fields[ref]["value"]["name"]
-                if name in output_names:
-                    self.fail(label + ".route_inputs", f"duplicate output field {name!r}")
-                output_names.add(name)
-            resolved = []
-            for key, templates in (("sync", sync), ("async", async_)):
-                ref = value[key]
-                if ref is not None:
-                    self.text(ref, label + "." + key)
-                    if ref not in templates:
-                        self.fail(label + "." + key, f"unknown template {ref!r}")
-                resolved.append(templates[ref] if ref is not None else None)
-            alternate = value["native_alternate"]
-            if alternate is not None:
-                self.alternate(alternate, label + ".native_alternate")
-            intents[intent] = ExecutionRow(
-                prefix, tuple(refs), resolved[0], resolved[1], _freeze_execution(alternate),
-            )
+
+        def read_rows(section: str) -> Mapping[str, ExecutionRow]:
+            rows: dict[str, ExecutionRow] = {}
+            for row_name, value in self.named(raw.get(section, {}), f"execution.{section}").items():
+                label = f"execution.{section}.{row_name}"
+                if section == "families" and "." in row_name:
+                    self.fail(label, "family key must not contain a dot")
+                value = self.obj(value, label, {"model_prefix", "route_inputs", "sync", "async", "native_alternate"})
+                prefix = self.text(value["model_prefix"], label + ".model_prefix", empty=True)
+                refs = self.words(value["route_inputs"], label + ".route_inputs")
+                output_names: set[str] = set()
+                for ref in refs:
+                    if ref not in fields:
+                        self.fail(label + ".route_inputs", f"unknown field row {ref!r}")
+                    name = fields[ref]["value"]["name"]
+                    if name in output_names:
+                        self.fail(label + ".route_inputs", f"duplicate output field {name!r}")
+                    output_names.add(name)
+                resolved = []
+                for key, templates in (("sync", sync), ("async", async_)):
+                    ref = value[key]
+                    if ref is not None:
+                        self.text(ref, label + "." + key)
+                        if ref not in templates:
+                            self.fail(label + "." + key, f"unknown template {ref!r}")
+                    resolved.append(templates[ref] if ref is not None else None)
+                alternate = value["native_alternate"]
+                if alternate is not None:
+                    self.alternate(alternate, label + ".native_alternate")
+                rows[row_name] = ExecutionRow(
+                    prefix, tuple(refs), resolved[0], resolved[1], _freeze_execution(alternate),
+                )
+            return MappingProxyType(rows)
+
+        intents = read_rows("intents")
+        families = read_rows("families")
         if not intents:
             self.fail("execution.intents", "must declare at least one intent")
         return ExecutionMaps(
             self.path, _freeze_execution(fields), _freeze_execution(raw["native_sync"]),
-            sync, async_, MappingProxyType(intents),
+            sync, async_, intents, families,
         )
 
 
@@ -737,7 +747,7 @@ def place(row: Row, record: Any, mode: str) -> dict[str, dict[str, Any]]:
 
 
 def execution_row(intent: str) -> ExecutionRow | None:
-    """Exact lookup; None means the intent has no templated sync or async route."""
+    """Exact intent, then family lookup; None means no templated routes."""
     return _MAPS.execution.row(intent)
 
 
@@ -751,10 +761,10 @@ def render_alternate(row: ExecutionRow, *, model: str) -> dict[str, Any] | None:
 
 
 def render_sync(record: Any) -> dict[str, Any] | None:
-    """Render the exact intent row's sync route, or None when absent."""
+    """Render the selected execution row's sync route, or None when absent."""
     return _MAPS.execution.render_sync(record)
 
 
 def render_async(record: Any) -> dict[str, Any] | None:
-    """Render the exact intent row's async route, or None when absent."""
+    """Render the selected execution row's async route, or None when absent."""
     return _MAPS.execution.render_async(record)
