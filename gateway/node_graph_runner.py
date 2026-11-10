@@ -320,8 +320,13 @@ class NodeGraphRunner:
             plan = (await batching.plan(session, ctx, ctx.inputs, options) if batching is not None and resume is None
                     else Plan(total=1, max_rounds=1))
             if resume is not None:
-                # Harvest one saved prompt, but keep its requested batch rather than one file.
-                plan.total = min(MAX_FILES_PER_REQUEST, max(1, int(ctx.inputs.get("n") or 1)))
+                # Harvest one saved prompt, but keep its requested batch rather than one file. The count is the one the host's
+                # plan reads: ``options.n`` times the per-prompt ``batch_size`` input.
+                count = options.get("n")
+                count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 1 else 1
+                per_prompt = ctx.inputs.get("batch_size")
+                per_prompt = per_prompt if isinstance(per_prompt, int) and not isinstance(per_prompt, bool) and per_prompt >= 1 else 1
+                plan.total = min(MAX_FILES_PER_REQUEST, count * per_prompt)
             batching = batching if resume is None else None
             offset = 0
             remaining = plan.total
