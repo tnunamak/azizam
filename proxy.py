@@ -8690,6 +8690,9 @@ def _image_graph_roles(
     # Size: the map writes width and height, so no size node is read from the graph.
     if found.width and found.height:
         roles.pop("size_node", None)
+    # Prompt: a mapped prompt is written by the map, so no prompt node is read from the graph.
+    if found.prompt:
+        roles.pop("prompt_node", None)
     return roles
 
 
