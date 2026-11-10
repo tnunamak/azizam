@@ -178,7 +178,7 @@ def release_graph_roles() -> dict:
     return table
 
 
-def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "release") -> dict:
+def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "release", *, distinct_uploads: bool = False, reload_reference_order: bool = False) -> dict:
     """One case on a fresh rig: the graphs the engine received and what the route recorded about them.
 
     ``roles`` is "release" (the shipped graph_roles table is in place) or "graph-meta" (the table is empty, as for an
@@ -195,16 +195,32 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], history=_history(*names), strict=False))
         inner = httpx.AsyncHTTPTransport.handle_async_request
 
+        uploaded = []
+
         async def tap(transport, request):
+            if distinct_uploads and request.method == "POST" and request.url.path == "/upload/image":
+                uploaded.append(f"asset-{len(uploaded) + 1}.png")
+                return httpx.Response(200, json={"name": uploaded[-1], "subfolder": "", "type": "input"}, request=request)
             if request.method == "POST" and request.url.path == "/prompt":
                 await request.aread()
                 posted.append(json.loads(request.content)["prompt"])
             return await inner(transport, request)
 
         rig.monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", tap)
-        from gateway import generated_defaults
-        rig.monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: SEED)
+        if scenario == "generate-noseed":
+            from gateway import generated_defaults
+            rig.monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: SEED)
         rig.monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", release_graph_roles() if roles == "release" else {})
+        if reload_reference_order:
+            candidate = dict(proxy.config)
+            candidate["images"] = yaml.safe_load((ROOT / "registry/defaults/images.yml").read_text())
+            entry = candidate["images"]["graph_roles"][f"workflows/images/{name}.json"]
+            entry["reference_order"].reverse()
+            # Use the real reload/publication path; only its candidate source is stubbed.
+            rig.monkeypatch.setattr(proxy, "_runtime_config_for_reload", lambda: (candidate, None))
+            rig.monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", proxy._IMAGE_GRAPH_ROLES)
+            proxy.reload_runtime_config()
+            assert list(proxy._IMAGE_GRAPH_ROLES[f"workflows/images/{name}.json"]["reference_order"]) == entry["reference_order"]
         estimate = 100 if scenario in ("generate-n2", "edit-n2", "generate-batch-input") else None
 
         def spy(workflow_name, width, height):
@@ -255,3 +271,33 @@ def test_the_fixture_covers_every_case_and_every_shipped_image_graph():
     assert len(graphs) == 18
     assert graphs <= set(GENERATE) | set(EDITS)
     assert graphs == set(GENERATE) | set(EDITS)
+
+
+@pytest.mark.parametrize("scenario,name", [("edit", MULTIREF), *[("edit-mask", name) for name in MASKED]])
+def test_multi_asset_golden_keeps_each_uploaded_asset_in_its_slot(tmp_path, scenario, name):
+    actual = observe(tmp_path, scenario, name, 0, distinct_uploads=True)
+    assert actual["status"] == [200]
+    expected = json.loads(FIXTURE.read_text())[f"{scenario}/{name}"]
+    import copy
+    expected = copy.deepcopy(expected)
+    for graph in expected["graphs"]:
+        # The first two graphs are mask-bound siblings with separate image and mask inputs.
+        # Other mask workflows combine alpha into the source before a single upload.
+        mapping = ({"10": "asset-1.png", "12": "asset-2.png"} if name in ("flux2-klein-4b-inpaint", "flux2-klein-4b-edit")
+                   else {"4": "asset-1.png", "11": "asset-2.png"} if name == MULTIREF
+                   else {node: "asset-1.png" for node, spec in graph.items()
+                         if isinstance(spec, dict) and spec.get("inputs", {}).get("image") == "uploaded.png"})
+        for node, filename in mapping.items():
+            assert graph[node]["inputs"]["image"] == "uploaded.png"
+            graph[node]["inputs"]["image"] = filename
+    assert actual == expected
+
+
+def test_reload_publishes_changed_reference_order_for_the_next_request(tmp_path):
+    before = observe(tmp_path, "edit", MULTIREF, 0, distinct_uploads=True)
+    after = observe(tmp_path, "edit", MULTIREF, 1, distinct_uploads=True, reload_reference_order=True)
+    assert before["status"] == after["status"] == [200]
+    assert before["graphs"][0]["4"]["inputs"]["image"] == "asset-1.png"
+    assert before["graphs"][0]["11"]["inputs"]["image"] == "asset-2.png"
+    assert after["graphs"][0]["4"]["inputs"]["image"] == "asset-2.png"
+    assert after["graphs"][0]["11"]["inputs"]["image"] == "asset-1.png"

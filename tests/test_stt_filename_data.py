@@ -67,8 +67,7 @@ def test_filename_defaults_reach_exact_multipart_bytes(fake_upstreams, tmp_path,
         try:
             reply = await adapter.invoke(STT_CONN, "stt.transcribe", call)
             if stream:
-                async for _ in reply:
-                    pass
+                await reply.aclose()
         finally:
             await call.cleanup.aclose()
             upload.file.close()
