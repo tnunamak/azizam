@@ -584,3 +584,29 @@ def test_reference_variants_skip_missing_workflows_and_video_facts():
     assert result[0][0] is eligible
     assert result[0][1] == VideoManifest(roles={"guide": "guide_frame"})
 
+
+
+def test_a_directory_file_that_brings_a_variant_conflict_is_refused_and_absent(monkeypatch, tmp_path) -> None:
+    """One check per directory is the fast path; on a conflict the load refuses the file that brings it, as one add does."""
+    import copy
+
+    from gateway import discovery
+    from gateway.manifests import load_workflow_manifest
+
+    shipped = load_workflow_manifest(ROOT / "manifests" / "workflows" / "ace-step-1.5-xl-turbo.yml")
+    files = {tmp_path / f"{name}.yml": {**copy.deepcopy(shipped), "id": f"{shipped['id']}-{name}"} for name in ("a", "b", "c")}
+    late = f"{shipped['id']}-c"
+
+    def check(records) -> None:
+        ids = {record.id for record in records}
+        if {f"{shipped['id']}-b", late} <= ids:
+            raise ValueError(f"{late}: claims the reference of {shipped['id']}-b")
+
+    monkeypatch.setattr(discovery, "_iter_manifest_files", lambda _root: list(files))
+    monkeypatch.setattr(discovery, "load_workflow_manifest", lambda path: copy.deepcopy(files[path]))
+    monkeypatch.setattr(discovery.video_grid, "check_video_variants", check)
+    registry = discovery.WorkflowRegistry()
+    registry.load_directory(tmp_path, policy={})
+    assert registry.ids() == [f"{shipped['id']}-a", f"{shipped['id']}-b"]
+    assert [(error.source_path, error.message) for error in registry.errors] == [
+        (tmp_path / "c.yml", f"{late}: claims the reference of {shipped['id']}-b")]
