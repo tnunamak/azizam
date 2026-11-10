@@ -1142,3 +1142,11 @@ def test_the_shipped_node_roles_satisfy_the_schema_including_a_numeric_option_de
 ])
 def test_a_node_role_that_is_not_a_node_id_or_a_list_of_ids_is_refused_by_the_schema(key, value):
     assert _videos_schema_errors(lambda roles: roles.update({key: value}))
+
+
+def test_no_video_graph_file_carries_its_own_node_roles():
+    """A video graph is the engine's graph and nothing else: the node roles live in its videos entry (``node_roles``),
+    and the name and description live in its manifest. A top-level ``_meta`` block is a second home for them."""
+    carrying = sorted(path.name for path in (ROOT / "workflows/videos").glob("*.json")
+                      if "_meta" in json.loads(path.read_text()))
+    assert carrying == []
