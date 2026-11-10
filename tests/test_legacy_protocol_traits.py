@@ -1,7 +1,9 @@
 """Compatibility contracts for operator descriptions written before protocol traits."""
+import pytest
 import yaml
 
 from gateway.engine_protocol import description
+from gateway.engine_protocol.errors import DescriptionError
 from gateway.frontend_shapes.mesh import mesh_profile
 from gateway.multipart_adapter import MultipartRunner, runners
 from gateway.provider_model_catalog import remote_provider_model_capabilities
@@ -58,3 +60,17 @@ def test_legacy_catalog_keeps_intent_and_aliases(tmp_path, monkeypatch):
             "remote_provider": True, "protocol": protocol, "models": [{"id": "example/model"}],
         })
         assert [row.intent for row in rows] == [original.catalog_intent]
+
+
+def test_unknown_implementation_is_skipped_at_load(tmp_path, monkeypatch):
+    raw = raw_document("node-graph")
+    raw.update(id="fixture-unknown", implementation="not_registered")
+    (tmp_path / "fixture-unknown.yml").write_text(yaml.safe_dump(raw))
+    monkeypatch.setattr(description, "user_directory", lambda: tmp_path)
+    assert raw["id"] not in description.load_registry()
+    assert any(row["file"] == "fixture-unknown.yml" for row in description.registry_problems())
+    with pytest.raises(DescriptionError, match="implementation"):
+        description.parse_description(raw, source="fixture-unknown.yml")
+    assert set(description.load_registry(description.REGISTRY_DIR)) == {
+        path.stem for path in description.REGISTRY_DIR.glob("*.yml")
+    }
