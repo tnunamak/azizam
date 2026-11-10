@@ -1119,3 +1119,20 @@ frontends:
       - methods: [POST]
         canonical: /v1/3d/generations/glb
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+
+# Compatibility mapping used after a workflow and its binding have been selected.
+# New manifests declare neutral roles and input_fields; the second path reads older documents.
+input_contract:
+  extension_hints:
+    prompt: prompt
+    negative_prompt: negative_prompt
+    width: size
+    height: size
+    length: seconds
+    frame_rate: workflow configuration
+    seed: seed
+    image: input_reference
+    image_strength: image_strength
+  source_role_paths:
+    - [roles, source]
+    - [video, roles, source]
