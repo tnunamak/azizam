@@ -270,8 +270,11 @@ test("image and video slot Change and Remove targets are at least 44 px at phone
       page.waitForEvent("filechooser"),
       choose.click(),
     ]);
-    expect(await picker.element().getAttribute("aria-label")).toBe(`Choose ${slot.label}`);
-    expect(await picker.element().getAttribute("accept")).toBe(slot.accepts.join(","));
+    const [pickerLabel, pickerAccept] = await picker
+      .element()
+      .evaluate((el) => [(el as HTMLInputElement).ariaLabel, (el as HTMLInputElement).accept]);
+    expect(pickerLabel).toBe(`Choose ${slot.label}`);
+    expect(pickerAccept).toBe(slot.accepts.join(","));
     await picker.setFiles(filePath(slot));
     await expect(choose).toBeHidden();
     await expect(change).toBeVisible();
