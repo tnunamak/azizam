@@ -45,7 +45,7 @@ from gateway import log_scrub
 
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2, AdapterOrigin
 from gateway.engine_protocol.assets import AssetStore, served_media_type
-from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description
+from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description, shipped_for_implementation
 from gateway.engine_protocol.errors import (
     MalformedResponse, ProtocolError, SelectionRefused, TransportFailure, UnknownOperation, UnsupportedByAdapter, UpstreamError,
 )
@@ -59,7 +59,7 @@ from gateway.manifests import bind_backend_request, validate_inputs
 from gateway import binding_registry, engine_egress, output_selectors
 from gateway.service_registry import join_base_path
 
-ADAPTER_ID = "node-graph"
+ADAPTER_ID = shipped_for_implementation("graph_submission").adapter_identity
 OPERATIONS = (
     "graph.submit", "graph.history", "graph.history_page", "graph.queue", "graph.view", "graph.upload", "graph.cancel",
     "graph.delete_history", "graph.stats", "graph.free",
@@ -447,6 +447,7 @@ class NodeGraphAdapter:
     def __init__(self, description: ProtocolDescription | None = None, *, assets: AssetStore | None = None,
                  workflow_root: Path | None = None, client_id: str | None = None,
                  derive_ui: Callable[[Mapping[str, Any]], dict | None] | None = None) -> None:
+        self.adapter_id = description.adapter_identity if description is not None else ADAPTER_ID
         self.label = (description.label if description is not None else "") or _DEFAULT_LABEL
         # What this adapter was built from (None: it was built without a description, so it cannot run a pinned job).
         self.built_from = AdapterOrigin.of(description) if description is not None else None

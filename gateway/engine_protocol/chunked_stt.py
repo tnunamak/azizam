@@ -49,7 +49,7 @@ import httpx
 
 from gateway import private_io, stt_chunking
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
-from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description
+from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description, shipped_for_implementation
 from gateway.engine_protocol.errors import UnknownOperation, UnsupportedByAdapter
 from gateway.engine_protocol.httpx_wire import failure, lower_headers, reply_from
 from gateway.engine_protocol.types import (
@@ -58,7 +58,7 @@ from gateway.engine_protocol.types import (
 from gateway import engine_egress
 from gateway.service_registry import join_base_path
 
-ADAPTER_ID = "chunked-stt"
+ADAPTER_ID = shipped_for_implementation("chunked_transcription").adapter_identity
 ROUTES = {"stt.transcribe": "/v1/audio/transcriptions", "stt.translate": "/v1/audio/translations"}
 OPERATIONS = tuple(ROUTES)
 _DEFAULT_LABEL = "STT backend"
@@ -309,6 +309,9 @@ class ChunkedSttAdapter:
 
     def __init__(self, description: ProtocolDescription | None = None) -> None:
         description = description if description is not None else load_shipped_description(ADAPTER_ID)
+        from gateway.engine_protocol.adapter import AdapterOrigin
+        self.adapter_id = description.adapter_identity
+        self.built_from = AdapterOrigin.of(description)
         self.label = description.label or _DEFAULT_LABEL
         self._filenames = description.multipart_filenames
         if not self._filenames:
