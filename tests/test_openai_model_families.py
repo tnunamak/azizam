@@ -12,7 +12,7 @@ from tests.support.config_snapshot import section_published
 
 SHIPPED = yaml.safe_load(families.FAMILIES_FILE.read_text(encoding="utf-8"))
 
-# Captured from the code chain this file replaced; each id is one the generated model list does not hold.
+# Captured from the code chain this file replaced. The rows are read directly here; some ids are also in the generated list.
 EXPECTED = {
     "dall-e-2": "images", "dall-e-9": "images", "gpt-image-9": "images", "chatgpt-image-x": "images",
     "tts-1": "speech", "tts-1-hd": "speech", "tts-2": "speech", "kokoro-tts": "speech", "a-tts-b": "speech",
