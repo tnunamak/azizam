@@ -1,0 +1,27 @@
+schema_version: 1
+sites:
+  - file: gateway/model_files.py
+    literal: mmproj
+    count: 1
+    category: protocol_field
+    reason: Names the configuration field containing a projector-file path.
+  - file: gateway/model_files.py
+    literal: activation_mmproj
+    count: 1
+    category: protocol_field
+    reason: Names the configured projector-file path used during model activation.
+  - file: gateway/model_ids.py
+    literal: '\.(?:gguf|safetensors|ckpt|onnx|bin)$'
+    count: 1
+    category: file_format
+    reason: Matches model-file suffixes when redacting path-like model identifiers for display.
+  - file: gateway/protocols/ollama.py
+    literal: gguf
+    count: 1
+    category: wire_value
+    reason: Names the default details.format value published by the Ollama-compatible API.
+  - file: gateway/local_capabilities.py
+    literal: mmproj
+    count: 1
+    category: protocol_field
+    reason: Names the configuration field containing a projector-file path.
