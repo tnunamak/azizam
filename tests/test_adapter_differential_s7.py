@@ -417,5 +417,7 @@ def cell_params():
 
 @pytest.mark.parametrize("route,outcome", cell_params())
 def test_s7_cell(route, outcome, tmp_path, record_testsuite_property):
+    # ROUTES lives for the worker process: a source video an earlier cell created must not reach this one.
+    vars(ROUTES[route]).pop("source_id", None)
     setup, drive, description = build(ROUTES[route], outcome)
     play(fixture_name(route, outcome), tmp_path, record_testsuite_property, setup, drive, description=description)
