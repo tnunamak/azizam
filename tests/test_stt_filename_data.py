@@ -8,6 +8,7 @@ import yaml
 from gateway import stt_chunking
 from gateway.engine_protocol import description
 from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter, _RunWire
+from tests.support.fake_upstream import fake_upstreams  # noqa: F401
 from tests.test_engine_protocol_adapter import _Upload, _serve_stt, _stt_run, STT_CONN, run
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,7 +67,7 @@ def test_filename_defaults_reach_exact_multipart_bytes(fake_upstreams, tmp_path,
         try:
             reply = await adapter.invoke(STT_CONN, "stt.transcribe", call)
             if stream:
-                async for _ in reply.chunks:
+                async for _ in reply:
                     pass
         finally:
             await call.cleanup.aclose()

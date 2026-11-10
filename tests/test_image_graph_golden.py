@@ -2,7 +2,7 @@
 
 The image routes read their node roles (prompt, size, seed, batch size, image slots, background cut-out) from places that
 are about to change. This file freezes what the engine receives, so a change of where a role is read from has to leave
-every posted graph byte for byte as it was. ``tests/fixtures/image_graph_golden/graphs.json`` holds, per case, the graphs
+every posted graph equal after parse to its recorded value. ``tests/fixtures/image_graph_golden/graphs.json`` holds, per case, the graphs
 posted to ``/prompt`` (parsed from the raw request body, in post order), the receipt's requested and resolved workflow
 names, and the key each round asked the VRAM estimate for (the batching key).
 
@@ -17,7 +17,7 @@ seamless-tile composition, which runs two graphs.
 
 Normalised: only the seed values at the manifest's seed targets in the "no seed sent" cases, because the gateway draws
 them at random there (``<random-seed>``). Nothing else is normalised: the uploaded file name is the fake engine's constant,
-and the comparison reads the raw request body, not the rig's normalised trace.
+and the comparison parses the raw request body, not the rig's normalised trace.
 
 To record the fixture again after an approved change, run this file once with the fixture missing or stale and read the
 ``image_graph_golden.*`` suite properties from the junit XML (the property value is the case's JSON).
@@ -162,6 +162,7 @@ def _find(value, key):
 def _mask_seeds(graph: dict, manifest: dict) -> None:
     """The draw of a seed the caller did not send is random; mark the manifest's seed targets."""
     for target in manifest["bindings"]["comfyui"]["map"].get("seed", []):
+        assert graph[target["node"]]["inputs"][target["input"]] == SEED, "seed binding was not applied"
         graph[target["node"]]["inputs"][target["input"]] = "<random-seed>"
 
 
@@ -201,6 +202,8 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
             return await inner(transport, request)
 
         rig.monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", tap)
+        from gateway import generated_defaults
+        rig.monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: SEED)
         rig.monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", release_graph_roles() if roles == "release" else {})
         estimate = 100 if scenario in ("generate-n2", "edit-n2", "generate-batch-input") else None
 
