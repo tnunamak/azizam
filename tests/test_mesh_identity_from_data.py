@@ -271,3 +271,20 @@ def test_modality_vocabulary_rejects_malformed_words(monkeypatch, words):
     }))
     with pytest.raises(ValueError, match="modality_words"):
         capability_ids.load_modality_words(fixture_path)
+
+
+@pytest.mark.parametrize("enabled", [None, False])
+@pytest.mark.parametrize("name", ["renamed-result", "audio"])
+def test_disabled_discovery_uses_output_media_type(record, contract, enabled, name):
+    contract["outputs"] = {name: next(iter(contract["outputs"].values()))}
+    record["enabled"] = enabled
+    facts = mesh_api.discovery_facts(_workflow(contract), [] if enabled is None else [record])
+    assert facts.output_modalities == ("mesh",)
+
+
+def test_disabled_discovery_refuses_unknown_output_modality(contract):
+    manifest = _workflow(contract)
+    changed = deepcopy(manifest.data)
+    changed["outputs"] = {"mesh": {"media_type": "application/x-unknown"}}
+    with pytest.raises(MeshManifestError, match="output_modality_missing"):
+        mesh_api.discovery_facts(replace(manifest, data=changed), [])

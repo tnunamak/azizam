@@ -181,3 +181,21 @@ def test_legacy_spec_without_descriptor_uses_bundled_role(tmp_path, monkeypatch)
     prepared = stt_samples.prepare_sample(spec, files, tmp_path / "prepared.wav")
     assert converted == [files["audio"]]
     assert prepared.words == expected
+
+
+@pytest.mark.parametrize("kind, field, parameter", [
+    ("ami-words", "required_source_params", "annotations"),
+    ("ami-words", "required_params", "word_members"),
+    ("icsi-words", "required_source_params", "annotations"),
+    ("icsi-words", "required_params", "word_members"),
+    ("earnings21", "required_source_params", "transcript"),
+    ("earnings21", "required_source_params", "segments"),
+])
+def test_descriptor_cannot_omit_algorithm_parameter(tmp_path, kind, field, parameter):
+    document, _, _ = _document(kind)
+    document["recipes"]["entries"]["unfamiliar"][field].remove(parameter)
+    del document["samples"][0]["recipe"]["params"][parameter]
+    with pytest.raises(stt_samples.SampleError) as raised:
+        _load(tmp_path, document)
+    message = str(raised.value)
+    assert all(word in message for word in ("unfamiliar", kind, parameter))
