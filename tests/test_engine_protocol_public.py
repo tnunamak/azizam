@@ -45,6 +45,14 @@ def engine(monkeypatch, tmp_path):
         yield SimpleNamespace(record=record, fake=fake, client=TestClient(proxy.app), registry=registry)
 
 
+def test_bundled_manifests_load_inside_the_engine_world(engine):
+    """The engine fixture's shipped registry still holds every release description, so loading the bundled workflow
+    manifests with a cold cache works (gate train 43: the mesh profile needs the shipped multipart default)."""
+    from gateway import discovery
+    discovery._bundled_manifests.cache_clear()
+    assert discovery.bundled_workflow_manifests()
+    assert "prism" in description.load_registry()
+
 def chat(engine, **kw):
     return engine.client.post('/v1/chat/completions', json={'model':'prism-chat','messages':[{'role':'user','content':'Hello'}],'temperature':9,**kw})
 
