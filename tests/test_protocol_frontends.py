@@ -1094,6 +1094,9 @@ class OllamaTagsAndErrorTests(unittest.TestCase):
         self.assertEqual(first["details"]["family"], "llama")
         self.assertEqual(first["details"]["families"], ["llama"])
         self.assertEqual(first["size"], 4_000_000_000)
+        # A summary names no file format, so none is claimed; a summary that names one keeps it.
+        self.assertEqual(first["details"]["format"], "")
+        self.assertEqual(oll.tags_response_from_model_summaries([{"id": "m", "format": "safetensors"}])["models"][0]["details"]["format"], "safetensors")
 
     def test_show_response_from_summary(self) -> None:
         out = oll.show_response_from_model_summary(

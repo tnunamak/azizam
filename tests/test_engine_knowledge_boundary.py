@@ -1040,14 +1040,13 @@ class TestReviewedEngineKnowledge:
             )
             assert any("rose 1 -> 2" in violation for violation in _ratchet_violations(counts, baseline))
 
-    def test_seeded_entries_review_exactly_five_hits(self) -> None:
+    def test_seeded_entries_review_exactly_four_hits(self) -> None:
         document = yaml.safe_load(_REVIEWED_PATH.read_text(encoding="utf-8"))
-        assert len(document["sites"]) == 5
+        assert len(document["sites"]) == 4
         assert {(entry["file"], entry["literal"], entry["count"], entry["category"]) for entry in document["sites"]} == {
             ("gateway/model_files.py", "mmproj", 1, "protocol_field"),
             ("gateway/model_files.py", "activation_mmproj", 1, "protocol_field"),
             ("gateway/model_ids.py", r"\.(?:gguf|safetensors|ckpt|onnx|bin)$", 1, "file_format"),
-            ("gateway/protocols/ollama.py", "gguf", 1, "wire_value"),
             ("gateway/local_capabilities.py", "mmproj", 1, "protocol_field"),
         }
         sources = {
@@ -1057,11 +1056,11 @@ class TestReviewedEngineKnowledge:
         raw = {rel: _count_engine_knowledge(source, rel) for rel, source in sources.items()}
         assert raw == {
             "gateway/model_files.py": 2, "gateway/model_ids.py": 1,
-            "gateway/protocols/ollama.py": 1, "gateway/local_capabilities.py": 3,
+            "gateway/local_capabilities.py": 3,
         }
         counts = _engine_knowledge_counts(sources)
         assert counts == {"gateway/local_capabilities.py": 2}
-        assert sum(raw.values()) - sum(counts.values()) == 5
+        assert sum(raw.values()) - sum(counts.values()) == 4
 
     def test_lower_baseline_uses_reviewed_counts_and_refuses_increases(self, tmp_path, monkeypatch) -> None:
         import json

@@ -983,7 +983,8 @@ def _ollama_model_details(entry: Mapping[str, Any]) -> dict[str, Any]:
     family = entry.get("family", "")
     return {
         "parent_model": entry.get("parent_model", ""),
-        "format": entry.get("format", "gguf"),
+        # The listing also serves models that are not files of one format: name a format only when the entry has one.
+        "format": entry.get("format", ""),
         "family": family,
         "families": entry.get("families") or ([family] if family else []),
         "parameter_size": entry.get("parameter_size", ""),
