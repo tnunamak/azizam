@@ -610,3 +610,28 @@ def test_a_directory_file_that_brings_a_variant_conflict_is_refused_and_absent(m
     assert registry.ids() == [f"{shipped['id']}-a", f"{shipped['id']}-b"]
     assert [(error.source_path, error.message) for error in registry.errors] == [
         (tmp_path / "c.yml", f"{late}: claims the reference of {shipped['id']}-b")]
+
+
+def test_a_later_file_with_the_same_id_takes_the_place_of_a_refused_one(monkeypatch, tmp_path) -> None:
+    """A file refused for a variant conflict does not keep a later file with its id out, as adding each file in order."""
+    import copy
+
+    from gateway import discovery
+    from gateway.manifests import load_workflow_manifest
+
+    shipped = load_workflow_manifest(ROOT / "manifests" / "workflows" / "ace-step-1.5-xl-turbo.yml")
+    usable = {**copy.deepcopy(shipped), "id": f"{shipped['id']}-x"}
+    files = {tmp_path / "a.yml": {**copy.deepcopy(usable), "version": "conflicting"}, tmp_path / "b.yml": usable}
+
+    def check(records) -> None:
+        if any(record.manifest.get("version") == "conflicting" for record in records):
+            raise ValueError(f"{usable['id']}: claims a taken reference")
+
+    monkeypatch.setattr(discovery, "_iter_manifest_files", lambda _root: list(files))
+    monkeypatch.setattr(discovery, "load_workflow_manifest", lambda path: copy.deepcopy(files[path]))
+    monkeypatch.setattr(discovery.video_grid, "check_video_variants", check)
+    registry = discovery.WorkflowRegistry()
+    registry.load_directory(tmp_path, policy={})
+    assert [(record.id, record.source_path) for record in registry.records()] == [(usable["id"], tmp_path / "b.yml")]
+    assert [(error.source_path, error.message) for error in registry.errors] == [
+        (tmp_path / "a.yml", f"{usable['id']}: claims a taken reference")]
