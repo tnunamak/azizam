@@ -594,6 +594,38 @@
           "kind": "system",
           "name": "Gateway"
         },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "litellm",
+        "metadata_json": {
+          "kind": "system",
+          "name": "LiteLLM"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "comfyui",
+        "metadata_json": {
+          "address": "127.0.0.1:7890",
+          "kind": "engine",
+          "name": "ComfyUI (Image + Video Generation)",
+          "reach": "Azizam reaches it on this computer"
+        },
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "created_at": "<time>",
+        "destination_id": "gateway",
+        "metadata_json": {
+          "kind": "system",
+          "name": "Gateway"
+        },
         "source_id": "<req:2>",
         "source_kind": "receipt"
       },
@@ -621,6 +653,54 @@
       }
     ],
     "retention_fact_references": [
+      {
+        "destination_id": "gateway",
+        "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "gateway",
+        "revision": "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
+      {
+        "destination_id": "litellm",
+        "revision": "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5",
+        "source_id": "<req:1>",
+        "source_kind": "receipt"
+      },
       {
         "destination_id": "gateway",
         "revision": "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
@@ -1035,6 +1115,16 @@
               "kind": "library_prompt",
               "reason": "no_person"
             }
+          ],
+          "retention_facts": [
+            "8bfac2d1b003ce716aaf78a1d3ee850d9661cfdabfdeb035376448b86a61e289",
+            "e11147b8b4676ade3ec860d14f0b2aafa384c22771b898dad5afab6436059392",
+            "cf9d9b85426203d13f81214124d2b2ef4881a8fab78c856e47c854fa98a630ad",
+            "d6fdc987a005fe8ddb0a229ae0f2a48eb3b63555f2a34be994a6e324e17c4f96",
+            "bd6db1696b5457b685ad03055c586999f562d4cb01807398f941e572c62ad20c",
+            "36a7dbd1e1445b3c2eee267f63eff3051746fa8f8ae50891a6132b5b6ad54baf",
+            "4912f0471e721ecda04bd71da4314412819fe3c477087eb50c99ef6bf73fde4e",
+            "a263fcf3bdb450f1ba7394c7ba30f7da1ff6022e8d3b409280cba2da487041b5"
           ],
           "source_kind": "app",
           "source_label": "test-app",
