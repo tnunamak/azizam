@@ -14,6 +14,8 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from gateway.storage_kinds import load_storage_kinds
+
 from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES
 from gateway.discovery_metadata import PUBLIC_PROTOCOLS, _load_protocol_frontend_records
 from gateway.resource_decisions import CALLER_REASONS
@@ -25,6 +27,8 @@ JobId = Annotated[str, StringConstraints(pattern=r"^mj_[0-9a-f]{32}$")]
 Count = Annotated[int, Field(ge=0)]
 Number = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 Capability = Literal[tuple(CAPABILITY_LABELS)]
+STORAGE_KINDS = load_storage_kinds()
+StorageKind = Literal[STORAGE_KINDS]
 Status = Literal["queued", "running", "succeeded", "failed", "canceled", "cancelled", "unknown"]
 Terminal = Literal["cancelled", "completed", "connect_error", "disconnected", "failed", "idle_timeout", "internal_error", "read_error", "unknown"]
 
@@ -162,7 +166,7 @@ class StorageView(Schema):
     person: NamedIdentity | None = None
     app: NamedIdentity | None = None
     category: Literal["person", "service_app", "unattributed", "gateway", "disk"]
-    media_kind: Literal["image", "video", "audio", "voice", "other"] | None = None
+    media_kind: StorageKind | None = None
     count: Count | None = None
     size_bytes: Count | None = None
     free_bytes: Count | None = None
@@ -279,7 +283,7 @@ def project(kind: Literal["receipt", "job", "storage"], record: Mapping[str, Any
     if kind == "storage":
         return StorageView(person=_identity(record.get("person_id"), names.people),
                            app=_identity(record.get("app_id"), names.apps), category=record["category"],
-                           media_kind=_enum(record.get("media_kind"), {"image", "video", "audio", "voice", "other"}),
+                           media_kind=_enum(record.get("media_kind"), STORAGE_KINDS),
                            state=_enum(record.get("state"), {"healthy", "low", "paused"}, "unknown"),
                            stale=record.get("stale") is True,
                            **{key: _number(record.get(key), integer=key != "measured_at") for key in

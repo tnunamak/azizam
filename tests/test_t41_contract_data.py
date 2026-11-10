@@ -26,3 +26,27 @@ def test_contract_refuses_unknown_duplicate_and_invalid_fields(tmp_path, name, l
     path.write_text(yaml.safe_dump(value))
     with pytest.raises(ValueError):
         loader(path)
+
+
+def test_storage_kind_contract_drives_validation_and_projection(tmp_path, monkeypatch):
+    import importlib
+    from pydantic import ValidationError
+    from gateway import owner_projection as projection, storage_kinds
+
+    path = tmp_path / "storage.yml"
+    kinds = ["image", "video", "audio", "voice", "other", "archive"]
+    path.write_text(yaml.safe_dump({"schema_version": 1, "kinds": kinds}))
+    with monkeypatch.context() as patch:
+        patch.setattr(storage_kinds, "load_storage_kinds", lambda: load_storage_kinds(path))
+        importlib.reload(projection)
+        try:
+            for kind in kinds:
+                assert projection.StorageView(category="gateway", media_kind=kind).media_kind == kind
+                assert projection.project("storage", {"category": "gateway", "media_kind": kind}).media_kind == kind
+            with pytest.raises(ValidationError):
+                projection.StorageView(category="gateway", media_kind="undeclared")
+            assert projection.project("storage", {"category": "gateway", "media_kind": "undeclared"}).media_kind is None
+            assert projection.StorageView.model_json_schema()["properties"]["media_kind"]["anyOf"][0]["enum"] == kinds
+        finally:
+            patch.undo()
+            importlib.reload(projection)
