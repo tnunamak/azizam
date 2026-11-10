@@ -3407,7 +3407,10 @@ def embeddings_model() -> str:
 
 
 def image_edit_default_model() -> str:
-    return model_compat_defaults().get("image_edits", "qwen-image-2.1-edit")
+    defaults = model_compat_defaults()
+    if "image_edits" in defaults:
+        return defaults["image_edits"]
+    return required_text_setting(_images_group("edits"), "default_workflow", "images.edits.default_workflow")
 
 
 OPENAI_STATIC_MODEL_CATEGORIES = {

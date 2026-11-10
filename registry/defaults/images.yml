@@ -12,6 +12,7 @@ variations:
   default_workflow: qwen-image-2.1-edit
   denoise: 0.75
 edits:
+  default_workflow: qwen-image-2.1-edit
   multiref_default_workflow: qwen-image-2.1-edit-multiref
 media_jobs:
   max_attempts: 3

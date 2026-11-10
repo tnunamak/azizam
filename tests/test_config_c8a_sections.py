@@ -82,7 +82,8 @@ def test_the_release_files_hold_no_host_path_and_no_address():
 def test_the_release_names_no_id_it_does_not_ship():
     images = yaml.safe_load((DEFAULTS / "images.yml").read_text(encoding="utf-8"))
     shipped = {path.stem for path in (ROOT / "manifests" / "workflows").glob("*.yml")}
-    for workflow in (images["variations"]["default_workflow"], images["edits"]["multiref_default_workflow"]):
+    for workflow in (images["variations"]["default_workflow"], images["edits"]["default_workflow"],
+                     images["edits"]["multiref_default_workflow"]):
         assert workflow in shipped, workflow
     voices = yaml.safe_load((DEFAULTS / "voices.yml").read_text(encoding="utf-8"))
     assert "design_engine" not in voices and "quality_engine" not in voices, "an engine id is the install's, not the release's"
@@ -222,6 +223,20 @@ def test_the_image_readers_follow_the_snapshot():
         limits = proxy._session_make_limits()
         assert (limits.max_prompt_chars, limits.per_person, limits.household) == (100, 1, 2)
         assert proxy._SESSION_MAKE_RUNTIME.limits == limits
+
+
+def test_the_edit_default_is_the_images_release_value_unless_the_model_defaults_name_one(monkeypatch):
+    """No model id in code: the images section names the edit default, and model_compatibility overrides it."""
+    monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {})
+    with section_published("images", _images(edits={"default_workflow": "unfamiliar-editor"})):
+        assert proxy.image_edit_default_model() == "unfamiliar-editor"
+    missing = _images()
+    del missing["edits"]["default_workflow"]
+    with section_published("images", missing), pytest.raises(proxy.SettingMissing, match="images.edits.default_workflow"):
+        proxy.image_edit_default_model()
+    monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {"image_edits": "owner-editor"})
+    with section_published("images", _images(edits={"default_workflow": "unfamiliar-editor"})):
+        assert proxy.image_edit_default_model() == "owner-editor"
 
 
 def test_the_media_job_resume_follows_the_snapshot_and_the_environment_does_not_move_it(monkeypatch):

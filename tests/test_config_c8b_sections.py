@@ -218,5 +218,6 @@ def test_the_release_defaults_name_each_default_workflow():
         shipped = yaml.safe_load((root / f"{name}.yml").read_text(encoding="utf-8"))
         assert isinstance(shipped["default_workflow"], str) and shipped["default_workflow"]
     images = yaml.safe_load((root / "images.yml").read_text(encoding="utf-8"))
-    for value in (images["variations"]["default_workflow"], images["edits"]["multiref_default_workflow"]):
+    for value in (images["variations"]["default_workflow"], images["edits"]["default_workflow"],
+                  images["edits"]["multiref_default_workflow"]):
         assert isinstance(value, str) and value
