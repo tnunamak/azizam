@@ -8,6 +8,8 @@ import hashlib
 import json
 import math
 from fractions import Fraction
+from functools import lru_cache
+from types import MappingProxyType
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -125,7 +127,86 @@ def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors
 # The input types whose value is one media reference: a value that names a stored or supplied file, not a plain value.
 # This is the leaf test of a value check (a reference is a string or a mapping). It does not say whether an input
 # carries media: an array or object can hold assets, and ``media_bearing`` answers that for every rule that asks.
-MEDIA_INPUT_TYPES = frozenset({"asset", "image"})
+MEDIA_INPUT_TYPES = frozenset({"asset"})
+_INPUT_TYPE_ALIASES_PATH = Path(__file__).resolve().parents[1] / "registry" / "input_type_aliases.yml"
+
+
+class _AliasLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        result = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, str) or key in result:
+                raise ManifestError("alias keys must be unique strings")
+            result[key] = self.construct_object(value_node, deep=deep)
+        return result
+
+
+def load_input_type_aliases(path: str | Path = _INPUT_TYPE_ALIASES_PATH) -> Mapping[str, Mapping[str, Any]]:
+    """Compatibility aliases only; the strict workflow schema is unchanged."""
+    path = Path(path)
+    def bad(reason: str) -> ManifestError:
+        return ManifestError(f"{path}: {reason}")
+    try:
+        doc = yaml.load(path.read_text(encoding="utf-8"), Loader=_AliasLoader)
+    except (OSError, UnicodeError, yaml.YAMLError, ManifestError) as exc:
+        raise bad(str(exc)) from exc
+    if not isinstance(doc, dict) or set(doc) != {"schema_version", "aliases"}:
+        raise bad("expected only schema_version and aliases")
+    if type(doc["schema_version"]) is not int or doc["schema_version"] != 1:
+        raise bad("schema_version must be 1")
+    if not isinstance(doc["aliases"], dict):
+        raise bad("aliases must be a mapping")
+    result = {}
+    for name, row in doc["aliases"].items():
+        if not re.fullmatch(r"[a-z][a-z0-9_-]*", name) or name in {"string", "number", "integer", "boolean", "object", "array", *MEDIA_INPUT_TYPES}:
+            raise bad("alias must be a new data name")
+        if not isinstance(row, dict) or set(row) != {"type", "accepts"}:
+            raise bad(f"aliases.{name}: expected only type and accepts")
+        if not isinstance(row["type"], str) or row["type"] not in MEDIA_INPUT_TYPES:
+            raise bad(f"aliases.{name}.type: unknown reference type")
+        accepts = row["accepts"]
+        if (not isinstance(accepts, list) or not accepts
+                or any(not isinstance(item, str) or not re.fullmatch(r"(?:[a-z0-9!#$&^_.+-]+|\*)/(?:[a-z0-9!#$&^_.+-]+|\*)", item) for item in accepts)
+                or len(set(accepts)) != len(accepts)):
+            raise bad(f"aliases.{name}.accepts: expected distinct media types")
+        result[name] = MappingProxyType({"type": row["type"], "accepts": tuple(accepts)})
+    return MappingProxyType(result)
+
+
+@lru_cache(maxsize=1)
+def _shipped_input_type_aliases() -> Mapping[str, Mapping[str, Any]]:
+    return load_input_type_aliases()
+
+
+def normalize_input_spec(spec: Mapping[str, Any], _depth: int = 0) -> dict[str, Any]:
+    """Canonicalize compatibility specs without changing strict manifest loading."""
+    result = dict(spec)
+    if _depth > _SPEC_WALK_LIMIT:
+        return result
+    kind = result.get("type")
+    alias = _shipped_input_type_aliases().get(kind) if isinstance(kind, str) else None
+    if alias is not None:
+        result["type"] = alias["type"]
+        declared = result.get("accepts") or ([result["media_type"]] if result.get("media_type") else alias["accepts"])
+        if isinstance(declared, str):
+            declared = [declared]
+        def within(narrow: str, broad: str) -> bool:
+            return all(b == "*" or a == b for a, b in zip(narrow.split("/"), broad.split("/")))
+        accepted = []
+        for item in declared:
+            for allowed in alias["accepts"]:
+                candidate = item if within(item, allowed) else allowed if within(allowed, item) else None
+                if candidate is not None and candidate not in accepted:
+                    accepted.append(candidate)
+        result["accepts"] = accepted
+        result.pop("media_type", None)
+    if result.get("type") == "object" and isinstance(result.get("properties"), Mapping):
+        result["properties"] = {key: normalize_input_spec(child, _depth + 1) if isinstance(child, Mapping) else child
+                                for key, child in result["properties"].items()}
+    if result.get("type") == "array" and isinstance(result.get("items"), Mapping):
+        result["items"] = normalize_input_spec(result["items"], _depth + 1)
+    return result
 
 # A spec nests at most four levels (CODE_TO_DATA_S3, D4); the walk stops a little past that, so a spec built in code
 # without the save check cannot make it run away.
@@ -661,7 +742,7 @@ def _backend_metadata(backend_binding: dict[str, Any]) -> dict[str, Any]:
 
 def validate_input_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     """Validate one value against the manifest input-spec subset."""
-    return _validate_value(name, value, spec)
+    return _validate_value(name, value, normalize_input_spec(spec))
 
 
 def exact_number(value: Any) -> Fraction | None:
@@ -758,6 +839,7 @@ def value_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]
     """Why ``value`` does not fit ``spec``: ``(path, code, message)`` for each problem, nested ones with their own path
     (``at`` plus the keys and indexes of the value, never the spec's ``properties`` or ``items``). A default is held to
     this, and so is a caller's value (CODE_TO_DATA_S3, D4). A message never holds the value."""
+    spec = normalize_input_spec(spec)
     kind = spec.get("type")
     if kind == "object":
         yield from _object_problems(spec, value, at)
