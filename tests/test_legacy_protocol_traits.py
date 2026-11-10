@@ -92,7 +92,9 @@ def test_every_legacy_shipped_copy_selects_original_traits(tmp_path, monkeypatch
             raw.pop(key, None)
         (tmp_path / f"{name}.yml").write_text(yaml.safe_dump(raw))
     monkeypatch.setattr(description, "user_directory", lambda: tmp_path)
-    loaded = description.load_registry()
+    assert description.registry_problems() == []
+    # Load only the copies, so a copy that was skipped cannot be stood in for by its shipped original.
+    loaded = description.load_registry(tmp_path)
     assert set(loaded) == set(originals)
     for name, original in originals.items():
         assert traits(loaded[name]) == traits(original), name
@@ -139,3 +141,16 @@ def test_ambiguous_shipped_executor_does_not_supply_traits(tmp_path, monkeypatch
     monkeypatch.setattr(description, "REGISTRY_DIR", tmp_path)
     doc = description.parse_description(raw, source="fixture.yml")
     assert traits(doc) == ("", "", (), {})
+
+
+@pytest.mark.parametrize("unrelated", ["- a list, not a mapping\n", "id: [unclosed\n", "id: one\nid: two\n"])
+def test_unreadable_shipped_file_does_not_break_inheritance_for_others(tmp_path, monkeypatch, unrelated):
+    """A shipped file that is not a readable mapping supplies no defaults; it reports its own problem when it loads."""
+    raw = raw_document("http-multipart")
+    (tmp_path / "http-multipart.yml").write_text(yaml.safe_dump(raw))
+    (tmp_path / "fixture-broken.yml").write_text(unrelated)
+    raw.pop("implementation")
+    raw.pop("multipart")
+    monkeypatch.setattr(description, "REGISTRY_DIR", tmp_path)
+    doc = description.parse_description(raw, source="fixture.yml")
+    assert traits(doc) == traits(description.parse_description(raw_document("http-multipart"), source="seed.yml"))
