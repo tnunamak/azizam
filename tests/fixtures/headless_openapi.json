@@ -891,6 +891,9 @@
                     "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
                   },
                   {
+                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_video_mux"
+                  },
+                  {
                     "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
                   },
                   {
@@ -1036,6 +1039,29 @@
         "title": "SCAIL-2 Character Replace",
         "type": "object",
         "x-azizam-workflow-id": "video.edit.scail-2-replace"
+      },
+      "WorkflowExtensionInputs_video_edit_video_mux": {
+        "additionalProperties": false,
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "properties": {
+          "source_audio": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "source_video": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video that gets the new sound.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "source_video",
+          "source_audio"
+        ],
+        "title": "Add a Soundtrack to a Video",
+        "type": "object",
+        "x-azizam-workflow-id": "video.edit.video-mux"
       },
       "WorkflowExtensionInputs_video_generate_ltx_2_5_i2v": {
         "additionalProperties": false,
@@ -1389,6 +1415,31 @@
         "title": "SCAIL-2 Character Replace",
         "type": "object",
         "x-azizam-workflow-id": "video.edit.scail-2-replace"
+      },
+      "WorkflowForm_video_edit_video_mux": {
+        "additionalProperties": false,
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "properties": {
+          "source_audio": {
+            "description": "The song or sound to put on the video.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "source_video": {
+            "description": "The video that gets the new sound.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "source_video",
+          "source_audio"
+        ],
+        "title": "Add a Soundtrack to a Video",
+        "type": "object",
+        "x-azizam-workflow-id": "video.edit.video-mux"
       },
       "WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo": {
         "additionalProperties": false,
@@ -2922,6 +2973,29 @@
         "title": "SCAIL-2 Character Replace",
         "type": "object",
         "x-azizam-workflow-id": "video.edit.scail-2-replace"
+      },
+      "WorkflowInputs_video_edit_video_mux": {
+        "additionalProperties": false,
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "properties": {
+          "source_audio": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "source_video": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video that gets the new sound.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "source_video",
+          "source_audio"
+        ],
+        "title": "Add a Soundtrack to a Video",
+        "type": "object",
+        "x-azizam-workflow-id": "video.edit.video-mux"
       },
       "WorkflowInputs_video_generate_ltx_2_5_i2v": {
         "additionalProperties": false,
@@ -21440,6 +21514,120 @@
         "x-azizam-workflow-id": "video.edit.scail-2-replace"
       }
     },
+    "/gateway/v1/workflows/video.edit.video-mux/run": {
+      "post": {
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "operationId": "run_video_mux",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowForm_video_edit_video_mux"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid input. `error.message` names the field and the rule."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not permitted by the app profile."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown workflow, model, or job."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend failed while rendering."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend unavailable or disabled."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Run Add a Soundtrack to a Video",
+        "tags": [
+          "gateway-workflows"
+        ],
+        "x-azizam-workflow-id": "video.edit.video-mux"
+      }
+    },
     "/gateway/v1/workflows/{workflow_id}": {
       "get": {
         "operationId": "get_workflow_gateway_v1_workflows__workflow_id__get",
@@ -21516,6 +21704,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/WorkflowForm_video_edit_scail_2_replace"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowForm_video_edit_video_mux"
                   }
                 ]
               }
@@ -26484,6 +26675,9 @@
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
+                          },
+                          {
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_video_mux"
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
@@ -34047,6 +34241,9 @@
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_scail_2_replace"
                           },
                           {
+                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_video_mux"
+                          },
+                          {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v"
                           },
                           {
@@ -40230,6 +40427,101 @@
       "route_inputs": [],
       "short_id": "scail-2-replace",
       "typical_seconds": 231.0
+    },
+    {
+      "aliases": [],
+      "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+      "display_name": "Add a Soundtrack to a Video",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "DELETE",
+            "path": "/v1/videos/{video_id}"
+          },
+          "content": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}/content"
+          },
+          "fields": {
+            "source_audio": {
+              "field": "source_audio",
+              "in": "extension"
+            },
+            "source_video": {
+              "field": "source_video",
+              "in": "extension"
+            }
+          },
+          "kind": "video",
+          "poll": {
+            "method": "GET",
+            "path": "/v1/videos/{video_id}"
+          },
+          "statuses": [
+            "queued",
+            "in_progress",
+            "completed",
+            "failed"
+          ],
+          "submit": {
+            "content_type": "application/json",
+            "method": "POST",
+            "model": "video-video-mux",
+            "path": "/v1/videos"
+          },
+          "terminal": [
+            "completed",
+            "failed"
+          ]
+        },
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "source_audio": {
+              "field": "source_audio",
+              "in": "file"
+            },
+            "source_video": {
+              "field": "source_video",
+              "in": "file"
+            }
+          },
+          "method": "POST",
+          "output": "a media job; its content is the video",
+          "path": "/gateway/v1/workflows/video.edit.video-mux/run"
+        }
+      },
+      "id": "video.edit.video-mux",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_video_edit_video_mux"
+      },
+      "intent": "video.edit",
+      "outputs": [
+        {
+          "media_type": "video/mp4",
+          "name": "video"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "Clip length in seconds.",
+          "field": "seconds",
+          "in": "body",
+          "minimum": 1,
+          "name": "seconds",
+          "type": "number"
+        },
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "video-mux",
+      "typical_seconds": 5.0
     },
     {
       "aliases": [],

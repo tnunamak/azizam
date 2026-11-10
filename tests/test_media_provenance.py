@@ -111,6 +111,16 @@ class StubRequest:
     url = SimpleNamespace(scheme="http", netloc="gateway.test")
 
 
+def _assert_provenance_links_to_stored_receipt(case: unittest.TestCase, record: dict[str, Any], stored_id: str) -> None:
+    """The record names the request's own receipt, and that receipt is really stored."""
+    case.assertEqual(record["request_id"], stored_id)
+    case.assertEqual(record["receipt"], f"/gateway/v1/receipts/{stored_id}")
+    linked_id = record["receipt"].rsplit("/", 1)[1]
+    stored = receipt_store.get(linked_id, path=receipt_store.DB_PATH)
+    case.assertIsNotNone(stored, f"receipt {linked_id!r} is not stored")
+    case.assertEqual(stored["request_id"], stored_id)
+
+
 class PlanBoundTests(unittest.TestCase):
     def test_plans_strip_metadata_unless_they_keep_it(self) -> None:
         self.assertEqual(plan_for("local").media_metadata, "none")
@@ -897,6 +907,16 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.assertNotIn(SECRET_KEY, self._tags(full.content))
 
 
+    def test_embedded_provenance_links_to_the_stored_receipt(self) -> None:
+        full = self._generate(extensions={NS: {"metadata": "full"}})
+        self.assertEqual(full.status_code, 200, full.text)
+        record = json.loads(media_metadata.read_media_tags(full.content, ".flac")["azizam_provenance"])
+        stored_id = full.headers["x-request-id"]
+        self.assertTrue(stored_id.startswith("req_"), stored_id)
+        _assert_provenance_links_to_stored_receipt(self, record, stored_id)
+        self.assertNotIn("audio_pid-a", json.dumps(record))
+
+
 class MediaJobUrlTests(unittest.TestCase):
     def test_job_asset_urls_carry_the_delivery_mode(self) -> None:
         asset_id = "vid_" + "a" * 64
@@ -1056,6 +1076,70 @@ def test_provenance_serializer_sanitizes_untrusted_record_independently():
         },
     }
     assert raw == original
+
+
+class VideoSubmitProvenanceTests(unittest.IsolatedAsyncioTestCase):
+    """POST /v1/videos with ComfyUI faked: the embedded record links to the stored receipt."""
+
+    PROMPT_ID = "11111111-2222-3333-4444-555555555555"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        _patch_route_stores(self, Path(self.tmp.name))
+        for patcher in (
+            derived_patch("COMFY_ENABLED", True),
+            patch.object(proxy, "_video_job_records", {}),
+            patch.object(proxy, "_video_progress", {}),
+            patch.object(proxy, "_persist_video_record", lambda *_a, **_k: None),
+            patch.object(proxy, "_service_availability_response", lambda *_a, **_k: None),
+            patch.object(proxy, "configured_downstream_headers", lambda *_a: {}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def _submit(self) -> Any:
+        class Resp:
+            status = 200
+            status_code = 200
+            text = ""
+
+            def json(self_inner):
+                return {"prompt_id": VideoSubmitProvenanceTests.PROMPT_ID}
+
+        class Client:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return False
+
+            async def post(self, url, **_k):
+                return Resp()
+
+        class Req(StubRequest):
+            headers = {"content-type": "application/json"}
+
+            async def json(self_inner):
+                return {"model": "ltx-2.5", "prompt": "a cat", "seconds": "4", "size": "768x512"}
+
+        with patch.object(proxy.httpx, "AsyncClient", Client):
+            return await proxy.proxy_graph_video_create(Req(), FULL_AUTH)  # type: ignore[arg-type]
+
+    async def test_embedded_provenance_links_to_the_stored_receipt(self) -> None:
+        response = await self._submit()
+        self.assertEqual(response.status_code, 200, response.body)
+        public_id = json.loads(response.body)["id"]
+        self.assertTrue(public_id.startswith("video_"), public_id)
+        stored_id = response.headers["x-request-id"]
+        self.assertTrue(stored_id.startswith("req_"), stored_id)
+        record = proxy._video_job_records[self.PROMPT_ID]["provenance"]
+        _assert_provenance_links_to_stored_receipt(self, record, stored_id)
+        self.assertNotEqual(record["request_id"], public_id)
+        self.assertNotIn(public_id, record["receipt"])
 
 
 if __name__ == "__main__":

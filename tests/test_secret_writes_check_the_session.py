@@ -61,6 +61,9 @@ PROBES = {
     ("POST", "/admin/api/operator/services/{service_id}/secret-entries"):
         BUILT[("POST", "/admin/api/operator/services/{service_id}/secret-entries")][0][2],
     ("POST", "/admin/api/extensions/enable"): BUILT[("POST", "/admin/api/extensions/enable")][0][2],
+    ("PUT", "/admin/api/problem-reports/destinations"): lambda c: {"json": {"destinations": [
+        {"id": "ntfy", "type": "webhook", "url": "https://ntfy.invalid/alerts", "format": "text", "enabled": True,
+         "secret": "probe-destination-token-4711"}]}},
 }
 
 # Routes that reach a secret writer and store nothing for a browser: what they delete is clean-up of a secret

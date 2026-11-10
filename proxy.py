@@ -11804,6 +11804,7 @@ async def _submit_video_graph(
                         # Delivery control from the submit request (None = use profile default).
                         "metadata_mode": (media_delivery.current().requested_mode if media_delivery.current() else None),
                         "provenance": provenance.build_provenance_record(
+                            receipt=media_delivery.current().receipt if media_delivery.current() else None,
                             kind="video",
                             requested_model=public_model,
                             resolved_model=workflow_name,
@@ -11817,7 +11818,6 @@ async def _submit_video_graph(
                                 "actual_seconds": round(actual_seconds, 4),
                                 "length_frames": length,
                             },
-                            request_id=video_id,
                             created_at=now,
                         ),
                         **(record_extra or {}),
@@ -16281,6 +16281,7 @@ PROBLEM_REPORTS = problem_reports.ProblemReports(
     lambda: Path(ADMIN_DB_PATH).with_name("problem_reports.db"),
     destinations=lambda: problem_reports.destinations_from_settings(ADMIN_DB_PATH),
     job_lookup=lambda job_id: media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH),
+    secret_for=lambda ref, origin: runtime_secrets.resolve(ref, origin=origin),
 )
 
 
@@ -17624,7 +17625,7 @@ app.include_router(config_api.create_config_router(
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 app.include_router(problem_reports.create_problem_reports_router(
-    auth=ADMIN_AUTH, service=PROBLEM_REPORTS, admin_path=ADMIN_DB_PATH))
+    auth=ADMIN_AUTH, service=PROBLEM_REPORTS, admin_path=lambda: Path(ADMIN_DB_PATH)))
 # Owner-defined categories and plans (design v3). Active rules tighten the
 # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
 def _category_service_catalog() -> list[dict[str, Any]]:
@@ -27933,6 +27934,7 @@ async def proxy_audio_generate(
                                         audio_bytes,
                                         audio_suffix,
                                         provenance.build_provenance_record(
+                                            receipt=media_delivery.current().receipt,
                                             kind="audio",
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
@@ -27944,7 +27946,6 @@ async def proxy_audio_generate(
                                                 "type": audio_type,
                                                 "duration": duration_value,
                                             },
-                                            request_id=audio_id,
                                         ),
                                     )
                             except media_metadata.MediaMetadataError as exc:
