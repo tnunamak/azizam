@@ -26961,6 +26961,15 @@ class _WorkflowRunPort:
         adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
         result bundle is committed by ``engine_protocol.jobs.run`` itself."""
         from gateway.engine_protocol import jobs as protocol_jobs
+        # The row opens before its destination is known. Freeze the pinned service's
+        # facts here, before any adapter can dispatch or observe an owner edit.
+        receipt = _ROW_REQUEST_RECEIPT.get()
+        owner = _RUN_RECEIPT_OWNERS.get(ctx.request_id)
+        if owner is not None:
+            receipt = owner.receipt
+        if receipt is not None:
+            receipt.backend = ctx.pin.envelope.service_id
+            _capture_retention_facts(receipt, auth_context=ctx.caller)
         runner = workflow_adapters.for_binding(ctx.pin.envelope.binding_key)
         if runner is not None:
             return await runner.run(ctx)
