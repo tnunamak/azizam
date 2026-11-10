@@ -2,6 +2,7 @@
 import base64
 import copy
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,9 +26,13 @@ def engine(monkeypatch, tmp_path):
     fake = ProtocolUpstream()
     registry = {'schema_version':2,'services':{record['id']:record}}
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: registry)
-    monkeypatch.setattr(description, 'REGISTRY_DIR', FIXTURE)
+    # The release descriptions plus the fictional engine: other release code (the mesh profile) reads the shipped defaults.
+    shipped = tmp_path/'protocols'
+    shutil.copytree(description.REGISTRY_DIR, shipped)
+    shutil.copyfile(FIXTURE/'prism.yml', shipped/'prism.yml')
+    monkeypatch.setattr(description, 'REGISTRY_DIR', shipped)
     original = description.load_registry
-    monkeypatch.setattr(description, 'load_registry', lambda directory=FIXTURE: original(directory))
+    monkeypatch.setattr(description, 'load_registry', lambda directory=shipped: original(directory))
     wire = transport.HttpxTransport.for_tests(HandlerTransport(fake))
     monkeypatch.setattr(executor, 'HttpxTransport', lambda: wire)
     monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=False))
