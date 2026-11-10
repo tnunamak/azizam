@@ -202,7 +202,8 @@
       ],
       "properties": {
         "intent": {
-          "$ref": "#/$defs/id"
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
         },
         "aliases": {
           "type": "array",
