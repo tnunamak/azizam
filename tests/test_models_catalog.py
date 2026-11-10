@@ -1333,3 +1333,69 @@ def test_registered_projection_preserves_catalog_response_bytes(monkeypatch, ava
     previous_body = JSONResponse(content=build_models_catalog(capabilities=old, **supplied)).body
     assert current_body == previous_body  # No sorting or JSON reserialization.
     assert supplied == before
+
+
+def test_registered_synthetic_family_gate_reaches_catalog_response(
+    monkeypatch, fixed_catalog_availability,
+):
+    # Registered projection no longer exposes enabled_flags. Its default must
+    # retain this row; explicit flag controls below exercise the real builder.
+    original_rows = local_capabilities._BACKEND_ROWS
+    row = {
+        "group": "endpoints", "triggers": ("synthetic-trigger",), "flag": "images",
+        "intent": "synthetic.projection", "inputs": ("text",), "outputs": ("text",),
+        "execution": "sync", "streaming": False, "gpu_required": False,
+    }
+    services = {"services": {"declared-service": {
+        "capabilities": ["synthetic-trigger"],
+        "config": {"models": [{"id": "synthetic-model"}]},
+    }}}
+    expected_entry = {
+        "id": "synthetic-model",
+        "capabilities": [{
+            "intent": "synthetic.projection",
+            "input_modalities": ["text"],
+            "output_modalities": ["text"],
+            "streaming": False,
+            "available": True,
+        }],
+    }
+
+    def catalog_entries():
+        catalog = build_models_catalog(
+            capabilities=registered_model_capabilities(services),
+            service_records=services,
+        )
+        # Assert literal public contract fields, not a second production-built
+        # expected catalog. Presentation labels are outside this gating test.
+        entries = [{
+            "id": model["id"],
+            "capabilities": [{
+                key: capability[key] for key in expected_entry["capabilities"][0]
+            } for capability in model["capabilities"]],
+        } for model in catalog["models"]]
+        return entries, catalog["counts"], catalog["aliases"]
+
+    with monkeypatch.context() as rows:
+        rows.setattr(local_capabilities, "_BACKEND_ROWS", (*original_rows, row))
+        # Unlike shipped-row comparisons, this assertion detects reinstating
+        # the old family veto in registered_model_capabilities.
+        assert catalog_entries() == (
+            [expected_entry], {"aliases": 0, "models": 1, "capabilities": 1}, [],
+        )
+        for enabled in (True, False):
+            def controlled_projection(config, *, backends, **kwargs):
+                return build_local_capabilities(
+                    config, backends=backends,
+                    enabled_flags={**CATALOG_OLD_FLAGS, "images": enabled},
+                )
+
+            with monkeypatch.context() as flags:
+                flags.setattr(models_catalog, "build_local_capabilities", controlled_projection)
+                entries, counts, aliases = catalog_entries()
+            assert entries == ([expected_entry] if enabled else [])
+            assert counts == {
+                "aliases": 0, "models": int(enabled), "capabilities": int(enabled),
+            }
+            assert aliases == []
+    assert local_capabilities._BACKEND_ROWS is original_rows
