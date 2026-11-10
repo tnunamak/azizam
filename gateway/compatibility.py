@@ -34,6 +34,14 @@ class CompatibilityContract(Contract):
     migration: MigrationSelector
     legacy_alias_tables: dict[Word, Word]
     limit_key_aliases: dict[Word, Word]
+    legacy_audio_result_keys: Annotated[list[Word], Field(min_length=1)]
+
+    @model_validator(mode="after")
+    def unique_legacy_result_keys(self):
+        keys = self.legacy_audio_result_keys
+        if len(set(keys)) != len(keys) or any(any(char.isspace() for char in key) for key in keys):
+            raise ValueError("legacy result keys must be unique non-whitespace words")
+        return self
 
 
 def load_compatibility(path: Path = REGISTRY / "compatibility.yml") -> CompatibilityContract:

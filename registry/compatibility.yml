@@ -1,5 +1,8 @@
 # Frozen compatibility policy. Migration selectors run only at admin schema version 6.
 schema_version: 1
+# Ordered keys for the legacy base64/byte result wrapper, not engine selectors.
+# The first truthy value wins; if none is truthy, retain the last key's value.
+legacy_audio_result_keys: [audio, b64_json, data]
 migration:
   include_capabilities: [transcriptions, translations, translation, stt, audio.transcriptions, audio.translations]
   exclude_capabilities: [chat, completions]

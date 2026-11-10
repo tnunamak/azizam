@@ -7,6 +7,7 @@ It deliberately avoids scheduling, persistence, and backend calls.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Mapping
@@ -119,10 +120,14 @@ def normalize_video_asset(
     name = str(filename or "").strip()
     if not name:
         raise ValueError("filename is required")
+    normalized_media_type = str(media_type or "").split(";", 1)[0].strip().lower()
+    # MIME syntax, not a list of presentation families or engine identities.
+    if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9a-z-]+/[!#$%&'*+.^_`|~0-9a-z-]+", normalized_media_type):
+        normalized_media_type = media_type_for_video_filename(name)
     normalized: dict[str, Any] = {
-        "kind": "video",
+        "kind": normalized_media_type.split("/", 1)[0],
         "filename": PurePosixPath(name).name,
-        "media_type": media_type or media_type_for_video_filename(name),
+        "media_type": normalized_media_type,
     }
     if asset_id:
         normalized["asset_id"] = str(asset_id)
