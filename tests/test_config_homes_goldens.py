@@ -42,9 +42,10 @@ ENTRIES_CHANGED_ON_PURPOSE = {
     # (tracked and live_like) lost compile_from_pin and shows the release defaults of the S4 to S8 train (I7).
     # videos: each workflow entry gained its node_roles (S7 parity M9, builder V2), the roles that were the graph file's
     # _meta block before.
-    "tracked": {"models", "routing", "admin", "workflow_execution", "videos"},
-    "live_like": {"models", "routing", "admin", "workflow_execution", "videos"},
-    "first_run": {"models", "workflow_execution", "videos"},
+    # images: graph_roles holds the non-input graph roles (image metadata migration step 2).
+    "tracked": {"models", "routing", "admin", "workflow_execution", "videos", "images"},
+    "live_like": {"models", "routing", "admin", "workflow_execution", "videos", "images"},
+    "first_run": {"models", "workflow_execution", "videos", "images"},
 }
 
 

@@ -105,7 +105,7 @@ class DoctorTests(unittest.TestCase):
                 result = doctor.check_workflow_bindings(manifest_dir).to_dict()
 
         self.assertEqual(result["status"], "fail")
-        self.assertIn("ComfyUI binding target missing", result["details"]["errors"][0]["message"])
+        self.assertIn("binding target missing: node 404 input steps", result["details"]["errors"][0]["message"])
 
     def test_http_checks_are_skipped_without_base_url(self) -> None:
         result = doctor.check_http_json("public_health", None, "/health", 1).to_dict()

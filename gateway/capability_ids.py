@@ -16,10 +16,33 @@ import yaml
 CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "capability_words.yml"
 
 
+def _modality_words(document: Mapping[str, Any], path: Path) -> frozenset[str]:
+    if "modality_words" not in document:
+        return frozenset()
+    words = document["modality_words"]
+    if (not isinstance(words, list) or not words
+            or any(not isinstance(word, str) or not word.strip() or word != word.strip() for word in words)):
+        raise ValueError(f"{path.name}: modality_words must be a non-empty list of non-empty words")
+    if len(set(words)) != len(words):
+        raise ValueError(f"{path.name}: modality_words must not contain duplicates")
+    return frozenset(words)
+
+
+def load_modality_words(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
+    """The registered wire-facing modality vocabulary; not capability aliases or MIME types."""
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{path.name}: modality_words could not be loaded: {error}") from error
+    if not isinstance(document, dict):
+        raise ValueError(f"{path.name}: modality_words requires a mapping document")
+    return _modality_words(document, path)
+
+
 def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
-    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int],
 ]:
     """Validate capability, presentation and classification rows together."""
     def invalid(word: object, reason: str) -> ValueError:
@@ -38,10 +61,14 @@ def _load_capability_tables(path: Path) -> tuple[
     if not isinstance(document, dict):
         raise invalid("<document>", "must be a mapping")
     for key in document:
-        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule"}:
+        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents",
+                       "type_capabilities", "audio_rule", "modality_words"}:
             raise invalid_table("document", key, "is an unknown top-level key")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be the integer 1")
+
+    if "modality_words" in document:
+        _modality_words(document, path)
 
     rows = document.get("capabilities")
     if not isinstance(rows, list) or not rows:
@@ -52,11 +79,12 @@ def _load_capability_tables(path: Path) -> tuple[
     aliases: dict[str, str] = {}
     summaries: dict[str, str] = {}
     hidden_by: dict[str, tuple[str, ...]] = {}
+    display_order: dict[str, int] = {}
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -67,6 +95,12 @@ def _load_capability_tables(path: Path) -> tuple[
         if not isinstance(label, str) or not label.strip():
             raise invalid_row(index, "label must be a non-empty string")
         labels[capability] = label
+        rank = row.get("display_order", index - 1)
+        if type(rank) is not int or rank < 0:
+            raise invalid_row(index, "display_order must be a non-negative integer")
+        if rank in display_order.values():
+            raise invalid_row(index, f"has duplicate display_order {rank!r}")
+        display_order[capability] = rank
         if "policy_protocol" in row:
             protocol = row["policy_protocol"]
             if not isinstance(protocol, str):
@@ -151,7 +185,8 @@ def _load_capability_tables(path: Path) -> tuple[
     return (MappingProxyType(labels), MappingProxyType(policy_protocols),
             MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
             MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
-            MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by))
+            MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by),
+            MappingProxyType(display_order))
 
 
 def _load_capability_data(path: Path) -> tuple[
@@ -172,7 +207,12 @@ def load_capability_classification(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
     Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
 ]:
     """Read immutable type, audio and suppression decisions; omitted sections are empty."""
-    return _load_capability_tables(path)[7:]
+    return _load_capability_tables(path)[7:10]
+
+
+def load_capability_display_order(path: Path = CAPABILITY_WORDS_PATH) -> Mapping[str, int]:
+    """Read immutable ranks for declared capabilities; omitted ranks use row order."""
+    return _load_capability_tables(path)[10]
 
 
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
@@ -183,7 +223,9 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
  CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
- TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+ TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+
+MODALITY_WORDS = load_modality_words()
 
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's

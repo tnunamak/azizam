@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Legacy import alias only; workflow readers use the contract intent.
 MESH_INTENT = "mesh.generate"
 MESH_MEDIA_TYPE = "model/gltf-binary"
 

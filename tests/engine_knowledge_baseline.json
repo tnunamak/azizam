@@ -5,7 +5,6 @@
     "gateway/extension_catalog.py": 1,
     "gateway/lifecycle_drivers.py": 11,
     "gateway/local_capabilities.py": 3,
-    "gateway/manifests.py": 1,
     "gateway/model_files.py": 2,
     "gateway/model_ids.py": 1,
     "gateway/openai_media_schemas.py": 1,

@@ -90,6 +90,14 @@ class Source:
 
 
 @dataclass(frozen=True)
+class RecipeDescriptor:
+    algorithm: str
+    required_source_params: tuple[str, ...]
+    required_params: tuple[str, ...]
+    conversion_source_param: str
+
+
+@dataclass(frozen=True)
 class SampleSpec:
     id: str
     corpus: str
@@ -101,6 +109,7 @@ class SampleSpec:
     sources: tuple[Source, ...]
     recipe_kind: str
     recipe_params: Mapping[str, Any]
+    recipe_descriptor: RecipeDescriptor | None = None
 
     def download_bytes(self) -> int:
         """Bytes to download for this sample when the cache is empty (a file listed twice counts once)."""
@@ -254,18 +263,21 @@ def _earnings21_words(params: Mapping[str, Any], files: Mapping[str, Path]) -> l
     return words
 
 
-# kind -> (function, params that name a source, other required params)
-RECIPES: dict[str, tuple[Callable[[Mapping[str, Any], Mapping[str, Path]], list[Word]], tuple[str, ...], tuple[str, ...]]] = {
-    "ami-words": (_ami_words, ("audio", "annotations"), ("word_members",)),
-    "icsi-words": (_icsi_words, ("audio", "annotations"), ("word_members",)),
-    "earnings21": (_earnings21_words, ("audio", "transcript", "segments"), ()),
+# Closed algorithm allowlist. Descriptors select only these callables, never import paths.
+RECIPES: dict[str, Callable[[Mapping[str, Any], Mapping[str, Path]], list[Word]]] = {
+    "ami-words": _ami_words,
+    "icsi-words": _icsi_words,
+    "earnings21": _earnings21_words,
 }
 _COMMON_PARAMS = ("cut_seconds",)
 
 
 def build_reference(spec: SampleSpec, files: Mapping[str, Path]) -> list[Word]:
     """The sample's reference words from its downloaded sources (``files``: source name -> path), sorted by time."""
-    function = RECIPES[spec.recipe_kind][0]
+    descriptor = _recipe_descriptor(spec)
+    function = RECIPES.get(descriptor.algorithm)
+    if function is None:
+        raise SampleError(f"Unknown recipe algorithm {descriptor.algorithm!r}.")
     words = function(spec.recipe_params, files)
     cut = spec.recipe_params.get("cut_seconds")
     if cut is not None:
@@ -310,7 +322,7 @@ def _require(value: Any, kind: type | tuple[type, ...], where: str) -> Any:
 
 def _check_keys(item: Any, allowed: set[str], where: str) -> dict:
     _require(item, dict, where)
-    unknown = sorted(set(item) - allowed)
+    unknown = sorted(map(str, set(item) - allowed))
     if unknown:
         raise SampleError(f"{where} has unknown keys: {', '.join(unknown)}.")
     missing = sorted(allowed - set(item))
@@ -342,7 +354,66 @@ def _rights(value: Any, where: str) -> Rights:
     return Rights(status, _evidence(raw["note"], f"{where} note"))
 
 
-def _parse_sample(raw: Any, index: int) -> SampleSpec:
+def _parse_recipe_descriptors(raw: Any) -> dict[str, RecipeDescriptor]:
+    where = "The manifest recipes"
+    _check_keys(raw, {"schema_version", "entries"}, where)
+    if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+        raise SampleError(f"{where} schema_version must be 1.")
+    entries = _require(raw["entries"], dict, f"{where} entries")
+    if not entries:
+        raise SampleError(f"{where} entries must not be empty.")
+    descriptors = {}
+    fields = {"algorithm", "required_source_params", "required_params", "conversion_source_param"}
+    for kind, entry in entries.items():
+        _require(kind, str, f"{where} kind")
+        if not _ID.fullmatch(kind):
+            raise SampleError(f"{where} has an invalid kind {kind!r}.")
+        label = f"{where} {kind}"
+        _check_keys(entry, fields, label)
+        algorithm = _require(entry["algorithm"], str, f"{label} algorithm")
+        if algorithm not in RECIPES:
+            raise SampleError(f"{label} has unknown algorithm {algorithm!r}.")
+
+        def param_names(field: str) -> tuple[str, ...]:
+            values = _require(entry[field], list, f"{label} {field}")
+            for value in values:
+                _require(value, str, f"{label} {field}")
+                if not _ID.fullmatch(value):
+                    raise SampleError(f"{label} {field} has an invalid parameter name.")
+            if len(set(values)) != len(values):
+                raise SampleError(f"{label} {field} must not contain duplicates.")
+            return tuple(values)
+
+        source_params = param_names("required_source_params")
+        other_params = param_names("required_params")
+        if not source_params:
+            raise SampleError(f"{label} required_source_params must not be empty.")
+        if set(source_params) & set(other_params) or set(source_params + other_params) & set(_COMMON_PARAMS):
+            raise SampleError(f"{label} parameter roles must not overlap.")
+        role = _require(entry["conversion_source_param"], str, f"{label} conversion_source_param")
+        if role not in source_params:
+            raise SampleError(f"{label} conversion_source_param must name a required source parameter.")
+        descriptors[kind] = RecipeDescriptor(algorithm, source_params, other_params, role)
+    return descriptors
+
+
+def _default_recipe_descriptors() -> dict[str, RecipeDescriptor]:
+    # Legacy sample-only manifests and directly constructed specs share the versioned defaults.
+    with open(DEFAULT_MANIFEST, encoding="utf-8") as f:
+        data = _require(yaml.safe_load(f), dict, "The bundled manifest")
+    return _parse_recipe_descriptors(data.get("recipes"))
+
+
+def _recipe_descriptor(spec: SampleSpec) -> RecipeDescriptor:
+    if spec.recipe_descriptor is not None:
+        return spec.recipe_descriptor
+    descriptors = _default_recipe_descriptors()
+    if spec.recipe_kind not in descriptors:
+        raise SampleError(f"Unknown recipe kind {spec.recipe_kind!r}.")
+    return descriptors[spec.recipe_kind]
+
+
+def _parse_sample(raw: Any, index: int, descriptors: Mapping[str, RecipeDescriptor]) -> SampleSpec:
     where = f"Sample {index + 1}"
     _check_keys(raw, _SAMPLE_KEYS, where)
     sample_id = _require(raw["id"], str, f"{where} id")
@@ -387,20 +458,21 @@ def _parse_sample(raw: Any, index: int) -> SampleSpec:
 
     recipe = _check_keys(raw["recipe"], {"kind", "params"}, f"{where} recipe")
     kind = _require(recipe["kind"], str, f"{where} recipe kind")
-    if kind not in RECIPES:
-        raise SampleError(f"{where} has recipe kind {kind!r}; known kinds are: {', '.join(sorted(RECIPES))}.")
+    if kind not in descriptors:
+        raise SampleError(f"{where} has recipe kind {kind!r}; known kinds are: {', '.join(sorted(descriptors))}.")
     params = _require(recipe["params"], dict, f"{where} recipe params")
-    _, source_params, other_params = RECIPES[kind]
+    descriptor = descriptors[kind]
+    source_params, other_params = descriptor.required_source_params, descriptor.required_params
     unknown = sorted(set(params) - set(source_params) - set(other_params) - set(_COMMON_PARAMS))
     missing = sorted(set(source_params + other_params) - set(params))
     if unknown or missing:
         raise SampleError(f"{where} recipe params do not fit kind {kind}: "
                           f"unknown {', '.join(unknown) or 'none'}; missing {', '.join(missing) or 'none'}.")
     for p in source_params:
-        if params[p] not in names:
+        if _require(params[p], str, f"{where} recipe param {p}") not in names:
             raise SampleError(f"{where} recipe param {p} names no source of the sample.")
-    audio = next(source for source in sources if source.name == params["audio"])
-    if audio.audio_rights.status == "not-applicable":
+    recording = next(source for source in sources if source.name == params[descriptor.conversion_source_param])
+    if recording.audio_rights.status == "not-applicable":
         raise SampleError(f"{where} audio source audio_rights cannot be not-applicable.")
     if "word_members" in params:
         members = _require(params["word_members"], list, f"{where} recipe word_members")
@@ -414,18 +486,24 @@ def _parse_sample(raw: Any, index: int) -> SampleSpec:
     return SampleSpec(id=sample_id, corpus=_require(raw["corpus"], str, f"{where} corpus"),
                       title=_require(raw["title"], str, f"{where} title"), licence=licence,
                       duration_seconds=float(duration), speakers=speakers, timing=timing, sources=tuple(sources),
-                      recipe_kind=kind, recipe_params=dict(params))
+                      recipe_kind=kind, recipe_params=dict(params), recipe_descriptor=descriptor)
 
 
 def load_manifest(path: Path | str = DEFAULT_MANIFEST) -> list[SampleSpec]:
-    """Read and check the samples manifest. Top-level keys that start with ``x-`` hold YAML anchors and are ignored."""
+    """Read samples and optional versioned recipe descriptors; otherwise use the bundled descriptors.
+
+    Top-level keys starting with ``x-`` hold YAML anchors and are ignored.
+    """
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     _require(data, dict, "The manifest")
-    unknown = sorted(k for k in data if k != "samples" and not str(k).startswith("x-"))
+    unknown = sorted(k for k in data if k not in {"samples", "recipes"} and not str(k).startswith("x-"))
     if unknown:
         raise SampleError(f"The manifest has unknown top-level keys: {', '.join(map(str, unknown))}.")
-    specs = [_parse_sample(raw, i) for i, raw in enumerate(_require(data.get("samples"), list, "The manifest samples"))]
+    descriptors = (_parse_recipe_descriptors(data["recipes"]) if "recipes" in data
+                   else _default_recipe_descriptors())
+    specs = [_parse_sample(raw, i, descriptors)
+             for i, raw in enumerate(_require(data.get("samples"), list, "The manifest samples"))]
     seen: set[str] = set()
     for spec in specs:
         if spec.id in seen:
@@ -553,7 +631,8 @@ def prepare_sample(spec: SampleSpec, files: Mapping[str, Path], audio_path: Path
     total = spec.download_bytes()
     if progress is not None:
         progress(total, total, f"Converting the audio of {spec.id}")
-    duration = convert_audio(files[spec.recipe_params["audio"]], audio_path,
+    descriptor = _recipe_descriptor(spec)
+    duration = convert_audio(files[spec.recipe_params[descriptor.conversion_source_param]], audio_path,
                              cut_seconds=spec.recipe_params.get("cut_seconds"))
     if progress is not None:
         progress(total, total, f"Reading the reference words of {spec.id}")

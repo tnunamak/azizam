@@ -17,6 +17,27 @@
 # not an independent rights or authorship verification. Status is stated,
 # not-stated, or not-applicable; public hosting does not establish reuse rights.
 
+# Recipes declare source roles once. Algorithm IDs select a fixed code allowlist;
+# they are not Python import paths. Sample-only manifests use these defaults.
+recipes:
+  schema_version: 1
+  entries:
+    ami-words:
+      algorithm: ami-words
+      required_source_params: [audio, annotations]
+      required_params: [word_members]
+      conversion_source_param: audio
+    icsi-words:
+      algorithm: icsi-words
+      required_source_params: [audio, annotations]
+      required_params: [word_members]
+      conversion_source_param: audio
+    earnings21:
+      algorithm: earnings21
+      required_source_params: [audio, transcript, segments]
+      required_params: []
+      conversion_source_param: audio
+
 x-no-audio-rights: &no_audio_rights
   status: not-applicable
   note: This source contains annotations, not audio.

@@ -1,5 +1,10 @@
 {
   "dynamic_combo": "COMFY_DYNAMICCOMBO_V3",
   "autogrow": "COMFY_AUTOGROW_V3",
-  "match_type": "COMFY_MATCHTYPE_V3"
+  "match_type": "COMFY_MATCHTYPE_V3",
+  "upload_buttons": {
+    "image_upload": {"value": "image", "type": "IMAGEUPLOAD"},
+    "video_upload": {"value": "video", "type": "VIDEOUPLOAD"},
+    "audio_upload": {"value": "audio", "type": "AUDIOUPLOAD"}
+  }
 }

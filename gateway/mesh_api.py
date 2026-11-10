@@ -18,7 +18,8 @@ import httpx
 
 from gateway.exclusive_pool import MIB, ExclusivePoolSpec
 from gateway.frontend_shapes.mesh import mesh_profile
-from gateway.mesh_manifest import MESH_INTENT, MESH_MEDIA_TYPE, MeshManifestError
+# Re-export legacy constants for callers outside this reader's scope.
+from gateway.mesh_manifest import MESH_INTENT as MESH_INTENT, MESH_MEDIA_TYPE as MESH_MEDIA_TYPE, MeshManifestError
 from gateway.multipart_adapter import (
     SERVICE_ABSENT,
     SERVICE_DISABLED,
@@ -28,9 +29,10 @@ from gateway.multipart_adapter import (
     probe_pool,
 )
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS, Capability, ResourceEstimate
-from gateway.capability_ids import CAPABILITY_LABELS
+from gateway.capability_ids import CAPABILITY_LABELS, MODALITY_WORDS
 from gateway.service_registry import service_base_url
 
+# Legacy import aliases only. Route and workflow readers below never use these values.
 FRONTEND_ID = "mesh"
 CAPABILITY = "mesh"
 MESH_PROTOCOL = "openai.mesh"
@@ -97,11 +99,14 @@ class MeshWorkflow:
 
 
 def mesh_profile_errors(contract: Mapping[str, Any]) -> list[str]:
-    """Why this route cannot serve the workflow: the mesh wire's profile (``frontend_shapes.mesh``) and the intent the
-    route's own workflow loader requires. Empty when it can."""
+    """Why the contract cannot serve this wire: its shape and registered, data-owned identity."""
     problems = mesh_profile(contract)
-    if isinstance(contract, Mapping) and contract.get("intent") != MESH_INTENT:
-        problems.insert(0, f"intent must be {MESH_INTENT!r}")
+    if isinstance(contract, Mapping):
+        intent, capability = contract.get("intent"), contract.get("capability")
+        if not isinstance(intent, str) or not intent.strip():
+            problems.insert(0, "workflow intent must be a non-empty string")
+        if not isinstance(capability, str) or capability not in CAPABILITY_LABELS:
+            problems.insert(0, "workflow names an unknown capability")
     return problems
 
 
@@ -115,7 +120,7 @@ def mesh_workflow(contract: Mapping[str, Any], manifest_hash: str) -> MeshWorkfl
     binding = next(iter(contract["bindings"].values()))
     (output,) = contract["outputs"].values()
     return MeshWorkflow(
-        id=str(contract["id"]), intent=MESH_INTENT, version=str(contract["version"]), manifest_hash=manifest_hash,
+        id=str(contract["id"]), intent=contract["intent"], version=str(contract["version"]), manifest_hash=manifest_hash,
         inputs=contract["inputs"], service_id=binding["service"], transport_path=binding["path"],
         mapping=dict(binding["map"]), output_media_type=output["media_type"], data=contract)
 
@@ -147,31 +152,81 @@ class MeshApiDeps:
     workflow_available: Callable[[], bool] | None = None
 
 
-def route_row(records: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any] | None, str | None]:
-    """The frontend record's listing route and why it is not usable, or (None, reason). Reads no default."""
-    record = next((item for item in records if item.get("id") == FRONTEND_ID), None)
-    if record is None:
+def _identity_problem(row: Mapping[str, Any], manifest: MeshWorkflow | None) -> str | None:
+    """Cross-check declared identity; no product-name fallback is used."""
+    capability, intent = row.get("capability"), row.get("intent")
+    if not isinstance(capability, str) or capability not in CAPABILITY_LABELS:
+        return "frontend row names an unknown capability"
+    if not isinstance(intent, str) or not intent.strip():
+        return "frontend row has no valid intent"
+    policy = row.get("runtime_policy")
+    if not isinstance(policy, Mapping) or policy.get("intent") != intent:
+        return "frontend row and runtime_policy disagree on intent"
+    if "capability" in policy and policy["capability"] != capability:
+        return "frontend row and runtime_policy disagree on capability"
+    if manifest is not None:
+        if manifest.data.get("intent") != manifest.intent or intent != manifest.intent:
+            return "frontend row and workflow contract disagree on intent"
+        if capability != manifest.data.get("capability"):
+            return "frontend row and workflow contract disagree on capability"
+    return None
+
+
+def route_row(records: Sequence[Mapping[str, Any]],
+              manifest: MeshWorkflow | None = None) -> tuple[Mapping[str, Any] | None, str | None]:
+    """Find the unique POST listing-route owner; optionally cross-check its workflow snapshot."""
+    owners = []
+    for record in records:
+        rows = [row for row in record.get("registered_routes") or ()
+                if isinstance(row, Mapping)
+                and str(row.get("canonical") or "").strip() == LISTING_PATH
+                and isinstance(row.get("methods"), list)
+                and "POST" in [str(method).upper() for method in row["methods"]]]
+        if rows:
+            owners.append((record, rows))
+    if not owners:
         return None, FRONTEND_ABSENT
+    if len(owners) != 1:
+        return None, "multiple frontend owners for the POST listing route"
+    record, rows = owners[0]
     if record.get("enabled") is not True:
         return None, FRONTEND_DISABLED
-    rows = [row for row in record.get("registered_routes") or ()
-            if isinstance(row, Mapping) and str(row.get("canonical") or "").strip() == LISTING_PATH]
     if len(rows) != 1:
         return None, "frontend record must hold exactly one row for the route"
     row = rows[0]
-    methods = row.get("methods")
-    if not isinstance(methods, list) or [str(m).upper() for m in methods] != ["POST"]:
+    if [str(method).upper() for method in row["methods"]] != ["POST"]:
         return None, "frontend row must name only POST"
-    if row.get("intent") != MESH_INTENT or row.get("capability") != CAPABILITY:
-        return None, "frontend row names another intent or capability"
+    problem = _identity_problem(row, manifest)
+    if problem is not None:
+        return None, problem
     tiers = row.get("runtime_policy")
-    if not isinstance(tiers, Mapping) or tiers.get("protocol") != MESH_PROTOCOL:
+    if tiers.get("protocol") != MESH_PROTOCOL:
         return None, "frontend row names another protocol"
     if (tiers.get("capability_exposure") not in EXPOSURE_CLASSES
             or tiers.get("capability_trust_tier") not in TRUST_TIERS
             or tiers.get("capability_resource_tier") not in RESOURCE_TIERS):
         return None, "frontend row has no valid route tiers"
     return row, None
+
+
+def _modalities(metadata: Mapping[str, Any], field: str) -> tuple[str, ...]:
+    words = metadata.get(field)
+    if (not isinstance(words, list) or not words
+            or any(not isinstance(word, str) or word not in MODALITY_WORDS for word in words)):
+        raise MeshManifestError(f"discovery_metadata {field} must be a non-empty list of registered modality words")
+    return tuple(words)
+
+
+def _workflow_metadata(manifest: MeshWorkflow) -> Mapping[str, Any]:
+    """Describe an absent/disabled route from its contract, without inventing route identity."""
+    return {
+        "input_modalities": list(dict.fromkeys(
+            media_type.partition("/")[0]
+            for spec in manifest.inputs.values() if spec.get("type") == "asset"
+            for media_type in spec.get("accepts", ()) if isinstance(media_type, str)
+        )),
+        "output_modalities": list(manifest.data.get("outputs", {})),
+    }
 
 
 async def registry_snapshot(deps: MeshApiDeps) -> MeshApiDeps:
@@ -187,19 +242,29 @@ def discovery_facts(manifest: MeshWorkflow, frontend_records: Sequence[Mapping[s
     """The mesh row's facts for the shared capability catalog: what the route is, and the tiers its frontend row sets
     (or the defaults, when that row is not usable). It reads nothing and holds no state. The state is the pool's probe,
     which joins as evidence (pool_evidence), so a route whose frontend or service is missing still lists, as Off."""
-    row, _ = route_row(frontend_records)
+    row, problem = route_row(frontend_records, manifest)
+    if problem not in (None, FRONTEND_ABSENT, FRONTEND_DISABLED):
+        raise MeshManifestError(problem)
     tiers = (row or {}).get("runtime_policy") or {}
+    capability = row["capability"] if row is not None else manifest.data.get("capability")
+    if not isinstance(capability, str) or capability not in CAPABILITY_LABELS:
+        raise MeshManifestError("workflow names an unknown capability")
+    if manifest.data.get("intent") != manifest.intent:
+        raise MeshManifestError("workflow view and contract disagree on intent")
+    metadata = row.get("discovery_metadata") if row is not None else _workflow_metadata(manifest)
+    if not isinstance(metadata, Mapping):
+        raise MeshManifestError("frontend row has no discovery_metadata")
     return Capability(
-        intent=MESH_INTENT,
+        intent=manifest.intent,
         backend=manifest.service_id,
         workflow=manifest.id,
-        capability=CAPABILITY,
-        title=CAPABILITY_LABELS[CAPABILITY],
-        input_modalities=("image",),
-        output_modalities=("mesh",),
+        capability=capability,
+        title=CAPABILITY_LABELS[capability],
+        input_modalities=_modalities(metadata, "input_modalities"),
+        output_modalities=_modalities(metadata, "output_modalities"),
         execution="sync",
         protocol=MESH_PROTOCOL,
-        output_media_types=(MESH_MEDIA_TYPE,),
+        output_media_types=(manifest.output_media_type,),
         exposure=tiers.get("capability_exposure", "disabled"),
         trust_tier=tiers.get("capability_trust_tier", "experimental"),
         resource_tier=tiers.get("capability_resource_tier", "batch"),
@@ -215,12 +280,12 @@ async def pool_evidence(deps: MeshApiDeps) -> dict[str, dict[str, Any]]:
     manifest = deps.current_manifest()
     workflow_present = deps.workflow_available is None or deps.workflow_available()
     deps = await registry_snapshot(deps)
-    _, problem = route_row(deps.frontend_records())
+    row, problem = route_row(deps.frontend_records(), manifest)
     if not workflow_present:
         problem = WORKFLOW_ABSENT
     observed_s = int(time.time())
     if problem is None:
-        problem, spec, service = exclusive_pool_problem(deps.services(), manifest.service_id, CAPABILITY)
+        problem, spec, service = exclusive_pool_problem(deps.services(), manifest.service_id, row["capability"])
         if problem is None and spec is not None and service is not None:
             problem, observed_s = await _pool_answer(deps, spec, service)
     available = problem is None

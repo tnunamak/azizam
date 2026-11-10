@@ -19,7 +19,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from gateway.capabilities import Capability
-from gateway.capability_ids import CAPABILITY_LABELS
+from gateway.capability_ids import CAPABILITY_DISPLAY_ORDER, CAPABILITY_LABELS
 from gateway.policy import (
     CANNOT_TELL_RULES,
     RULE_ALLOWS,
@@ -49,11 +49,8 @@ UNKNOWN = "unknown"
 FULL = "full"
 LIMITED = "limited"
 
-# The order the Models page shows its groups in.
-GROUP_ORDER = (
-    "chat", "image", "video", "mesh", "music", "sfx", "speech", "audio",
-    "transcribe", "decide", "embed", "rerank",
-)
+# Presentation ranks do not grant access or filter either supplied catalog.
+GROUP_ORDER = tuple(sorted(CAPABILITY_DISPLAY_ORDER, key=CAPABILITY_DISPLAY_ORDER.__getitem__))
 
 _CATEGORY_PREFIX = "category rules:"
 _CATEGORY_HIDDEN = "CATEGORY_HIDDEN"

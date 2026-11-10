@@ -15,3 +15,88 @@ sites:
     count: 11
     category: engine_node_input
     reason: Names the ComfyUI node input receiving image data when graph nodes are added or rewired.
+  - file: gateway/prompt_memory.py
+    literal: audio
+    count: 2
+    category: media_type
+    reason: Names the IANA media family in a suffix-derived media_kind comparison used to read or restore container metadata.
+  - file: gateway/prompt_memory.py
+    literal: video
+    count: 2
+    category: media_type
+    reason: Names the IANA media family in a suffix-derived media_kind comparison used to read or restore container metadata.
+  - file: gateway/asset_types.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
+  - file: gateway/asset_types.py
+    literal: image
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
+  - file: gateway/asset_types.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
+  - file: gateway/capabilities.py
+    literal: image
+    count: 1
+    category: media_type
+    reason: Names the IANA family returned by an explicit MIME-prefix classification.
+  - file: gateway/capabilities.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names the IANA family returned by an explicit MIME-prefix classification.
+  - file: gateway/capabilities.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names the IANA family returned by an explicit MIME-prefix classification.
+  - file: gateway/engine_protocol/media.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
+  - file: gateway/engine_protocol/media.py
+    literal: image
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
+  - file: gateway/engine_protocol/media.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
+  - file: gateway/media_delivery.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names the IANA media family in a suffix-derived media_kind comparison before embedding provenance.
+  - file: gateway/media_delivery.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names the IANA media family in a suffix-derived media_kind comparison before embedding provenance.
+  - file: gateway/voices_api.py
+    literal: audio.voice_consent
+    count: 1
+    category: wire_enum
+    reason: Names the audio.voice_consent object discriminator of the OpenAI Audio voice-consent deletion response.
+  - file: gateway/voices_api.py
+    literal: audio.voice
+    count: 1
+    category: wire_enum
+    reason: Names the audio.voice object discriminator of the OpenAI Audio Voice object, reused by the gateway's delete extension.
+  - file: gateway/protocols/anthropic.py
+    literal: image
+    count: 1
+    category: wire_enum
+    reason: Names the image discriminator defined by the Anthropic Messages API in messages[].content[].type.
+  - file: gateway/stt_chunking.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: Names the audio value defined by FFprobe's JSON output in streams[].codec_type.

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from gateway.engine_protocol import node_ui_graph
 from gateway.engine_protocol.node_ui_graph import derive_ui_workflow
 
 SAMPLERS = ["euler", "dpmpp_2m"]
@@ -213,6 +214,74 @@ def test_optional_unlinked_connection_omitted_and_force_input_is_connection():
     assert [i["name"] for i in n["inputs"]] == ["image", "mask", "force"]
     assert all(i["link"] is not None for i in n["inputs"])
     assert n["widgets_values"] == []
+
+
+def _upload_workflow(flags, linked=False):
+    api = {"1": {"class_type": "UploadSource", "inputs": {}},
+           "2": {"class_type": "UploadTarget", "inputs": {
+               "media": ["1", 0] if linked else "picked.bin", "source": ["1", 0], "after": 9}}}
+    info = {
+        "UploadSource": {"input": {}, "output": ["STRING"], "output_name": ["STRING"]},
+        "UploadTarget": {
+            "input": {"required": {
+                "media": [["default.bin"], {"control_after_generate": True, **flags}],
+                "source": ["STRING", {"forceInput": True}],
+                "after": ["INT", {"default": 1}]}},
+            "input_order": {"required": ["media", "source", "after"]},
+            "output": [], "output_name": []},
+    }
+    return derive_ui_workflow(api, info.get)
+
+
+@pytest.mark.parametrize("flag,button,widget_type", [
+    ("image_upload", "image", "IMAGEUPLOAD"),
+    ("video_upload", "video", "VIDEOUPLOAD"),
+    ("audio_upload", "audio", "AUDIOUPLOAD"),
+])
+@pytest.mark.parametrize("linked", [False, True])
+def test_upload_button_values_types_and_slots(flag, button, widget_type, linked):
+    # Base node_ui_graph.py:35, 156-167: value, control, upload, then the next widget.
+    wf = _upload_workflow({flag: True}, linked=linked)
+    node = by_id(wf)[2]
+    assert node["widgets_values"] == ["default.bin" if linked else "picked.bin", "fixed", button, 9]
+    assert [(i["name"], i["type"]) for i in node["inputs"]] == [
+        ("source", "STRING"), ("media", "COMBO"), ("upload", widget_type), ("after", "INT")]
+    assert node["inputs"][2] == {
+        "name": "upload", "localized_name": "upload", "type": widget_type,
+        "widget": {"name": "upload"}, "link": None}
+    assert wf["links"] == [[1, 1, 0, 2, 0, "STRING"]] + (
+        [[2, 1, 0, 2, 1, "STRING"]] if linked else [])
+    assert node["inputs"][1]["link"] == (2 if linked else None)
+
+
+def test_upload_buttons_follow_table_order():
+    # Deliberately reverse config order; the base table orders image, video, audio.
+    node = by_id(_upload_workflow({
+        "audio_upload": True, "video_upload": True, "image_upload": True}))[2]
+    assert node["widgets_values"] == ["picked.bin", "fixed", "image", "video", "audio", 9]
+    assert [(i["name"], i["type"]) for i in node["inputs"]] == [
+        ("source", "STRING"), ("media", "COMBO"), ("upload", "IMAGEUPLOAD"),
+        ("upload", "VIDEOUPLOAD"), ("upload", "AUDIOUPLOAD"), ("after", "INT")]
+
+
+def test_upload_button_added_to_loaded_table(monkeypatch):
+    # Copy the loaded table, without mutating its entries or the shipped JSON file.
+    buttons = {**node_ui_graph._DYNAMIC_INPUT_TYPES.get("upload_buttons", {}),
+               "paper_upload": {"value": "choose-paper", "type": "PAPER_PICKER"}}
+    # raising=False lets the base reach the behavioral assertion instead of an AttributeError.
+    monkeypatch.setattr(node_ui_graph, "_UPLOAD_BUTTONS", buttons, raising=False)
+    node = by_id(_upload_workflow({"paper_upload": True}))[2]
+    assert node["widgets_values"] == ["picked.bin", "fixed", "choose-paper", 9]
+    assert [(i["name"], i["type"]) for i in node["inputs"]] == [
+        ("source", "STRING"), ("media", "COMBO"), ("upload", "PAPER_PICKER"), ("after", "INT")]
+
+
+def test_upload_flag_absent_from_table_adds_nothing():
+    plain = _upload_workflow({})
+    unknown = _upload_workflow({"unlisted_upload": True})
+    assert by_id(unknown)[2]["widgets_values"] == ["picked.bin", "fixed", 9]
+    assert [i["name"] for i in by_id(unknown)[2]["inputs"]] == ["source", "media", "after"]
+    assert json.dumps(unknown) == json.dumps(plain)
 
 
 # ---- Real-server oracle -------------------------------------------------

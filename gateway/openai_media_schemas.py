@@ -18,9 +18,151 @@ giving SDK generators and clients the right top-level entry points.
 
 from __future__ import annotations
 
+from copy import deepcopy
+import math
+from pathlib import Path
+import re
 from typing import Any
 
+import yaml
+
 JsonObjectSchema = dict[str, Any]
+
+
+class _FragmentLoader(yaml.SafeLoader):
+    """Safe YAML without duplicate/merged keys that could hide reviewed data."""
+
+
+def _unique_fragment_mapping(loader: _FragmentLoader, node: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if not isinstance(key, str) or key in result:
+            raise ValueError("schema fragments require unique string mapping keys")
+        result[key] = loader.construct_object(value_node, deep=True)
+    return result
+
+
+_FragmentLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_fragment_mapping,
+)
+
+
+def _fragment_mapping(
+    value: Any, label: str, allowed: set[str] | None = None,
+    required: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or any(not isinstance(key, str) or not key for key in value):
+        raise ValueError(f"{label}: expected a mapping with nonempty string keys")
+    if (allowed is not None and set(value) - allowed) or required - set(value):
+        raise ValueError(f"{label}: unknown or missing fields")
+    return value
+
+
+def _validate_fragment_schema(value: Any, label: str, depth: int = 0) -> None:
+    if depth > 32:
+        raise ValueError(f"{label}: schema nesting is too deep")
+    schema = _fragment_mapping(value, label, {
+        "type", "properties", "required", "additionalProperties", "enum",
+        "minimum", "maximum", "description", "format", "items",
+    }, {"type"})
+    types = schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
+    known_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+    if not types or any(not isinstance(item, str) or item not in known_types for item in types) or len(set(types)) != len(types):
+        raise ValueError(f"{label}: invalid type")
+    for key in ("description", "format"):
+        if key in schema and not isinstance(schema[key], str):
+            raise ValueError(f"{label}.{key}: expected text")
+    properties = _fragment_mapping(schema.get("properties", {}), f"{label}.properties")
+    required = schema.get("required", [])
+    if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
+        raise ValueError(f"{label}.required: expected property names")
+    if len(set(required)) != len(required) or set(required) - set(properties):
+        raise ValueError(f"{label}.required: duplicate or undeclared property")
+    if any(key in schema for key in ("properties", "required", "additionalProperties")) and "object" not in types:
+        raise ValueError(f"{label}: object keywords require object type")
+    if "additionalProperties" in schema and type(schema["additionalProperties"]) is not bool:
+        raise ValueError(f"{label}.additionalProperties: expected a boolean")
+    for key, child in properties.items():
+        _validate_fragment_schema(child, f"{label}.properties.{key}", depth + 1)
+    if "items" in schema:
+        if "array" not in types:
+            raise ValueError(f"{label}: items requires array type")
+        _validate_fragment_schema(schema["items"], f"{label}.items", depth + 1)
+    if "enum" in schema:
+        values = schema["enum"]
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"{label}.enum: expected nonempty scalar list")
+        for item in values:
+            if item is not None and type(item) not in (str, bool, int, float):
+                raise ValueError(f"{label}.enum: expected JSON scalars")
+            if type(item) is float and not math.isfinite(item):
+                raise ValueError(f"{label}.enum: expected finite scalars")
+    for key in ("minimum", "maximum"):
+        if key in schema and (type(schema[key]) not in (int, float) or not math.isfinite(schema[key])):
+            raise ValueError(f"{label}.{key}: expected a finite number")
+    if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
+        raise ValueError(f"{label}: minimum exceeds maximum")
+
+
+def _validate_fragment_content(value: Any, label: str) -> None:
+    content = _fragment_mapping(value, label)
+    if not content:
+        raise ValueError(f"{label}: expected at least one content type")
+    for media_type, entry in content.items():
+        if not re.fullmatch(r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+", media_type):
+            raise ValueError(f"{label}: invalid content type")
+        entry = _fragment_mapping(entry, f"{label}.{media_type}", {"schema"}, {"schema"})
+        _validate_fragment_schema(entry["schema"], f"{label}.{media_type}.schema")
+
+
+def _load_schema_fragments(path: Path) -> dict[str, JsonObjectSchema]:
+    """Load a closed data-only format; it cannot resolve imports or references."""
+    try:
+        document = yaml.load(path.read_text(encoding="utf-8"), Loader=_FragmentLoader)
+    except (yaml.YAMLError, ValueError, RecursionError) as exc:
+        raise ValueError(f"{path}: invalid schema fragment YAML") from exc
+    document = _fragment_mapping(document, str(path), {"schema_version", "endpoints"}, {"schema_version", "endpoints"})
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError(f"{path}: unsupported schema_version")
+    endpoints = _fragment_mapping(document["endpoints"], f"{path}: endpoints")
+    if not endpoints:
+        raise ValueError(f"{path}: expected at least one endpoint")
+    for key, fragment in endpoints.items():
+        if not re.fullmatch(r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\s?#]*", key):
+            raise ValueError(f"{path}: invalid HTTP method/path key")
+        fragment = _fragment_mapping(fragment, key, {"requestBody", "responses"})
+        if not fragment:
+            raise ValueError(f"{key}: empty endpoint fragment")
+        if "requestBody" in fragment:
+            body = _fragment_mapping(fragment["requestBody"], f"{key}.requestBody", {"required", "content"}, {"required", "content"})
+            if type(body["required"]) is not bool:
+                raise ValueError(f"{key}: requestBody.required must be boolean")
+            _validate_fragment_content(body["content"], f"{key}.requestBody.content")
+        if "responses" in fragment:
+            responses = _fragment_mapping(fragment["responses"], f"{key}.responses")
+            if not responses:
+                raise ValueError(f"{key}: empty responses")
+            for status, response in responses.items():
+                if not re.fullmatch(r"[1-5][0-9]{2}|default", status):
+                    raise ValueError(f"{key}: invalid response status")
+                response = _fragment_mapping(response, f"{key}.{status}", {"description", "content"}, {"description", "content"})
+                if not isinstance(response["description"], str):
+                    raise ValueError(f"{key}.{status}: description must be text")
+                _validate_fragment_content(response["content"], f"{key}.{status}.content")
+    return endpoints
+
+
+def _endpoint_fragment(
+    method: str, path: str, *, fragments: dict[str, JsonObjectSchema] | None = None,
+) -> JsonObjectSchema:
+    source = _SCHEMA_FRAGMENTS if fragments is None else fragments
+    return deepcopy(source[f"{method} {path}"])
+
+
+_SCHEMA_FRAGMENTS = _load_schema_fragments(
+    Path(__file__).resolve().parent.parent / "registry" / Path(__file__).with_suffix(".yml").name,
+)
 
 
 _ERROR_SCHEMA: JsonObjectSchema = {
@@ -360,25 +502,7 @@ IMAGES_GENERATIONS_OPENAPI: JsonObjectSchema = {
 
 
 def _images_edit_request_schema() -> JsonObjectSchema:
-    return {
-        "type": "object",
-        "required": ["prompt"],
-        "properties": {
-            "image": {
-                "type": "string",
-                "format": "binary",
-                "description": "Single image. Repeat the field name 'image[]' for multiple.",
-            },
-            "mask": {"type": "string", "format": "binary"},
-            "prompt": {"type": "string"},
-            "model": {"type": "string"},
-            "n": {"type": "integer", "minimum": 1, "maximum": 10},
-            "size": {"type": "string"},
-            "response_format": {"type": "string", "enum": ["url", "b64_json"]},
-            "user": {"type": "string"},
-        },
-        "additionalProperties": True,
-    }
+    return _endpoint_fragment("POST", "/v1/images/edits")["requestBody"]["content"]["multipart/form-data"]["schema"]
 
 
 IMAGES_EDITS_OPENAPI: JsonObjectSchema = {
@@ -396,21 +520,7 @@ IMAGES_EDITS_OPENAPI: JsonObjectSchema = {
 
 
 IMAGES_VARIATIONS_OPENAPI: JsonObjectSchema = {
-    "requestBody": _multipart_request(
-        {
-            "type": "object",
-            "required": ["image"],
-            "properties": {
-                "image": {"type": "string", "format": "binary"},
-                "model": {"type": "string"},
-                "n": {"type": "integer", "minimum": 1, "maximum": 10},
-                "size": {"type": "string"},
-                "response_format": {"type": "string", "enum": ["url", "b64_json"]},
-                "user": {"type": "string"},
-            },
-            "additionalProperties": True,
-        }
-    ),
+    "requestBody": _endpoint_fragment("POST", "/v1/images/variations")["requestBody"],
     "responses": {
         # Routed through a configurable edit-capable workflow (no local
         # model dedicated to "variations" exists) with a fixed generic
@@ -684,22 +794,7 @@ VIDEOS_LIST_OPENAPI: JsonObjectSchema = {
 
 VIDEOS_DELETE_OPENAPI: JsonObjectSchema = {
     "responses": {
-        "200": {
-            "description": "Deletion confirmation.",
-            "content": {
-                "application/json": {
-                    "schema": {
-                        "type": "object",
-                        "required": ["id", "object", "deleted"],
-                        "properties": {
-                            "id": {"type": "string"},
-                            "object": {"type": "string", "enum": ["video"]},
-                            "deleted": {"type": "boolean"},
-                        },
-                    }
-                }
-            },
-        },
+        "200": _endpoint_fragment("DELETE", "/v1/videos/{video_id}")["responses"]["200"],
         **_common_error_responses(),
     },
 }
@@ -721,37 +816,7 @@ VIDEOS_REMIX_OPENAPI: JsonObjectSchema = {
 
 
 VIDEOS_EDIT_OPENAPI: JsonObjectSchema = {
-    "requestBody": {
-        "required": True,
-        "content": {
-            "multipart/form-data": {
-                "schema": {
-                    "type": "object",
-                    "required": ["prompt", "video"],
-                    "properties": {
-                        "prompt": {"type": "string"},
-                        "video": {"type": "string", "format": "binary"},
-                    },
-                    "additionalProperties": True,
-                }
-            },
-            "application/json": {
-                "schema": {
-                    "type": "object",
-                    "required": ["prompt", "video"],
-                    "properties": {
-                        "prompt": {"type": "string"},
-                        "video": {
-                            "type": "object",
-                            "required": ["id"],
-                            "properties": {"id": {"type": "string"}},
-                        },
-                    },
-                    "additionalProperties": True,
-                }
-            },
-        },
-    },
+    "requestBody": _endpoint_fragment("POST", "/v1/videos/edits")["requestBody"],
     "responses": {
         "200": {
             "description": "New video job rendered from an uploaded or existing video.",
@@ -763,39 +828,7 @@ VIDEOS_EDIT_OPENAPI: JsonObjectSchema = {
 
 
 VIDEOS_EXTEND_OPENAPI: JsonObjectSchema = {
-    "requestBody": {
-        "required": True,
-        "content": {
-            "application/json": {
-                "schema": {
-                    "type": "object",
-                    "required": ["prompt", "video"],
-                    "properties": {
-                        "prompt": {"type": "string", "description": "What happens in the new footage."},
-                        "video": {
-                            "type": "object",
-                            "required": ["id"],
-                            "properties": {"id": {"type": "string"}},
-                        },
-                        "seconds": {"type": ["string", "number"], "description": "Seconds to add."},
-                        "context_seconds": {"type": "number", "description": "Overlap window taken from the source end (default 1)."},
-                    },
-                    "additionalProperties": True,
-                }
-            },
-            "multipart/form-data": {
-                "schema": {
-                    "type": "object",
-                    "required": ["prompt", "video"],
-                    "properties": {
-                        "prompt": {"type": "string"},
-                        "video": {"type": "string", "format": "binary"},
-                    },
-                    "additionalProperties": True,
-                }
-            },
-        },
-    },
+    "requestBody": _endpoint_fragment("POST", "/v1/videos/extensions")["requestBody"],
     "responses": {
         "200": {
             "description": "New video job: the source followed by the new footage. `seconds` is the stitched total.",
