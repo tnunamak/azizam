@@ -137,6 +137,9 @@ model_compatibility:
   aliases: {}
 ```
 
+An image edit that names no model uses `defaults.image_edits` when the owner sets it. Otherwise it uses
+`images.edits.default_workflow`, which the release sets in `registry/defaults/images.yml`.
+
 The path of the generated OpenAI model list is not a setting: it is the release file
 `registry/openai_model_aliases.generated.yml`. A `generated_aliases_file` key in an old startup file is left in the
 file and not used.

@@ -184,7 +184,7 @@ sites:
     literal: "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content."
     count: 1
     category: wire_enum
-    reason: Documents the published workflow discovery and asynchronous route contract; this prose does not select workflow behavior.
+    reason: The OpenAPI document's info.description (published at /openapi.json); documents workflow discovery and the asynchronous route contract and does not select workflow behavior.
   - file: gateway/workflow_openapi.py
     literal: "image.generate"
     count: 1
@@ -219,4 +219,4 @@ sites:
     literal: OpenAI-compatible response proxied from the active local backend.
     count: 1
     category: wire_enum
-    reason: Documents the published successful response contract without selecting a workflow, model, engine or intent.
+    reason: The 200 response description in _OPENAI_COMPAT_JSON_BODY_OPENAPI, published in /openapi.json for the OpenAI-compatible JSON routes; it selects no workflow, model, engine or intent.
