@@ -526,6 +526,9 @@ def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but
             assert spec.pop("default") == 48
             assert bundled["inputs"]["mask_feather"]["description"].startswith(spec["description"])
             spec["description"] = bundled["inputs"]["mask_feather"]["description"]
+        if path.stem == "video-mux":                    # the length rule added to the release description
+            assert bundled["description"].startswith(converted["description"])
+            converted["description"] = bundled["description"]
         if path.stem not in named:
             assert without_section_additions(bundled, converted) == converted, path.name
     ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))

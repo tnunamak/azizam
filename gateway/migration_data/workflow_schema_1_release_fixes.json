@@ -1,5 +1,5 @@
 {
-  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there. I2 (the image edit workflows): the post-composite result stage of the two Klein edit workflows, and the removed feather default of the inpaint workflow.",
+  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there. I2 (the image edit workflows): the post-composite result stage of the two Klein edit workflows, and the removed feather default of the inpaint workflow. The video-mux description gained its length rule.",
   "fixes": {
     "audio.generate.ace-step-1.5-xl-turbo": {
       "remove": [
@@ -23,6 +23,11 @@
       ],
       "set": [
         {"path": ["inputs", "mask_feather", "description"], "value": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge. When it is not given, the workflow's own feather applies (48 pixels at the top and bottom, none at the sides).", "was": "Pixels to feather each edge of the edit mask. Higher values soften the known boundary-seam artifact at the cost of edit precision near the mask edge."}
+      ]
+    },
+    "video.edit.video-mux": {
+      "set": [
+        {"path": ["description"], "value": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.", "was": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old."}
       ]
     }
   }
