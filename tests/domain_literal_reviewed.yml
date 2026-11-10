@@ -205,3 +205,18 @@ sites:
     count: 1
     category: wire_enum
     reason: Documents the published media-job request body routes and intent aliases; this prose does not select workflow behavior.
+  - file: proxy.py
+    literal: X-ComfyUI-Models-Freed
+    count: 1
+    category: wire_enum
+    reason: Names the response header reporting that ComfyUI models were freed; the header name does not select backend behavior.
+  - file: proxy.py
+    literal: video.generation
+    count: 2
+    category: wire_enum
+    reason: Names the video.generation object discriminator the gateway publishes on its video responses (azizam_object and object fields); it does not select workflow behavior.
+  - file: proxy.py
+    literal: OpenAI-compatible response proxied from the active local backend.
+    count: 1
+    category: wire_enum
+    reason: Documents the published successful response contract without selecting a workflow, model, engine or intent.
