@@ -10,6 +10,13 @@ Code: `gateway/model_metadata.py` (pure derivation), wired in `proxy.py` (`list_
 `_model_metadata_sources`, `_service_model_index`, `_declared_model_metadata_index`, `_with_loaded_model_inheritance`,
 `_catalog_model_metadata`).
 
+At startup, the gateway reads the type, input modality, output modality and tag vocabularies from
+the `model_metadata` enums in `registry/defaults/models.schema.json:19-28`, preserving their order.
+A missing or unreadable file, invalid JSON, or a missing or malformed metadata enum stops startup
+with an error naming the schema file; there is no fallback vocabulary. The loader and startup read
+are in `gateway/product_contracts.py:15-60`; metadata derivation loads the same vocabularies in
+`gateway/model_metadata.py:79-86` and `gateway/model_metadata.py:184-189`.
+
 ## Fields
 
 Every entry keeps `id`, `object: "model"`, `created`, `owned_by` and every existing `azizam_*` field.

@@ -24,6 +24,29 @@ An explicit seed must be a JSON integer from 0 through 4294967295. Only an
 omitted seed selects a random seed. Invalid values return HTTP 400 with the
 corresponding parameter name in the OpenAI error envelope.
 
+## Error-parameter registry
+
+At startup, the gateway loads `registry/openai_media_schemas.yml`, including the
+`wire_error_params` groups and their `wire_error_param_endpoints` bindings.
+For each bound group, every public error parameter must be a top-level request
+property in at least one supported request content type of the bound endpoint.
+An undeclared public property, an absent endpoint, or a binding to an absent
+error-parameter group stops startup. These checks are in
+`gateway/openai_media_schemas.py:175-213`; the startup load is at
+`gateway/openai_media_schemas.py:243-250`.
+
+## Workflow catalog request examples
+
+The workflow catalog's curl, Python and JavaScript request examples follow the
+selected execution route. Its field mapping determines JSON body and extension
+placement; a route without a field mapping uses the synchronous request mapping.
+A submit declaration supplies its method, content type and extra headers.
+Extra headers are carried into all three examples. The request uses the model
+named by the route or its submit declaration and adds no model when neither
+names one. See `gateway/workflows_catalog.py:152-162`,
+`gateway/workflows_catalog.py:323-390`, `gateway/workflows_catalog.py:401-429`
+and `gateway/workflows_catalog.py:499-503`.
+
 ## JSON video-create controls
 
 JSON requests to `POST /v1/videos` may include the optional `extensions`
