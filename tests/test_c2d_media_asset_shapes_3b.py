@@ -108,26 +108,30 @@ def test_audio_presentation_family_uses_the_normalized_artifact_mime():
     assert store.call_args.kwargs["kind"] == "aud"
 
 
-def test_video_mime_parameters_and_unfamiliar_family_are_normalized():
-    for supplied, expected_type, expected_kind in [
-        (" VIDEO/MP4; codecs=AVC1 ", "video/mp4", "video"),
-        ("application/x-framed; version=1", "application/x-framed", "application"),
-        ("x-novel/framed", "x-novel/framed", "x-novel"),
-    ]:
+def test_video_asset_keeps_the_supplied_media_type_and_video_kind():
+    # Train 43 behaviour, captured from the review's inputs: the stored media type is kept byte for byte.
+    for supplied in (" VIDEO/MP4; codecs=AVC1 ", "video/mp4; codecs=avc1", "audio/mpeg; codecs=x",
+                     "application/x-framed; version=1", "x-novel/framed", "not-a-mime", "video/", "video/mp4/extra"):
         assert video_jobs.normalize_video_asset(filename="clip.mp4", media_type=supplied) == {
-            "kind": expected_kind, "filename": "clip.mp4", "media_type": expected_type,
+            "kind": "video", "filename": "clip.mp4", "media_type": supplied,
         }
 
 
-def test_unknown_video_filename_and_invalid_mime_do_not_invent_a_family():
-    assert video_jobs.normalize_video_asset(filename="clip.unknown") == {
-        "kind": "application", "filename": "clip.unknown",
-        "media_type": "application/octet-stream",
+def test_unknown_video_filename_falls_back_to_octet_stream_as_before():
+    for media_type in (None, ""):
+        assert video_jobs.normalize_video_asset(filename="clip.unknown", media_type=media_type) == {
+            "kind": "video", "filename": "clip.unknown", "media_type": "application/octet-stream",
+        }
+    assert video_jobs.normalize_video_asset(filename="clip.mp4") == {
+        "kind": "video", "filename": "clip.mp4", "media_type": "video/mp4",
     }
-    for media_type in ("not-a-mime", " / ", "video/", "video/mp4/extra", " ; charset=utf-8"):
-        assert video_jobs.normalize_video_asset(filename="clip.mp4", media_type=media_type) == {
-            "kind": "video", "filename": "clip.mp4", "media_type": "video/mp4",
-        }
+
+
+def test_legacy_result_keys_cannot_be_changed_after_validation():
+    keys = compatibility.COMPATIBILITY.legacy_audio_result_keys
+    assert isinstance(keys, tuple)
+    with pytest.raises(AttributeError):
+        keys.clear()
 
 
 def test_raw_binary_sniffing_and_fallback_order_are_unchanged():
@@ -148,7 +152,7 @@ def test_raw_binary_sniffing_and_fallback_order_are_unchanged():
 
 def test_all_declared_keys_accept_base64_and_byte_payloads():
     keys = compatibility.COMPATIBILITY.legacy_audio_result_keys
-    assert keys == LEGACY_KEYS
+    assert list(keys) == list(LEGACY_KEYS)
     content = b"legacy payload"
     for key in keys:
         for value in (base64.b64encode(content).decode("ascii"),

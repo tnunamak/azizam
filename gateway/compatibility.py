@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from gateway.strict_yaml import safe_load_strict
 
@@ -34,7 +34,13 @@ class CompatibilityContract(Contract):
     migration: MigrationSelector
     legacy_alias_tables: dict[Word, Word]
     limit_key_aliases: dict[Word, Word]
-    legacy_audio_result_keys: Annotated[list[Word], Field(min_length=1)]
+    legacy_audio_result_keys: Annotated[tuple[Word, ...], Field(min_length=1)]
+
+    @field_validator("legacy_audio_result_keys", mode="before")
+    @classmethod
+    def owned_key_order(cls, value):
+        # YAML gives a list; keep an immutable copy so the order cannot change after validation.
+        return tuple(value) if isinstance(value, list) else value
 
     @model_validator(mode="after")
     def unique_legacy_result_keys(self):
