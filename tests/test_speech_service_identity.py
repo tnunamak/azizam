@@ -165,6 +165,10 @@ class RenamedDefaultSpeechRouteTests(CustomVoiceRouteCase):
         patcher = derived_patch("TTS_ENABLED", True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # A model with no alias of its own: the selected default service serves it.
+        resolution = patch.object(proxy, "resolve_model_for_operation", lambda op, model: proxy.ModelResolution(model, model, op))
+        resolution.start()
+        self.addCleanup(resolution.stop)
 
     def test_the_selected_service_receives_the_default_model_request(self) -> None:
         self.assertEqual(proxy._speech_service()[0], "voice-one")
@@ -196,3 +200,20 @@ class RenamedDefaultSpeechRouteTests(CustomVoiceRouteCase):
             resp = self.speak("alloy", model="tts-1")
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(_FakeClient.requests[-1]["url"], "http://127.0.0.1:18101/v1/audio/speech")
+
+    def test_with_no_speech_service_selected_the_request_is_refused_and_nothing_is_sent(self) -> None:
+        for service_id in proxy.backends_for_capability("audio.speech", backends=self.cfg["backends"], include_disabled=True):
+            self.cfg["backends"].pop(service_id)
+        self.assertIsNone(proxy._speech_service())
+        resp = self.speak("alloy", model="tts-1")
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(_FakeClient.requests, [])
+
+    def test_a_disabled_selected_service_is_refused_and_no_lower_service_takes_its_place(self) -> None:
+        self.cfg["backends"]["voice-zero"] = _speech(18105, priority=5, enabled=False)
+        self.assertEqual(proxy._speech_service()[0], "voice-zero")
+        # The derived settings of this config say speech is off (test_a_disabled_selected_service_is_off_and_no_other_takes_its_place).
+        with derived_patch("TTS_ENABLED", False):
+            resp = self.speak("alloy", model="tts-1")
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(_FakeClient.requests, [])

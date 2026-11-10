@@ -90,7 +90,7 @@ def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, '_azizam_policy_decision', lambda *a, **kw: None)
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: {'services': {}})
     monkeypatch.setattr(proxy, '_ensure_speech_service_ready', AsyncMock(return_value=None))
-    monkeypatch.setattr(proxy, 'host_for_capability', lambda _: speech.base_url)
+    monkeypatch.setattr(proxy, '_speech_service_base', lambda _service_id: speech.base_url)
     monkeypatch.setattr(proxy, 'resolve_model_for_operation', lambda op, model: proxy.ModelResolution(model, model, op))
     monkeypatch.setattr(proxy, 'configured_downstream_headers', lambda *a, **kw: {})
     calls = _DispatchCalls(engine, speech)
