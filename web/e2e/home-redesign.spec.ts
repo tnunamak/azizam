@@ -385,6 +385,8 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
       captionEnds: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().bottom))).size,
       grid: node.getBoundingClientRect().toJSON(),
       cardBoxes: cards.map((card) => card.getBoundingClientRect().toJSON()),
+      // Kept so a face that moves without changing its height still counts as a change.
+      faceBoxes: faces.map((face) => face.toJSON()),
     };
   };
   const settledReading: { settled?: ReturnType<typeof measure> } = {};
@@ -393,11 +395,20 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
     .poll(async () => {
       const reading = await group.evaluate(measure);
       const key = JSON.stringify(reading);
+      const before = previous ? (JSON.parse(previous) as Record<string, unknown>) : undefined;
       const settled = key === previous && reading.faceHeights === 1 && reading.captionEnds === 1;
       previous = key;
-      if (settled) settledReading.settled = reading;
-      return settled ? "settled" : `${reading.faceHeights}/${reading.captionEnds}`;
-    })
+      if (settled) {
+        settledReading.settled = reading;
+        return "settled";
+      }
+      const changed = before
+        ? Object.entries(reading)
+            .filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(before[field]))
+            .map(([field]) => field)
+        : ["first reading"];
+      return `face heights ${reading.faceHeights}, caption ends ${reading.captionEnds}, changed: ${changed.join(", ") || "none"}`;
+    }, { message: "the home cards should stop moving with one face height and one caption end" })
     .toBe("settled");
   const shape = settledReading.settled;
   if (!shape) throw new Error("the card layout never settled");
