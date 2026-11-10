@@ -950,7 +950,8 @@ ad_hoc_upstream_fake_files = 46
 # Train 40 integration: the shared AST scanner measures 431 unreviewed sites.
 # Train 41 lane B: hermetic collection 26867; domain literals 423 after protocol selectors moved to data.
 # Train 41 integration: lane A removed 12 sites and lane B 8 from 431; 411 remain.
-domain_literals = 411
+# Triage 3 (2026-11-10): 14 protocol-edge sites reviewed (group 4 design 5, triage 3a 3, triage 3b 6); 411 -> 397.
+domain_literals = 397
 
 # XC task 1: model vocabularies and implication roles moved to capability_intent_metadata.yml.
 # XC task 2: binding names, managed input words and legacy role paths moved to frontend data.
