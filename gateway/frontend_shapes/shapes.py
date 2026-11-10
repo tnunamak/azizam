@@ -623,17 +623,22 @@ class OpenAIVideoCreate(VideoViews, Shape):
         recorded = getattr(jobs, "request_facts", lambda *_: None)(outcome.job_id, caller)
         facts = {**facts, **(recorded or {})}
         now = outcome.created_at_s
+        prompt = None
+        if self.shape_id == OpenAIVideoCreate.shape_id and not getattr(caller, "person_id", None):
+            prompt = getattr(getattr(request, "state", None), "video_prompt", None)
         body = {
             "id": self.wire_id(outcome.job_id), "object": self.wire_name, "model": facts.get("model"),
             "azizam_resolved_model": facts.get("resolved_model"), "status": "queued", "progress": 0, "created_at": now,
-            "completed_at": None, "expires_at": now + EXPIRY_S, "prompt": None, "remixed_from_video_id": None, "error": None,
+            "completed_at": None, "expires_at": now + EXPIRY_S, "prompt": prompt,
+            "remixed_from_video_id": facts.get("remixed_from_video_id"), "error": None,
             "size": facts.get("size"), "seconds": facts.get("seconds"), "actual_seconds": facts.get("actual_seconds")}
-        requested, actual = facts.get("seconds"), facts.get("actual_seconds")
+        requested = facts.get("seconds")
         adjusted = None
         try:
-            if requested is not None and actual is not None and abs(float(actual) - float(requested)) > 0.05:
+            actual = float(facts["length_frames"]) / float(facts["frame_rate"])
+            if requested is not None and actual != float(requested):
                 adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason=frame_count_stride"
-        except (TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
             adjusted = None
         headers = _wire.result_headers(row.result_headers, {"duration_adjusted": adjusted})
         return JSONResponse(body, headers=headers)
@@ -712,3 +717,27 @@ class OpenAIVideoRemix(OpenAIVideoCreate):
     run is the edit shape's, with that id as the source."""
 
     shape_id = "openai.video.remix"
+    files = OpenAIVideoEdit.files
+    file_inputs = OpenAIVideoEdit.file_inputs
+    legacy_route = OpenAIVideoEdit.legacy_route
+
+    async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
+        from gateway.frontend_shapes import video_create
+        body = await video_create.read_body(self, request)
+        if isinstance(body, Response):
+            return body
+        # Read the same edit wire with its source supplied by the route, never by a second body id.
+        payload = json.dumps({**body, self.wire_name: {"id": request.path_params.get("video_id")}}).encode()
+
+        async def receive():
+            return {"type": "http.request", "body": payload, "more_body": False}
+
+        headers = [(key, value) for key, value in request.scope["headers"]
+                   if key.lower() not in (b"content-type", b"content-length")]
+        headers += [(b"content-type", b"application/json"), (b"content-length", str(len(payload)).encode())]
+        adapted = Request({**request.scope, "headers": headers}, receive)
+        run = await OpenAIVideoEdit.to_run_request(self, adapted, row, snapshot, spool=spool)
+        if not isinstance(run, Response):
+            request.state.video_facts = dict(run.facts)
+            request.state.video_prompt = run.inputs.get("prompt")
+        return run
