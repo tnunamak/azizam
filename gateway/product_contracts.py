@@ -3,18 +3,42 @@
 These describe caller-visible data. They do not import the running gateway or
 its stores; generation and contract validation need no instance credentials.
 """
+import json
+from pathlib import Path
 from typing import Literal
 from typing_extensions import NotRequired, TypedDict
+
+_MODEL_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "registry/defaults/models.schema.json"
+with _MODEL_SCHEMA_PATH.open(encoding="utf-8") as _schema_file:
+    _model_schema = json.load(_schema_file)
+
+
+def _metadata_enum(*keys: str) -> list[str]:
+    path = ("additionalProperties", "properties", "model_metadata", "properties", *keys, "enum")
+    value = _model_schema
+    try:
+        for key in path:
+            value = value[key]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"Missing model metadata schema enum: {'.'.join(path)}") from exc
+    if not isinstance(value, list) or not value or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise ValueError(
+            f"Model metadata schema enum {'.'.join(path)} must be a non-empty array of non-empty strings"
+        )
+    return value
+
 
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "unknown", "unavailable"]
 # An icon key names a capability id from registry/capability_words.yml; the set grows with the rows.
 CapabilityIconKey = str
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
-# The `/v1/models` metadata vocabulary (gateway/model_metadata.py, docs/api/MODEL_METADATA.md).
-ModelType = Literal["language", "embedding", "reranking", "image", "video", "audio", "decision"]
-InputModality = Literal["text", "image", "audio", "video", "file"]
-OutputModality = Literal["text", "image", "audio", "video", "embedding"]
-ModelTag = Literal["tool-use", "reasoning", "vision", "file-input"]
+# The same metadata vocabulary operators validate in registry/defaults/models.schema.json.
+ModelType = Literal[tuple(_metadata_enum("type"))]
+InputModality = Literal[tuple(_metadata_enum("input_modalities", "items"))]
+OutputModality = Literal[tuple(_metadata_enum("output_modalities", "items"))]
+ModelTag = Literal[tuple(_metadata_enum("tags", "items"))]
 
 
 class AvailabilityEvidence(TypedDict, total=False):
