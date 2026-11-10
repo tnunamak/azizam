@@ -599,7 +599,9 @@ def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: C
                     # A recorded partial restore runs its declared reset (SERVICE_TRANSITION_GATE.md, restore
                     # partial); only a verified clean, ready target serves cold. Without a reset, or without a
                     # clean verification, the gate stays failed_closed.
-                    resets_clean = cell.stage == "restore" and cell.reset and cell.late == "clean"
+                    # A reset that already ran and could not be read (restore:U with no answer) is not run again.
+                    resets_clean = (cell.stage == "restore" and cell.reset and cell.late == "clean"
+                                    and cell.value is True)
                     if resets_clean:
                         resolved = await rig.executor.wait(done.op_id)
                     assert (rig.gates.state("dom"), resolved.state) == PAIRS["O" if resets_clean else "F"]
