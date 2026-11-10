@@ -146,7 +146,7 @@ look at the picture.
 
 1. Sidecar venv: `uv venv ~/applications/face-service/venv --python 3.12 && uv pip install --python
    ~/applications/face-service/venv/bin/python -r services/face-service/requirements.txt`.
-2. Models in `/media/windows/AI Models/insightface/models/{buffalo_l,antelopev2}/` (about 1.1 GB; the
+2. Models in `/path/to/models/insightface/models/{buffalo_l,antelopev2}/`; the operator chooses the root and sets `FACE_MODEL_ROOT` to the parent `insightface` directory (about 1.1 GB; the
    unzipped `buffalo_l.zip` and `antelopev2.zip` from the insightface v0.7 release).
 3. `cp services/face-service/face-service.service ~/.config/systemd/user/ && systemctl --user
    daemon-reload`. The gateway starts it on demand (`identity.face_service`, an `identity` config section entry the owner sets with the config API; an install that had it in `proxy_config.yml` has it imported once at first boot);

@@ -7,7 +7,8 @@ After=network.target
 [Service]
 Type=simple
 Environment=LLAMA_SERVER=%h/applications/llamacpp-official-b11337-fa-all-quants/bin/llama-server
-Environment="DECIDER_MODEL=/media/windows/AI Models/LLMs/GGUF/decider-4b-v2.1/decider-4b-v2.1-Q4_K_M.gguf"
+# This file sets DECIDER_MODEL to the operator's model file.
+EnvironmentFile=%h/.config/azizam/decider-quality.env
 Environment=DECIDER_MODEL_ID=decider-4b-v2.1
 Environment=DECIDER_PLACEMENT=cpu
 Environment=DECIDER_RESIDENCY=on_demand

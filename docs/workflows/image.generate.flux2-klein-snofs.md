@@ -24,7 +24,7 @@ Krea manifest do.
 
 ## LoRA facts
 
-- File: `Diffusion/loras/klein_snofs_v1_4.safetensors` (1.09 GB, on `/media/windows/AI Models`).
+- File: `/path/to/models/Diffusion/loras/klein_snofs_v1_4.safetensors` (1.09 GB; the operator chooses the model root, shown as `/path/to/models`).
 - Format: LoKr (`lokr_w1` and `lokr_w2` keys). `LoraLoaderModelOnly` applies it to the UNet only.
 - Base: the safetensors metadata has `ss_base_model_version` = `flux2_klein_9b` and was written by
   ai-toolkit 0.9.4. The LoRA is for the 9B base, so it does not belong on the 4B workflows.

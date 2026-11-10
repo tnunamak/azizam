@@ -11,7 +11,8 @@ Type=simple
 # process; the wrapper also passes --device none because llama.cpp otherwise puts compute buffers on GPU0.
 Environment=CUDA_VISIBLE_DEVICES=
 Environment=LLAMA_SERVER=%h/applications/llamacpp-official-b11337-fa-all-quants/bin/llama-server
-Environment="RERANK_MODEL=/media/windows/AI Models/rerankers/qwen3-reranker-0.6b/Qwen3-Reranker-0.6B-Q5_K_M.gguf"
+# This file sets RERANK_MODEL to the operator's model file.
+EnvironmentFile=%h/.config/azizam/rerank-cpu.env
 Environment=RERANK_PORT=8018
 Environment=RERANK_THREADS=8
 Environment=RERANK_CTX=4096

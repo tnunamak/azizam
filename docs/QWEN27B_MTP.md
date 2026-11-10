@@ -10,12 +10,12 @@ the model's native MTP speculative decoding head.
 - Exact fork/tag tested: `QuinsZouls/llama-cpp-turboquant`,
   `llama-next-b9265-1e5a46d`
 - MTP model:
-  `/media/windows/AI Models/LLMs/GGUF/MTP/Qwen3.6-27B-MTP-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf`
+  `/path/to/models/LLMs/GGUF/MTP/Qwen3.6-27B-MTP-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf` (the operator chooses the model root)
 - Runner: `scripts/local/run_qwen27b_mtp.sh`
 - User service: `llama-mtp.service`
 - Benchmark harness: `scripts/local/bench_llm_endpoint.py`
 
-The model lives under `/media/windows/AI Models`, not the Hugging Face cache.
+The model lives under an operator-chosen root, shown as `/path/to/models`, not the Hugging Face cache.
 Wiping `~/.cache/huggingface` must not affect this service.
 
 ## Recommendation
@@ -70,12 +70,12 @@ on this short benchmark.
 
 ## Validation Commands
 
-Isolated test without touching the production port:
+Isolated test without touching the production port; `LLAMA_MTP_MODEL` must name the model file:
 
 ```bash
 TURBO_AUTO_ASYMMETRIC=0 CUDA_VISIBLE_DEVICES=1 \
   /path/to/llama-tq-mtp/build/bin/llama-server \
-    --model "/media/windows/AI Models/LLMs/GGUF/MTP/Qwen3.6-27B-MTP-GGUF/Qwen3.6-27B-UD-Q4_K_XL.gguf" \
+    --model "$LLAMA_MTP_MODEL" \
     --port 5052 \
     --host 127.0.0.1 \
     --n-gpu-layers 999 \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run Qwen3.6-27B with TurboQuant KV cache and MTP speculative decoding.
 #
-# This intentionally uses the model file under /media/windows/AI Models, not the
+# The operator chooses the model root (shown as /path/to/models), not the
 # Hugging Face cache, so wiping ~/.cache/huggingface does not break the service.
 #
 # STATUS (2026-06-17): llama-mtp.service is DISABLED and does not work on the
@@ -26,7 +26,10 @@ set -euo pipefail
 
 LLAMA_MTP_APP="${LLAMA_MTP_APP:-$HOME/applications/llama-tq-mtp}"
 LLAMA_MTP_BIN="${LLAMA_MTP_BIN:-$LLAMA_MTP_APP/build/bin/llama-server}"
-LLAMA_MTP_MODEL="${LLAMA_MTP_MODEL:-/media/windows/AI Models/LLMs/GGUF/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf}"
+if [ -z "${LLAMA_MTP_MODEL:-}" ]; then
+    echo "LLAMA_MTP_MODEL must name the model file" >&2
+    exit 2
+fi
 LLAMA_MTP_PORT="${LLAMA_MTP_PORT:-5051}"
 LLAMA_MTP_HOST="${LLAMA_MTP_HOST:-127.0.0.1}"
 LLAMA_MTP_CTX="${LLAMA_MTP_CTX:-196608}"
