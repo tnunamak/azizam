@@ -603,10 +603,12 @@ def _python_example(
                 "print(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
             )
         )
+    extra = "".join(f", {name!r}: {value!r}" for name, value in (headers or {}).items())
     return (
         "import os\nimport requests\n\n"
         f"response = requests.request({method!r}, {url!r},\n"
-        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n"
+        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\""
+        + extra + "},\n"
         f"    json={dict(body)!r}, timeout=300)\n"
         "response.raise_for_status()\n"
         + (
@@ -673,10 +675,12 @@ def _javascript_example(
         "console.log(await response.json());"
     )
     import_line = "import { writeFile } from 'node:fs/promises';\n" if binary_response else ""
+    extra = "".join(f", {json.dumps(name)}: {json.dumps(value)}" for name, value in (headers or {}).items())
     return (
         f"{import_line}const response = await fetch({json.dumps(url)}, {{\n"
         f"  method: {json.dumps(method)},\n"
-        "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n"
+        "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json'"
+        + extra + " },\n"
         f"  body: JSON.stringify({json.dumps(dict(body), indent=2)}),\n"
         f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
     )
