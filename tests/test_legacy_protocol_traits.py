@@ -74,3 +74,11 @@ def test_unknown_implementation_is_skipped_at_load(tmp_path, monkeypatch):
     assert set(description.load_registry(description.REGISTRY_DIR)) == {
         path.stem for path in description.REGISTRY_DIR.glob("*.yml")
     }
+
+
+def test_renamed_chunked_implementation_requires_filenames():
+    raw = raw_document("chunked-stt")
+    raw.update(id="fixture-transcriber", executor="adapter:fixture-transcriber")
+    raw.pop("multipart_filenames")
+    with pytest.raises(DescriptionError, match="multipart_filenames"):
+        description.parse_description(raw, source="fixture-transcriber.yml")
