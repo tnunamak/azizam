@@ -331,7 +331,7 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         )
         self.assertIn("image", default_role.input_modalities)
 
-    def test_vision_role_name_implies_vision(self):
+    def test_vision_role_gets_image_input_from_its_backend(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
         vision_role = next(
             c for c in caps if c.intent == INTENT_CHAT and c.model == "role:vision"
