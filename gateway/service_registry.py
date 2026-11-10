@@ -1748,13 +1748,12 @@ def service_base_url(config: Mapping[str, Any]) -> str:
     ).strip()
     if raw:
         return raw.rstrip("/")
-    host = str(config.get("host") or "").strip()
-    port = config.get("port")
-    if not host or port is None:
+    # Host and port build the URL only through host_port_origin, which refuses an invalid host, port or scheme.
+    origin = host_port_origin(config)
+    if not origin:
         return ""
-    scheme = str(config.get("scheme") or "http").strip() or "http"
     base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
-    return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
+    return f"{origin}/{base_path.strip('/')}".rstrip("/")
 
 
 def origin_of(url: str) -> str:
@@ -1908,9 +1907,9 @@ def host_port_origin(config: Mapping[str, Any]) -> str:
         host, port, scheme = _valid_host_port(config)
     except EngineAddressError:
         return ""
-    if ":" in host:
-        host = f"[{host}]"  # an IPv6 address needs its brackets to be a URL host
-    return f"{scheme}://{host}:{port}"
+    url = f"{scheme}://[{host}]:{port}" if ":" in host else f"{scheme}://{host}:{port}"  # IPv6 needs its brackets
+    # The URL a client parses must name the host the record shows, or it names no address.
+    return url if (urlsplit(url).hostname or "") == host.lower() else ""
 
 
 def lifecycle_dial_url(config: Mapping[str, Any]) -> str:
@@ -1952,13 +1951,14 @@ def _require_valid_host_port(config: Mapping[str, Any]) -> None:
 
 def _valid_host_port(config: Mapping[str, Any]) -> tuple[str, int, str]:
     """The record's bare host, port number and scheme; EngineAddressError, naming only the field, when one is invalid."""
-    scheme = str(config.get("scheme") or "http").strip() or "http"
+    scheme = (str(config.get("scheme") or "http").strip() or "http").lower()
     if scheme not in ("http", "https"):
         raise EngineAddressError("service record scheme is not http or https")
     host = str(config.get("host") or "").strip()
     bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     valid_host = bool(_HOSTNAME.fullmatch(bare))
-    if not valid_host and ":" in bare:
+    # An IPv6 scope id ("%eth0") may carry any text, and a URL parser reads it differently; no engine needs one.
+    if not valid_host and ":" in bare and "%" not in bare:
         try:
             ipaddress.ip_address(bare)
             valid_host = True
