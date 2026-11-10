@@ -954,11 +954,17 @@ records:
         canonical: /v1/3d/generations
         intent: mesh.generate
         capability: mesh
+        model_metadata:
+          input_modalities: [image]
+          output_modalities: [mesh]
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [POST]
         canonical: /v1/3d/generations/glb
         intent: mesh.generate
         capability: mesh
+        model_metadata:
+          input_modalities: [image]
+          output_modalities: [mesh]
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
     # A finished model is stored under the generic ``ast`` prefix; the job's content route and the asset content route
     # read this row for the plan check, as they read the img, aud and vid rows.

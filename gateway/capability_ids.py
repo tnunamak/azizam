@@ -16,6 +16,27 @@ import yaml
 CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "capability_words.yml"
 
 
+def _modality_words(document: Mapping[str, Any], path: Path) -> frozenset[str]:
+    words = document.get("modality_words")
+    if (not isinstance(words, list) or not words
+            or any(not isinstance(word, str) or not word.strip() or word != word.strip() for word in words)):
+        raise ValueError(f"{path.name}: modality_words must be a non-empty list of non-empty words")
+    if len(set(words)) != len(words):
+        raise ValueError(f"{path.name}: modality_words must not contain duplicates")
+    return frozenset(words)
+
+
+def load_modality_words(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
+    """The registered wire-facing modality vocabulary; not capability aliases or MIME types."""
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{path.name}: modality_words could not be loaded: {error}") from error
+    if not isinstance(document, dict):
+        raise ValueError(f"{path.name}: modality_words requires a mapping document")
+    return _modality_words(document, path)
+
+
 def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
@@ -38,10 +59,14 @@ def _load_capability_tables(path: Path) -> tuple[
     if not isinstance(document, dict):
         raise invalid("<document>", "must be a mapping")
     for key in document:
-        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents", "type_capabilities", "audio_rule"}:
+        if key not in {"schema_version", "capabilities", "protocol_words", "route_intents",
+                       "type_capabilities", "audio_rule", "modality_words"}:
             raise invalid_table("document", key, "is an unknown top-level key")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be the integer 1")
+
+    if "modality_words" in document:
+        _modality_words(document, path)
 
     rows = document.get("capabilities")
     if not isinstance(rows, list) or not rows:
@@ -184,6 +209,8 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
  CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
  TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+
+MODALITY_WORDS = load_modality_words()
 
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's

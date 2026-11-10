@@ -1,5 +1,7 @@
 # Capability rows are in display order. Route intents list only extra words.
 schema_version: 1
+# Wire-facing modalities are distinct from capability IDs and MIME media types.
+modality_words: [text, image, audio, video, mesh]
 capabilities:
   - id: chat
     label: Chat
