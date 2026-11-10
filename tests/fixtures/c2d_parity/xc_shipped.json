@@ -1208,7 +1208,7 @@
         "rejected": {
           "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
           "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
-          "reference_image_2": "reference_image_2 is managed by the standard the standard request shape request field; do not pass it as a workflow extension",
+          "reference_image_2": "reference_image_2 is managed by the standard request shape; do not pass it as a workflow extension",
           "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
           "undeclared_probe": "unknown input"
         }

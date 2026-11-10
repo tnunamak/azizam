@@ -14,20 +14,17 @@ import sqlite3
 from typing import Any, Mapping
 
 from gateway import service_registry
+from gateway.compatibility import COMPATIBILITY
 
 TIMING_DIAGNOSTIC_ROW: dict[str, Any] = {"kind": "drop-params", "phase": "response", "drop": ["timing"]}
-# Every spelling under which a service is chosen for speech-to-text.
-_STT_CAPABILITIES = frozenset({
-    "transcriptions", "translations", "translation", "stt", "audio.transcriptions", "audio.translations",
-})
-# Service response rows also run on chat completions; a chat service keeps its answers unchanged.
-_CHAT_CAPABILITIES = frozenset({"chat", "completions"})
 
 
 def attach_timing_row(config: dict[str, Any], capabilities: Any) -> bool:
     """Append the row to a speech-to-text service's config unless it is there; True when added."""
     declared = {str(cap).strip().lower() for cap in service_registry.normalize_string_list(capabilities)}
-    if declared & _CHAT_CAPABILITIES or not (declared & _STT_CAPABILITIES or isinstance(config.get("chunking"), dict)):
+    selector = COMPATIBILITY.migration
+    if declared.intersection(selector.exclude_capabilities) or not (
+            declared.intersection(selector.include_capabilities) or isinstance(config.get(selector.config_mapping), dict)):
         return False
     transforms = config.get("transforms")
     # The old chunk parser never read attachments, so a non-list value carried no rows.

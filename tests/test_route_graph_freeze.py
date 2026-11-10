@@ -260,7 +260,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-09 for the combined train 38 (video-int, the video ship checks and release/c2d-38 merged): the
         # create-video operation now comes from the videos-create frontend row and the data-only registered_routes row.
         # Before it the digest was 28560d4c8bd8c5ed2313bc28ddb54f06ed9796e3a801f5c2207b8837cab628c1.
-        assert route_graph.openapi_digest(proxy.app) == "bcc462e4b8a834d514c523692450ac6023ff53a237f11e49ed8c41ee08005c08"
+        # DELETE now uses the published video.deleted discriminator on both route aliases.
+        assert route_graph.openapi_digest(proxy.app) == "fde56f52f7d227f0c6134124f01d8083eaedff2589e7c3b11f749d5d90211d00"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.

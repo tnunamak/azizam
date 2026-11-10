@@ -141,9 +141,9 @@ def _reject_route_managed_inputs(
     rejected: dict[str, str] = {}
     for name, value in supplied.items():
         if name in managed:
-            hint = hints.get(name, "the standard request shape")
+            field = f"the standard {hints[name]} request field" if name in hints else "the standard request shape"
             rejected[name] = (
-                f"{name} is managed by the standard {hint} request field; "
+                f"{name} is managed by {field}; "
                 "do not pass it as a workflow extension"
             )
         else:

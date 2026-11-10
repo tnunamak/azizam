@@ -54,8 +54,9 @@ class VideoLimitsTests(unittest.TestCase):
 
     def test_lookup_accepts_config_keys_and_registry_ids(self) -> None:
         published = video_limits(VIDEOS)
+        published["video-ltx-2.5-long"] = published["video-a-long"]
         self.assertIs(limits_for_workflow(published, "video-a-long"), published["video-a-long"])
-        self.assertIs(limits_for_workflow(published, "video.generate.a-long"), published["video-a-long"])
+        self.assertIs(limits_for_workflow(published, "video.generate.ltx-2.5-long"), published["video-a-long"])
         self.assertEqual(limits_for_workflow(published, "image.generate.x"), {})
         self.assertEqual(limits_for_workflow(published, None), {})
 

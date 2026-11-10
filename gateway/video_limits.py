@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from gateway.compatibility import COMPATIBILITY
+
 DEFAULT_MAX_TOTAL_SECONDS = 40.0
 DEFAULT_CHAIN_SEGMENT_SECONDS = 8.0
 
@@ -82,7 +84,5 @@ def limits_for_workflow(
         return {}
     if workflow in published:
         return published[workflow]
-    for prefix in ("video.generate.", "video.edit."):
-        if workflow.startswith(prefix):
-            return published.get(f"video-{workflow[len(prefix):]}", {})
-    return {}
+    alias = COMPATIBILITY.limit_key_aliases.get(workflow)
+    return published.get(alias, {}) if alias else {}

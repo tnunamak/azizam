@@ -415,6 +415,14 @@ RERECORDED: dict[str, str] = {
                                "the body is compact JSON (video_id_namespace and json spacing only)",
     "s7_ve_admission_refusal": "as s7_vc_admission_refusal",
 }
+# Authorized snapshot correction: only fact ledger rows and receipt revision hashes
+# changed; the deletion contract also adds eight bytes to its response body.
+for _scenario in ("video_lifecycle", "video_extend", "video_create_unreachable",
+                  "s7_vc_replay_same", "s7_vc_replay_conflict", "s7_vc_cancel_queued", "s7_vc_cancel_finished",
+                  "s7_ve_success", "s7_ve_replay_same", "s7_ve_replay_conflict", "s7_ve_cancel_queued", "s7_ve_cancel_finished"):
+    RERECORDED[_scenario] += "; video receipts now retain the destination fact snapshot captured before dispatch"
+RERECORDED["video_lifecycle"] += "; DELETE uses the published video.deleted discriminator and its content length"
+
 #: Re-records that change what is sent to the engine. These are the behaviour-preservation exceptions to report, not hide.
 ENGINE_FACING_CHANGES = frozenset({"video_lifecycle", "video_extend", "s7_ve_success", "s7_ve_replay_same", "s7_ve_replay_conflict",
                                    "s7_ve_cancel_queued", "s7_ve_cancel_finished"})
