@@ -37,7 +37,7 @@ def test_legacy_input_alias_normalizes_to_asset_contract(tmp_path: Path, monkeyp
     assert legacy == before
     assert list(m.asset_leaf_specs(canonical)) == [canonical]
     assert m.accepts_of(canonical) == ("application/pdf",)
-    for reference in ("asset:one", "https://example.test/a.pdf", {"asset_id": "one"}, "", {}):
+    for reference in ("asset:one", "https://example.com/a.pdf", {"asset_id": "one"}, "", {}):
         assert m.validate_input_value("source", reference, legacy) is None
         assert m.validate_input_value("source", reference, canonical) is None
     for value in (None, False, 7, 1.5, []):
@@ -51,7 +51,7 @@ def test_legacy_input_alias_normalizes_to_asset_contract(tmp_path: Path, monkeyp
 def test_supported_legacy_reference_acceptance_is_unchanged() -> None:
     # This test also runs unchanged on the base, independently of the new normalizer.
     legacy = {"type": "image"}
-    for reference in ("", "asset:one", "https://example.test/a.png", "data:image/png;base64,AA==", {}, {"asset_id": "one"}):
+    for reference in ("", "asset:one", "https://example.com/a.png", "data:image/png;base64,AA==", {}, {"asset_id": "one"}):
         assert m.validate_input_value("source", reference, legacy) is None
     for value in (None, False, 7, 1.5, [], ["asset:one"]):
         assert m.validate_input_value("source", value, legacy) == "source must be an asset reference"

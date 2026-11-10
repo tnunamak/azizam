@@ -200,8 +200,10 @@ def test_metadata_contract_refuses_invalid_data(tmp_path, location, value):
 
 @pytest.mark.parametrize("duplicate", ["schema_version: 1\n", "derivation:\n  scalar_input: text\n"])
 def test_metadata_contract_refuses_duplicate_yaml_fields(tmp_path, duplicate):
-    path = _write(tmp_path, "duplicate.yml", _document())
-    path.write_text(path.read_text(encoding="utf-8") + duplicate, encoding="utf-8")
+    path = _write(tmp_path, "invalid.yml", _document())
+    # Duplicate inside the vocabulary section, not as an unrelated outer field.
+    repeated = "".join("  " + line + "\n" for line in duplicate.splitlines())
+    path.write_text(path.read_text(encoding="utf-8") + repeated, encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate"):
         mm.load_metadata_contract(path)
 
