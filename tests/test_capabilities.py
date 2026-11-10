@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -319,6 +320,76 @@ class SummarizeCapabilitiesOrderingTests(unittest.TestCase):
         first = summarize_capabilities([a, b, c], audience="admin")
         second = summarize_capabilities([c, b, a], audience="admin")
         self.assertEqual(first, second)
+
+
+class OutputModalityTests(unittest.TestCase):
+    def test_existing_media_types_keep_their_modalities(self) -> None:
+        from gateway.capabilities import _media_type_modality
+
+        cases = (
+            ("image/png", "image"),
+            ("audio/wav", "audio"),
+            ("video/mp4", "video"),
+            ("text/plain", "text"),
+            ("application/json", "text"),
+            ("model/gltf-binary", None),
+        )
+        for media_type, expected in cases:
+            with self.subTest(media_type=media_type):
+                self.assertEqual(_media_type_modality(media_type), expected)
+
+    def test_extra_modality_is_read_from_a_vocabulary_fixture(self) -> None:
+        from gateway import capabilities
+        from gateway.capability_ids import CAPABILITY_WORDS_PATH, load_modality_words
+
+        document = yaml.safe_load(CAPABILITY_WORDS_PATH.read_text(encoding="utf-8"))
+        document["modality_words"].extend(["font", "application"])
+        self.assertIsNone(capabilities._media_type_modality("font/woff2"))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "capability_words.yml"
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with patch.object(capabilities, "MODALITY_WORDS", load_modality_words(path)):
+                self.assertEqual(capabilities._media_type_modality("font/woff2"), "font")
+                self.assertEqual(capabilities._media_type_modality("application/pdf"), "application")
+                self.assertEqual(capabilities._media_type_modality("application/json"), "text")
+                self.assertEqual(
+                    capabilities._derive_output_modalities({
+                        "first": {"media_type": "font/woff2"},
+                        "duplicate": {"media_type": "font/ttf"},
+                        "caption": {"media_type": "text/plain"},
+                    }),
+                    ("font", "text"),
+                )
+
+    def test_bare_words_and_unregistered_majors_are_not_modalities(self) -> None:
+        from gateway.capabilities import _media_type_modality
+
+        for media_type in ("", "image", "audio", "video", "application/octet-stream"):
+            with self.subTest(media_type=media_type):
+                self.assertIsNone(_media_type_modality(media_type))
+
+    def test_shipped_output_media_types_match_the_frozen_base(self) -> None:
+        from gateway.capabilities import _media_type_modality
+
+        folder = ROOT / "manifests" / "workflows"
+        paths = sorted(path for path in folder.rglob("*") if path.suffix in {".yml", ".yaml"})
+        self.assertTrue(paths, "No shipped manifests found; parity must not pass vacuously")
+        checked = 0
+        for path in paths:
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+            outputs = document.get("outputs") if isinstance(document, dict) else None
+            if not isinstance(outputs, dict):
+                continue
+            for name, spec in outputs.items():
+                if not isinstance(spec, dict):
+                    continue
+                media_type = str(spec.get("media_type") or "")
+                with self.subTest(manifest=str(path.relative_to(ROOT)), output=name):
+                    self.assertEqual(
+                        _media_type_modality(media_type), _base_media_type_modality(media_type)
+                    )
+                checked += 1
+        self.assertGreater(checked, 0, "No shipped outputs found; parity must not pass vacuously")
 
 
 class InputModalityTests(unittest.TestCase):
