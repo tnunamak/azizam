@@ -7,6 +7,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -14,7 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import local_capabilities  # noqa: E402
+from gateway import local_capabilities, model_metadata as mm  # noqa: E402
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capabilities  # noqa: E402
 from tests.support import c2d_parity  # noqa: E402
 from gateway.local_capabilities import (  # noqa: E402
@@ -67,12 +68,15 @@ REPRESENTATIVE_CONFIG: dict = {
             "backend": "kobold",
             "model": "/secret/path/Qwen3.6-27B.gguf",
             "mmproj": "/secret/path/mmproj.gguf",
+            "model_metadata": {"input_modalities": ["text", "image"]},
         },
         "vision": {
             "backend": "tabby",
+            "model_metadata": {"input_modalities": ["text", "image"]},
         },
         "text-only-role": {
             "backend": "kobold",
+            "model_metadata": {"input_modalities": ["text"]},
         },
     },
     "models": [
@@ -81,12 +85,14 @@ REPRESENTATIVE_CONFIG: dict = {
             "backend": "kobold",
             "path": "/secret/path/heretic.gguf",
             "mmproj": "/secret/path/mmproj.gguf",
+            "model_metadata": {"input_modalities": ["text", "image"]},
         },
         {
             "id": "cydonia-24b",
             "backend": "kobold",
             "path": "/secret/path/cydonia.gguf",
             "mmproj": None,
+            "model_metadata": {"input_modalities": ["text"]},
         },
     ],
     "videos": {
@@ -134,7 +140,181 @@ def _by_intent(caps, intent):
     return [c for c in caps if c.intent == intent]
 
 
+class ReadDeclaredInputModalitiesTest(unittest.TestCase):
+    def test_absent_parent_or_field_is_undeclared(self):
+        for record in ({}, {"model_metadata": {}}, {"model_metadata": {"tags": ["vision"]}}):
+            with self.subTest(record=record):
+                self.assertIsNone(mm.read_declared_input_modalities(record, "role:sample"))
+
+    def test_explicit_null_input_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "role:sample.model_metadata.input_modalities"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": None}}, "role:sample"
+            )
+
+    def test_malformed_parent_is_invalid(self):
+        for declaration in (None, False, 1, "text", [], ["text"]):
+            with self.subTest(declaration=declaration), self.assertRaisesRegex(
+                ValueError, "role:sample.model_metadata: must be a mapping"
+            ):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": declaration}, "role:sample"
+                )
+
+    def test_non_list_input_is_invalid(self):
+        for values in (False, 1, "text", {"text": True}, ("text",), {"text"}):
+            with self.subTest(values=values), self.assertRaisesRegex(ValueError, "nonempty list"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": values}}, "model:sample"
+                )
+
+    def test_empty_input_list_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "nonempty list"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": []}}, "model:sample"
+            )
+
+    def test_unknown_input_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "outside the input vocabulary"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": ["unregistered-input"]}}, "model:sample"
+            )
+
+    def test_duplicate_input_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": ["text", "text"]}}, "model:sample"
+            )
+
+    def test_noncanonical_strings_are_invalid(self):
+        for value in ("", "Text", "TEXT", " text", "text ", "\ttext"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "canonical strings"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": [value]}}, "model:sample"
+                )
+
+    def test_non_string_elements_are_invalid(self):
+        for value in (None, False, 1, [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "canonical strings"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": ["text", value]}}, "model:sample"
+                )
+
+    def test_result_follows_contract_order(self):
+        values = list(reversed(mm.METADATA_CONTRACT.input_modalities))
+        self.assertEqual(
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": values}}, "model:sample"
+            ),
+            mm.METADATA_CONTRACT.input_modalities,
+        )
+
+    def test_known_audio_and_file_inputs_are_accepted(self):
+        self.assertEqual(
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": ["file", "audio"]}}, "model:sample"
+            ),
+            ("audio", "file"),
+        )
+
+    def test_reader_does_not_mutate_valid_or_invalid_records(self):
+        for values in (["image", "text"], ["text", "text"], ["text", {}]):
+            record = {"model_metadata": {"input_modalities": values, "tags": ["vision"]}}
+            before = json.loads(json.dumps(record))
+            with self.subTest(values=values):
+                if values == ["image", "text"]:
+                    self.assertEqual(mm.read_declared_input_modalities(record, "row:1"), ("text", "image"))
+                else:
+                    with self.assertRaises(ValueError):
+                        mm.read_declared_input_modalities(record, "row:1")
+                self.assertEqual(record, before)
+
+    def test_errors_use_safe_row_identity_without_record_contents(self):
+        private_path = "/private/operator/model.gguf"
+        for declaration, field in (
+            (private_path, "model_metadata"),
+            ({"input_modalities": [private_path]}, "model_metadata.input_modalities"),
+            ({"input_modalities": {"path": private_path}}, "model_metadata.input_modalities"),
+        ):
+            record = {
+                "path": private_path,
+                "description": "private operator note",
+                "model_metadata": declaration,
+            }
+            with self.subTest(field=field), self.assertRaises(ValueError) as error:
+                mm.read_declared_input_modalities(record, "models[3]")
+            message = str(error.exception)
+            self.assertTrue(message.startswith(f"models[3].{field}: "))
+            self.assertNotIn(private_path, message)
+            self.assertNotIn("private operator note", message)
+
+    def test_text_only_declaration_is_complete_despite_other_signals(self):
+        record = {
+            "id": "vision",
+            "backend": "vision",
+            "capabilities": ["vision"],
+            "mmproj": "/not-installed/projector.gguf",
+            "model_metadata": {"input_modalities": ["text"], "tags": ["vision"]},
+        }
+        self.assertEqual(mm.read_declared_input_modalities(record, "role:vision"), ("text",))
+
+    def test_alternate_contract_controls_membership_and_order(self):
+        contract = dataclasses.replace(
+            mm.METADATA_CONTRACT,
+            input_modalities=("control", "sample", "blob"),
+            scalar_input="control",
+            input_priority=(),
+            implications=(),
+        )
+        with patch.object(mm, "METADATA_CONTRACT", contract):
+            self.assertEqual(
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": ["blob", "sample"]}}, "row:1"
+                ),
+                ("sample", "blob"),
+            )
+            with self.assertRaisesRegex(ValueError, "outside the input vocabulary"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": ["text"]}}, "row:1"
+                )
+
+
 class BuildLocalCapabilitiesTest(unittest.TestCase):
+    def test_representative_declarations_and_emitted_inputs_are_exact(self):
+        expected = [
+            ("role:default", ("text", "image")),
+            ("role:vision", ("text", "image")),
+            ("role:text-only-role", ("text",)),
+            ("heretic-v2", ("text", "image")),
+            ("cydonia-24b", ("text",)),
+        ]
+        records = [
+            (f"role:{name}", spec) for name, spec in REPRESENTATIVE_CONFIG["roles"].items()
+        ] + [(spec["id"], spec) for spec in REPRESENTATIVE_CONFIG["models"]]
+        self.assertEqual(
+            [(identity, mm.read_declared_input_modalities(spec, identity)) for identity, spec in records],
+            expected,
+        )
+        self.assertEqual(
+            [(cap.model, cap.input_modalities) for cap in build_local_capabilities(REPRESENTATIVE_CONFIG)
+             if cap.intent == INTENT_CHAT and cap.model is not None],
+            expected,
+        )
+
+    def test_fixture_declarations_do_not_change_any_emitted_modalities(self):
+        undeclared = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+        for spec in [*undeclared["roles"].values(), *undeclared["models"]]:
+            del spec["model_metadata"]
+
+        def modalities(config):
+            return [
+                (cap.intent, cap.backend, cap.model, cap.workflow,
+                 cap.input_modalities, cap.output_modalities)
+                for cap in build_local_capabilities(config)
+            ]
+
+        self.assertEqual(modalities(REPRESENTATIVE_CONFIG), modalities(undeclared))
+
     def test_llm_roles_emit_chat_capabilities(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
         chat = _by_intent(caps, INTENT_CHAT)

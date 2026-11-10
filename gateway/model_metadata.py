@@ -198,6 +198,44 @@ DECLARABLE_FIELDS: tuple[str, ...] = (
     "type", "input_modalities", "output_modalities", "max_tokens", "tags",
 )
 
+
+def read_declared_input_modalities(
+    record: Mapping[str, Any], row_label: str,
+) -> tuple[str, ...] | None:
+    """Read one complete input declaration without inference or normalization.
+
+    Return None only when the parent or field is absent. The caller supplies a
+    safe record identity as row_label, never a filesystem path or record dump.
+    Errors identify that row and field but never include declaration values.
+    This reader is deliberately independent of the derived metadata overlay.
+    """
+    if DECLARATION_KEY not in record:
+        return None
+    declaration = record[DECLARATION_KEY]
+    if not isinstance(declaration, Mapping):
+        raise ValueError(f"{row_label}.{DECLARATION_KEY}: must be a mapping")
+    if "input_modalities" not in declaration:
+        return None
+
+    values = declaration["input_modalities"]
+    at = f"{row_label}.{DECLARATION_KEY}.input_modalities"
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"{at}: must be a nonempty list")
+    present: set[str] = set()
+    for value in values:
+        if (
+            not isinstance(value, str) or not value
+            or value != value.strip() or value != value.lower()
+        ):
+            raise ValueError(f"{at}: values must be nonempty canonical strings")
+        if value not in METADATA_CONTRACT.input_modalities:
+            raise ValueError(f"{at}: contains a value outside the input vocabulary")
+        if value in present:
+            raise ValueError(f"{at}: must not contain duplicates")
+        present.add(value)
+    return tuple(value for value in METADATA_CONTRACT.input_modalities if value in present)
+
+
 # Top-level response fields this module writes.
 OUTPUT_FIELDS: tuple[str, ...] = ("type", "architecture", "max_tokens", "tags")
 
