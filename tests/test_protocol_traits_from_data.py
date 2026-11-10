@@ -87,7 +87,8 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
             rows = remote_provider_model_capabilities("example", service)
             assert [row.intent for row in rows] == [doc.catalog_intent]
     incomplete = document("http-multipart")
-    incomplete.update(id="http-multipart-like", binding="http-multipart-like")
+    # No shipped executor default exists for this identity, so absent traits stay absent.
+    incomplete.update(id="http-multipart-like", binding="http-multipart-like", executor="adapter:fixture-unregistered")
     del incomplete["multipart"]
     del incomplete["implementation"]
     doc = parsed(incomplete)
