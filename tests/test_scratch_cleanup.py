@@ -110,6 +110,27 @@ wait $!
     assert not directory.exists()
 
 
+def test_the_watcher_holds_no_lock_or_pipe_of_its_caller(tmp_path: Path) -> None:
+    # ci-local holds the host lock on a descriptor; a watcher that kept a copy would hold the lock after ci-local ends.
+    script = f"""
+set -euo pipefail
+source {LIB}
+exec 9>"$1/host.lock"
+flock -n 9
+dir=$(mktemp -d "$1/fake-XXXXXX")
+scratch_reap_on_death "$dir"
+echo "$dir"
+"""
+    result = subprocess.run(["bash", "-c", script, "harness", str(tmp_path)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert subprocess.run(["flock", "-n", str(tmp_path / "host.lock"), "true"]).returncode == 0
+    directory = Path(result.stdout.strip())
+    deadline = time.monotonic() + 10
+    while directory.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not directory.exists()
+
+
 def test_a_dead_owners_directory_is_removed_when_the_next_harness_starts(tmp_path: Path) -> None:
     pid, started = _dead_pid()
     stale = _plant(tmp_path, "fake-stale", f"{pid}-{started}")

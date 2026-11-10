@@ -48,14 +48,22 @@ scratch_on_signal() {
 scratch_reap_on_death() {
   local started
   started=$(scratch_start_time $$) || return 0
+  # The watcher holds none of the caller's descriptors: an inherited lock or pipe would outlive the caller.
+  # A subshell closes them, then starts the watcher, so they are closed before the watcher exists.
   # The watcher reads /proc directly (no fork per poll) and holds no terminal or pipe open.
-  setsid -f bash -c '
-    owner=$1 started=$2; shift 2
-    while read -r line 2>/dev/null < "/proc/$owner/stat"; do
-      line=${line##*) }; fields=($line)
-      [[ ${fields[19]} == "$started" ]] || break
-      sleep 2
-    done
-    rm -rf -- "$@"
-  ' scratch-reaper "$$" "$started" "$@" </dev/null >/dev/null 2>&1 || true
+  (
+    for fd in /proc/$BASHPID/fd/*; do
+      fd=${fd##*/}
+      if (( fd > 2 )); then eval "exec $fd>&-" || true; fi
+    done 2>/dev/null
+    setsid -f bash -c '
+      owner=$1 started=$2; shift 2
+      while read -r line 2>/dev/null < "/proc/$owner/stat"; do
+        line=${line##*) }; fields=($line)
+        [[ ${fields[19]} == "$started" ]] || break
+        sleep 2
+      done
+      rm -rf -- "$@"
+    ' scratch-reaper "$$" "$started" "$@" </dev/null >/dev/null 2>&1
+  ) || true
 }
