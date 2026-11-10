@@ -66,7 +66,7 @@ def _row(record):
 
 def _metadata(record):
     # Existing-base fixtures remain useful while the separate shipped-data test is red.
-    return _row(record).setdefault("model_metadata", {
+    return _row(record).setdefault("discovery_metadata", {
         "input_modalities": ["image"], "output_modalities": ["mesh"],
     })
 
@@ -89,7 +89,7 @@ def _evidence(manifest, records):
 
 
 def test_shipped_row_declares_modalities(record):
-    assert _row(record).get("model_metadata") == {
+    assert _row(record).get("discovery_metadata") == {
         "input_modalities": ["image"], "output_modalities": ["mesh"],
     }
 
@@ -243,8 +243,8 @@ def test_invalid_modalities_are_refused(record, contract, field, value):
 
 
 def test_missing_metadata_is_refused_for_an_enabled_owner(record, contract):
-    _row(record).pop("model_metadata", None)
-    with pytest.raises(MeshManifestError, match="model_metadata"):
+    _row(record).pop("discovery_metadata", None)
+    with pytest.raises(MeshManifestError, match="discovery_metadata"):
         mesh_api.discovery_facts(_workflow(contract), [record])
 
 
@@ -252,7 +252,7 @@ def test_complete_capability_and_existing_route_fields_match_base(record, contra
     # Only the explicitly requested new metadata differs from the raw base row.
     actual, reason = mesh_api.route_row([record])
     assert reason is None
-    assert {key: value for key, value in actual.items() if key != "model_metadata"} == BASE_ROUTE
+    assert {key: value for key, value in actual.items() if key != "discovery_metadata"} == BASE_ROUTE
     assert mesh_api.discovery_facts(_workflow(contract), [record]) == BASE_FACTS
     # Feeding the unchanged base row gives literally the same route_row result.
     base_record = deepcopy(record)

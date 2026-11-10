@@ -954,7 +954,7 @@ records:
         canonical: /v1/3d/generations
         intent: mesh.generate
         capability: mesh
-        model_metadata:
+        discovery_metadata:
           input_modalities: [image]
           output_modalities: [mesh]
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
@@ -962,7 +962,7 @@ records:
         canonical: /v1/3d/generations/glb
         intent: mesh.generate
         capability: mesh
-        model_metadata:
+        discovery_metadata:
           input_modalities: [image]
           output_modalities: [mesh]
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}

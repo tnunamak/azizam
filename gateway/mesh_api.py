@@ -213,7 +213,7 @@ def _modalities(metadata: Mapping[str, Any], field: str) -> tuple[str, ...]:
     words = metadata.get(field)
     if (not isinstance(words, list) or not words
             or any(not isinstance(word, str) or word not in MODALITY_WORDS for word in words)):
-        raise MeshManifestError(f"model_metadata {field} must be a non-empty list of registered modality words")
+        raise MeshManifestError(f"discovery_metadata {field} must be a non-empty list of registered modality words")
     return tuple(words)
 
 
@@ -251,9 +251,9 @@ def discovery_facts(manifest: MeshWorkflow, frontend_records: Sequence[Mapping[s
         raise MeshManifestError("workflow names an unknown capability")
     if manifest.data.get("intent") != manifest.intent:
         raise MeshManifestError("workflow view and contract disagree on intent")
-    metadata = row.get("model_metadata") if row is not None else _workflow_metadata(manifest)
+    metadata = row.get("discovery_metadata") if row is not None else _workflow_metadata(manifest)
     if not isinstance(metadata, Mapping):
-        raise MeshManifestError("frontend row has no model_metadata")
+        raise MeshManifestError("frontend row has no discovery_metadata")
     return Capability(
         intent=manifest.intent,
         backend=manifest.service_id,
