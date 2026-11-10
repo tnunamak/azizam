@@ -1137,7 +1137,7 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
-# All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
+# All models catalog entries require a local file path (this is a GGUF catalog).
 # Any enabled registry backend may appear here.
 def _extra_model_entries(raw) -> dict:
     """The ``models`` section as ``{normalized id: entry}``. The section is a mapping of the model name a client sends
@@ -1178,7 +1178,9 @@ def _normalize_models_catalog(raw) -> dict:
     return out
 
 
-MODELS_CATALOG = _normalize_models_catalog(config.get("models"))
+def _models_catalog() -> dict:
+    """The models section of the live config, normalized; read on each call, so an owner's edit applies to the next request."""
+    return _normalize_models_catalog(config.get("models"))
 
 def _tts_adapter(service_id: str):
     """The reviewed adapter a speech service's record selects (contract v2.1 section 4); core never branches on what it is."""
@@ -14761,7 +14763,7 @@ def _role_catalog_ids_for_loaded_path(
             if matches_path(role_model):
                 ids.add(str(role_name))
 
-    for model_id, spec in MODELS_CATALOG.items():
+    for model_id, spec in _models_catalog().items():
         if not isinstance(spec, Mapping) or spec.get("backend") != backend:
             continue
         if matches_path(spec.get("path")):
@@ -28787,7 +28789,7 @@ def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[
         backend = str(role.get("backend") or "").strip() or None
         return backend, role
 
-    catalog = MODELS_CATALOG.get(normalized)
+    catalog = _models_catalog().get(normalized)
     if isinstance(catalog, Mapping):
         backend = str(catalog.get("backend") or "").strip() or None
         return backend, catalog
@@ -29113,7 +29115,7 @@ def _build_role_catalog_entries() -> list[dict]:
             }
         entries.append(entry)
 
-    for mid, cat in MODELS_CATALOG.items():
+    for mid, cat in _models_catalog().items():
         entries.append({
             "id": mid,
             "object": "model",

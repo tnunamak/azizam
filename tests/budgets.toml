@@ -1004,7 +1004,8 @@ domain_literals = 312
 "import_time_config_reads.mcp" = 1
 "import_time_config_reads.model_compatibility" = 0
 "import_time_config_reads.model_routing" = 0
-"import_time_config_reads.models" = 1
+# Train 46 lowered models 1 to 0: the models catalog is read per call (_models_catalog), so an owner edit applies at once.
+"import_time_config_reads.models" = 0
 "import_time_config_reads.proxy" = 2
 "import_time_config_reads.request_body_limits" = 1
 "import_time_config_reads.roles" = 0
