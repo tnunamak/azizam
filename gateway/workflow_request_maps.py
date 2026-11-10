@@ -248,7 +248,8 @@ def load(path: str | Path = DEFAULT_PATH) -> RequestMaps:
     unknown = set(document) - _TOP_KEYS
     if unknown:
         raise ValueError(f"{path}: unknown key {sorted(unknown)[0]!r}")
-    if document.get("schema_version") != 1:
+    version = document.get("schema_version")
+    if type(version) is not int or version != 1:  # True and 1.0 compare equal to 1; refuse them.
         raise ValueError(f"{path}: schema_version must be 1")
     raw_rows = document.get("maps")
     if not isinstance(raw_rows, list):
@@ -360,9 +361,16 @@ def _place(maps: RequestMaps, row: Row, record: Any, mode: str) -> dict[str, dic
         if name not in ordered:
             ordered.append(name)
 
+    # A member of the ``first`` set takes that set's placement before any named input: the edit route
+    # carries every route picture as a repeated part, whatever the input is called.
+    first_placement = next((candidate for word, candidate in row.sets if word == row.first), None)
     out: dict[str, dict[str, Any]] = {}
     for name in ordered:
-        placement = row.inputs.get(name)
+        placement = None
+        if first_placement is not None and name in resolved[row.first]:
+            placement = first_placement
+        if placement is None:
+            placement = row.inputs.get(name)
         if placement is None:
             for word, candidate in row.sets:
                 if name in resolved[word]:
