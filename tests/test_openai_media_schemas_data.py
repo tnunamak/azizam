@@ -2,7 +2,7 @@
 
 The golden was recorded before production edits, from 638af7b7f7790fc958d7bb68dd9c0643d83d2e74.
 Protocol projections below are handwritten from the cited sources, not the registry.
-No tests in this assignment were executed; the submitting lead must run this file.
+The delete response golden was corrected with the published discriminator.
 """
 
 from __future__ import annotations

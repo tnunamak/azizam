@@ -658,7 +658,7 @@ def test_video_9_81_list_is_scoped_to_the_owner(tmp_path):
 
 
 def test_video_10_90_delete_answers_the_deleted_object(tmp_path):
-    """video-90: a successful delete answers 200 `{id, object: video, deleted: true}`."""
+    """video-90: a successful delete answers 200 `{id, object: video.deleted, deleted: true}`."""
     seen = {}
 
     def setup(rig):
