@@ -946,7 +946,8 @@ ad_hoc_upstream_fake_files = 46
 # Train 40 task 4: -6 multipart filename sites read from description data; ratchet test measures 449.
 
 # Train 40 integration: the shared AST scanner measures 431 unreviewed sites.
-domain_literals = 431
+# Train 41 lane B: protocol implementation and catalog selectors moved to descriptions; measured 423.
+domain_literals = 423
 
 # XC task 1: model vocabularies and implication roles moved to capability_intent_metadata.yml.
 # XC task 2: binding names, managed input words and legacy role paths moved to frontend data.

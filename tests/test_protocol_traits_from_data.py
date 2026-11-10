@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import asyncio
-import copy
-from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -14,6 +14,7 @@ from gateway.engine_protocol.errors import DescriptionError, ProtocolError, Unkn
 from gateway.engine_protocol.types import CanonicalRequest, Connection
 from gateway.frontend_shapes.mesh import mesh_profile
 from gateway.multipart_adapter import MultipartRunner, runner
+from gateway.mesh_manifest import ImageAsset
 from gateway.provider_model_catalog import remote_provider_model_capabilities
 from tests.mesh_workflows import bundled_document
 
@@ -58,7 +59,8 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
         raw["multipart"] = {"service": "endpoint", "path": "route", "map": "fields"}
         doc = parsed(raw)
         docs[name] = doc
-    monkeypatch.setattr(description, "load_registry", lambda *_: docs)
+    load_registry = description.load_registry
+    monkeypatch.setattr(description, "load_registry", lambda directory=None: docs if directory is None else load_registry(directory))
     for name, doc in docs.items():
         contract = bundled_document()
         binding = contract["bindings"].pop("http-multipart")
@@ -66,7 +68,14 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
         assert mesh_profile(contract) == []
         selected = runner(None, doc)
         assert selected.binding_key == name and selected.adapter_id == name
-        assert selected._fields == {"service": "endpoint", "path": "route", "map": "fields"}
+        file = ImageAsset(b"picture", "fixture.png", "image/png")
+        selected._read_file = AsyncMock(return_value=file)
+        context = SimpleNamespace(pin=SimpleNamespace(contract=contract), generated={}, inputs={},
+                                  media={key: [object()] for key, spec in contract["inputs"].items() if spec["type"] == "asset"})
+        file_field, actual_file, scalar = asyncio.run(selected._form(context, contract["bindings"][name]))
+        picture = next(key for key, spec in contract["inputs"].items() if spec["type"] == "asset")
+        assert file_field == binding["map"][picture] and actual_file == file
+        assert isinstance(scalar, dict)
         for protocol in (name, name + "-alias"):
             service = {"remote_provider": True, "protocol": protocol, "models": [{"id": "fixture/model"}]}
             rows = remote_provider_model_capabilities("example", service)
