@@ -74,3 +74,10 @@ or a null `com.azizam.video` value as absent. Those legacy inputs are not
 advertised by the object-shaped schema. A non-null, non-object namespace
 value is rejected. These nested controls are published only for JSON video
 create, not for multipart video create.
+
+The loaded groups in `registry/extension_controls.yml` are the single source
+for published JSON extension namespaces, fields, primitive types and defaults.
+Each declared namespace rejects additional controls; the outer extension object
+remains open. New groups need only descriptor data, not a second Python schema.
+Duplicate namespaces are rejected at load time. The schema module imports the
+descriptor module, which does not import the schema module.

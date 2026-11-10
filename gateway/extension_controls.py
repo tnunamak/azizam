@@ -11,9 +11,6 @@ from typing import Any, Mapping
 
 import yaml
 
-from gateway.openai_media_schemas import VIDEOS_CREATE_OPENAPI
-
-
 @dataclass(frozen=True)
 class ControlDescriptor:
     """One validated primitive control, addressed by its public field."""
@@ -101,42 +98,8 @@ def _template(value: Any, token: str, label: str) -> str:
     return value
 
 
-def _validate_published_contract(group: ControlGroup, request_schema: Mapping[str, Any]) -> None:
-    """Check a descriptor against an independently declared JSON request contract."""
-    label = f"extensions.{group.namespace}"
-    properties = request_schema.get("properties", {})
-    extensions = properties.get("extensions", {}) if isinstance(properties, Mapping) else {}
-    namespaces = extensions.get("properties", {}) if isinstance(extensions, Mapping) else {}
-    if not isinstance(namespaces, Mapping) or group.namespace not in namespaces:
-        raise ValueError(f"{label}: namespace is not an explicitly declared request property")
-    namespace_schema = namespaces[group.namespace]
-    if not isinstance(namespace_schema, Mapping) or namespace_schema.get("type") != "object":
-        raise ValueError(f"{label}: published namespace must have object type")
-    if namespace_schema.get("additionalProperties") is not False:
-        raise ValueError(f"{label}: published namespace must reject unknown controls")
-    fields = namespace_schema.get("properties", {})
-    if not isinstance(fields, Mapping):
-        raise ValueError(f"{label}: published properties must be a mapping")
-    if group.public_fields != set(fields):
-        missing = sorted(set(fields) - group.public_fields)
-        extra = sorted(group.public_fields - set(fields))
-        raise ValueError(f"{label}: control fields differ; missing {missing}; extra {extra}")
-    for descriptor in group.controls.values():
-        field_label = f"{label}.{descriptor.field}"
-        published = fields[descriptor.field]
-        if not isinstance(published, Mapping) or published.get("type") != descriptor.type:
-            raise ValueError(f"{field_label}: control type does not match published boolean type")
-        default = published.get("default")
-        if type(default) is not bool or default is not descriptor.default:
-            raise ValueError(f"{field_label}: control default does not match published boolean default")
-
-
-def load_extension_controls(
-    path: Path, *, request_schema: Mapping[str, Any] | None = None,
-) -> Mapping[str, ControlGroup]:
-    """Validate against the published request, or an explicit synthetic contract."""
-    if request_schema is None:
-        request_schema = VIDEOS_CREATE_OPENAPI["requestBody"]["content"]["application/json"]["schema"]
+def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
+    """Load the descriptor-owned public contract without importing its consumers."""
     try:
         document = yaml.load(path.read_text(encoding="utf-8"), Loader=_ControlLoader)
     except (yaml.YAMLError, ValueError, RecursionError) as exc:
@@ -145,9 +108,13 @@ def load_extension_controls(
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise ValueError(f"{path}: unsupported schema_version")
     groups: dict[str, ControlGroup] = {}
+    namespaces: set[str] = set()
     for name, raw in _logical_mapping(document["groups"], "groups").items():
         raw = _mapping(raw, name, {"namespace", "controls", "errors"})
         namespace = _text(raw["namespace"], f"{name}.namespace")
+        if namespace in namespaces:
+            raise ValueError(f"{name}: duplicate namespace {namespace}")
+        namespaces.add(namespace)
         descriptors: dict[str, ControlDescriptor] = {}
         public_fields: set[str] = set()
         group_label = f"{name} ({namespace})"
@@ -170,9 +137,31 @@ def load_extension_controls(
             for key, token in tokens.items()
         }
         group = ControlGroup(namespace, descriptors, errors)
-        _validate_published_contract(group, request_schema)
         groups[name] = group
     return MappingProxyType(groups)
+
+
+def extension_controls_schema(
+    groups: Mapping[str, ControlGroup] | None = None,
+) -> dict[str, Any]:
+    """Build a fresh public schema from loaded descriptors, closing each namespace."""
+    if groups is None:
+        groups = _CONTROL_GROUPS
+    return {
+        "type": "object",
+        "properties": {
+            group.namespace: {
+                "type": "object",
+                "properties": {
+                    descriptor.field: {"type": descriptor.type, "default": descriptor.default}
+                    for descriptor in group.controls.values()
+                },
+                "additionalProperties": False,
+            }
+            for group in groups.values()
+        },
+        "additionalProperties": True,
+    }
 
 
 def control_group(name: str) -> ControlGroup:

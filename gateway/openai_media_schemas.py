@@ -28,6 +28,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from gateway.extension_controls import extension_controls_schema
+
 JsonObjectSchema = dict[str, Any]
 
 
@@ -757,20 +759,7 @@ def _video_create_request_schema() -> JsonObjectSchema:
                 "type": "string",
                 "description": "Reference image/video as URL, path, data URI, or base64 string.",
             },
-            # Reviewed public wire contract, independent of the control registry.
-            "extensions": {
-                "type": "object",
-                "properties": {
-                    "com.azizam.video": {
-                        "type": "object",
-                        "properties": {
-                            "audio": {"type": "boolean", "default": True},
-                        },
-                        "additionalProperties": False,
-                    },
-                },
-                "additionalProperties": True,
-            },
+            "extensions": extension_controls_schema(),
         },
         "additionalProperties": True,
     }
