@@ -35,3 +35,21 @@ def sole_transcription(backends: Mapping[str, Any], record: Mapping[str, Any], s
     out = {key: value for key, value in backends.items() if key not in others}
     out.update(declared({service_id: record}))
     return out
+
+
+def without_capability(base_config: Mapping[str, Any], capability: str) -> dict[str, Any]:
+    """A deep copy of *base_config* without any record that declares *capability*, disabled ones included.
+
+    Unrelated records and all other configuration stay. The live config is never mutated. A legacy id is not removed
+    for its name; a caller that needs that pops it itself.
+    """
+    import copy
+
+    import proxy
+
+    cfg = copy.deepcopy(dict(base_config))
+    backends = dict(cfg.get("backends") or {})
+    for service_id in proxy.backends_for_capability(capability, backends=backends, include_disabled=True):
+        backends.pop(service_id, None)
+    cfg["backends"] = backends
+    return cfg
