@@ -28,6 +28,7 @@ from gateway.engine_protocol import mapping, pointer
 from gateway.engine_protocol.budgets import DEFAULT_BUDGETS, Budgets
 from gateway.engine_protocol.errors import DescriptionError
 from gateway.output_selectors import DescriptorError, SelectorDescriptor, parse_descriptor
+from gateway.strict_yaml import safe_load_strict
 
 REGISTRY_DIR = Path(__file__).resolve().parent.parent.parent / "registry" / "protocols"
 SCHEMA_PATH = REGISTRY_DIR / "protocol.schema.json"
@@ -233,30 +234,8 @@ def http_selector_problem(descriptor: SelectorDescriptor) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# YAML
+# YAML (duplicate keys are an error: the shared strict loader, gateway/strict_yaml.py)
 # ---------------------------------------------------------------------------
-
-
-class _StrictLoader(yaml.SafeLoader):
-    """SafeLoader that refuses a repeated mapping key instead of letting the last one win."""
-
-
-def _construct_unique_mapping(loader: _StrictLoader, node: yaml.MappingNode, deep: bool = False) -> dict:
-    loader.flatten_mapping(node)
-    seen: set[Any] = set()
-    for key_node, _ in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        try:
-            duplicate = key in seen
-        except TypeError:
-            raise yaml.constructor.ConstructorError(None, None, "a mapping key must be a plain value", key_node.start_mark) from None
-        if duplicate:
-            raise yaml.constructor.ConstructorError(None, None, f"duplicate key {key!r}", key_node.start_mark)
-        seen.add(key)
-    return yaml.SafeLoader.construct_mapping(loader, node, deep)
-
-
-_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
 
 
 def parse_description_text(text: str, *, source: str, budgets: Budgets = DEFAULT_BUDGETS) -> ProtocolDescription:
@@ -266,7 +245,7 @@ def parse_description_text(text: str, *, source: str, budgets: Budgets = DEFAULT
         for event in yaml.parse(text, Loader=yaml.SafeLoader):
             if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
                 raise DescriptionError(source, ["YAML aliases and anchors are not allowed; write each value out"])
-        doc = yaml.load(text, Loader=_StrictLoader)  # noqa: S506 - SafeLoader subclass
+        doc = safe_load_strict(text)
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f"line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "unknown line"
