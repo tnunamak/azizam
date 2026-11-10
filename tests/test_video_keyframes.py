@@ -723,14 +723,14 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
 
     def setUp(self) -> None:
         super().setUp()
-        submit = proxy.workflow_run.RunCore.submit_run
+        submit = proxy.workflow_run.WorkflowRunCore.submit_run
 
         async def submit_before_graph_check(core, request, caller, **kwargs):
             # The route answers when queued; these assertions inspect the engine's
             # submitted graph. Keep the request loop alive until that handoff.
             return await submit(core, replace(request, submit_wait_s=5.0), caller, **kwargs)
 
-        self.stack.enter_context(patch.object(proxy.workflow_run.RunCore, "submit_run", submit_before_graph_check))
+        self.stack.enter_context(patch.object(proxy.workflow_run.WorkflowRunCore, "submit_run", submit_before_graph_check))
 
     def _expected(self, parent: str, edits: dict[str, dict[str, object]]) -> dict:
         graph = _graph(parent)
