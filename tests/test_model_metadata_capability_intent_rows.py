@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from gateway import model_metadata as mm
+from gateway.intent_families import resolve_intent
 
 ROWS = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
 
@@ -29,13 +30,13 @@ EXACT = (
     ("speech.translation", "audio", ("audio",), ("text",)),
 )
 FAMILIES = (
-    ("chat.", "language", ("text",), ("text",)),
-    ("responses.", "language", ("text",), ("text",)),
-    ("decision.", "decision", ("text",), ("text",)),
-    ("image.", "image", ("text",), ("image",)),
-    ("video.", "video", ("text",), ("video",)),
-    ("speech.", "audio", ("text",), ("audio",)),
-    ("audio.", "audio", ("text",), ("audio",)),
+    ("chat", "language", ("text",), ("text",)),
+    ("responses", "language", ("text",), ("text",)),
+    ("decision", "decision", ("text",), ("text",)),
+    ("image", "image", ("text",), ("image",)),
+    ("video", "video", ("text",), ("video",)),
+    ("speech", "audio", ("text",), ("audio",)),
+    ("audio", "audio", ("text",), ("audio",)),
 )
 OTHER = (
     ("image.other", "image", ("text",), ("image",)),
@@ -53,7 +54,7 @@ def _view(answer):
     return None if answer is None else (answer.type, answer.input_modalities, answer.output_modalities)
 
 
-@pytest.mark.parametrize("intent, type_, inputs, outputs", EXACT + FAMILIES + OTHER)
+@pytest.mark.parametrize("intent, type_, inputs, outputs", EXACT + tuple((family + ".unfamiliar", *row) for family, *row in FAMILIES) + OTHER)
 def test_from_capability_matches_literal_baseline(intent, type_, inputs, outputs):
     expected = None if type_ is None else (type_, inputs, outputs)
     assert _view(mm.from_capability(intent)) == expected
@@ -75,7 +76,7 @@ def _document():
     return {
         "schema_version": 1,
         "exact": [{"intent": "test.exact", "operation": "chat"}],
-        "families": [{"prefix": "test.", "operation": "speech"}],
+        "families": [{"family": "test", "operation": "speech"}],
     }
 
 
@@ -119,31 +120,24 @@ def test_index_maps_and_metadata_are_read_only(tmp_path):
     with pytest.raises(TypeError):
         index.exact["other"] = index.exact["test.exact"]
     with pytest.raises(TypeError):
-        index.families["other."] = index.families["test."]
+        index.families["other"] = index.families["test"]
     with pytest.raises(FrozenInstanceError):
         index.exact = {}
     with pytest.raises(FrozenInstanceError):
-        index.families["test."].type = "image"
+        index.families["test"].type = "image"
     assert isinstance(index.exact["test.exact"].input_modalities, tuple)
-    assert isinstance(index.families["test."].output_modalities, tuple)
+    assert isinstance(index.families["test"].output_modalities, tuple)
 
 
-def test_test_only_family_first_match_and_exact_precedence_are_data(tmp_path, monkeypatch):
+def test_test_only_family_and_exact_precedence_are_data(tmp_path, monkeypatch):
     document = {
         "schema_version": 1,
         "exact": [{"intent": "test.specific", "operation": "decisions"}],
-        "families": [
-            {"prefix": "test.", "operation": "chat"},
-            {"prefix": "test.specific", "model_metadata": _metadata()},
-        ],
+        "families": [{"family": "test", "operation": "chat"}],
     }
     _activate(monkeypatch, _loader()(_write(tmp_path, document)))
     assert _view(mm.from_capability("test.new")) == ("language", ("text",), ("text",))
     assert _view(mm.from_capability("test.specific.other")) == ("language", ("text",), ("text",))
-    assert _view(mm.from_capability("test.specific")) == ("decision", ("text",), ("text",))
-    document["families"].reverse()
-    _activate(monkeypatch, _loader()(_write(tmp_path, document)))
-    assert _view(mm.from_capability("test.specific.other")) == ("image", ("text",), ("image",))
     assert _view(mm.from_capability("test.specific")) == ("decision", ("text",), ("text",))
 
 
@@ -155,7 +149,7 @@ def test_operation_rows_are_reused_by_name(tmp_path, monkeypatch):
     assert _view(mm.from_capability("test.exact")) == ("reranking", ("text",), ("text",))
     assert _view(mm.from_capability("test.other")) == ("audio", ("text",), ("audio",))
     assert index.exact["test.exact"] is mm.OPERATION_METADATA["rerank"]
-    assert index.families["test."] is mm.OPERATION_METADATA["speech"]
+    assert index.families["test"] is mm.OPERATION_METADATA["speech"]
 
 
 def test_loaded_rows_are_a_snapshot_not_a_per_call_read(tmp_path, monkeypatch):
@@ -169,7 +163,7 @@ def test_loaded_rows_are_a_snapshot_not_a_per_call_read(tmp_path, monkeypatch):
         _loader()(path)
 
 
-@pytest.mark.parametrize("section, key", (("exact", "intent"), ("families", "prefix")))
+@pytest.mark.parametrize("section, key", (("exact", "intent"), ("families", "family")))
 @pytest.mark.parametrize("change, row_number, message", (
     (lambda rows, key: rows[0].update(unexpected=True), 0, "unknown keys"),
     (lambda rows, key: rows.append(dict(rows[0])), 1, "duplicate"),
@@ -234,3 +228,54 @@ def test_missing_intent_file_names_the_file(tmp_path):
     with pytest.raises(ValueError, match="cannot read") as caught:
         _loader()(path)
     assert str(path) in str(caught.value)
+
+
+
+@pytest.mark.parametrize("intent, exact, families, expected", (
+    ("sample.exact", {"sample.exact": "exact"}, {"sample": "family"}, "exact"),
+    ("sample.exact", {"sample.exact": {}}, {"sample": "family"}, {}),
+    ("sample.exact", {"sample.exact": None}, {"sample": "family"}, None),
+    ("sample.exact", {"sample.exact": False}, {"sample": "family"}, False),
+    ("sample.unfamiliar", {}, {"sample": "family"}, "family"),
+    ("sample.unfamiliar.deep", {}, {"sample": "family"}, "family"),
+    ("unknown.other", {}, {"sample": "family"}, None),
+    ("sample", {"sample": "exact"}, {"sample": "family"}, None),
+    ("", {}, {"": "family"}, None),
+    (".other", {}, {"": "family"}, None),
+    ("sample.", {}, {"sample": "family"}, None),
+    ("sample..other", {}, {"sample": "family"}, None),
+    (" sample.other", {}, {" sample": "family"}, None),
+    ("sample.other ", {}, {"sample": "family"}, None),
+    ("sample.oth er", {}, {"sample": "family"}, None),
+    ("sample.oth\ter", {}, {"sample": "family"}, None),
+))
+def test_resolve_intent_table(intent, exact, families, expected):
+    assert resolve_intent(intent, exact=exact, families=families) == expected
+
+
+@pytest.mark.parametrize("intent", (None, 7, [], {}))
+def test_resolve_intent_rejects_non_strings(intent):
+    with pytest.raises(TypeError, match="intent"):
+        resolve_intent(intent, exact={}, families={})
+
+
+@pytest.mark.parametrize("family", ("test.", "test.nested", "", " ", "test family"))
+def test_invalid_family_segment_names_file_and_row(tmp_path, family):
+    document = _document()
+    document["families"][0]["family"] = family
+    path = _write(tmp_path, document)
+    with pytest.raises(ValueError) as caught:
+        _loader()(path)
+    assert str(path) in str(caught.value)
+    assert "families[0].family" in str(caught.value)
+
+
+def test_old_prefix_spelling_is_refused(tmp_path):
+    document = _document()
+    document["families"] = [{"prefix": "test.", "operation": "chat"}]
+    path = _write(tmp_path, document)
+    with pytest.raises(ValueError) as caught:
+        _loader()(path)
+    assert str(path) in str(caught.value)
+    assert "families[0]" in str(caught.value)
+    assert "unknown keys" in str(caught.value)

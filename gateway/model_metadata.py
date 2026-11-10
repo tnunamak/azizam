@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
+from gateway.intent_families import resolve_intent
 from gateway.manifests import asset_input_modalities, asset_leaf_specs
 from gateway.product_contracts import _MODEL_SCHEMA_PATH, load_model_metadata_vocabularies
 from gateway.stable_aliases import OPERATIONS as ALIAS_OPERATIONS
@@ -428,7 +429,7 @@ def load_service_capability_metadata(
 # Loaded once, like OPERATION_METADATA; owner configuration cannot replace release data.
 SERVICE_CAPABILITY_METADATA = load_service_capability_metadata()
 
-# Capability intents and ordered prefix families are immutable release data.
+# Capability intents and segment families are immutable release data.
 _CAPABILITY_INTENT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
 
 
@@ -441,7 +442,7 @@ class CapabilityIntentIndex:
 def load_capability_intent_metadata(
     path: str | Path = _CAPABILITY_INTENT_ROWS_PATH,
 ) -> CapabilityIntentIndex:
-    """Load exact matches and first-match families once, without intent-specific code."""
+    """Load exact matches and segment families once, without intent-specific code."""
     path = Path(path)
 
     def invalid(at: str, reason: str) -> ValueError:
@@ -499,15 +500,17 @@ def load_capability_intent_metadata(
             name = row.get(name_key)
             if not isinstance(name, str) or not name.strip():
                 raise invalid(f"{at}.{name_key}", "must be a nonempty string")
+            if name_key == "family" and ("." in name or any(char.isspace() for char in name)):
+                raise invalid(f"{at}.{name_key}", "family must be one segment without dots or whitespace")
             if name in found:
                 raise invalid(f"{at}.{name_key}", f"duplicate {name_key}: {name!r}")
             found[name] = metadata(row, at)
         return MappingProxyType(found)
 
-    return CapabilityIntentIndex(rows("exact", "intent"), rows("families", "prefix"))
+    return CapabilityIntentIndex(rows("exact", "intent"), rows("families", "family"))
 
 
-# Loaded once; mapping insertion order preserves first-match family precedence.
+# Loaded once; exact and family rows are immutable snapshots.
 _CAPABILITY_INTENT_INDEX = load_capability_intent_metadata()
 _CAPABILITY_INTENTS = _CAPABILITY_INTENT_INDEX.exact
 _CAPABILITY_INTENT_FAMILIES = _CAPABILITY_INTENT_INDEX.families
@@ -573,9 +576,7 @@ def from_capability(
     if type_ is not None:
         return ModelMetadata(type_, inputs, outputs)
     intent = str(intent or "")
-    base = _CAPABILITY_INTENTS.get(intent) or next(
-        (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES.items() if intent.startswith(prefix)), None
-    )
+    base = resolve_intent(intent, exact=_CAPABILITY_INTENTS, families=_CAPABILITY_INTENT_FAMILIES)
     if base is None:
         type_ = type_of(inputs, outputs)
         return None if type_ is None else ModelMetadata(type_, inputs, outputs)

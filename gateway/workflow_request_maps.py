@@ -28,6 +28,7 @@ from typing import Any, Mapping
 
 import yaml
 
+from gateway.intent_families import resolve_intent
 from gateway.manifests import media_bearing
 from gateway.strict_yaml import safe_load_strict
 from gateway.workflow_view import settable_inputs
@@ -420,8 +421,7 @@ class ExecutionMaps:
 
     def row(self, intent: str) -> ExecutionRow | None:
         """Prefer an exact intent row, then its family; otherwise no templated routes."""
-        row = self.intents.get(intent)
-        return row if row is not None else self.families.get(intent.partition(".")[0])
+        return resolve_intent(intent, exact=self.intents, families=self.families)
 
     def validate_records(self, records: Any) -> None:
         for record in records:

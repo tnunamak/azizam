@@ -353,3 +353,9 @@ def test_execution_families_are_optional(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(workflow_request_maps, "_MAPS", loaded)
     assert workflow_request_maps.execution_row("video.interpolate") is None
     assert workflow_request_maps.execution_row("video.generate") is not None
+
+
+
+@pytest.mark.parametrize("intent", ("video", "video.", ".video", "video..other", "video. other"))
+def test_execution_malformed_intent_has_no_row(intent) -> None:
+    assert workflow_request_maps.execution_row(intent) is None

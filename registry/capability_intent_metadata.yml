@@ -27,19 +27,19 @@ exact:
   - intent: speech.translation
     operation: transcriptions
 families:
-  - prefix: chat.
+  - family: chat
     operation: chat
-  - prefix: responses.
+  - family: responses
     operation: chat
-  - prefix: decision.
+  - family: decision
     operation: decisions
-  - prefix: image.
+  - family: image
     model_metadata: {type: image, input_modalities: [text], output_modalities: [image]}
-  - prefix: video.
+  - family: video
     model_metadata: {type: video, input_modalities: [text], output_modalities: [video]}
-  - prefix: speech.
+  - family: speech
     operation: speech
-  - prefix: audio.
+  - family: audio
     model_metadata: {type: audio, input_modalities: [text], output_modalities: [audio]}
 
 # Model metadata semantic rules; vocabularies live in defaults/models.schema.json.
