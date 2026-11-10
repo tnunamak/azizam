@@ -11,7 +11,8 @@ of an entry (LLM catalog, current-loaded, decision runtime), and the
 capabilities a service-registry record declares. Operator declarations under
 the `model_metadata` key are DATA and always win over derived values.
 
-Operation, service-capability and capability-intent metadata are read once from shipped registry rows.
+The vocabulary contract, operation, service-capability and capability-intent metadata
+are read once from shipped registry rows.
 Other lookups are injected; this module reads no owner config and makes no network calls.
 """
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+import re
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping
 
@@ -27,12 +29,159 @@ import yaml
 from gateway.manifests import asset_input_modalities, asset_leaf_specs
 from gateway.stable_aliases import OPERATIONS as ALIAS_OPERATIONS
 
-MODEL_TYPES: tuple[str, ...] = (
-    "language", "embedding", "reranking", "image", "video", "audio", "decision",
-)
-INPUT_MODALITIES: tuple[str, ...] = ("text", "image", "audio", "video", "file")
-OUTPUT_MODALITIES: tuple[str, ...] = ("text", "image", "audio", "video", "embedding")
-TAGS: tuple[str, ...] = ("tool-use", "reasoning", "vision", "file-input")
+_METADATA_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
+
+
+@dataclass(frozen=True)
+class ModalityTypeRule:
+    modality: str
+    type: str
+
+
+@dataclass(frozen=True)
+class TagInputImplication:
+    type: str
+    tag: str
+    input_modality: str
+
+
+@dataclass(frozen=True)
+class MetadataContract:
+    types: tuple[str, ...]
+    input_modalities: tuple[str, ...]
+    output_modalities: tuple[str, ...]
+    tags: tuple[str, ...]
+    tag_types: tuple[str, ...]
+    scalar_input: str
+    fallback_output: str
+    default_type: str
+    output_priority: tuple[ModalityTypeRule, ...]
+    input_priority: tuple[ModalityTypeRule, ...]
+    implications: tuple[TagInputImplication, ...]
+
+
+class _MetadataContractLoader(yaml.SafeLoader):
+    """Safe YAML with duplicate/non-string mapping keys refused at every depth."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[str, Any]:
+        found: dict[str, Any] = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, str):
+                raise ValueError("contract mapping keys must be strings")
+            if key in found:
+                raise ValueError(f"duplicate contract field: {key!r}")
+            found[key] = self.construct_object(value_node, deep=deep)
+        return found
+
+
+def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> MetadataContract:
+    """Load a closed data-only schema; order and semantic roles are independent."""
+    path = Path(path)
+
+    def invalid(at: str, reason: str) -> ValueError:
+        return ValueError(f"{path}: {at}: {reason}")
+
+    def mapping(value: Any, at: str, keys: set[str]) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise invalid(at, "must be a mapping")
+        unknown, missing = set(value) - keys, keys - set(value)
+        if unknown:
+            raise invalid(at, f"unknown fields: {sorted(map(str, unknown))}")
+        if missing:
+            raise invalid(at, f"missing fields: {sorted(missing)}")
+        return value
+
+    def roster(value: Any, at: str, *, empty: bool = False) -> tuple[str, ...]:
+        if not isinstance(value, list) or (not value and not empty):
+            raise invalid(at, "must be an ordered list" if empty else "must be a nonempty ordered list")
+        found: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", item):
+                raise invalid(at, "values must be lowercase data names, not paths")
+            if item in found:
+                raise invalid(at, f"duplicate value: {item!r}")
+            found.append(item)
+        return tuple(found)
+
+    def reference(value: Any, at: str, vocabulary: tuple[str, ...]) -> str:
+        if not isinstance(value, str) or value not in vocabulary:
+            raise invalid(at, f"unknown value: {value!r}")
+        return value
+
+    try:
+        document = yaml.load(path.read_text(encoding="utf-8"), Loader=_MetadataContractLoader)
+    except (OSError, UnicodeError, yaml.YAMLError, ValueError) as exc:
+        raise invalid("document", str(exc)) from exc
+    document = mapping(document, "document", {"schema_version", "exact", "families", "contract"})["contract"]
+    document = mapping(document, "document", {
+        "schema_version", "types", "input_modalities", "output_modalities",
+        "tags", "tag_types", "derivation", "implications",
+    })
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise invalid("schema_version", "must be 1")
+    types = roster(document["types"], "types")
+    inputs = roster(document["input_modalities"], "input_modalities")
+    outputs = roster(document["output_modalities"], "output_modalities")
+    tags = roster(document["tags"], "tags", empty=True)
+    tag_types = roster(document["tag_types"], "tag_types", empty=True)
+    for type_ in tag_types:
+        reference(type_, "tag_types", types)
+    derivation = mapping(document["derivation"], "derivation", {
+        "scalar_input", "fallback_output", "default_type", "output_priority", "input_priority",
+    })
+    scalar_input = reference(derivation["scalar_input"], "derivation.scalar_input", inputs)
+    fallback_output = reference(derivation["fallback_output"], "derivation.fallback_output", outputs)
+    default_type = reference(derivation["default_type"], "derivation.default_type", types)
+
+    def priority(key: str, vocabulary: tuple[str, ...]) -> tuple[ModalityTypeRule, ...]:
+        rows = derivation[key]
+        if not isinstance(rows, list):
+            raise invalid(f"derivation.{key}", "must be an ordered list")
+        found: list[ModalityTypeRule] = []
+        seen: set[str] = set()
+        for index, row in enumerate(rows):
+            at = f"derivation.{key}[{index}]"
+            row = mapping(row, at, {"modality", "type"})
+            modality = reference(row["modality"], f"{at}.modality", vocabulary)
+            type_ = reference(row["type"], f"{at}.type", types)
+            if modality in seen:
+                raise invalid(at, f"duplicate modality: {modality!r}")
+            if key == "output_priority" and modality == fallback_output:
+                raise invalid(at, "fallback output cannot also be a priority output")
+            seen.add(modality)
+            found.append(ModalityTypeRule(modality, type_))
+        return tuple(found)
+
+    output_priority = priority("output_priority", outputs)
+    input_priority = priority("input_priority", inputs)
+    rows = document["implications"]
+    if not isinstance(rows, list):
+        raise invalid("implications", "must be an ordered list")
+    implications: list[TagInputImplication] = []
+    for index, row in enumerate(rows):
+        at = f"implications[{index}]"
+        row = mapping(row, at, {"type", "tag", "input_modality"})
+        implication = TagInputImplication(
+            reference(row["type"], f"{at}.type", tag_types),
+            reference(row["tag"], f"{at}.tag", tags),
+            reference(row["input_modality"], f"{at}.input_modality", inputs),
+        )
+        if implication in implications:
+            raise invalid(at, "duplicate implication")
+        implications.append(implication)
+    return MetadataContract(
+        types, inputs, outputs, tags, tag_types, scalar_input, fallback_output, default_type,
+        output_priority, input_priority, tuple(implications),
+    )
+
+
+# One immutable release contract. Compatibility exports preserve the public roster API.
+METADATA_CONTRACT = load_metadata_contract()
+MODEL_TYPES = METADATA_CONTRACT.types
+INPUT_MODALITIES = METADATA_CONTRACT.input_modalities
+OUTPUT_MODALITIES = METADATA_CONTRACT.output_modalities
+TAGS = METADATA_CONTRACT.tags
 
 # Operator declaration key on a role, a `models:` entry, or a service-registry
 # model record. Its value holds any subset of DECLARABLE_FIELDS.
@@ -80,7 +229,10 @@ def _ordered(values: Iterable[Any], vocabulary: tuple[str, ...]) -> tuple[str, .
 
 
 def _md(type_: str, inputs: Iterable[str], outputs: Iterable[str]) -> ModelMetadata:
-    return ModelMetadata(type_, _ordered(inputs, INPUT_MODALITIES), _ordered(outputs, OUTPUT_MODALITIES))
+    return ModelMetadata(
+        type_, _ordered(inputs, METADATA_CONTRACT.input_modalities),
+        _ordered(outputs, METADATA_CONTRACT.output_modalities),
+    )
 
 
 # Stable-alias operation -> metadata, declared once on its registered route.
@@ -120,11 +272,11 @@ def load_operation_metadata(path: str | Path = _OPERATION_ROWS_PATH) -> Mapping[
             if not isinstance(metadata, Mapping):
                 raise ValueError(f"{operation}: model_metadata must be a mapping")
             type_ = metadata.get("type")
-            if type_ not in MODEL_TYPES:
+            if type_ not in METADATA_CONTRACT.types:
                 raise ValueError(f"{operation}: unknown type: {type_!r}")
             modalities: dict[str, list[str]] = {}
-            for key, vocabulary in (("input_modalities", INPUT_MODALITIES),
-                                    ("output_modalities", OUTPUT_MODALITIES)):
+            for key, vocabulary in (("input_modalities", METADATA_CONTRACT.input_modalities),
+                                    ("output_modalities", METADATA_CONTRACT.output_modalities)):
                 values = metadata.get(key)
                 if not isinstance(values, list):
                     raise ValueError(f"{operation}: {key} must be a list")
@@ -215,15 +367,15 @@ def load_service_capability_metadata(
     if capability in found:
         raise invalid("augmentation.capability", "must not also be a matching row")
     match_type = augmentation.get("match_type")
-    if not isinstance(match_type, str) or match_type not in MODEL_TYPES:
+    if not isinstance(match_type, str) or match_type not in METADATA_CONTRACT.types:
         raise invalid("augmentation.match_type", f"unknown model type: {match_type!r}")
     inputs = augmentation.get("input_modalities")
     if (not isinstance(inputs, list) or not inputs
-            or any(not isinstance(item, str) or item not in INPUT_MODALITIES for item in inputs)):
+            or any(not isinstance(item, str) or item not in METADATA_CONTRACT.input_modalities for item in inputs)):
         raise invalid("augmentation.input_modalities", "must be a nonempty list of known input modalities")
     return ServiceCapabilityIndex(
         MappingProxyType(found),
-        ServiceCapabilityAugmentation(capability, match_type, _ordered(inputs, INPUT_MODALITIES)),
+        ServiceCapabilityAugmentation(capability, match_type, _ordered(inputs, METADATA_CONTRACT.input_modalities)),
     )
 
 
@@ -270,11 +422,11 @@ def load_capability_intent_metadata(
             {"type", "input_modalities", "output_modalities"},
         )
         type_ = literal.get("type")
-        if not isinstance(type_, str) or type_ not in MODEL_TYPES:
+        if not isinstance(type_, str) or type_ not in METADATA_CONTRACT.types:
             raise invalid(f"{at}.model_metadata.type", f"unknown type: {type_!r}")
         modalities: dict[str, list[str]] = {}
-        for key, vocabulary in (("input_modalities", INPUT_MODALITIES),
-                                ("output_modalities", OUTPUT_MODALITIES)):
+        for key, vocabulary in (("input_modalities", METADATA_CONTRACT.input_modalities),
+                                ("output_modalities", METADATA_CONTRACT.output_modalities)):
             values = literal.get(key)
             if (not isinstance(values, list)
                     or any(not isinstance(value, str) or value not in vocabulary for value in values)):
@@ -286,7 +438,7 @@ def load_capability_intent_metadata(
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise invalid("document", f"cannot read capability intent metadata: {exc}") from exc
-    document = mapping(document, "document", {"schema_version", "exact", "families"})
+    document = mapping(document, "document", {"schema_version", "exact", "families", "contract"})
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be 1")
 
@@ -335,16 +487,17 @@ _MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio"
 
 
 def type_of(input_modalities: Iterable[str], output_modalities: Iterable[str]) -> str | None:
-    """The model type the modalities say. A media output is that medium; embeddings are embeddings; a text answer from
-    some other medium (a transcript, a description) is typed by that input medium; plain text to text is a language
-    model. None when nothing is declared."""
+    """Use explicit output precedence, then input precedence for the fallback output."""
     inputs, outputs = set(input_modalities), set(output_modalities)
-    produced = [m for m in OUTPUT_MODALITIES if m in outputs and m != INPUT_MODALITIES[0]]
-    if produced:
-        return produced[0]
-    if INPUT_MODALITIES[0] in outputs:
-        taken = [m for m in INPUT_MODALITIES[1:] if m in inputs and m in MODEL_TYPES]
-        return taken[0] if taken else _LANGUAGE.type
+    contract = METADATA_CONTRACT
+    for rule in contract.output_priority:
+        if rule.modality in outputs:
+            return rule.type
+    if contract.fallback_output in outputs:
+        return next(
+            (rule.type for rule in contract.input_priority if rule.modality in inputs),
+            contract.default_type,
+        )
     return None
 
 
@@ -357,10 +510,11 @@ def from_contract(manifest: Mapping[str, Any] | None) -> ModelMetadata | None:
     declared = manifest.get("inputs")
     if isinstance(declared, Mapping):
         if any(isinstance(spec, Mapping) and spec.get("type") == "string" for spec in declared.values()):
-            inputs.append(INPUT_MODALITIES[0])
+            inputs.append(METADATA_CONTRACT.scalar_input)
     inputs.extend(_asset_input_modality(spec) or "" for spec in _asset_inputs(manifest))
     outputs = _manifest_output_modalities(manifest)
-    ordered_in, ordered_out = _ordered(inputs, INPUT_MODALITIES), _ordered(outputs, OUTPUT_MODALITIES)
+    ordered_in = _ordered(inputs, METADATA_CONTRACT.input_modalities)
+    ordered_out = _ordered(outputs, METADATA_CONTRACT.output_modalities)
     type_ = type_of(ordered_in, ordered_out)
     return None if type_ is None else ModelMetadata(type_, ordered_in, ordered_out)
 
@@ -371,8 +525,8 @@ def from_capability(
     output_modalities: Iterable[str] = (),
 ) -> ModelMetadata | None:
     """Use an unambiguous declared I/O pair, else the legacy intent or modality fallback."""
-    inputs = _ordered(input_modalities, INPUT_MODALITIES)
-    outputs = _ordered(output_modalities, OUTPUT_MODALITIES)
+    inputs = _ordered(input_modalities, METADATA_CONTRACT.input_modalities)
+    outputs = _ordered(output_modalities, METADATA_CONTRACT.output_modalities)
     type_ = _CAPABILITY_TYPES_BY_IO.get((frozenset(inputs), frozenset(outputs)))
     if type_ is not None:
         return ModelMetadata(type_, inputs, outputs)
@@ -392,16 +546,16 @@ def from_capability(
 
 def from_fields(fields: Mapping[str, Any] | None) -> ModelMetadata | None:
     """Read back the response fields `ModelMetadata.to_fields` wrote. None when untyped."""
-    if not isinstance(fields, Mapping) or fields.get("type") not in MODEL_TYPES:
+    if not isinstance(fields, Mapping) or fields.get("type") not in METADATA_CONTRACT.types:
         return None
     architecture = fields.get("architecture") if isinstance(fields.get("architecture"), Mapping) else {}
     max_tokens = fields.get("max_tokens")
     return ModelMetadata(
         type=fields["type"],
-        input_modalities=_ordered(architecture.get("input_modalities") or (), INPUT_MODALITIES),
-        output_modalities=_ordered(architecture.get("output_modalities") or (), OUTPUT_MODALITIES),
+        input_modalities=_ordered(architecture.get("input_modalities") or (), METADATA_CONTRACT.input_modalities),
+        output_modalities=_ordered(architecture.get("output_modalities") or (), METADATA_CONTRACT.output_modalities),
         max_tokens=max_tokens if isinstance(max_tokens, int) and not isinstance(max_tokens, bool) else None,
-        tags=_ordered(fields.get("tags") or (), TAGS),
+        tags=_ordered(fields.get("tags") or (), METADATA_CONTRACT.tags),
     )
 
 
@@ -460,10 +614,10 @@ def merge(parts: Iterable[ModelMetadata | None]) -> ModelMetadata | None:
     caps = {p.max_tokens for p in known}
     return ModelMetadata(
         type=known[0].type,
-        input_modalities=_ordered((m for p in known for m in p.input_modalities), INPUT_MODALITIES),
-        output_modalities=_ordered((m for p in known for m in p.output_modalities), OUTPUT_MODALITIES),
+        input_modalities=_ordered((m for p in known for m in p.input_modalities), METADATA_CONTRACT.input_modalities),
+        output_modalities=_ordered((m for p in known for m in p.output_modalities), METADATA_CONTRACT.output_modalities),
         max_tokens=caps.pop() if len(caps) == 1 else None,
-        tags=_ordered((t for p in known for t in p.tags), TAGS),
+        tags=_ordered((t for p in known for t in p.tags), METADATA_CONTRACT.tags),
     )
 
 
@@ -482,10 +636,10 @@ def common(parts: Iterable[ModelMetadata | None]) -> ModelMetadata | None:
 
     return ModelMetadata(
         type=known[0].type,
-        input_modalities=shared("input_modalities", INPUT_MODALITIES),
-        output_modalities=shared("output_modalities", OUTPUT_MODALITIES),
+        input_modalities=shared("input_modalities", METADATA_CONTRACT.input_modalities),
+        output_modalities=shared("output_modalities", METADATA_CONTRACT.output_modalities),
         max_tokens=caps.pop() if len(caps) == 1 else None,
-        tags=shared("tags", TAGS),
+        tags=shared("tags", METADATA_CONTRACT.tags),
     )
 
 
@@ -515,16 +669,20 @@ def apply_declared(derived: ModelMetadata | None, declared: Mapping[str, Any] | 
     """Overlay operator-declared values on derived ones. Declared wins per field.
 
     Values outside the contract vocabulary are ignored rather than emitted.
-    Only `language` entries keep tags; for them the `vision` tag and `image`
-    input are then made consistent.
+    Tag-bearing types and bidirectional tag/input implications are declared
+    by the release contract, independently of vocabulary ordering.
     """
     result = derived or ModelMetadata()
     if isinstance(declared, Mapping):
         updates: dict[str, Any] = {}
         type_ = declared.get("type")
-        if isinstance(type_, str) and type_ in MODEL_TYPES:
+        if isinstance(type_, str) and type_ in METADATA_CONTRACT.types:
             updates["type"] = type_
-        for key, vocab in (("input_modalities", INPUT_MODALITIES), ("output_modalities", OUTPUT_MODALITIES), ("tags", TAGS)):
+        for key, vocab in (
+            ("input_modalities", METADATA_CONTRACT.input_modalities),
+            ("output_modalities", METADATA_CONTRACT.output_modalities),
+            ("tags", METADATA_CONTRACT.tags),
+        ):
             if isinstance(declared.get(key), (list, tuple)):
                 updates[key] = _ordered(declared[key], vocab)
         max_tokens = declared.get("max_tokens")
@@ -533,11 +691,9 @@ def apply_declared(derived: ModelMetadata | None, declared: Mapping[str, Any] | 
         result = replace(result, **updates)
     if result.type is None:
         return None
-    if result.type != "language":
-        # Tags are chat-model capability flags. Media models state image input
-        # through their modalities only.
+    if result.type not in METADATA_CONTRACT.tag_types:
         return replace(result, tags=())
-    return _consistent_vision(result)
+    return _consistent_implications(result)
 
 
 @dataclass(frozen=True)
@@ -659,7 +815,7 @@ def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _asset_input_modality(spec: Mapping[str, Any]) -> str | None:
     """One declared asset family, only when it is a single model input kind."""
     modalities = asset_input_modalities(spec)
-    return modalities[0] if len(modalities) == 1 and modalities[0] in INPUT_MODALITIES else None
+    return modalities[0] if len(modalities) == 1 and modalities[0] in METADATA_CONTRACT.input_modalities else None
 
 
 def asset_media_type(spec: Mapping[str, Any]) -> str | None:
@@ -695,13 +851,29 @@ def _manifest_output_modalities(manifest: Mapping[str, Any]) -> list[str]:
 
 
 def _with_inputs(metadata: ModelMetadata, extra: Iterable[str]) -> ModelMetadata:
-    return replace(metadata, input_modalities=_ordered([*metadata.input_modalities, *extra], INPUT_MODALITIES))
+    return replace(
+        metadata, input_modalities=_ordered(
+            [*metadata.input_modalities, *extra], METADATA_CONTRACT.input_modalities,
+        ),
+    )
 
 
-def _consistent_vision(metadata: ModelMetadata) -> ModelMetadata:
-    """For a language model, `vision` tag <=> `image` input. A declared tag adds the input and vice versa."""
-    if "vision" in metadata.tags and "image" not in metadata.input_modalities:
-        metadata = _with_inputs(metadata, ("image",))
-    if "image" in metadata.input_modalities and "vision" not in metadata.tags:
-        metadata = replace(metadata, tags=_ordered([*metadata.tags, "vision"], TAGS))
-    return metadata
+def _consistent_implications(metadata: ModelMetadata) -> ModelMetadata:
+    """Close type-scoped tag/input equivalences; additions are finite and ordered."""
+    inputs, tags = set(metadata.input_modalities), set(metadata.tags)
+    rules = tuple(rule for rule in METADATA_CONTRACT.implications if rule.type == metadata.type)
+    while True:
+        size = len(inputs) + len(tags)
+        for rule in rules:
+            if rule.tag in tags or rule.input_modality in inputs:
+                inputs.add(rule.input_modality)
+                tags.add(rule.tag)
+        if len(inputs) + len(tags) == size:
+            break
+    updates: dict[str, Any] = {}
+    # Preserve unchanged fields exactly, as operator declarations already order them.
+    if inputs != set(metadata.input_modalities):
+        updates["input_modalities"] = _ordered(inputs, METADATA_CONTRACT.input_modalities)
+    if tags != set(metadata.tags):
+        updates["tags"] = _ordered(tags, METADATA_CONTRACT.tags)
+    return replace(metadata, **updates) if updates else metadata
