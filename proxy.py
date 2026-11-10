@@ -20,7 +20,7 @@ from gateway import engine_egress, engine_record_defaults
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.frontend_shapes.video_views import VideoViews
 from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
-from gateway import registry_snapshot
+from gateway import openai_model_families, registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
@@ -3413,14 +3413,6 @@ def image_edit_default_model() -> str:
     return required_text_setting(_images_group("edits"), "default_workflow", "images.edits.default_workflow")
 
 
-OPENAI_STATIC_MODEL_CATEGORIES = {
-    "dall-e-2": "images",
-    "dall-e-3": "images",
-    "tts-1": "speech",
-    "tts-1-hd": "speech",
-    "whisper-1": "transcriptions",
-}
-
 OPERATION_COMPATIBLE_CATEGORIES = {
     "chat": {"chat", "unknown"},
     "completions": {"chat", "unknown"},
@@ -3430,7 +3422,7 @@ OPERATION_COMPATIBLE_CATEGORIES = {
     "translations": {"transcriptions", "translations", "unknown"},
     "images": {"images", "unknown"},
     "image_edits": {"images", "unknown"},
-    # `video` is the OpenAI category for sora-* models (see infer_openai_model_category).
+    # `video` is an OpenAI family named in registry/openai_model_families.yml.
     # Local Wan/LTX names without an OpenAI category fall through as "unknown".
     "videos": {"video", "unknown"},
 }
@@ -3503,34 +3495,9 @@ def infer_openai_model_category(model_name: str) -> Optional[str]:
     if configured_category:
         return configured_category
 
-    if model_id in OPENAI_STATIC_MODEL_CATEGORIES:
-        return OPENAI_STATIC_MODEL_CATEGORIES[model_id]
-
-    if model_id.startswith(("dall-e-", "gpt-image-")) or model_id.startswith("chatgpt-image"):
-        return "images"
-
-    if "embedding" in model_id:
-        return "embeddings"
-
-    if "transcribe" in model_id or "diarize" in model_id or model_id.startswith("whisper"):
-        return "transcriptions"
-
-    if model_id.startswith("tts-") or model_id.endswith("-tts") or "-tts-" in model_id:
-        return "speech"
-
-    if model_id.startswith("sora"):
-        return "video"
-
-    if "moderation" in model_id:
-        return "moderation"
-
-    if "deep-research" in model_id:
-        return "deep_research"
-
-    if model_id.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4", "codex-", "computer-use-")):
-        if "realtime" in model_id or model_id.startswith("gpt-audio"):
-            return "audio_chat"
-        return "chat"
+    family = openai_model_families.FAMILIES.category_for(model_id)
+    if family:
+        return family
 
     generated_aliases = load_generated_openai_model_aliases()
     return generated_aliases.get(model_id)
