@@ -9,10 +9,12 @@ import unittest
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import local_capabilities  # noqa: E402
 from gateway.capabilities import summarize_capabilities  # noqa: E402
 from tests.support import c2d_parity  # noqa: E402
 from gateway.local_capabilities import (  # noqa: E402
@@ -573,6 +575,84 @@ def test_image_family_uses_effective_backend_override():
     ]
     assert build_local_capabilities(config, backends={}) == []
     assert config["backends"] == {"other": {"default_model": "frozen-model"}}
+
+
+def _load_backend_rows_with_flag(tmp_path, flag):
+    document = yaml.safe_load(
+        (ROOT / "registry" / "local_capability_rows.yml").read_text(encoding="utf-8")
+    )
+    # Only required fields: no optional metadata or shipped backend row is needed.
+    document["backend_rows"] = [{
+        "group": "endpoints",
+        "triggers": ["unfamiliar-trigger"],
+        "flag": flag,
+        "intent": "unfamiliar.intent",
+        "inputs": ["unfamiliar-input"],
+        "outputs": ["unfamiliar-output"],
+        "streaming": False,
+        "execution": "sync",
+        "gpu_required": False,
+    }]
+    path = tmp_path / "local_capability_rows.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return local_capabilities.load_backend_capability_rows(path)
+
+
+@pytest.mark.parametrize("flag", ["spectral_gate", "Particle-Override"])
+def test_backend_row_uses_its_unfamiliar_flag(tmp_path, monkeypatch, flag):
+    rows = _load_backend_rows_with_flag(tmp_path, flag)
+    assert len(rows) == 1
+    assert rows[0]["flag"] == flag
+    monkeypatch.setattr(local_capabilities, "_BACKEND_ROWS", rows)
+    config = {"backends": {"future-backend": {"capabilities": ["unfamiliar-trigger"]}}}
+
+    assert build_local_capabilities(config, enabled_flags={flag: False}) == []
+    enabled = build_local_capabilities(config, enabled_flags={flag: True})
+    assert [
+        (cap.intent, cap.input_modalities, cap.output_modalities) for cap in enabled
+    ] == [("unfamiliar.intent", ("unfamiliar-input",), ("unfamiliar-output",))]
+    assert build_local_capabilities(
+        config, enabled_flags={flag: True, "audio": False}
+    ) == enabled
+    assert build_local_capabilities(config, enabled_flags={"audio": False}) == enabled
+    assert build_local_capabilities(
+        config, enabled_flags={flag: False, "audio": True}
+    ) == []
+
+
+@pytest.mark.parametrize("flag", ["spectral_gate", "Particle-Override"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_backend_row_flag_rename_preserves_output(tmp_path, monkeypatch, flag, enabled):
+    config = {"backends": {"future-backend": {"capabilities": ["unfamiliar-trigger"]}}}
+    monkeypatch.setattr(
+        local_capabilities, "_BACKEND_ROWS", _load_backend_rows_with_flag(tmp_path, flag)
+    )
+    original = build_local_capabilities(config, enabled_flags={flag: enabled})
+
+    renamed = f"renamed::{flag}"
+    monkeypatch.setattr(
+        local_capabilities, "_BACKEND_ROWS", _load_backend_rows_with_flag(tmp_path, renamed)
+    )
+    actual = build_local_capabilities(
+        config, enabled_flags={renamed: enabled, flag: not enabled}
+    )
+    assert actual == original
+    assert len(actual) == int(enabled)
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["", " \t\n", None, False, 7, ["spectral_gate"], {"spectral_gate": True}],
+    ids=["empty", "whitespace", "null", "boolean", "integer", "list", "mapping"],
+)
+def test_backend_row_flag_rejects_invalid_values(tmp_path, flag):
+    with pytest.raises(ValueError) as error:
+        _load_backend_rows_with_flag(tmp_path, flag)
+
+    assert str(error.value) == (
+        f"{tmp_path / 'local_capability_rows.yml'}: "
+        "backend_rows row 1: flag must be a non-empty string"
+    )
 
 
 if __name__ == "__main__":

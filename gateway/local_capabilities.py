@@ -272,8 +272,6 @@ def _load_local_capability_rows(
         if group not in {"endpoints", "speech", "recognition"}:
             fail(where, "unknown group")
         flag = text(row, "flag", where)
-        if flag not in {"llm", "embeddings", "tts", "stt", "images", "videos", "audio"}:
-            fail(where, "unknown flag")
         triggers = tuple(value.lower() for value in modalities(row, "triggers", where))
         for trigger in triggers:
             if trigger in triggers_seen:
