@@ -252,3 +252,35 @@ reload it or inspect the environment. Restart after editing the file. The
 original two-table loader API and files without `backend_rows` remain supported;
 an omitted list is empty, with no hard-coded backend fallback.
 This file does not probe workflow files or enable a backend by itself.
+
+## Workflow request maps
+
+`workflow_request_maps.yml` (schema version 1) states where each workflow input
+goes in a request for the route that serves it, as data.
+`gateway/workflow_request_maps.py` reads it. `maps` is a list of rows: a row's
+`select` is exactly one of a native route with a `mode`, an `intent` with a
+`mode` (`sync`, `async` or `any`), an `intent_prefix`, or `any: true`. Selection
+precedence is the native route, an exact intent and mode, an exact intent in
+either mode, the longest intent prefix, then the default row. A row places every
+settable input with the first matching part: `first` names a set word whose
+members come first, `inputs` maps an input name to a placement, `sets` lists set
+words with placements, `asset` covers an asset input not placed yet, and
+`default` covers the rest. A placement is `in` one of `body`, `form`, `file`,
+`file+extension`, `extension` or `none`, with an optional `field` (the input name
+when absent) and an optional two-name `combine` for the `WIDTHxHEIGHT` size
+field. A native row may also `rename` an input.
+
+Route-managed sets stay in Python. A row names a static word
+(`image_generate_managed`, `image_edit_managed`, `audio_route_managed`,
+`video_route_managed`, `video_reference`) or a per-record word (`unbound`,
+`route_images`), and the loader resolves it from the existing constant or
+helper, never a copy of the members. `pending` lists selectors a dedicated
+branch of `gateway/workflow_openapi.py` still serves, so the default row does
+not claim them until rows name them.
+
+The loader refuses, with the file and row index, an unknown key, an unknown `in`
+word, an unknown set word, two rows with the same selector, and a row with no
+`select`. It loads the file once at import into read-only rows; the
+media-bearing container post-step stays in
+`gateway.workflow_openapi.request_mapping`. Restart the gateway after editing the
+file.

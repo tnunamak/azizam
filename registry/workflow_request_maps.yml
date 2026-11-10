@@ -1,0 +1,71 @@
+# Where each workflow input goes in a route's request. The loader is
+# gateway/workflow_request_maps.py; the shapes it produces are what
+# gateway/workflow_openapi.request_mapping builds a request from.
+#
+# A row selects records (select: a native route and mode, an exact intent and
+# mode, an intent prefix, or the default) and places every settable input with
+# the first part that matches, in this order: first, inputs, sets, asset,
+# default. A placement is `in` one of body, form, file, file+extension,
+# extension or none, with an optional `field` (the input name when absent) and
+# an optional two-name `combine` for the WIDTHxHEIGHT size field.
+#
+# Route-managed sets stay in Python. A row names one by word and the loader
+# resolves it with the existing constant or helper, so members are never copied
+# here. Static words: image_generate_managed, image_edit_managed,
+# audio_route_managed, video_route_managed, video_reference. Per-record words:
+# unbound (inputs no service binding maps) and route_images (the pictures the
+# native edit route reads, in submission order).
+#
+# pending lists selectors a dedicated branch of gateway/workflow_openapi.py
+# still serves. The default row must not claim them: jobs B and C add the image,
+# audio and video rows and delete an entry as they do. A stale entry is
+# harmless once a specific row selects the intent.
+schema_version: 1
+pending:
+  - intent: image.generate
+  - intent: image.edit
+  - intent: audio.generate
+  - intent_prefix: video.
+
+maps:
+  # A native route (the record sets gateway_route): plain multipart. Each asset
+  # is a file part and every other input a form field; source_image is the
+  # route's single image.
+  - select:
+      native: true
+      mode: sync
+    rename:
+      source_image: image
+    asset:
+      in: file
+    default:
+      in: form
+
+  # The mesh route refuses an input no service binding maps, so those inputs are
+  # not form fields either.
+  - select:
+      intent: mesh.generate
+      mode: sync
+    sets:
+      - word: unbound
+        placement:
+          in: none
+    asset:
+      in: file
+    default:
+      in: form
+
+  # The video-edit run route: plain multipart form.
+  - select:
+      intent: video.edit
+      mode: sync
+    asset:
+      in: file
+    default:
+      in: form
+
+  # Any other intent and mode: a key under extensions["com.azizam.workflow"].
+  - select:
+      any: true
+    default:
+      in: extension
