@@ -1,61 +1,74 @@
-# Capability rows are in display order. Route intents list only extra words.
+# Capability rows retain catalog order; display_order ranks access-preview groups.
+# Route intents list only extra words.
 schema_version: 1
 # Wire-facing modalities are distinct from capability IDs and MIME media types.
 modality_words: [text, image, audio, video, mesh]
 capabilities:
   - id: chat
+    display_order: 0
     label: Chat
     recommended_alias: default
   - id: image
+    display_order: 1
     label: Images
     recommended_alias: image
     summary: Generate or edit images from your prompts.
     policy_protocol: openai.images
   - id: video
+    display_order: 2
     label: Video
     recommended_alias: video
     summary: Video from a prompt or image.
     policy_protocol: openai.video
   - id: speech
+    display_order: 6
     label: Voice
     recommended_alias: tts
     summary: Turn text into spoken audio.
     policy_protocol: openai.audio
   - id: transcribe
+    display_order: 8
     label: Transcription
     recommended_alias: stt
     summary: Turn recorded speech into text.
     policy_protocol: openai.audio
   - id: music
+    display_order: 4
     label: Music
     recommended_alias: music
     summary: Songs and instrumentals from a prompt.
     policy_protocol: openai.audio
   - id: sfx
+    display_order: 5
     label: Sound effects
     recommended_alias: sfx
     summary: Sound effects from a description.
     policy_protocol: openai.audio
   - id: audio
+    display_order: 7
     label: Audio
     hidden_by: [speech, transcribe, music, sfx]
     icon: sfx
     summary: Generate audio from your prompts.
     policy_protocol: openai.audio
   - id: decide
+    display_order: 9
     label: Decisions
     recommended_alias: decide
     summary: Choose an outcome from your options.
   - id: embed
+    display_order: 10
     label: Document search
     recommended_alias: embed
     summary: Create vectors for search and similarity.
     policy_protocol: openai.embeddings
   - id: rerank
+    display_order: 11
     label: Reranking
     recommended_alias: rerank
     summary: Order search results by relevance.
   - id: mesh
+    display_order: 3
     label: 3D models
     summary: A 3D model from one picture.
     policy_protocol: openai.mesh

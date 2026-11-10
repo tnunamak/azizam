@@ -40,7 +40,7 @@ def load_modality_words(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
 def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
-    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int],
 ]:
     """Validate capability, presentation and classification rows together."""
     def invalid(word: object, reason: str) -> ValueError:
@@ -77,11 +77,12 @@ def _load_capability_tables(path: Path) -> tuple[
     aliases: dict[str, str] = {}
     summaries: dict[str, str] = {}
     hidden_by: dict[str, tuple[str, ...]] = {}
+    display_order: dict[str, int] = {}
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -92,6 +93,12 @@ def _load_capability_tables(path: Path) -> tuple[
         if not isinstance(label, str) or not label.strip():
             raise invalid_row(index, "label must be a non-empty string")
         labels[capability] = label
+        rank = row.get("display_order", index - 1)
+        if type(rank) is not int or rank < 0:
+            raise invalid_row(index, "display_order must be a non-negative integer")
+        if rank in display_order.values():
+            raise invalid_row(index, f"has duplicate display_order {rank!r}")
+        display_order[capability] = rank
         if "policy_protocol" in row:
             protocol = row["policy_protocol"]
             if not isinstance(protocol, str):
@@ -176,7 +183,8 @@ def _load_capability_tables(path: Path) -> tuple[
     return (MappingProxyType(labels), MappingProxyType(policy_protocols),
             MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
             MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
-            MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by))
+            MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by),
+            MappingProxyType(display_order))
 
 
 def _load_capability_data(path: Path) -> tuple[
@@ -197,7 +205,12 @@ def load_capability_classification(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
     Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]],
 ]:
     """Read immutable type, audio and suppression decisions; omitted sections are empty."""
-    return _load_capability_tables(path)[7:]
+    return _load_capability_tables(path)[7:10]
+
+
+def load_capability_display_order(path: Path = CAPABILITY_WORDS_PATH) -> Mapping[str, int]:
+    """Read immutable ranks for declared capabilities; omitted ranks use row order."""
+    return _load_capability_tables(path)[10]
 
 
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
@@ -208,7 +221,7 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
  CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
- TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+ TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER) = _load_capability_tables(CAPABILITY_WORDS_PATH)
 
 MODALITY_WORDS = load_modality_words()
 
