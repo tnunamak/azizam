@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from gateway.capabilities import Capability
 from gateway import service_registry
 
-_CHAT_PROTOCOLS = frozenset({"openai-compatible", "openai-chat", "anthropic-messages"})
+from gateway.engine_protocol import description
 
 
 def remote_provider_model_capabilities(
@@ -87,9 +87,11 @@ def remote_provider_model_metadata(
 
 def _intent_for_protocol(protocol: str) -> str | None:
     normalized = protocol.strip().lower()
-    if normalized in _CHAT_PROTOCOLS:
-        return "chat.completions"
-    return None
+    matches = [doc for doc in description.load_registry().values()
+               if normalized == doc.id or normalized in doc.catalog_aliases]
+    if len(matches) != 1:
+        return None
+    return matches[0].catalog_intent or None
 
 
 def _model_rows(value: Any) -> list[Mapping[str, Any]]:
