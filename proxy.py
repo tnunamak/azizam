@@ -8696,6 +8696,11 @@ def _image_graph_roles(
     # Seed: a mapped seed is bound through the map, so no seed node is read from the graph.
     if found.seed:
         roles.pop("seed_node", None)
+    # Batch size: the map's batch_size input, else the table's pair for graphs whose map leaves it out.
+    owned = _IMAGE_GRAPH_ROLES.get(path) or {}
+    batch = [pair for pair in (found.batch_size or tuple((str(t["node"]), str(t["input"])) for t in owned.get("batch_size") or ())) if pair[1] == "batch_size"]
+    if batch:
+        roles["batch_size_node"] = batch[0][0]
     return roles
 
 
