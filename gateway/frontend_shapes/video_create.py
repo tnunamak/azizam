@@ -315,8 +315,7 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:
         target = _reference_input(chosen)
-        if target is None:
-            return LegacyRoute(LEGACY_CREATE, body)
+        assert target is not None, "select hands a reference with no request-map target to the old handler"
         decoded = _reference_bytes(reference)
         refused_reference = hooks.check_reference(caller, decoded[0], chosen.contract, target)
         if refused_reference is not None:
