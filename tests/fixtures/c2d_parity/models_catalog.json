@@ -6023,7 +6023,7 @@
             "capability": "mesh",
             "icon_key": "mesh",
             "input_modalities": [
-              "asset",
+              "image",
               "text"
             ],
             "intent": "mesh.generate",
@@ -6051,7 +6051,7 @@
         "id": "mesh.generate.trellis-2",
         "io": {
           "input": [
-            "asset",
+            "image",
             "text"
           ],
           "output": []
@@ -6086,7 +6086,7 @@
         "workflow": "mesh.generate.trellis-2"
       },
       "id": "mesh.generate.trellis-2",
-      "sha256": "9d460e564b22b0ff642da744160474541558123b01a46d910e13cfd26d2cd3ee"
+      "sha256": "d24c80f26c915472e421650374ea193a178becc12d7d398d3ae22fe8a188d7c0"
     },
     {
       "bytes": 2194,
@@ -6789,7 +6789,7 @@
       "sha256": "3cdb77c85963aac20bf0df327172db2449e67c88f76f14981ccd4df4deb167d1"
     },
     {
-      "bytes": 1767,
+      "bytes": 1799,
       "full": {
         "alias": false,
         "availability": {
@@ -6811,6 +6811,7 @@
             "capability": "video",
             "icon_key": "video",
             "input_modalities": [
+              "image",
               "video",
               "text"
             ],
@@ -6841,6 +6842,7 @@
         "id": "video.edit.scail-2-replace",
         "io": {
           "input": [
+            "image",
             "text",
             "video"
           ],
@@ -6878,7 +6880,7 @@
         "workflow": "video.edit.scail-2-replace"
       },
       "id": "video.edit.scail-2-replace",
-      "sha256": "e3d374761c491f7e818670caf1c5acce0d04aea5ed64504a86117afe03ef248f"
+      "sha256": "d1febe6a2876519ef18346464d2b1af787488f72f46da7995ccdb8d7d28716f1"
     },
     {
       "bytes": 2193,
@@ -6904,7 +6906,7 @@
             "icon_key": "video",
             "input_modalities": [
               "text",
-              "video"
+              "image"
             ],
             "intent": "video.generate",
             "label": "Video",
@@ -6936,8 +6938,8 @@
         "id": "video.generate.ltx-2.5-i2v",
         "io": {
           "input": [
-            "text",
-            "video"
+            "image",
+            "text"
           ],
           "output": [
             "video"
@@ -6979,7 +6981,7 @@
         "workflow": "video.generate.ltx-2.5-i2v"
       },
       "id": "video.generate.ltx-2.5-i2v",
-      "sha256": "6bc421049643d2eb43ac0a751275ac873bc7e126f6d8fc7207632c9be2eb33d9"
+      "sha256": "16e33a40ddd6b286eb292ccc0ffc25acfddcb10af2d505b9ccebeefb3ae218cb"
     },
     {
       "bytes": 2265,
@@ -7005,7 +7007,7 @@
             "icon_key": "video",
             "input_modalities": [
               "text",
-              "video"
+              "image"
             ],
             "intent": "video.generate",
             "label": "Video",
@@ -7037,8 +7039,8 @@
         "id": "video.generate.ltx-2.5-keyframes",
         "io": {
           "input": [
-            "text",
-            "video"
+            "image",
+            "text"
           ],
           "output": [
             "video"
@@ -7080,7 +7082,7 @@
         "workflow": "video.generate.ltx-2.5-keyframes"
       },
       "id": "video.generate.ltx-2.5-keyframes",
-      "sha256": "bd8f05e42856536669cd9a622f1e231fecf347170b6e05477dbac063ee69098c"
+      "sha256": "db526963daac12fab23c946c1c9a4cc8f3eef0174b2cb3fc7b88693d077f19d0"
     },
     {
       "bytes": 2333,
@@ -7106,7 +7108,7 @@
             "icon_key": "video",
             "input_modalities": [
               "text",
-              "video"
+              "image"
             ],
             "intent": "video.generate",
             "label": "Video",
@@ -7138,8 +7140,8 @@
         "id": "video.generate.ltx-2.5-keyframes-mid",
         "io": {
           "input": [
-            "text",
-            "video"
+            "image",
+            "text"
           ],
           "output": [
             "video"
@@ -7181,7 +7183,7 @@
         "workflow": "video.generate.ltx-2.5-keyframes-mid"
       },
       "id": "video.generate.ltx-2.5-keyframes-mid",
-      "sha256": "847ff4b170deb92903eeeddd45d5a45c9c327eddbea3f69ca19cb6bba413a60d"
+      "sha256": "a464b46a06b584e22ff43c7613fa4a3a4bc460894eae39ef74926321451ef364"
     },
     {
       "bytes": 2143,
@@ -7405,7 +7407,7 @@
             "icon_key": "video",
             "input_modalities": [
               "text",
-              "video"
+              "image"
             ],
             "intent": "video.generate",
             "label": "Video",
@@ -7437,8 +7439,8 @@
         "id": "video.generate.minimax-h3-i2v",
         "io": {
           "input": [
-            "text",
-            "video"
+            "image",
+            "text"
           ],
           "output": [
             "video"
@@ -7480,7 +7482,7 @@
         "workflow": "video.generate.minimax-h3-i2v"
       },
       "id": "video.generate.minimax-h3-i2v",
-      "sha256": "cc11da7367aafbd87ff6b0b93c41a8ee85250821a1a729cf3b26a7db1ac0dc84"
+      "sha256": "3aa30480fe420f3694b4fab95801a138d77244ecdb744d456c004de7c201913b"
     },
     {
       "bytes": 2261,
@@ -7506,7 +7508,7 @@
             "icon_key": "video",
             "input_modalities": [
               "text",
-              "video"
+              "image"
             ],
             "intent": "video.generate",
             "label": "Video",
@@ -7538,8 +7540,8 @@
         "id": "video.generate.minimax-h3-keyframes",
         "io": {
           "input": [
-            "text",
-            "video"
+            "image",
+            "text"
           ],
           "output": [
             "video"
@@ -7581,7 +7583,7 @@
         "workflow": "video.generate.minimax-h3-keyframes"
       },
       "id": "video.generate.minimax-h3-keyframes",
-      "sha256": "cb6b209e63a947b58a426b8d194e208857837b248c0e043609c696a80c22eaac"
+      "sha256": "3c25360274e856f4ad92bbae8b65bd5bf8f38b7469c272068e960df3d8915d0a"
     },
     {
       "bytes": 2329,
@@ -7607,7 +7609,7 @@
             "icon_key": "video",
             "input_modalities": [
               "text",
-              "video"
+              "image"
             ],
             "intent": "video.generate",
             "label": "Video",
@@ -7639,8 +7641,8 @@
         "id": "video.generate.minimax-h3-keyframes-mid",
         "io": {
           "input": [
-            "text",
-            "video"
+            "image",
+            "text"
           ],
           "output": [
             "video"
@@ -7682,7 +7684,7 @@
         "workflow": "video.generate.minimax-h3-keyframes-mid"
       },
       "id": "video.generate.minimax-h3-keyframes-mid",
-      "sha256": "581b3387ef9c29c9428312913bb985ba4145976c5a657e0773f0653173e4d06a"
+      "sha256": "b77e39c079ab3e3cbe78a5ca4950e8cc2dc7222dec65b223c617e7370ed3f860"
     },
     {
       "bytes": 2169,

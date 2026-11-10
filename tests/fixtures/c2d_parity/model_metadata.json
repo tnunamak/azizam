@@ -3656,12 +3656,108 @@
     }
   },
   "from_capability": {
-    " image.generate |declared audio in, image out": null,
-    " image.generate |declared text+image in, text out": null,
+    " image.generate |declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    " image.generate |declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     " image.generate |defaults": null,
     " image.generate |unknown and non-string values": null,
-    "Chat.completions|declared audio in, image out": null,
-    "Chat.completions|declared text+image in, text out": null,
+    "Chat.completions|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "Chat.completions|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "Chat.completions|defaults": null,
     "Chat.completions|unknown and non-string values": null,
     "audio.generate|declared audio in, image out": {
@@ -3860,8 +3956,56 @@
         "type": "audio"
       }
     },
-    "audio|declared audio in, image out": null,
-    "audio|declared text+image in, text out": null,
+    "audio|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "audio|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "audio|defaults": null,
     "audio|unknown and non-string values": null,
     "chat.completions.stream|declared audio in, image out": {
@@ -4158,8 +4302,56 @@
         "type": "language"
       }
     },
-    "chat|declared audio in, image out": null,
-    "chat|declared text+image in, text out": null,
+    "chat|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "chat|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "chat|defaults": null,
     "chat|unknown and non-string values": null,
     "decision.other|declared audio in, image out": {
@@ -4358,12 +4550,108 @@
         "type": "decision"
       }
     },
-    "decision|declared audio in, image out": null,
-    "decision|declared text+image in, text out": null,
+    "decision|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "decision|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "decision|defaults": null,
     "decision|unknown and non-string values": null,
-    "frobnicate.widget-9|declared audio in, image out": null,
-    "frobnicate.widget-9|declared text+image in, text out": null,
+    "frobnicate.widget-9|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "frobnicate.widget-9|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "frobnicate.widget-9|defaults": null,
     "frobnicate.widget-9|unknown and non-string values": null,
     "image.analyze|declared audio in, image out": {
@@ -4762,8 +5050,56 @@
         "type": "image"
       }
     },
-    "image|declared audio in, image out": null,
-    "image|declared text+image in, text out": null,
+    "image|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "image|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "image|defaults": null,
     "image|unknown and non-string values": null,
     "responses.create|declared audio in, image out": {
@@ -4962,8 +5298,56 @@
         "type": "language"
       }
     },
-    "responses|declared audio in, image out": null,
-    "responses|declared text+image in, text out": null,
+    "responses|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "responses|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "responses|defaults": null,
     "responses|unknown and non-string values": null,
     "speech.other|declared audio in, image out": {
@@ -5358,8 +5742,56 @@
         "type": "audio"
       }
     },
-    "speech|declared audio in, image out": null,
-    "speech|declared text+image in, text out": null,
+    "speech|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "speech|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "speech|defaults": null,
     "speech|unknown and non-string values": null,
     "text.completions|declared audio in, image out": {
@@ -5954,12 +6386,108 @@
         "type": "video"
       }
     },
-    "video|declared audio in, image out": null,
-    "video|declared text+image in, text out": null,
+    "video|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "video|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "video|defaults": null,
     "video|unknown and non-string values": null,
-    "|declared audio in, image out": null,
-    "|declared text+image in, text out": null,
+    "|declared audio in, image out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "audio"
+          ],
+          "output_modalities": [
+            "image"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "audio"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "image"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
+    "|declared text+image in, text out": {
+      "fields": {
+        "architecture": {
+          "input_modalities": [
+            "text",
+            "image"
+          ],
+          "output_modalities": [
+            "text"
+          ]
+        },
+        "type": "image"
+      },
+      "record": {
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "max_tokens": null,
+        "output_modalities": [
+          "text"
+        ],
+        "tags": [],
+        "type": "image"
+      }
+    },
     "|defaults": null,
     "|unknown and non-string values": null
   },

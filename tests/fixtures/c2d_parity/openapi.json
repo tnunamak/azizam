@@ -1430,7 +1430,7 @@
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
-      "bytes": 7601,
+      "bytes": 7661,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1620,7 +1620,10 @@
               "method": "POST",
               "model": "ace-step-1.5-xl-turbo",
               "output": "audio bytes (see Content-Type)",
-              "path": "/v1/audio/generate"
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
             }
           },
           "id": "audio.generate.ace-step-1.5-xl-turbo",
@@ -1736,10 +1739,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo",
         "run_path": null
       },
-      "sha256": "0da91094993b151a16f55f438ba0178e52ceba869b07ef47a38f351900812752"
+      "sha256": "084cb86835c775a036eed78cd161b391a577b15bb7164f80daad34d7fba78894"
     },
     "audio.generate.sa3-small-sfx": {
-      "bytes": 3307,
+      "bytes": 3367,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1817,7 +1820,10 @@
               "method": "POST",
               "model": "sa3-small-sfx",
               "output": "audio bytes (see Content-Type)",
-              "path": "/v1/audio/generate"
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
             }
           },
           "id": "audio.generate.sa3-small-sfx",
@@ -1873,10 +1879,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx",
         "run_path": null
       },
-      "sha256": "5d8448ec23ed48b46d8ef45168ebb196d116a317290b7cfe518aee39a099c394"
+      "sha256": "155c03d81ffbf392a2cd4775fa39657cb1a50d6da2d8c8d12d9a62725da6ce52"
     },
     "audio.generate.tangoflux": {
-      "bytes": 4185,
+      "bytes": 4245,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -1980,7 +1986,10 @@
               "method": "POST",
               "model": "tangoflux",
               "output": "audio bytes (see Content-Type)",
-              "path": "/v1/audio/generate"
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
             }
           },
           "id": "audio.generate.tangoflux",
@@ -2050,10 +2059,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux",
         "run_path": null
       },
-      "sha256": "cd5cd3e9218b7e4bf397fca27c62d9e8aa8cf4c795a13764df607b3b6c67dc3a"
+      "sha256": "e6b46fe41b5b2b1b00a6f1e668e20f3e40c348983f60c33aa57c244e16022564"
     },
     "audio.generate.yue2-song": {
-      "bytes": 3810,
+      "bytes": 3870,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2139,7 +2148,10 @@
               "method": "POST",
               "model": "yue2-song",
               "output": "audio bytes (see Content-Type)",
-              "path": "/v1/audio/generate"
+              "path": "/v1/audio/generate",
+              "response": {
+                "kind": "binary"
+              }
             }
           },
           "id": "audio.generate.yue2-song",
@@ -2202,10 +2214,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song",
         "run_path": null
       },
-      "sha256": "be4ddcc992f82910b1480899df723769b369488f456626c9d818cfe56a03d203"
+      "sha256": "c065fb57eea4bf15fbb466c5ed0ee204f7be0bff0385811f7ba08b70a78c9739"
     },
     "image.analyze.face-likeness": {
-      "bytes": 2666,
+      "bytes": 2724,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2236,7 +2248,10 @@
               },
               "method": "POST",
               "output": "JSON (see the route's response schema)",
-              "path": "/gateway/v1/faces/likeness"
+              "path": "/gateway/v1/faces/likeness",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.analyze.face-likeness",
@@ -2291,10 +2306,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_analyze_face_likeness",
         "run_path": null
       },
-      "sha256": "ef173b1f1359c38a8409dded1e8a69ee63fc03e3b439fc333f4c13a32207f0dd"
+      "sha256": "687446a0cd5ccab98ed5e37e059e2737866c6bd4fac4cb28c7935138f086a7fd"
     },
     "image.edit.fibo-2-edit-turbo": {
-      "bytes": 3185,
+      "bytes": 3243,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2327,7 +2342,10 @@
               "method": "POST",
               "model": "fibo-2-edit-turbo",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.fibo-2-edit-turbo",
@@ -2401,10 +2419,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_fibo_2_edit_turbo",
         "run_path": null
       },
-      "sha256": "7263f51dac6a8c81157fb63496365f0cf4d268293b229e05b18d847157a63293"
+      "sha256": "6363d0a79408487cf2e53202c8e670edbab931d7364bba77abda4da1030c9f71"
     },
     "image.edit.flux2-klein": {
-      "bytes": 3756,
+      "bytes": 3814,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2457,7 +2475,10 @@
               "method": "POST",
               "model": "flux2-klein",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.flux2-klein",
@@ -2542,10 +2563,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein",
         "run_path": null
       },
-      "sha256": "fe766ea2dec490f6fa8a39dc05e1b3721696cccba6c38e3bdd3f2ed80cc97d99"
+      "sha256": "fe73eddda87bf8dc39988344dbcce1ff494fc72a93985239b2a445bbc25f9858"
     },
     "image.edit.flux2-klein-4b": {
-      "bytes": 4081,
+      "bytes": 4139,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -2604,7 +2625,10 @@
               "method": "POST",
               "model": "flux2-klein-4b",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.flux2-klein-4b",
@@ -2696,10 +2720,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein_4b",
         "run_path": null
       },
-      "sha256": "6f2f26e5684541c9cce0606fc42e32781abc4ac424f1e5974df089c211e99be0"
+      "sha256": "a37317d19a1ab2116cec6bc76088e49da0eeb132962387b48871c87ae2bd8b43"
     },
     "image.edit.flux2-klein-4b-inpaint": {
-      "bytes": 5264,
+      "bytes": 5322,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2768,7 +2792,10 @@
               "method": "POST",
               "model": "flux2-klein-4b-inpaint",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.flux2-klein-4b-inpaint",
@@ -2882,10 +2909,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein_4b_inpaint",
         "run_path": null
       },
-      "sha256": "c63d588d30afc851df10f669068fb6ad86fa20b189ae80de0d4602b7dafac320"
+      "sha256": "25425b9d8e788d46bb62d78d65c6482cc13c6ce51724ba1507162d801f4d49b1"
     },
     "image.edit.image-identity": {
-      "bytes": 7160,
+      "bytes": 7218,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2982,7 +3009,10 @@
               },
               "method": "POST",
               "output": "JSON (see the route's response schema)",
-              "path": "/gateway/v1/images/identity"
+              "path": "/gateway/v1/images/identity",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.image-identity",
@@ -3134,10 +3164,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_image_identity",
         "run_path": null
       },
-      "sha256": "bc4f85abf7108a8a5527f10c6e1932be710458a7314492395030a7b55f70ab5d"
+      "sha256": "edd558e96cedd7743cc34b39083d5367a06b370f5e59fc12efe881f069b48d44"
     },
     "image.edit.qwen-image-2.1-edit": {
-      "bytes": 3833,
+      "bytes": 3891,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3182,7 +3212,10 @@
               "method": "POST",
               "model": "qwen-image-2.1-edit",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.qwen-image-2.1-edit",
@@ -3274,10 +3307,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit",
         "run_path": null
       },
-      "sha256": "392e8e049494e8891449ccf1559aa3c53585400fc17d79e871443f70acfe0c63"
+      "sha256": "11dff41b7d1db84d02ed33060f78ca48db91e5387f5d5d92b87716515fb19b1f"
     },
     "image.edit.qwen-image-2.1-edit-multiref": {
-      "bytes": 4131,
+      "bytes": 4189,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3326,7 +3359,10 @@
               "method": "POST",
               "model": "qwen-image-2.1-edit-multiref",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.qwen-image-2.1-edit-multiref",
@@ -3422,10 +3458,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit_multiref",
         "run_path": null
       },
-      "sha256": "f002afe7e4d3f8425709dde736a36246cca1d0d5b39578c90d0ce297387ae2ab"
+      "sha256": "31d0370ccc9ba443dd66c3197a862a00def64a2e8ee58c8afdb4a39919c440ae"
     },
     "image.edit.qwen-image-2.1-inpaint": {
-      "bytes": 4978,
+      "bytes": 5036,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3482,7 +3518,10 @@
               "method": "POST",
               "model": "qwen-image-2.1-inpaint",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.qwen-image-2.1-inpaint",
@@ -3595,10 +3634,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_inpaint",
         "run_path": null
       },
-      "sha256": "f5111b55280fe87adf5abe0b41cf6896c10b860948d86b10d473d0e2305d6f02"
+      "sha256": "ecdb669c63350ae4d6cf684d14bfe78cee51ffdd9e0a50e75098125d4e3863c3"
     },
     "image.edit.seedvr2-upscale": {
-      "bytes": 3182,
+      "bytes": 3240,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3631,7 +3670,10 @@
               "method": "POST",
               "model": "seedvr2-upscale",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/edits"
+              "path": "/v1/images/edits",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.edit.seedvr2-upscale",
@@ -3713,10 +3755,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_seedvr2_upscale",
         "run_path": null
       },
-      "sha256": "c1c580f441d10c39a002c7a9bc02295bb296d066957c4116b01c288e84e87988"
+      "sha256": "6fbe17f39f1f13399e7719cb464bfd79d178ca973fb3e44c98fa9b2e7b7cc4c1"
     },
     "image.generate.anima-turbo": {
-      "bytes": 5168,
+      "bytes": 5226,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3834,7 +3876,10 @@
               "method": "POST",
               "model": "anima-turbo",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.anima-turbo",
@@ -3918,10 +3963,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_anima_turbo",
         "run_path": null
       },
-      "sha256": "80e4c41ee948ace02355a1492cc4b6f3cb4046de17982ee0706fa8a3237dc1ad"
+      "sha256": "b2c0b85585d8ba638d4f4d5962ad54e665238419645e1fc6325bd58b754bee84"
     },
     "image.generate.flux2-klein": {
-      "bytes": 5358,
+      "bytes": 5416,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4047,7 +4092,10 @@
               "method": "POST",
               "model": "flux2-klein",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.flux2-klein",
@@ -4132,10 +4180,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
         "run_path": null
       },
-      "sha256": "ce42a4f45ca165ef682afab2aa7f5604827b8a0760bcf9e71039134f66744057"
+      "sha256": "8eb48fdff8781af2f7aed19a858c50e6323e9784afca6bde77dbba33050fad08"
     },
     "image.generate.flux2-klein-4b": {
-      "bytes": 5403,
+      "bytes": 5461,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -4263,7 +4311,10 @@
               "method": "POST",
               "model": "flux2-klein-4b",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.flux2-klein-4b",
@@ -4348,10 +4399,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b",
         "run_path": null
       },
-      "sha256": "5374b115da14e22918b16b8ae744d5194cec9cad6edf87f9cc5feb61a00150ae"
+      "sha256": "920316d014fd4fad6db9005ecd791f8d66be1953847f15df8791fc09b1f69972"
     },
     "image.generate.flux2-klein-4b-seamless-tile": {
-      "bytes": 8259,
+      "bytes": 8317,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4525,7 +4576,10 @@
               "method": "POST",
               "model": "flux2-klein-4b-seamless-tile",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.flux2-klein-4b-seamless-tile",
@@ -4651,10 +4705,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b_seamless_tile",
         "run_path": null
       },
-      "sha256": "8107696dca65ddf74d72da1968af566b3f04dd597b8574bb3d6e707560a1cbc8"
+      "sha256": "022e18143f8df4355cbedf05f77ffaa5864de02e58bcad0427b5f89632c628a0"
     },
     "image.generate.flux2-klein-snofs": {
-      "bytes": 5953,
+      "bytes": 6011,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4788,7 +4842,10 @@
               "method": "POST",
               "model": "flux2-klein-snofs",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.flux2-klein-snofs",
@@ -4880,10 +4937,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
         "run_path": null
       },
-      "sha256": "c282c9f2a7adad123d8479d73f97b2442ff3fe517c7b1bca16de961687b47dbf"
+      "sha256": "26047fd1262ba45baba15e7648ab5cab1cfa2537bb11f5658dba0d503f2c601e"
     },
     "image.generate.krea2-turbo": {
-      "bytes": 5004,
+      "bytes": 5062,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -5003,7 +5060,10 @@
               "method": "POST",
               "model": "krea2-turbo",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.krea2-turbo",
@@ -5085,10 +5145,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo",
         "run_path": null
       },
-      "sha256": "8e955c2234429485971b6d0a3feca137aaa187a5065ca9b16c0a37536009b8c0"
+      "sha256": "5cb7806745f4a646a1ba05acc771a90026a35fba745c75aaecb69c5cf9f82548"
     },
     "image.generate.krea2-turbo-snofs": {
-      "bytes": 5788,
+      "bytes": 5846,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5214,7 +5274,10 @@
               "method": "POST",
               "model": "krea2-turbo-snofs",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.krea2-turbo-snofs",
@@ -5305,10 +5368,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs",
         "run_path": null
       },
-      "sha256": "ef3bf72fe809673aecf443df600fe7a43f5485e0fa1b3d728f094ebfa89c8080"
+      "sha256": "3d939d524187e48cd5435485fe7c254de79b389281a5c158f16c3d8035333957"
     },
     "image.generate.moss-image": {
-      "bytes": 4706,
+      "bytes": 4764,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5418,7 +5481,10 @@
               "method": "POST",
               "model": "moss-image",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.moss-image",
@@ -5495,10 +5561,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image",
         "run_path": null
       },
-      "sha256": "4dac4d1f3fd03de00411743ff3b8b340d6614fbaac00fa6ed5599182fdc4754f"
+      "sha256": "71ba4cbb00845dabe19c95bc1cb3decf258c68d58445aaa47669934ada28e877"
     },
     "image.generate.moss-image-fast": {
-      "bytes": 4770,
+      "bytes": 4828,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5608,7 +5674,10 @@
               "method": "POST",
               "model": "moss-image-fast",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.moss-image-fast",
@@ -5685,10 +5754,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_fast",
         "run_path": null
       },
-      "sha256": "23b362b3486ae0ac3861b66c1eb25a10fb6d02e00b82062a1fda0a052ee5e4c6"
+      "sha256": "01c9479ecb4e3d00c2dd3b6258e5afe7832b78da13498f65dd8f7af2bb1d0052"
     },
     "image.generate.moss-image-quality": {
-      "bytes": 5224,
+      "bytes": 5282,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5806,7 +5875,10 @@
               "method": "POST",
               "model": "moss-image-quality",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.moss-image-quality",
@@ -5890,10 +5962,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_quality",
         "run_path": null
       },
-      "sha256": "de5ed35a779a233e73137b090d4a4b39c09c13be4de41c1fefb74dea014cf277"
+      "sha256": "fe5d970bdceeaac0b08141dfa698716f3974aab28c29a808f9cb75e0c0022b23"
     },
     "image.generate.sdxl-seamless-tile": {
-      "bytes": 6573,
+      "bytes": 6631,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6051,7 +6123,10 @@
               "method": "POST",
               "model": "sdxl-seamless-tile",
               "output": "data[].b64_json or data[].url",
-              "path": "/v1/images/generations"
+              "path": "/v1/images/generations",
+              "response": {
+                "kind": "json"
+              }
             }
           },
           "id": "image.generate.sdxl-seamless-tile",
@@ -6159,10 +6234,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_sdxl_seamless_tile",
         "run_path": null
       },
-      "sha256": "5d43ac4924fdaca72ac9fc83c001b941cc2cc748db3cbffc910ee638a377b1d0"
+      "sha256": "0ccaf1c3e3b9b880b61bf74db2fea84c71343ac5dd7b55a79a2acb1ffe37d022"
     },
     "mesh.generate.trellis-2": {
-      "bytes": 4450,
+      "bytes": 4555,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6254,7 +6329,11 @@
               },
               "method": "POST",
               "output": "model/gltf-binary (GLB bytes)",
-              "path": "/v1/3d/generations/glb"
+              "path": "/v1/3d/generations/glb",
+              "response": {
+                "kind": "binary",
+                "media_type": "model/gltf-binary"
+              }
             }
           },
           "id": "mesh.generate.trellis-2",
@@ -6327,10 +6406,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_mesh_generate_trellis_2",
         "run_path": null
       },
-      "sha256": "e8f5d11307cb0bb8a55b0ed9256157eb14d225416e9f8db089fab6e55ab42d4b"
+      "sha256": "34ae51104e003cc27de38e2c5590927653db90470037f5d21b3a23f0cf5ae1af"
     },
     "video.edit.rife-interpolate": {
-      "bytes": 8102,
+      "bytes": 8282,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6393,7 +6472,12 @@
               },
               "method": "POST",
               "output": "a media job; its content is the video",
-              "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run"
+              "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run",
+              "response": {
+                "content": "/gateway/v1/media/jobs/{job_id}/content",
+                "kind": "media_job",
+                "poll": "/gateway/v1/media/jobs/{job_id}"
+              }
             }
           },
           "id": "video.edit.rife-interpolate",
@@ -6617,10 +6701,10 @@
           }
         }
       },
-      "sha256": "02a0921ec408c4500dfeedc089f9f77887a8fadc3aef6b8c2306414938f9fbd0"
+      "sha256": "0db4fbafc2ffc617f2ad73fe9f710f934e5934f571c8e76d898e0c38e67098fc"
     },
     "video.edit.scail-2-replace": {
-      "bytes": 15593,
+      "bytes": 15773,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6779,7 +6863,12 @@
               },
               "method": "POST",
               "output": "a media job; its content is the video",
-              "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run"
+              "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run",
+              "response": {
+                "content": "/gateway/v1/media/jobs/{job_id}/content",
+                "kind": "media_job",
+                "poll": "/gateway/v1/media/jobs/{job_id}"
+              }
             }
           },
           "id": "video.edit.scail-2-replace",
@@ -7134,7 +7223,7 @@
           }
         }
       },
-      "sha256": "42fa4beff7db2d853ae70d1d4d4eb5dbbbc4d599c090c5efdc4dafeaf8c901e4"
+      "sha256": "c7e1c36f987190f85d5d167de66ff21f5fa8f54795aae4893f337818916dd071"
     },
     "video.generate.ltx-2.5-i2v": {
       "bytes": 4109,
