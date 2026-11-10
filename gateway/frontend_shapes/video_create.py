@@ -178,8 +178,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
             or (reference is not None and _reference_bytes(reference) is None)
             or any(not _wire.declared(chosen, key) or _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
+    primary = manifest.roles.get(kind, "input_reference") if reference is not None else None
     for missing in _wire.asset_input_names(chosen):      # a required picture the body leaves out, before any other problem
-        if missing != kind and _wire.entry_required(chosen, missing) is True and missing not in block:
+        if missing != primary and _wire.entry_required(chosen, missing) is True and missing not in block:
             return refuse(400, f"{missing} is required for this model", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{missing}")
     return chosen, manifest, name, public_model
 

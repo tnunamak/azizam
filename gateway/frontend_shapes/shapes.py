@@ -675,7 +675,14 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
             return _wire.error_response(400, f"The source is missing: send {{\"{self.wire_name}\": {{\"id\": ...}}}}", param=self.wire_name)
         entry = snapshot.get(run.workflow_id)
         targets = _wire.asset_input_names(entry) if entry is not None else []
-        if not targets:
+        contract = entry.contract if entry is not None else {}
+        roles = (contract.get("video") or {}).get("roles") or {}
+        target = roles.get("source")
+        if target is None:
+            target = next((name for name in targets
+                           if any(kind.startswith(self.output_prefix)
+                                  for kind in contract["inputs"][name].get("accepts", []))), None)
+        if target not in targets:
             return _wire.error_response(400, "This workflow edits no video", param=self.wire_name)
         job_id = self.job_id_of(source)
         if job_id is None:
@@ -695,7 +702,9 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
                                         param="seconds")
         ref = MediaRef(digest="", media_type="application/octet-stream", size=0, asset_id=found.asset_id)
         from dataclasses import replace
-        return replace(run, inputs=inputs, media={targets[0]: (ref,)})
+        return replace(run, inputs=inputs, media={**run.media, target: (ref,)},
+                       facts={**run.facts, "remixed_from_video_id": found.wire_id,
+                              "source_asset_id": found.asset_id})
 
 
 class OpenAIVideoRemix(OpenAIVideoCreate):
