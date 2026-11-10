@@ -309,17 +309,17 @@ def _shipped_trait_documents(signature: tuple) -> tuple[dict, ...]:
 
 def _inherit_legacy_traits(doc: dict) -> dict:
     """Fill absent legacy traits before validation. Explicit implementation choices keep their own requirements."""
-    if "implementation" in doc:
-        return doc
     executor = doc.get("executor")
-    if not isinstance(executor, str) or not executor.startswith("adapter:"):
+    if not isinstance(executor, str):
         return doc
     signature = tuple((path, path.stat().st_mtime_ns, path.stat().st_size)
                       for path in sorted(REGISTRY_DIR.glob("*.yml")))
-    defaults = [row for row in _shipped_trait_documents(signature) if row.get("executor") == executor]
+    defaults = [row for row in _shipped_trait_documents(signature) if row.get("executor") == executor
+                and (executor.startswith("adapter:") or row.get("id") == doc.get("id"))]
     if len(defaults) != 1:
         return doc
-    inherited = {key: copy.deepcopy(defaults[0][key]) for key in ("implementation", "multipart")
+    keys = ("catalog",) if "implementation" in doc else ("implementation", "multipart", "catalog")
+    inherited = {key: copy.deepcopy(defaults[0][key]) for key in keys
                  if key not in doc and key in defaults[0]}
     return {**doc, **inherited}
 
