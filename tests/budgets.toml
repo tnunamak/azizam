@@ -978,7 +978,7 @@ domain_literals = 313
 # effective config by _workflow_alias_tables and republished at every reload. They are counted under the section their
 # source statement read, so there is no model_aliases key to lower.
 # C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero; model_routing
-# falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
+# falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved), then 1 -> 0 (GGUF_DIR had no reader and was removed). models
 # keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
 # C8c (model_compatibility, identity): both keys reach zero (7 and 1 constants moved). TTS_BACKEND_MODEL, STT_BACKEND_MODEL
 # and EMBEDDINGS_MODEL also became per-call readers of model_compatibility.defaults; they were counted under "backends"
@@ -1002,7 +1002,7 @@ domain_literals = 313
 "import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
 "import_time_config_reads.model_compatibility" = 0
-"import_time_config_reads.model_routing" = 1
+"import_time_config_reads.model_routing" = 0
 "import_time_config_reads.models" = 1
 "import_time_config_reads.proxy" = 2
 "import_time_config_reads.request_body_limits" = 1

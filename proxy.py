@@ -1061,9 +1061,6 @@ def host_for_capability(capability: str) -> str | None:
     return None
 
 
-# Model routing - auto-detect backend from filesystem. The model directory is a startup setting (CONFIG_HOMES C10): it is
-# read from the startup file, because the model_routing section does not carry it.
-GGUF_DIR = (_bootstrap_config.get("model_routing") or {}).get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
 # Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
 # to the LLM backend. This is the max silence between bytes — NOT a wall-clock cap.
 # It governs:

@@ -139,8 +139,9 @@ def test_every_startup_only_name_is_a_key_of_the_tracked_startup_block():
         assert all(name in block for name in names), (section_id, names)
 
 
-def test_gguf_dir_is_still_read_from_the_startup_file():
-    assert proxy.GGUF_DIR == raw_config("tracked")["model_routing"]["gguf_dir"]
+def test_nothing_reads_gguf_dir_at_import():
+    """The constant had no reader and fell back to one household's host path; the setting is still accepted."""
+    assert not hasattr(proxy, "GGUF_DIR")
 
 
 # -- the readers read the snapshot, and an owner edit is live --------------------------------------------------------
