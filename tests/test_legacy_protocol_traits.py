@@ -128,3 +128,14 @@ def test_shared_http_executor_does_not_inherit_unrelated_catalog():
     raw.pop("catalog")
     doc = description.parse_description(raw, source="fixture.yml")
     assert (doc.catalog_intent, doc.catalog_aliases) == ("", ())
+
+
+def test_ambiguous_shipped_executor_does_not_supply_traits(tmp_path, monkeypatch):
+    raw = raw_document("http-multipart")
+    for name in ("fixture-first", "fixture-second"):
+        (tmp_path / f"{name}.yml").write_text(yaml.safe_dump({**raw, "id": name}))
+    raw.pop("implementation")
+    raw.pop("multipart")
+    monkeypatch.setattr(description, "REGISTRY_DIR", tmp_path)
+    doc = description.parse_description(raw, source="fixture.yml")
+    assert traits(doc) == ("", "", (), {})
