@@ -26961,15 +26961,6 @@ class _WorkflowRunPort:
         adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
         result bundle is committed by ``engine_protocol.jobs.run`` itself."""
         from gateway.engine_protocol import jobs as protocol_jobs
-        # The row opens before its destination is known. Freeze the pinned service's
-        # facts here, before any adapter can dispatch or observe an owner edit.
-        receipt = _ROW_REQUEST_RECEIPT.get()
-        owner = _RUN_RECEIPT_OWNERS.get(ctx.request_id)
-        if owner is not None:
-            receipt = owner.receipt
-        if receipt is not None:
-            receipt.backend = ctx.pin.envelope.service_id
-            _capture_retention_facts(receipt, auth_context=ctx.caller)
         runner = workflow_adapters.for_binding(ctx.pin.envelope.binding_key)
         if runner is not None:
             return await runner.run(ctx)
@@ -27494,6 +27485,12 @@ def _row_receipt_owner(auth: AuthContext, request_id: str, path: str, row: Any, 
         receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
         if identity is not None:
             receipt.visibility = identity.access.receipt_detail
+    if row.backend_at_run:
+        # Freeze the declared destination before egress, without claiming a
+        # dispatch yet. Only dispatching() exposes the backend on the receipt.
+        receipt.backend = row_routes.route_backend(row, declared_at)
+        _capture_retention_facts(receipt, auth_context=auth)
+        receipt.backend = None
     owner = _RunReceiptOwner(receipt)
     owner.short_names = row.receipt_names == "short"
     _ROW_RECEIPT.set(owner.receipt)
