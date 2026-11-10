@@ -585,9 +585,15 @@ def _generation_of_registry(registry: Mapping[str, Any]) -> Any:
     """
     try:
         stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
-        # ``registry`` is the normalized effective registry, so the stored effective one is normalized to compare.
-        same = stored is not None and service_registry.stable_hash(
-            service_registry.normalize_service_registry(stored["value"])) == service_registry.stable_hash(registry)
+        if stored is None:
+            return None
+        # A timestamp absent from the document was generated while normalizing
+        # ``registry``. Reuse that observation; a new clock tick is not an edit.
+        value = stored["value"]
+        if isinstance(value, Mapping) and not value.get("updated_at"):
+            value = {**value, "updated_at": registry.get("updated_at")}
+        same = service_registry.stable_hash(
+            service_registry.normalize_service_registry(value)) == service_registry.stable_hash(registry)
     except Exception as error:  # noqa: BLE001 - the generation is a label; the load goes on without it
         # The failure is named once, by type only: the text of an error can quote a stored value.
         _log_generation_read_failure(error)
