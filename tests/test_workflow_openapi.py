@@ -16,6 +16,7 @@ import yaml
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
+from starlette.responses import Response
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -907,9 +908,12 @@ class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
         messages = []
         for ordered in (edges, list(reversed(edges))):
             self.manifests[self.base.id].variants = dict(ordered)
-            with self.assertRaises(ValueError) as caught:
-                await self.run_body(self.body)
-            messages.append(str(caught.exception))
+            refused = await self.run_body(self.body)   # a registry conflict is a structured server error, not a raise
+            self.assertIsInstance(refused, Response)
+            self.assertEqual(refused.status_code, 500)
+            error = json.loads(refused.body)["error"]
+            self.assertEqual(error["code"], "registry_conflict")
+            messages.append(error["message"])
             self.check_reference.assert_not_called()
             self.stage.assert_not_awaited()
         self.assertEqual(messages[0], messages[1])

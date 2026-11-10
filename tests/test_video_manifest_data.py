@@ -240,7 +240,9 @@ def test_add_manifest_rejects_ambiguous_variants_without_changing_contents(refer
     owner, first, second = reference_variant_records
 
     def document(record):
-        return {"id": record.id, "version": "1", "schema_version": 2, **copy.deepcopy(record.contract)}
+        # The runtime fixture records carry only what variant selection reads; a manifest also needs outputs.
+        return {"id": record.id, "version": "1", "schema_version": 2,
+                "outputs": {"video": {"media_type": "video/mp4"}}, **copy.deepcopy(record.contract)}
 
     registry = WorkflowRegistry()
     registry.add_manifest(document(owner))
