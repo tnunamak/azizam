@@ -162,17 +162,8 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
     if manifest is None or manifest.chain or manifest.length is None:
         return LegacyRoute(LEGACY_CREATE, body)
     if reference:
-        eligible = []
-        for role, workflow_id in manifest.variants.items():
-            candidate = snapshot.get(workflow_id)
-            if candidate is None:
-                continue
-            candidate_manifest = video_grid.video_facts(candidate)
-            if candidate_manifest is None:
-                continue
-            candidate_input = _reference_input(candidate)
-            if candidate_input is not None and candidate_manifest.roles.get(role, role) == candidate_input:
-                eligible.append((candidate, candidate_manifest))
+        eligible = video_grid.reference_variants(manifest, snapshot.get, _reference_input)
+        # Defensive only: a registry that passed check_video_variants cannot reach this branch.
         if len(eligible) > 1:
             raise ValueError(f"{chosen.id}: multiple variants accept the reference: {sorted(entry.id for entry, _ in eligible)!r}")
         if eligible:

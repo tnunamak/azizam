@@ -42,6 +42,7 @@ from gateway.manifests import (
     manifest_identity,
 )
 from gateway.workflow_policy import PolicyFacts, release_policy
+from gateway import video_grid
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 MANIFEST_GLOBS = ("*.yml", "*.yaml")
@@ -142,6 +143,10 @@ class WorkflowRegistry:
                 self._errors.append(
                     RegistryLoadError(source_path=path, message=str(exc))
                 )
+        try:
+            video_grid.check_video_variants(self.records())
+        except ValueError as exc:   # two variants claim one reference: a registry error, not a request error
+            self._errors.append(RegistryLoadError(source_path=root, message=str(exc)))
 
     def add_manifest(
         self,

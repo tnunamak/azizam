@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from gateway.video_grid import (
-    GridSpec, SizeSpec, VideoManifest, frame_count, parse_size, resolve_size, seconds_to_length, video_facts)
+    GridSpec, SizeSpec, VideoManifest, check_video_variants, frame_count, parse_size, resolve_size, seconds_to_length, video_facts)
 from gateway.workflow_contract import check_contract
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -170,6 +170,73 @@ def test_the_frame_bounds_may_not_be_empty() -> None:
 
 def test_a_valid_section_raises_no_error() -> None:
     assert codes(doc_with(section())) == set()
+
+
+
+# ------------------------------------------------------------------------------------------- cross-registry variants
+
+
+@pytest.fixture
+def reference_variant_records(monkeypatch) -> tuple[SimpleNamespace, ...]:
+    from gateway import workflow_request_maps
+
+    document = {"schema_version": 1, "maps": [
+        {"select": {"intent": "fixture.generate", "mode": "async"},
+         "inputs": {"guide_frame": {"in": "body", "field": "input_reference"}},
+         "default": {"in": "extension"}},
+        {"select": {"any": True}, "default": {"in": "extension"}},
+    ]}
+    with monkeypatch.context() as context:
+        context.setattr(Path, "read_text", lambda *_args, **_kwargs: json.dumps(document))
+        maps = workflow_request_maps.load(Path("variant-reference-fixture.yml"))
+    monkeypatch.setattr(workflow_request_maps, "_MAPS", maps)
+
+    def entry(name: str, *, role: str | None = None) -> SimpleNamespace:
+        manifest = section()
+        inputs = {}
+        if role is not None:
+            manifest["roles"][role] = "guide_frame"
+            inputs["guide_frame"] = {"type": "asset", "accepts": ["image/png"]}
+        # Runtime entries need not have an intent attribute. Read the effective contract, not a stale manifest.
+        return SimpleNamespace(id=f"fixture.generate.{name}", contract={
+            "intent": "fixture.generate", "capability": "clip", "clip": manifest,
+            "inputs": inputs, "bindings": {},
+        })
+
+    owner, first, second = entry("base"), entry("first", role="guide"), entry("second", role="anchor")
+    owner.contract["clip"]["variants"] = {"guide": first.id, "anchor": second.id}
+    return owner, first, second
+
+
+def test_registry_check_rejects_ambiguous_reference_variants(reference_variant_records) -> None:
+    owner, first, second = reference_variant_records
+    edges = owner.contract["clip"]["variants"]
+    expected = f"{owner.id}: multiple variants accept the reference: {sorted([first.id, second.id])!r}"
+    for ordered in (list(edges.items()), list(reversed(edges.items()))):
+        owner.contract["clip"]["variants"] = dict(ordered)
+        with pytest.raises(ValueError) as caught:
+            check_video_variants(iter(reference_variant_records))
+        assert str(caught.value) == expected
+
+
+def test_registry_check_uses_the_variant_role_not_just_reference_acceptance(reference_variant_records) -> None:
+    owner, first, second = reference_variant_records
+    second.contract["clip"]["roles"]["anchor"] = "length"
+    check_video_variants(reference_variant_records)
+    # The selector also accepts a role whose name is the contract input, with no explicit role mapping.
+    owner.contract["clip"]["variants"] = {"guide_frame": first.id, "anchor": second.id}
+    first.contract["clip"]["roles"].pop("guide")
+    check_video_variants(reference_variant_records)
+
+
+def test_shipped_registry_has_unambiguous_reference_variants() -> None:
+    from gateway.discovery import WorkflowRegistry
+
+    registry = WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
+    assert registry.errors == []
+    records = tuple(registry.records())
+    assert any(facts.variants for record in records if (facts := video_facts(record)) is not None)
+    check_video_variants(records)
 
 
 # ---------------------------------------------------------------- the shipped manifests equal videos.yml, value for value
@@ -403,3 +470,23 @@ def test_video_facts_does_not_alias_the_contract() -> None:
     with pytest.raises((TypeError, AttributeError)):
         manifest.roles["width"] = "changed"  # type: ignore[index]
     assert contract["video"] == original
+
+
+def test_two_roles_naming_one_workflow_are_not_ambiguous(reference_variant_records) -> None:
+    owner, first, second = reference_variant_records
+    first.contract["clip"]["roles"]["anchor"] = "guide_frame"
+    owner.contract["clip"]["variants"] = {"guide": first.id, "anchor": first.id}
+    check_video_variants(reference_variant_records)
+
+
+def test_registry_load_reports_ambiguous_variants_as_a_load_error(reference_variant_records, monkeypatch) -> None:
+    from gateway import discovery
+
+    registry = discovery.WorkflowRegistry()
+    monkeypatch.setattr(registry, "records", lambda: list(reference_variant_records))
+    monkeypatch.setattr(discovery, "_iter_manifest_files", lambda _root: [])
+    registry.load_directory(ROOT / "manifests" / "workflows", policy={})
+    assert [error.message for error in registry.errors] == [
+        f"{reference_variant_records[0].id}: multiple variants accept the reference: "
+        f"{sorted([reference_variant_records[1].id, reference_variant_records[2].id])!r}"
+    ]
