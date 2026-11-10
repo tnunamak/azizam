@@ -39,7 +39,7 @@ def _document():
 
 def _write(tmp_path, name, document):
     path = tmp_path / name
-    if name not in ("operations.yml", "intents.yml", "services.yml"):
+    if name not in ("operations.yml", "capability.yml", "service.yml"):
         document = {"schema_version": 1, "exact": [], "families": [], "contract": document}
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     return path
