@@ -118,3 +118,10 @@ def test_shipped_source_attachment(monkeypatch):
     actual = source_attachment(monkeypatch)
     path = GOLDEN.with_name("xc_source.json")
     assert actual == json.loads(path.read_text())
+
+
+def test_changed_cross_modal_probe_is_not_a_video_workflow():
+    doc = yaml.safe_load((ROOT / "manifests/workflows/qwen-image-2.1-edit-multiref.yml").read_text())
+    assert shapes.OpenAIVideoCreate().profile(doc)
+    assert doc["outputs"] == {"image": {"media_type": "image/png"}}
+    assert doc["bindings"]["comfyui"]["route_bound_inputs"] == ["reference_image_2"]
