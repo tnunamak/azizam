@@ -28,6 +28,23 @@
           "multipart_filenames"
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "implementation": {
+            "const": "multipart_post"
+          }
+        },
+        "required": [
+          "implementation"
+        ]
+      },
+      "then": {
+        "required": [
+          "multipart"
+        ]
+      }
     }
   ],
   "properties": {

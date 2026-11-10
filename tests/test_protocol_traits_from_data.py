@@ -13,7 +13,8 @@ from gateway.engine_protocol.adapter import AdapterOrigin
 from gateway.engine_protocol.errors import DescriptionError, ProtocolError, UnknownOperation
 from gateway.engine_protocol.types import CanonicalRequest, Connection
 from gateway.frontend_shapes.mesh import mesh_profile
-from gateway.multipart_adapter import MultipartRunner, runner
+from gateway import workflow_adapters
+from gateway.multipart_adapter import MultipartRunner, runner, runners
 from gateway.mesh_manifest import ImageAsset
 from gateway.provider_model_catalog import remote_provider_model_capabilities
 from tests.mesh_workflows import bundled_document
@@ -61,12 +62,17 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
         docs[name] = doc
     load_registry = description.load_registry
     monkeypatch.setattr(description, "load_registry", lambda directory=None: docs if directory is None else load_registry(directory))
+    monkeypatch.setattr(workflow_adapters, "_RUNNERS", {})
+    for selected in runners(None):
+        workflow_adapters.register(selected)
+    assert {row.binding_key for row in runners(None)} == set(docs)
     for name, doc in docs.items():
         contract = bundled_document()
         binding = contract["bindings"].pop("http-multipart")
         contract["bindings"][name] = {"endpoint": binding["service"], "route": binding["path"], "fields": binding["map"]}
         assert mesh_profile(contract) == []
-        selected = runner(None, doc)
+        selected = workflow_adapters.for_binding(name)
+        assert selected is workflow_adapters.for_adapter(name)
         assert selected.binding_key == name and selected.adapter_id == name
         file = ImageAsset(b"picture", "fixture.png", "image/png")
         selected._read_file = AsyncMock(return_value=file)
@@ -83,6 +89,7 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
     incomplete = document("http-multipart")
     incomplete.update(id="http-multipart-like", binding="http-multipart-like")
     del incomplete["multipart"]
+    del incomplete["implementation"]
     doc = parsed(incomplete)
     docs[doc.id] = doc
     contract["bindings"] = {doc.binding: binding}
@@ -91,7 +98,7 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
         MultipartRunner(None, doc)
 
 
-@pytest.mark.parametrize("change", ["unknown", "import", "missing_role", "wrong_kind", "optional", "no_binding", "no_form", "no_map"])
+@pytest.mark.parametrize("change", ["unknown", "import", "missing_role", "wrong_kind", "optional", "no_binding", "no_form", "no_map", "missing_multipart"])
 def test_protocol_traits_refuse_invalid_data(change):
     raw = document("http-multipart")
     if change == "unknown":
@@ -108,6 +115,8 @@ def test_protocol_traits_refuse_invalid_data(change):
         del raw["binding_fields"]
     elif change == "no_form":
         raw["check_targets"] = "graph"
+    elif change == "missing_multipart":
+        del raw["multipart"]
     else:
         raw["inputs_via"] = "role"
     with pytest.raises(DescriptionError):

@@ -223,6 +223,12 @@ def runner(host: MultipartHost, description: protocol_description.ProtocolDescri
     return MultipartRunner(host, description or protocol_description.load_registry()[PROTOCOL_ID])
 
 
+def runners(host: MultipartHost) -> tuple["MultipartRunner", ...]:
+    """One runner per validated description selecting this reviewed implementation."""
+    return tuple(runner(host, doc) for doc in protocol_description.load_registry().values()
+                 if doc.implementation == "multipart_post")
+
+
 class MultipartRunner:
     """``workflow_adapters.BindingRunner`` for the multipart protocol description."""
 
