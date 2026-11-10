@@ -5083,25 +5083,25 @@ def _speech_alias_service_with_address(body: bytes, model_override: str | None) 
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
     body = await request.body()
-    # A model whose alias names another speech service with an address does not need the "tts" record: that
-    # service is checked below, where the alias resolves. Only a request for "tts" itself needs "tts" configured.
+    # A model whose alias names another speech service with an address does not need the "tts" record to name an
+    # address: that service is dialed instead. The speech route's own admission and the operator's "tts" override
+    # still apply to every speech request, as before.
     alias_service = _speech_alias_service_with_address(body, model_override)
-    if alias_service is None:
-        if not DERIVED.TTS_ENABLED:
-            return openai_error_response(
-                "TTS not enabled",
-                status_code=503,
-                error_type="service_unavailable",
-            )
-        admission = _dispatch_admission_response(
-            "speech.synthesis", auth_context=auth_context, service_id="tts",
-            service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
+    if alias_service is None and not DERIVED.TTS_ENABLED:
+        return openai_error_response(
+            "TTS not enabled",
+            status_code=503,
+            error_type="service_unavailable",
         )
-        if admission is not None:
-            return admission
-        service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
-        if service_response is not None:
-            return service_response
+    admission = _dispatch_admission_response(
+        "speech.synthesis", auth_context=auth_context, service_id="tts",
+        service_available=DERIVED.TTS_ENABLED or alias_service is not None, resource_class="audio", receipt=receipt,
+    )
+    if admission is not None:
+        return admission
+    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
+    if service_response is not None:
+        return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
     headers = prepare_downstream_headers(request.headers, auth_context, "tts")
