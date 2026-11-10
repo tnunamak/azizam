@@ -1,7 +1,4 @@
 """Closed frontend mappings and neutral manifest roles."""
-import copy
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -89,3 +86,10 @@ def test_extensions_and_source_roles_ignore_workflow_spelling(monkeypatch):
         outcomes.append((result.request, result.validation.accepted, result.validation.ignored,
                          [asdict(ref) for ref in attached.media[source]], dict(attached.facts)))
     assert outcomes[0] == outcomes[1]
+
+
+def test_source_role_must_be_bound():
+    doc = contract("qwen-image-2.1-edit")
+    doc["inputs"]["unbound_source"] = {"type": "asset", "accepts": ["image/*"]}
+    doc["roles"] = {"source": "unbound_source"}
+    assert any(error.code == "role_input_unbound" for error in check_contract(doc).errors)
