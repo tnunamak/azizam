@@ -90,7 +90,7 @@ def _background(value: Any, graph: str, nodes: Mapping[str, Any],
     if not isinstance(plain, list) or len(plain) != 2:
         _fail(graph, "background.output", "selector node must consume an image link")
     _node(nodes, plain[0], graph, "background.output")
-    if processor.get("inputs", {}).get("image") != plain:
+    if plain not in processor.get("inputs", {}).values():
         _fail(graph, "background.processor", "must process the selected output's plain image")
     slot = value["slot"]
     if type(slot) is not int or slot != _BACKGROUND_IMAGE_SLOT:
@@ -131,8 +131,8 @@ def _references(value: Any, graph: str, nodes: Mapping[str, Any],
         if name in seen:
             _fail(graph, key, f"input {name!r} is repeated")
         seen.add(name)
-        if inputs[name].get("type") not in {"asset", "image"}:
-            _fail(graph, key, "must name an image asset input")
+        if inputs[name].get("type") != "asset":
+            _fail(graph, key, "must name an asset input")
         targets = binding_map[name]
         if not isinstance(targets, (list, tuple)) or not targets:
             _fail(graph, key, "reference input has no node targets")
