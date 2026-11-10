@@ -10,7 +10,7 @@ import pytest
 from starlette.responses import Response
 
 from gateway import frontend_shapes
-from gateway.frontend_shapes import shapes
+from gateway.frontend_shapes import _wire, shapes
 from gateway.video_source import VideoSource
 from gateway.workflow_runtime_types import MediaRef, RunJobView, RunRequest
 from tests import test_video_create_shape as fixtures
@@ -93,8 +93,11 @@ def test_remix_without_a_configured_workflow_keeps_its_501(monkeypatch):
     request = fixtures.json_request({"prompt": "x"})
     request.scope["path_params"] = {"video_id": "video_mj_source"}
     response = asyncio.run(shape.to_run_request(request, row, fixtures.snap(), spool=fixtures.FakeSpool()))
-    assert isinstance(response, Response) and response.status_code == 501
-    assert fixtures.error(response)["code"] == "video_remix_not_configured"
+    # The 501 itself is the row layer's answer (row_routes, before the shape runs): it fires when the row declares
+    # ``unconfigured`` and selects no workflow. Here the shape must refuse without a source lookup (the hook raises).
+    assert row.unconfigured["status"] == 501 and row.unconfigured["code"] == "video_remix_not_configured"
+    assert not _wire.candidates(fixtures.snap(), row)
+    assert isinstance(response, Response) and response.status_code == 404
 
 
 @pytest.mark.parametrize("person_id,expected_prompt", [(None, "x"), ("person-1", None)])
