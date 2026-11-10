@@ -165,3 +165,13 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the audio.voice discriminator of the OpenAI Audio Voice object's object field.
+  - file: gateway/video_media_jobs.py
+    literal: video.generation
+    count: 1
+    category: wire_enum
+    reason: Names the azizam_object discriminator the gateway publishes on its /v1/videos job responses; changing it is an API change, not configuration.
+  - file: gateway/video_media_job_http.py
+    literal: video.content
+    count: 1
+    category: wire_enum
+    reason: Names the object discriminator the gateway publishes on its signed video content-URL response; changing it is an API change, not configuration.
