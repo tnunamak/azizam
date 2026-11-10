@@ -2,15 +2,16 @@
 
 A backend record selects its adapter with data, never with a branch on its name.
 The record's ``protocol`` (or ``connection.protocol``) names a protocol
-description. When that description says ``executor: adapter:<id>``, the factory
-registered under ``<id>`` builds the adapter. A record that names no adapter
+description. Its ``executor: adapter:<id>`` declares identity; its ``implementation``
+selects a factory in the reviewed code allow-list. Explicit factory registrations
+may replace that factory by identity. A record that names no adapter
 protocol is answered by the reviewed adapter whose description lists the
 record's capability in ``serves``. That is how every record stored before this
 field existed keeps working without a migration.
 
 Core calls ``adapter_for_backend(record, capability)``; nothing here knows what
 any engine is. The factories below are the reviewed in-tree adapters and the
-only place their ids are written next to their code.
+only place implementation symbols are written next to their code.
 """
 
 from __future__ import annotations
@@ -173,7 +174,7 @@ def adapter_for_backend(record: Mapping[str, Any], capability: str, *, assets: A
     With ``assets``, a fresh adapter that keeps the result files in that store (not cached).
 
     A description that names an adapter nobody registered, or one of another interface version, is skipped for the
-    next candidate, ending at the shipped description.
+    next candidate, ending at the shipped description. An explicit unknown implementation is refused immediately.
     """
     refusal: ProtocolError | None = None
     for doc in _candidates(record, capability):
