@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 import json
+import re
 
 import pytest
 import yaml
@@ -177,36 +178,48 @@ def test_metadata_contract_is_deeply_immutable(tmp_path):
         contract.implications[0].tag = "changed"
 
 
-@pytest.mark.parametrize("location,value", [
-    (("schema_version",), True),
-    (("schema_version",), 2),
-    (("unknown",), "not allowed"),
-    (("tag_types",), ["missing"]),
-    (("tag_types",), ["language", "language"]),
-    (("derivation", "unknown"), "not allowed"),
-    (("derivation", "scalar_input"), "missing"),
-    (("derivation", "fallback_output"), "missing"),
-    (("derivation", "default_type"), "missing"),
-    (("derivation", "output_priority"), [{"modality": "text", "type": "language"}]),
-    (("derivation", "input_priority"), [{"modality": "missing", "type": "language"}]),
-    (("derivation", "output_priority"), [{"modality": "scent", "type": "missing"}]),
+def test_metadata_contract_loads_literal_vocabulary_from_schema(tmp_path):
+    schema = _schema()
+    properties = schema["additionalProperties"]["properties"]["model_metadata"]["properties"]
+    # Present only in schema data, not in semantic rules or production vocabulary.
+    properties["input_modalities"]["items"]["enum"].append("magnetism")
+    contract = mm.load_metadata_contract(
+        _write(tmp_path, "contract.yml", _document()),
+        schema_path=_write_schema(tmp_path, schema),
+    )
+    assert contract.input_modalities == ("image", "file", "scent", "text", "magnetism")
+
+
+@pytest.mark.parametrize("location,value,expected_error", [
+    (("schema_version",), True, "schema_version: must be 1"),
+    (("schema_version",), 2, "schema_version: must be 1"),
+    (("unknown",), "not allowed", "document: unknown fields: ['unknown']"),
+    (("tag_types",), ["missing"], "tag_types: unknown value"),
+    (("tag_types",), ["language", "language"], "tag_types: duplicate value"),
+    (("derivation", "unknown"), "not allowed", "derivation: unknown fields: ['unknown']"),
+    (("derivation", "scalar_input"), "missing", "derivation.scalar_input: unknown value"),
+    (("derivation", "fallback_output"), "missing", "derivation.fallback_output: unknown value"),
+    (("derivation", "default_type"), "missing", "derivation.default_type: unknown value"),
+    (("derivation", "output_priority"), [{"modality": "text", "type": "language"}], "derivation.output_priority[0]: fallback output cannot also be a priority output"),
+    (("derivation", "input_priority"), [{"modality": "missing", "type": "language"}], "derivation.input_priority[0].modality: unknown value"),
+    (("derivation", "output_priority"), [{"modality": "scent", "type": "missing"}], "derivation.output_priority[0].type: unknown value"),
     (("derivation", "input_priority"), [{"modality": "scent", "type": "olfactory",
-                                        "import": "gateway.module"}]),
-    (("derivation", "input_priority"), [{"modality": "scent", "type": "olfactory"}] * 2),
-    (("implications",), [{"type": "image", "tag": "vision", "input_modality": "image"}]),
-    (("implications",), [{"type": "olfactory", "tag": "missing", "input_modality": "scent"}]),
-    (("implications",), [{"type": "olfactory", "tag": "olfaction", "input_modality": "missing"}]),
+                                        "import": "gateway.module"}], "derivation.input_priority[0]: unknown fields: ['import']"),
+    (("derivation", "input_priority"), [{"modality": "scent", "type": "olfactory"}] * 2, "derivation.input_priority[1]: duplicate modality"),
+    (("implications",), [{"type": "image", "tag": "vision", "input_modality": "image"}], "implications[0].type: unknown value"),
+    (("implications",), [{"type": "olfactory", "tag": "missing", "input_modality": "scent"}], "implications[0].tag: unknown value"),
+    (("implications",), [{"type": "olfactory", "tag": "olfaction", "input_modality": "missing"}], "implications[0].input_modality: unknown value"),
     (("implications",), [{"type": "olfactory", "tag": "olfaction", "input_modality": "scent",
-                         "callable": "gateway.module"}]),
-    (("implications",), [{"type": "olfactory", "tag": "olfaction", "input_modality": "scent"}] * 2),
+                         "callable": "gateway.module"}], "implications[0]: unknown fields: ['callable']"),
+    (("implications",), [{"type": "olfactory", "tag": "olfaction", "input_modality": "scent"}] * 2, "implications[1]: duplicate implication"),
 ])
-def test_metadata_contract_refuses_invalid_data(tmp_path, location, value):
+def test_metadata_contract_refuses_invalid_data(tmp_path, location, value, expected_error):
     document = _document()
     parent = document
     for key in location[:-1]:
         parent = parent[key]
     parent[location[-1]] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=re.escape(expected_error)):
         _load_contract(tmp_path, "invalid.yml", document)
 
 
