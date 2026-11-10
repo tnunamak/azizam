@@ -77,3 +77,28 @@ def test_catalog_examples_match_golden(workflow_id):
 def test_catalog_row_matches_golden(workflow_id):
     _assert_item(CATALOG["workflows"][workflow_id]["row"], CATALOG_GOLDEN["workflows"][workflow_id]["row"],
                  f"{workflow_id} row")
+
+
+def test_published_video_create_extension_contract_is_json_only():
+    from gateway.openai_media_schemas import VIDEOS_CREATE_OPENAPI
+
+    content = VIDEOS_CREATE_OPENAPI["requestBody"]["content"]
+    request = content["application/json"]["schema"]
+    assert "extensions" not in request.get("required", [])
+    extensions = request["properties"]["extensions"]
+    assert extensions == {
+        "type": "object",
+        "properties": {
+            "com.azizam.video": {
+                "type": "object",
+                "properties": {"audio": {"type": "boolean", "default": True}},
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": True,
+    }
+    assert type(extensions["properties"]["com.azizam.video"]["properties"]["audio"]["default"]) is bool
+    multipart = content["multipart/form-data"]["schema"]
+    assert "extensions" not in multipart["properties"]
+    assert multipart["required"] == request["required"]
+    assert multipart["properties"]["input_reference"]["format"] == "binary"

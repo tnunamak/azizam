@@ -757,6 +757,20 @@ def _video_create_request_schema() -> JsonObjectSchema:
                 "type": "string",
                 "description": "Reference image/video as URL, path, data URI, or base64 string.",
             },
+            # Reviewed public wire contract, independent of the control registry.
+            "extensions": {
+                "type": "object",
+                "properties": {
+                    "com.azizam.video": {
+                        "type": "object",
+                        "properties": {
+                            "audio": {"type": "boolean", "default": True},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": True,
+            },
         },
         "additionalProperties": True,
     }
@@ -764,6 +778,8 @@ def _video_create_request_schema() -> JsonObjectSchema:
 
 def _video_create_multipart_request_schema() -> JsonObjectSchema:
     schema = _video_create_request_schema()
+    # Nested extension controls are accepted only by the JSON create route.
+    schema["properties"].pop("extensions")
     schema["properties"] = {
         **schema["properties"],
         "input_reference": {

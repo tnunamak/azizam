@@ -11,6 +11,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from gateway.openai_media_schemas import VIDEOS_CREATE_OPENAPI
+
 
 @dataclass(frozen=True)
 class ControlDescriptor:
@@ -99,8 +101,42 @@ def _template(value: Any, token: str, label: str) -> str:
     return value
 
 
-def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
-    """Read and validate the whole document, failing closed without fallback."""
+def _validate_published_contract(group: ControlGroup, request_schema: Mapping[str, Any]) -> None:
+    """Check a descriptor against an independently declared JSON request contract."""
+    label = f"extensions.{group.namespace}"
+    properties = request_schema.get("properties", {})
+    extensions = properties.get("extensions", {}) if isinstance(properties, Mapping) else {}
+    namespaces = extensions.get("properties", {}) if isinstance(extensions, Mapping) else {}
+    if not isinstance(namespaces, Mapping) or group.namespace not in namespaces:
+        raise ValueError(f"{label}: namespace is not an explicitly declared request property")
+    namespace_schema = namespaces[group.namespace]
+    if not isinstance(namespace_schema, Mapping) or namespace_schema.get("type") != "object":
+        raise ValueError(f"{label}: published namespace must have object type")
+    if namespace_schema.get("additionalProperties") is not False:
+        raise ValueError(f"{label}: published namespace must reject unknown controls")
+    fields = namespace_schema.get("properties", {})
+    if not isinstance(fields, Mapping):
+        raise ValueError(f"{label}: published properties must be a mapping")
+    if group.public_fields != set(fields):
+        missing = sorted(set(fields) - group.public_fields)
+        extra = sorted(group.public_fields - set(fields))
+        raise ValueError(f"{label}: control fields differ; missing {missing}; extra {extra}")
+    for descriptor in group.controls.values():
+        field_label = f"{label}.{descriptor.field}"
+        published = fields[descriptor.field]
+        if not isinstance(published, Mapping) or published.get("type") != descriptor.type:
+            raise ValueError(f"{field_label}: control type does not match published boolean type")
+        default = published.get("default")
+        if type(default) is not bool or default is not descriptor.default:
+            raise ValueError(f"{field_label}: control default does not match published boolean default")
+
+
+def load_extension_controls(
+    path: Path, *, request_schema: Mapping[str, Any] | None = None,
+) -> Mapping[str, ControlGroup]:
+    """Validate against the published request, or an explicit synthetic contract."""
+    if request_schema is None:
+        request_schema = VIDEOS_CREATE_OPENAPI["requestBody"]["content"]["application/json"]["schema"]
     try:
         document = yaml.load(path.read_text(encoding="utf-8"), Loader=_ControlLoader)
     except (yaml.YAMLError, ValueError, RecursionError) as exc:
@@ -114,8 +150,9 @@ def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
         namespace = _text(raw["namespace"], f"{name}.namespace")
         descriptors: dict[str, ControlDescriptor] = {}
         public_fields: set[str] = set()
-        for logical_id, definition in _logical_mapping(raw["controls"], f"{name}.controls").items():
-            label = f"{name}.controls.{logical_id}"
+        group_label = f"{name} ({namespace})"
+        for logical_id, definition in _logical_mapping(raw["controls"], f"{group_label}.controls").items():
+            label = f"{group_label}.controls.{logical_id}"
             definition = _mapping(definition, label, {"field", "type", "default"})
             public_field = _text(definition["field"], f"{label}.field")
             if public_field in public_fields:
@@ -132,7 +169,9 @@ def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
             key: _template(raw_errors[key], token, f"{name}.errors.{key}")
             for key, token in tokens.items()
         }
-        groups[name] = ControlGroup(namespace, descriptors, errors)
+        group = ControlGroup(namespace, descriptors, errors)
+        _validate_published_contract(group, request_schema)
+        groups[name] = group
     return MappingProxyType(groups)
 
 

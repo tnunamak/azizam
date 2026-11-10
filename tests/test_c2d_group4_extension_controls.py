@@ -281,7 +281,23 @@ def test_control_public_name_is_descriptor_owned(tmp_path):
     }
     path = tmp_path / "unfamiliar.yml"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-    group = controls.load_extension_controls(path)["general_delivery"]
+    # This synthetic namespace has its own independent public wire contract.
+    request_schema = {
+        "type": "object",
+        "properties": {"extensions": {
+            "type": "object",
+            "properties": {"org.example.options": {
+                "type": "object",
+                "properties": {
+                    "keep_copy": {"type": "boolean", "default": False},
+                    "show_receipt": {"type": "boolean", "default": True},
+                },
+                "additionalProperties": False,
+            }},
+            "additionalProperties": True,
+        }},
+    }
+    group = controls.load_extension_controls(path, request_schema=request_schema)["general_delivery"]
     assert group.public_fields == frozenset({"keep_copy", "show_receipt"})
     assert controls.parse_control_group({}, group) == {}
     assert controls.parse_control_group({"extensions": {group.namespace: {}}}, group) == {
@@ -329,3 +345,42 @@ def test_video_control_legacy_exports_are_unchanged():
     assert error.param == "extensions.com.azizam.video.audio"
     assert video_controls.parse_video_controls({"extensions": {"com.azizam.video": {}}}) == {"audio": True}
     assert video_controls.parse_video_controls({"extensions": {"com.azizam.video": {"audio": False}}}) == {"audio": False}
+
+
+@pytest.mark.parametrize(("path", "value", "expected"), [
+    (("namespace",), "com.azizam.vidoe", "com.azizam.vidoe"),
+    (("namespace",), "org.example.options", "org.example.options"),
+    (("controls", "retain_sound", "field"), "aduio", "aduio"),
+    (("controls",), {}, "com.azizam.video"),
+    (("controls",), {
+        "retain_sound": {"field": "audio", "type": "boolean", "default": True},
+        "extra_option": {"field": "extra", "type": "boolean", "default": False},
+    }, "extra"),
+    (("controls", "retain_sound", "type"), "string", "com.azizam.video"),
+    (("controls", "retain_sound", "default"), False, "audio"),
+], ids=["namespace-typo", "undeclared-namespace", "field-typo", "missing-field",
+        "extra-field", "type-mismatch", "default-mismatch"])
+def test_production_controls_must_match_published_contract(tmp_path, path, value, expected):
+    from gateway import extension_controls as controls
+
+    document = _replaced(("groups", "clip_delivery", *path), value)
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError) as failure:
+        controls.load_extension_controls(registry)
+    assert expected in str(failure.value)
+
+
+def test_shipped_extension_controls_match_published_contract():
+    from gateway import extension_controls as controls
+
+    registry = Path(controls.__file__).resolve().parent.parent / "registry" / "extension_controls.yml"
+    groups = controls.load_extension_controls(registry)
+    assert groups["clip_delivery"] == controls.control_group("clip_delivery")
+    group = groups["clip_delivery"]
+    # Omission and null/non-object envelopes remain absent, not default-filled.
+    for body in ({}, {"extensions": None}, {"extensions": []}, {"extensions": "ignored"},
+                 {"extensions": 1}, {"extensions": False}, {"extensions": {}},
+                 {"extensions": {group.namespace: None}}):
+        assert controls.parse_control_group(body, group) == {}
+    assert controls.parse_control_group({"extensions": {group.namespace: {}}}, group) == {"audio": True}

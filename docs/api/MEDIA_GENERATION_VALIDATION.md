@@ -23,3 +23,31 @@ Audio `type` must be `"music"`, `"sfx"`, or `"ambient"`; omission selects
 An explicit seed must be a JSON integer from 0 through 4294967295. Only an
 omitted seed selects a random seed. Invalid values return HTTP 400 with the
 corresponding parameter name in the OpenAI error envelope.
+
+## JSON video-create controls
+
+JSON requests to `POST /v1/videos` may include the optional `extensions`
+object and its optional `com.azizam.video` object:
+
+```json
+{
+  "prompt": "A quiet walk through the forest",
+  "extensions": {
+    "com.azizam.video": {
+      "audio": false
+    }
+  }
+}
+```
+
+`audio` is an optional boolean. An empty namespace object
+(`"com.azizam.video": {}`) applies its default, `audio: true`; explicitly
+setting `audio: false` requests silent output. Other field names inside this
+namespace are rejected. Other extension namespaces remain allowed.
+
+Omitting `extensions` or `com.azizam.video` supplies no control override.
+For compatibility, the parser also treats a non-object `extensions` value
+or a null `com.azizam.video` value as absent. Those legacy inputs are not
+advertised by the object-shaped schema. A non-null, non-object namespace
+value is rejected. These nested controls are published only for JSON video
+create, not for multipart video create.
