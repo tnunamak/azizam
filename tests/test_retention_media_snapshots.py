@@ -14,7 +14,7 @@ from tests.test_adapter_differential import _audio_comfy, _video_comfy, _capture
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="media execution needs ffmpeg")
 @pytest.mark.parametrize("kind,background", [("audio", False), ("audio", True), ("music", True), ("sfx", True),
     pytest.param("video", False, marks=pytest.mark.xfail(
-        strict=True, reason="V5d: a content download answers 403 prompt_not_accessible when no metadata mode is set")),
+        strict=True, reason="V5d: the run-core video create receipt does not carry the destination retention_facts snapshot")),
     ("video", True)])
 def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background):
     with GatewayRig(f"retention-{kind}-{background}", tmp_path) as rig:

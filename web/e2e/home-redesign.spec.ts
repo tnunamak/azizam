@@ -367,7 +367,11 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
   const chat = group.getByRole("button", { name: "Chat About 1 s · no charge" });
   await chat.click();
   await expect(chat).toHaveAttribute("aria-pressed", "true");
-  // Faces settle as their pictures load, so wait until every face and caption lines up before measuring the rest.
+  // Faces settle as their pictures load. Wait for every picture to decode first, so a late one cannot change a face
+  // after the poll below has seen them line up; then wait until every face and caption lines up.
+  await group.evaluate((node) =>
+    Promise.all(Array.from(node.querySelectorAll("img")).map((img) => img.decode().catch(() => undefined))),
+  );
   await expect
     .poll(() =>
       group.evaluate((node) => {

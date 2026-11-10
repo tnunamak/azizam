@@ -196,8 +196,33 @@ def test_full_metadata_is_refused_unless_the_maker_and_a_kept_prompt(shape, serv
     core, jobs = served
     done = finished(core, jobs, facts=facts)
     told = []
-    answer = shape.render_bytes(done, jobs, None, caller_person_id=person, never_keep=never_keep, on_delivered=lambda *a: told.append(a))
+    answer = shape.render_bytes(done, jobs, None, metadata_mode="full", caller_person_id=person, never_keep=never_keep,
+                                on_delivered=lambda *a: told.append(a))
     assert answer.status_code == 403 and body(answer)["error"]["code"] == "prompt_not_accessible" and told == []
+
+
+@pytest.mark.parametrize(("facts", "person", "never_keep"), [
+    (RequestFacts({}, prompt="a prompt", maker_person_id="p1"), "p2", False),        # someone else
+    (RequestFacts({}, prompt="a prompt", maker_person_id="p1"), None, False),        # no person
+    (RequestFacts({}, prompt=None, maker_person_id="p1"), "p1", False),              # the prompt is no longer kept
+    (RequestFacts({}, prompt="a prompt", maker_person_id="p1"), "p1", True),         # the household keeps no prompts
+    (RequestFacts({}), "p1", False)], ids=["other", "anonymous", "prompt-gone", "never-keep", "no-maker"])
+def test_full_only_by_default_sends_the_file_without_metadata(shape, served, monkeypatch, facts, person, never_keep):
+    """Nobody chose full (not this request, not the submit): a finished render is sent stripped, never refused."""
+    from gateway import media_delivery
+    core, jobs = served
+    done = finished(core, jobs, facts=facts)
+    seen = []
+    monkeypatch.setattr(media_delivery, "deliver_bytes", lambda content, suffix, mode: seen.append((content, suffix, mode)) or b"clean")
+    answer = shape.render_bytes(done, jobs, None, caller_person_id=person, never_keep=never_keep)
+    assert (answer.status_code, answer.body) == (200, b"clean") and seen == [(b"mp4-bytes", ".mp4", "none")]
+
+
+def test_full_chosen_at_submit_is_still_refused_without_a_kept_prompt(shape, served):
+    core, jobs = served
+    done = finished(core, jobs, facts=RequestFacts({"metadata_mode": "full"}, prompt=None, maker_person_id="p1"))
+    answer = shape.render_bytes(done, jobs, None, caller_person_id="p1")
+    assert answer.status_code == 403 and body(answer)["error"]["code"] == "prompt_not_accessible"
 
 
 def test_a_request_for_no_metadata_strips_the_bytes_sent_and_needs_no_maker(shape, served, monkeypatch):

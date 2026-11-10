@@ -164,12 +164,16 @@ class VideoViews:
         ref = refs[0]
         facts = jobs.request_facts(view.job_id, caller)
         # The mode asked for, else the one the job recorded, else the plan's own default (as the old route resolved it).
-        mode = (metadata_mode or (facts.get("metadata_mode") if facts is not None else None)
-                or media_delivery.current_mode() or provenance.METADATA_FULL)
+        chosen = metadata_mode or (facts.get("metadata_mode") if facts is not None else None)
+        mode = chosen or media_delivery.current_mode() or provenance.METADATA_FULL
         if mode == provenance.METADATA_FULL and (
                 facts is None or facts.maker_person_id is None or facts.maker_person_id != caller_person_id
                 or facts.prompt is None or never_keep):
-            return JSONResponse({"error": {"code": "prompt_not_accessible", "message": NOT_ACCESSIBLE}}, status_code=403)
+            if chosen == provenance.METADATA_FULL:
+                return JSONResponse({"error": {"code": "prompt_not_accessible", "message": NOT_ACCESSIBLE}}, status_code=403)
+            # Full was only the plan's default, not the caller's choice (this request or the submit): send the file
+            # without metadata rather than refuse a finished render because no prompt was kept, as the old route did.
+            mode = provenance.METADATA_NONE
         content = self.read(view, ref, jobs, caller)
         filename = view.result_metadata.get("filename")
         suffix = posixpath.splitext(filename)[1].lower() if isinstance(filename, str) else ""
