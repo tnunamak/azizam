@@ -928,7 +928,8 @@ ad_hoc_upstream_fake_files = 46
 # Dot 2298 (2026-11-09): -1 where the example no longer tests for the audio intent; 765 - 1.
 # Release train c2d-38 (2026-11-09): measured 570 by tests/test_domain_literal_ratchet.py after all merges; every branch value was higher.
 # Request map rows (2026-11-09): -8 where request_mapping reads registry/workflow_request_maps.yml instead of per-intent branches; 518 - 8.
-domain_literals = 510
+# Literal triage 2 (dot 2475, 2026-11-09): -19 occurrences reviewed as media_type or wire_enum in tests/domain_literal_reviewed.yml; 510 - 19.
+domain_literals = 491
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through
