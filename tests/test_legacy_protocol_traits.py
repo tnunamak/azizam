@@ -4,6 +4,7 @@ import yaml
 from gateway.engine_protocol import description
 from gateway.frontend_shapes.mesh import mesh_profile
 from gateway.multipart_adapter import MultipartRunner, runners
+from gateway.provider_model_catalog import remote_provider_model_capabilities
 from tests.mesh_workflows import bundled_document
 
 
@@ -42,3 +43,18 @@ def test_legacy_multipart_keeps_runner_and_mesh_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(description, "load_registry", lambda: {doc.id: doc})
     assert len(runners(None)) == 1
     assert mesh_profile(bundled_document()) == []
+
+
+def test_legacy_catalog_keeps_intent_and_aliases(tmp_path, monkeypatch):
+    raw = raw_document("openai-compatible")
+    raw.pop("catalog")
+    (tmp_path / "openai-compatible.yml").write_text(yaml.safe_dump(raw))
+    monkeypatch.setattr(description, "user_directory", lambda: tmp_path)
+    original = description.load_shipped_description(raw["id"])
+    doc = description.load_registry()[raw["id"]]
+    assert traits(doc) == traits(original)
+    for protocol in (doc.id, *original.catalog_aliases):
+        rows = remote_provider_model_capabilities("example", {
+            "remote_provider": True, "protocol": protocol, "models": [{"id": "example/model"}],
+        })
+        assert [row.intent for row in rows] == [original.catalog_intent]
