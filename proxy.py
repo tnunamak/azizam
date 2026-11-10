@@ -4458,10 +4458,11 @@ async def check_embeddings_health() -> bool:
 # =============================================================================
 
 async def check_tts_health() -> bool:
-    """Check if TTS backend is healthy."""
-    if not DERIVED.TTS_ENABLED:
+    """Check if the selected speech service is healthy."""
+    selected = _speech_service()
+    if not DERIVED.TTS_ENABLED or selected is None:
         return False
-    return await check_service_health("tts")
+    return await check_service_health(selected[0])
 
 
 def convert_wav_to_mp3(wav_content: bytes) -> bytes:
@@ -4528,8 +4529,14 @@ def _speech_voice_aliases() -> dict[str, str]:
 
 def _builtin_voice_names() -> frozenset[str]:
     """Voice names of the default speech engine and their older spellings, which a custom voice may not take."""
-    records = speech_voices.voice_records(_speech_engine_for_service("tts"))
+    records = speech_voices.voice_records(_default_speech_engine())
     return frozenset(record["id"].lower() for record in records) | frozenset(_speech_voice_aliases())
+
+
+def _default_speech_engine() -> Mapping[str, Any]:
+    """The first speech engine of the selected speech service; empty when no speech service is selected."""
+    selected = _speech_service()
+    return _speech_engine_for_service(selected[0]) if selected is not None else {}
 
 
 def _speech_engine_for_service(service_id: str) -> Mapping[str, Any]:
@@ -4557,7 +4564,7 @@ def _speech_model_engines(resolution: ModelResolution) -> list[tuple[str | None,
     """
     alias = resolution.alias
     if alias is None or not alias.engine or alias.engine_spec is None:
-        return [(None, _speech_engine_for_service("tts"))]
+        return [(None, _default_speech_engine())]
     engines = _speech_engines()
     return [(alias.engine, alias.engine_spec),
             *((engine, engines.get(engine) or {}) for engine, _service in alias.fallbacks)]
@@ -5369,15 +5376,16 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 # =============================================================================
 
 async def check_stt_health() -> bool:
-    """Check if STT backend is healthy."""
-    if not DERIVED.STT_ENABLED:
+    """Check if the selected transcription service is healthy."""
+    selected = _transcription_service()
+    if not DERIVED.STT_ENABLED or selected is None:
         return False
-    return await check_service_health("stt")
+    return await check_service_health(selected[0])
 
 
 def stt_backend_supports_translation() -> bool:
-    stt_backend = config.get("backends", {}).get("stt", {})
-    capabilities = stt_backend.get("capabilities", []) if isinstance(stt_backend, dict) else []
+    stt_backend = (_transcription_service() or ("", {}))[1]
+    capabilities = stt_backend.get("capabilities") or []
     backend_caps = {str(cap).lower() for cap in capabilities if isinstance(cap, str)}
     return bool({"translation", "translations"} & backend_caps)
 
@@ -20858,7 +20866,7 @@ def _speech_engine_voices() -> dict[str, Any]:
     """
     section = (config.get("model_aliases") or {}).get("speech") or {}
     available = _alias_engine_available_for("speech")
-    shared = {record["id"]: record for record in speech_voices.voice_records(_speech_engine_for_service("tts"))}
+    shared = {record["id"]: record for record in speech_voices.voice_records(_default_speech_engine())}
     out: dict[str, Any] = {}
     for engine_id, spec in (section.get("engines") or {}).items():
         if not isinstance(spec, Mapping) or not spec.get("voice_map") or not available(str(engine_id), spec):

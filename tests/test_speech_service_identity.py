@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 
 KEYS = ("TTS_HOST", "STT_HOST", "TTS_ENABLED", "STT_ENABLED", "TTS_TIMEOUT", "STT_TIMEOUT")
 
@@ -100,3 +101,50 @@ def test_the_backend_model_is_the_selected_records_default_model(monkeypatch, re
 def test_the_module_holds_no_captured_speech_record():
     for name in ("tts_cfg", "stt_cfg", "_TTS_BACKEND_ID"):
         assert not hasattr(proxy, name), name
+
+
+# -- health, default voices and translation read the selected service ------------------------------------------------
+
+@pytest.mark.parametrize("check, record, role", [
+    ("check_tts_health", _speech, "TTS_ENABLED"), ("check_stt_health", _transcription, "STT_ENABLED"),
+])
+def test_the_health_check_probes_the_selected_service(monkeypatch, check, record, role):
+    import asyncio
+
+    probed: list[str] = []
+
+    async def probe(service_id: str) -> bool:
+        probed.append(service_id)
+        return True
+
+    monkeypatch.setattr(proxy, "config", _config(**{"renamed-one": record(18101)}))
+    monkeypatch.setattr(proxy, "check_service_health", probe)
+    with derived_patch(role, True):
+        assert asyncio.run(getattr(proxy, check)()) is True
+    assert probed == ["renamed-one"]
+    monkeypatch.setattr(proxy, "config", _config())
+    with derived_patch(role, True):
+        assert asyncio.run(getattr(proxy, check)()) is False
+    assert probed == ["renamed-one"]
+
+
+def test_the_default_voices_are_the_selected_speech_services_engine(monkeypatch):
+    cfg = _config(**{"voice-one": _speech(18101), "voice-two": _speech(18102, priority=200)})
+    cfg["model_aliases"] = {**(cfg.get("model_aliases") or {}), "speech": {"engines": {
+        "engine-two": {"service": "voice-two", "voice_map": {"b": "b"}},
+        "engine-one": {"service": "voice-one", "voice_map": {"a": "a"}},
+    }}}
+    monkeypatch.setattr(proxy, "config", cfg)
+    assert proxy._default_speech_engine()["service"] == "voice-one"
+    monkeypatch.setattr(proxy, "config", _config())
+    assert proxy._default_speech_engine() == {}
+
+
+def test_translation_support_is_read_from_the_selected_transcription_service(monkeypatch):
+    monkeypatch.setattr(proxy, "config", _config(**{"ears-one": _transcription(18101, capabilities=[
+        "audio", "transcriptions", "translations"])}))
+    assert proxy.stt_backend_supports_translation() is True
+    monkeypatch.setattr(proxy, "config", _config(**{
+        "ears-one": _transcription(18101), "ears-two": _transcription(18102, priority=200, capabilities=[
+            "audio", "transcriptions", "translations"])}))
+    assert proxy.stt_backend_supports_translation() is False
