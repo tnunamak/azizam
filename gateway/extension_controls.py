@@ -11,6 +11,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
+
 @dataclass(frozen=True)
 class ControlDescriptor:
     """One validated primitive control, addressed by its public field."""
@@ -119,6 +121,8 @@ def _load_groups(raw_groups: Any) -> Mapping[str, ControlGroup]:
     for name, raw in _logical_mapping(raw_groups, "groups").items():
         raw = _mapping(raw, name, {"namespace", "controls", "errors"})
         namespace = _text(raw["namespace"], f"{name}.namespace")
+        if namespace == WORKFLOW_EXTENSION_NAMESPACE:  # workflow inputs own it; a merge would hide one owner
+            raise ValueError(f"{name}: namespace {namespace} is reserved for workflow inputs")
         if namespace in namespaces:
             raise ValueError(f"{name}: duplicate namespace {namespace}")
         namespaces.add(namespace)

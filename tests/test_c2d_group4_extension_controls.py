@@ -425,6 +425,18 @@ def test_unsupported_control_type_names_the_descriptor_file(tmp_path):
     assert str(registry) in str(caught.value)
 
 
+def test_descriptor_cannot_claim_the_workflow_input_namespace(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    document["groups"]["clip_delivery"]["namespace"] = "com.azizam.workflow"
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="reserved for workflow inputs") as caught:
+        controls.load_extension_controls(registry)
+    assert str(registry) in str(caught.value) and "clip_delivery" in str(caught.value)
+
+
 def test_shipped_extension_schema_preserves_literal_bytes():
     from gateway import extension_controls as controls
     from gateway import openai_media_schemas as schemas

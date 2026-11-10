@@ -138,7 +138,10 @@ class WorkflowRegistry:
         for path in sorted(_iter_manifest_files(root)):
             try:
                 manifest = load_workflow_manifest(path)
-                self.add_manifest(manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])))
+                self.add_manifest(
+                    manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])),
+                    _check_variants=False,  # checked once below; a per-file check would copy the registry each time
+                )
             except (ManifestError, OSError, ValueError) as exc:
                 self._errors.append(
                     RegistryLoadError(source_path=path, message=str(exc))
@@ -156,6 +159,7 @@ class WorkflowRegistry:
         replace: bool = False,
         provenance: Provenance = UNKNOWN_PROVENANCE,
         facts: PolicyFacts | None = None,
+        _check_variants: bool = True,
     ) -> WorkflowRecord:
         """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first.
         The provenance and the facts are the record's, set by whoever knows where it came from; none means not reviewed and
@@ -171,9 +175,10 @@ class WorkflowRegistry:
             source_path=Path(source_path) if source_path else Path(""),
             facts=facts,
         )
-        candidate = dict(self._records)
-        candidate[identity.id] = record
-        video_grid.check_video_variants(candidate.values())
+        if _check_variants:
+            candidate = dict(self._records)
+            candidate[identity.id] = record
+            video_grid.check_video_variants(candidate.values())
         self._records[identity.id] = record
         return record
 
