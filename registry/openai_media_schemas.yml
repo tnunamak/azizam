@@ -7,6 +7,9 @@
     "identity_scene": {"reference_photos": "image"},
     "segment_chain": {"source_clip": "video"}
   },
+  "wire_error_param_endpoints": {
+    "segment_chain": "POST /v1/videos/extensions"
+  },
   "endpoints": {
     "POST /v1/images/edits": {
       "requestBody": {

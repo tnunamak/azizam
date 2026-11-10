@@ -134,7 +134,9 @@ def load_media_schema_registry(path: Path) -> MediaSchemaRegistry:
     except (yaml.YAMLError, ValueError, RecursionError) as exc:
         raise ValueError(f"{path}: invalid schema fragment YAML: {exc}") from exc
     document = _fragment_mapping(
-        document, str(path), {"schema_version", "endpoints", "wire_error_params"},
+        document, str(path), {
+            "schema_version", "endpoints", "wire_error_params", "wire_error_param_endpoints",
+        },
         {"schema_version", "endpoints"},
     )
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
@@ -165,6 +167,15 @@ def load_media_schema_registry(path: Path) -> MediaSchemaRegistry:
                 if not isinstance(response["description"], str):
                     raise ValueError(f"{label}.{status}: description must be text")
                 _validate_fragment_content(response["content"], f"{label}.{status}.content")
+    endpoint_label = f"{path}: wire_error_param_endpoints"
+    error_endpoints = _fragment_mapping(
+        document.get("wire_error_param_endpoints", {}), endpoint_label,
+    )
+    for domain, endpoint in error_endpoints.items():
+        if not isinstance(endpoint, str) or not re.fullmatch(
+            r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\s?#]*", endpoint,
+        ):
+            raise ValueError(f"{endpoint_label}.{domain}: invalid HTTP method/path key")
     error_params: dict[str, Mapping[str, str]] = {}
     if "wire_error_params" in document:
         label = f"{path}: wire_error_params"
@@ -176,12 +187,30 @@ def load_media_schema_registry(path: Path) -> MediaSchemaRegistry:
             group = _fragment_mapping(value, group_label)
             if not group:
                 raise ValueError(f"{group_label}: expected at least one parameter")
+            endpoint = error_endpoints.get(domain)
+            request_properties = None
+            if endpoint is not None and endpoint not in endpoints:
+                raise ValueError(f"{endpoint_label}.{domain}: endpoint {endpoint!r} is not in endpoints")
+            if endpoint is not None:
+                # A public parameter may belong to any supported request content type.
+                request_properties = {
+                    name
+                    for entry in endpoints[endpoint].get("requestBody", {}).get("content", {}).values()
+                    for name in entry["schema"].get("properties", {})
+                }
             for logical, public in group.items():
                 if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", logical):
                     raise ValueError(f"{group_label}.{logical}: invalid logical parameter")
                 if not isinstance(public, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.\[\]-]{0,127}", public):
                     raise ValueError(f"{group_label}.{logical}: invalid public parameter")
+                if request_properties is not None and public not in request_properties:
+                    raise ValueError(
+                        f"{group_label}.{logical}: public parameter {public!r} is not a request "
+                        f"property of endpoint {endpoint!r}"
+                    )
             error_params[domain] = MappingProxyType(dict(group))
+    if unknown := sorted(set(error_endpoints) - set(error_params)):
+        raise ValueError(f"{endpoint_label}: no wire_error_params group for {unknown}")
     return MediaSchemaRegistry(
         endpoints=MappingProxyType(deepcopy(endpoints)),
         wire_error_params=MappingProxyType(error_params),
