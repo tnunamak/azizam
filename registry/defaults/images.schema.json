@@ -129,6 +129,77 @@
           }
         }
       }
+    },
+    "graph_roles": {
+      "description": "Graph facts the ComfyUI input maps cannot carry. Keys exactly name manifest workflow paths; entries replace whole.",
+      "x-azizam-entry": "collection",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^workflows/images/[^/]+\\.json$": {
+          "x-azizam-entry": "atomic",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "background": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "output",
+                "processor",
+                "slot"
+              ],
+              "properties": {
+                "output": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "processor": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "slot": {
+                  "description": "The transparent IMAGE output used by the shipped RMBG graphs.",
+                  "type": "integer",
+                  "const": 0
+                }
+              }
+            },
+            "batch_size": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "node",
+                  "input"
+                ],
+                "properties": {
+                  "node": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "input": {
+                    "type": "string",
+                    "const": "batch_size"
+                  }
+                }
+              }
+            },
+            "reference_order": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
