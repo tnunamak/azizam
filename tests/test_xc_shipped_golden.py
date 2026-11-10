@@ -58,7 +58,7 @@ def capture(monkeypatch):
                             target = target.setdefault(part, {})
                         target[parts[-1]] = "original"
         try:
-            result = bind_video_workflow_extensions({"inputs": {**values, "undeclared_probe": 1}}, doc, graph)
+            result = bind_video_workflow_extensions({"inputs": {**values, "undeclared_probe": 1}}, doc, graph, backend="comfyui")
             extension = asdict(result)
         except manifests.ManifestError as exc:
             extension = {"error": str(exc)}

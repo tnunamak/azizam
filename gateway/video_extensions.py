@@ -17,6 +17,7 @@ from gateway.image_extensions import (
     detect_unknown_top_level_fields,
 )
 from gateway.manifests import BackendBindingResult, bind_backend_request
+from gateway.extension_catalog import INPUT_CONTRACT
 
 STANDARD_VIDEO_CREATE_FIELDS: frozenset[str] = frozenset(
     {
@@ -58,31 +59,22 @@ STANDARD_VIDEO_EXTEND_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-ROUTE_MANAGED_VIDEO_INPUTS: frozenset[str] = frozenset(
-    {
-        "prompt",
-        "negative_prompt",
-        "width",
-        "height",
-        "length",
-        "frame_rate",
-        "seed",
-        "image",
-        "image_strength",
-    }
-)
+# Compatibility exports are release data, shared with callers that list extension inputs.
+ROUTE_MANAGED_VIDEO_HINTS = INPUT_CONTRACT.extension_hints
+ROUTE_MANAGED_VIDEO_INPUTS = frozenset(ROUTE_MANAGED_VIDEO_HINTS)
 
-ROUTE_MANAGED_VIDEO_HINTS: dict[str, str] = {
-    "prompt": "prompt",
-    "negative_prompt": "negative_prompt",
-    "width": "size",
-    "height": "size",
-    "length": "seconds",
-    "frame_rate": "workflow configuration",
-    "seed": "seed",
-    "image": "input_reference",
-    "image_strength": "image_strength",
-}
+
+def _selected_binding(manifest: Mapping[str, Any], backend: str | None) -> tuple[str, Mapping[str, Any]]:
+    bindings = manifest.get("bindings") or {}
+    if backend is None:
+        if len(bindings) != 1:
+            raise ExtensionError("select a backend binding for workflow extensions")
+        backend = next(iter(bindings))
+    block = bindings.get(backend)
+    if not isinstance(block, Mapping):
+        from gateway.manifests import refusal
+        raise refusal(("bindings", backend), "binding_missing", f"manifest has no binding for backend: {backend}")
+    return backend, block
 
 
 @dataclass
@@ -142,12 +134,14 @@ def merge_workflow_inputs(
 
 def _reject_route_managed_inputs(
     supplied: Mapping[str, Any],
+    managed: frozenset[str],
+    hints: Mapping[str, str],
 ) -> tuple[dict[str, Any], dict[str, str]]:
     filtered: dict[str, Any] = {}
     rejected: dict[str, str] = {}
     for name, value in supplied.items():
-        if name in ROUTE_MANAGED_VIDEO_INPUTS:
-            hint = ROUTE_MANAGED_VIDEO_HINTS.get(name, "the standard request shape")
+        if name in managed:
+            hint = hints.get(name, "the standard request shape")
             rejected[name] = (
                 f"{name} is managed by the standard {hint} request field; "
                 "do not pass it as a workflow extension"
@@ -162,6 +156,7 @@ def validate_video_workflow_extensions(
     manifest: Mapping[str, Any],
     *,
     namespace: str = WORKFLOW_EXTENSION_NAMESPACE,
+    backend: str | None = None,
 ) -> tuple[ExtensionValidationResult, dict[str, str]]:
     """Validate caller inputs without resolving assets or binding a graph."""
     normalized_body = _request_with_workflow_namespace(request_body, namespace)
@@ -174,16 +169,13 @@ def validate_video_workflow_extensions(
     if not isinstance(inputs_spec, Mapping):
         raise ExtensionError("workflow manifest inputs must be a mapping")
 
-    binding_map = (
-        ((manifest.get("bindings") or {}).get("comfyui") or {}).get("map") or {}
-    )
-    supported_names = (
-        set(binding_map) - ROUTE_MANAGED_VIDEO_INPUTS
-        if isinstance(binding_map, Mapping)
-        else set()
-    )
+    _, block = _selected_binding(manifest, backend)
+    binding_map = block.get("map") or {}
+    managed = frozenset(block.get("route_bound_inputs", ROUTE_MANAGED_VIDEO_INPUTS))
+    hints = {**ROUTE_MANAGED_VIDEO_HINTS, **(manifest.get("input_fields") or {})}
+    supported_names = set(binding_map) - managed if isinstance(binding_map, Mapping) else set()
     supplied, route_managed_rejected = _reject_route_managed_inputs(
-        extract_extension_namespace(normalized_body, namespace)
+        extract_extension_namespace(normalized_body, namespace), managed, hints,
     )
     validation = validate_extension_inputs(
         inputs_spec,
@@ -201,14 +193,16 @@ def bind_video_workflow_extensions(
     backend_request: Mapping[str, Any],
     *,
     namespace: str = WORKFLOW_EXTENSION_NAMESPACE,
+    backend: str | None = None,
 ) -> VideoExtensionBinding:
-    """Validate video workflow extensions and bind accepted inputs to ComfyUI."""
+    """Validate workflow extensions and bind them through the selected binding."""
+    backend, _ = _selected_binding(manifest, backend)
     validation, unknown_top_level = validate_video_workflow_extensions(
-        request_body, manifest, namespace=namespace,
+        request_body, manifest, namespace=namespace, backend=backend,
     )
     binding = bind_backend_request(
         dict(manifest),
-        "comfyui",
+        backend,
         dict(backend_request),
         validation.accepted,
     )
