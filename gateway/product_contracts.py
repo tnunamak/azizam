@@ -10,7 +10,10 @@ from typing_extensions import NotRequired, TypedDict
 
 _MODEL_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "registry/defaults/models.schema.json"
 with _MODEL_SCHEMA_PATH.open(encoding="utf-8") as _schema_file:
-    _model_schema = json.load(_schema_file)
+    try:
+        _model_schema = json.load(_schema_file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{_MODEL_SCHEMA_PATH}: invalid JSON: {exc}") from exc
 
 
 def _metadata_enum(*keys: str) -> list[str]:

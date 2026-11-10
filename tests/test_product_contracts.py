@@ -43,7 +43,7 @@ def _enum_definition(schema, path):
 
 def _load_contracts_from_schema(schema, tmp_path, monkeypatch):
     schema_path = tmp_path / "models.schema.json"
-    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    schema_path.write_text(schema if isinstance(schema, str) else json.dumps(schema), encoding="utf-8")
     original_open = Path.open
 
     def open_schema(path, *args, **kwargs):
@@ -58,6 +58,13 @@ def _load_contracts_from_schema(schema, tmp_path, monkeypatch):
         patch.setattr(Path, "open", open_schema)
         spec.loader.exec_module(contracts)
     return contracts
+
+
+def test_malformed_model_schema_names_the_schema_file(tmp_path, monkeypatch):
+    with pytest.raises(ValueError) as failure:
+        _load_contracts_from_schema("{", tmp_path, monkeypatch)
+    assert str(_MODEL_SCHEMA_PATH) in str(failure.value) and "invalid JSON" in str(failure.value)
+    assert isinstance(failure.value.__cause__, json.JSONDecodeError)
 
 
 def test_generated_browser_types_are_current():
