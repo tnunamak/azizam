@@ -1085,6 +1085,9 @@ class ExecutionDataTests(unittest.TestCase):
                 with self.assertRaises(ValueError) as caught:
                     self.load_document(document)
                 self.assertIn("execution-fixture.yml", str(caught.exception))
+                self.assertIn(path[-1], str(caught.exception))
+                if isinstance(value, list) and len(set(value)) != len(value):
+                    self.assertIn("duplicate", str(caught.exception))
         for path in (("execution",),
                      ("execution", "intents", "image.edit", "async"),
                      ("execution", "sync_templates", "generated_image", "fields")):
@@ -1094,14 +1097,18 @@ class ExecutionDataTests(unittest.TestCase):
                 for key in path[:-1]:
                     target = target[key]
                 del target[path[-1]]
-                with self.assertRaisesRegex(ValueError, "execution-fixture.yml"):
+                with self.assertRaises(ValueError) as caught:
                     self.load_document(document)
+                self.assertIn("execution-fixture.yml", str(caught.exception))
+                self.assertIn(path[-1], str(caught.exception))
         document = self.document()
         document["execution"]["field_rows"]["same_name"] = copy.deepcopy(
             document["execution"]["field_rows"]["count"])
         document["execution"]["intents"]["image.edit"]["route_inputs"] = ["count", "same_name"]
-        with self.assertRaisesRegex(ValueError, "duplicate output field"):
+        with self.assertRaisesRegex(ValueError, "duplicate output field") as caught:
             self.load_document(document)
+        self.assertIn("execution-fixture.yml", str(caught.exception))
+        self.assertIn("route_inputs", str(caught.exception))
 
     def test_execution_reader_rejects_duplicate_yaml_and_unreadable_documents(self):
         raw = yaml.safe_dump(self.document(), sort_keys=False)
@@ -1132,6 +1139,42 @@ class ExecutionDataTests(unittest.TestCase):
             self.assertIsNone(maps.execution.render_sync(bare_record))
             self.assertIsNone(maps.execution.render_async(bare_record))
             workflow_catalog([self.record("image.generate"), native])
+
+    def test_workflow_catalog_rejects_native_only_row_without_binding(self):
+        from gateway.workflow_openapi import workflow_catalog
+
+        document = self.document()
+        document["execution"]["intents"]["unfamiliar.render"] = {
+            "model_prefix": "", "route_inputs": [], "sync": None, "async": None,
+            "native_alternate": None,
+        }
+        # Load without records so only publication can reject this pairing.
+        maps = self.load_document(document)
+        record = self.record("unfamiliar.render")
+        with patch.object(workflow_request_maps, "_MAPS", maps):
+            with self.assertRaises(ValueError) as caught:
+                workflow_catalog([record])
+        self.assertEqual(str(caught.exception),
+                         "execution-fixture.yml: execution.intents.unfamiliar.render: "
+                         "record 'unfamiliar.render.fixture' needs a native binding when both routes are null")
+
+    def test_augment_openapi_rejects_native_only_row_without_binding(self):
+        document = self.document()
+        document["execution"]["intents"]["unfamiliar.render"] = {
+            "model_prefix": "", "route_inputs": [], "sync": None, "async": None,
+            "native_alternate": None,
+        }
+        maps = self.load_document(document)
+        record = self.record("unfamiliar.render")
+        # Isolate this entry point: the nested catalog validator must not
+        # rescue a missing augment_openapi validation call.
+        with patch.object(workflow_request_maps, "_MAPS", maps), \
+             patch("gateway.workflow_openapi.workflow_catalog", return_value=[]):
+            with self.assertRaises(ValueError) as caught:
+                augment_openapi({}, [record])
+        self.assertEqual(str(caught.exception),
+                         "execution-fixture.yml: execution.intents.unfamiliar.render: "
+                         "record 'unfamiliar.render.fixture' needs a native binding when both routes are null")
 
     def test_native_only_execution_row_requires_native_binding(self):
         document = self.document()

@@ -1753,6 +1753,34 @@ class RouteFieldExampleTests(unittest.TestCase):
         for language in ("curl", "python", "javascript"):
             self.assertNotIn('"model"', example[language])
 
+    def test_omitted_route_fields_fall_back_to_sync_mapping(self) -> None:
+        from types import SimpleNamespace
+        from gateway.workflows_catalog import _example_request
+
+        record = SimpleNamespace(
+            id="quartz.render.fixture", intent="quartz.render",
+            contract={"inputs": {}, "bindings": {}},
+        )
+        inputs = [
+            {"name": "prompt", "accepted": True, "default": "A crystal lattice."},
+            {"name": "texture", "accepted": True, "default": "rough"},
+        ]
+        route = {
+            "method": "POST", "path": "/quartz/render",
+            "content_type": "application/json", "model": "crystal-v1",
+        }
+        with patch("gateway.workflows_catalog.request_mapping", return_value={
+            "prompt": {"in": "body", "field": "sync_prompt"},
+            "texture": {"in": "extension", "field": "finish"},
+        }) as mapping, patch("gateway.workflows_catalog.route_inputs", return_value=[]):
+            example = _example_request(record, inputs, route, "https://gateway.test")
+        mapping.assert_called_once_with(record, "sync")
+        self.assertEqual(example["body"], {
+            "model": "crystal-v1",
+            "sync_prompt": "A crystal lattice.",
+            "extensions": {"com.azizam.workflow": {"finish": "rough"}},
+        })
+
     def test_explicit_empty_route_fields_do_not_fall_back_to_a_mapping(self) -> None:
         self.assertEqual(self.example({}, model="crystal-v1")["body"], {"model": "crystal-v1"})
 
