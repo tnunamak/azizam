@@ -240,9 +240,8 @@ def registered_model_capabilities(service_records: Mapping[str, Any]) -> list[Ca
         if not isinstance(models, list):
             continue
         capabilities = build_local_capabilities(
-            {}, backends={service_id: runtime_backend_from_service(service)},
-            enabled_flags={"llm": True, "embeddings": True, "tts": True, "stt": True,
-                           "images": False, "videos": False, "audio": False},
+            {},
+            backends={service_id: runtime_backend_from_service(service)},
         )
         model_records = [model for model in models if isinstance(model, Mapping)]
         for model in model_records:

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway import local_capabilities  # noqa: E402
-from gateway.capabilities import summarize_capabilities  # noqa: E402
+from gateway.capabilities import Capability, ResourceEstimate, summarize_capabilities  # noqa: E402
 from tests.support import c2d_parity  # noqa: E402
 from gateway.local_capabilities import (  # noqa: E402
     INTENT_AUDIO_GENERATE,
@@ -653,6 +653,133 @@ def test_backend_row_flag_rejects_invalid_values(tmp_path, flag):
         f"{tmp_path / 'local_capability_rows.yml'}: "
         "backend_rows row 1: flag must be a non-empty string"
     )
+
+
+# Independent complete-record expectations for the catalog's empty-config projection.
+# Keep this fixture shared with test_models_catalog; do not read expectations from
+# the production backend-row table.
+CATALOG_OLD_FLAGS = {
+    "llm": True, "embeddings": True, "tts": True, "stt": True,
+    "images": False, "videos": False, "audio": False,
+}
+CATALOG_BACKEND_TEMPLATES = (
+    (("chat",), Capability(
+        intent="chat.completions", backend="declared-service",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True, resources=ResourceEstimate(gpu_required=True),
+    )),
+    (("completions",), Capability(
+        intent="text.completions", backend="declared-service",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True, resources=ResourceEstimate(gpu_required=True),
+    )),
+    (("embeddings",), Capability(
+        intent="text.embeddings", backend="declared-service",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=False, resources=ResourceEstimate(gpu_required=False),
+    )),
+    (("speech", "tts"), Capability(
+        intent="speech.synthesis", backend="declared-service",
+        input_modalities=("text",), output_modalities=("audio",),
+        execution="sync", streaming=True, resources=ResourceEstimate(gpu_required=True),
+        capability="speech",
+        tags=tuple(f"response_format:{value}" for value in ("wav", "mp3", "opus", "aac", "flac", "pcm")),
+    )),
+    (("transcriptions", "stt"), Capability(
+        intent="speech.transcription", backend="declared-service",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False, resources=ResourceEstimate(gpu_required=True),
+        action_label="Transcribe", recordable_inputs=("audio",),
+    )),
+    (("translations", "translation"), Capability(
+        intent="speech.translation", backend="declared-service",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False, resources=ResourceEstimate(gpu_required=True),
+        action_label="Translate", recordable_inputs=("audio",),
+        caveats=("Only advertised when the local STT backend declares translation support.",),
+    )),
+)
+CATALOG_TRIGGER_CASES = tuple(
+    (trigger, expected)
+    for triggers, expected in CATALOG_BACKEND_TEMPLATES
+    for trigger in triggers
+)
+CATALOG_EMPTY_DECLARATIONS = (
+    {}, {"capabilities": None}, {"capabilities": "chat"},
+    {"capabilities": ("chat",)}, {"capabilities": {"chat": True}},
+    {"capabilities": 7}, {"capabilities": []},
+    {"capabilities": ["unknown-trigger"]}, {"capabilities": [None, 7, {}, []]},
+)
+
+
+@pytest.mark.parametrize(("trigger", "expected"), CATALOG_TRIGGER_CASES)
+@pytest.mark.parametrize("normalized", [False, True])
+def test_empty_config_backend_rows_match_complete_records(trigger, expected, normalized):
+    tokens = [trigger.upper(), trigger, trigger.upper(), None, 7, "unknown-trigger"] if normalized else [trigger]
+    backends = {"declared-service": {"capabilities": tokens}}
+    default = build_local_capabilities({}, backends=backends)
+    masked = build_local_capabilities({}, backends=backends, enabled_flags=CATALOG_OLD_FLAGS)
+
+    assert [dataclasses.asdict(cap) for cap in default] == [dataclasses.asdict(expected)]
+    assert [dataclasses.asdict(cap) for cap in masked] == [dataclasses.asdict(expected)]
+
+
+@pytest.mark.parametrize("backend", CATALOG_EMPTY_DECLARATIONS)
+def test_empty_config_backend_rows_require_a_declared_list(backend):
+    assert build_local_capabilities({}, backends={"declared-service": backend}) == []
+
+
+def test_empty_config_backend_rows_preserve_vision_and_resource_fields():
+    backends = {"declared-service": {
+        "capabilities": ["CHAT", "VISION", "embeddings"],
+        "resources": {"gpu_required": False, "vram_gb_estimate": 2.5,
+                      "duration_class": "short", "max_parallel": 3},
+    }}
+    expected = [
+        dataclasses.replace(CATALOG_BACKEND_TEMPLATES[0][1], input_modalities=("text", "image")),
+        dataclasses.replace(CATALOG_BACKEND_TEMPLATES[2][1], resources=ResourceEstimate(
+            gpu_required=False, vram_gb_estimate=2.5, duration_class="short", max_parallel=3,
+        )),
+    ]
+    assert [dataclasses.asdict(cap) for cap in build_local_capabilities({}, backends=backends)] == [
+        dataclasses.asdict(cap) for cap in expected
+    ]
+
+
+@pytest.mark.parametrize("backend_id", ["comfyui", "unrelated-engine"])
+@pytest.mark.parametrize("default_model", [None, "concrete-image-model"])
+def test_empty_config_preserves_generic_rows_and_only_adds_bound_image(backend_id, default_model):
+    backend = {
+        "capabilities": [trigger for trigger, _expected in CATALOG_TRIGGER_CASES]
+                        + ["images", "generations", "videos", "audio"],
+        "workflows_dir": "./unused-workflows",
+    }
+    if default_model is not None:
+        backend["default_model"] = default_model
+    backends = {backend_id: backend}
+    masked = build_local_capabilities({}, backends=backends, enabled_flags=CATALOG_OLD_FLAGS)
+    default = build_local_capabilities({}, backends=backends)
+    expected_generic = [
+        dataclasses.replace(template, backend=backend_id)
+        for _triggers, template in CATALOG_BACKEND_TEMPLATES
+    ]
+    assert [dataclasses.asdict(cap) for cap in masked] == [
+        dataclasses.asdict(cap) for cap in expected_generic
+    ]
+    assert [dataclasses.asdict(cap) for cap in default if cap.model is None] == [
+        dataclasses.asdict(cap) for cap in expected_generic
+    ]
+    expected_bound = []
+    if backend_id == "comfyui" and default_model is not None:
+        expected_bound = [Capability(
+            intent="image.generate", backend=backend_id, model=default_model,
+            input_modalities=("text",), output_modalities=("image",),
+            execution="job", streaming=False, resource_tier="batch",
+            resources=ResourceEstimate(gpu_required=True),
+        )]
+    assert [dataclasses.asdict(cap) for cap in default] == [
+        dataclasses.asdict(cap) for cap in expected_generic + expected_bound
+    ]
 
 
 if __name__ == "__main__":

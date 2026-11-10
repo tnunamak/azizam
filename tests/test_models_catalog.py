@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import copy
+import dataclasses
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fastapi.responses import JSONResponse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from tests.support.access import access, plan_for  # noqa: E402
-from gateway.capabilities import Capability  # noqa: E402
+from gateway import local_capabilities, models_catalog  # noqa: E402
+from gateway.capabilities import Capability, ResourceEstimate  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities, build_local_capabilities  # noqa: E402
 from gateway.models_catalog import (  # noqa: E402
     auth_contexts_from_user_snapshot,
@@ -20,6 +27,12 @@ from gateway.models_catalog import (  # noqa: E402
     registered_model_capabilities,
     HealthProbeNoResponse,
     probe_service_health,
+)
+from tests.test_local_capabilities import (  # noqa: E402
+    CATALOG_BACKEND_TEMPLATES,
+    CATALOG_EMPTY_DECLARATIONS,
+    CATALOG_OLD_FLAGS,
+    CATALOG_TRIGGER_CASES,
 )
 
 
@@ -1101,3 +1114,222 @@ def test_two_workflows_with_one_intent_keep_their_exact_names():
     assert rows["first"]["title"] == "First music model"
     assert rows["second"]["title"] == "Second music model"
     assert rows["second"]["workflow"] == "audio.generate.second"
+
+
+@pytest.fixture
+def fixed_catalog_availability(monkeypatch):
+    # The projection is under test, not host-file installation state.
+    monkeypatch.setattr(models_catalog, "model_file_availability", lambda *args, **kwargs: None)
+
+
+@pytest.mark.parametrize(("trigger", "template"), CATALOG_TRIGGER_CASES)
+@pytest.mark.parametrize("model_form", ["list", "mapping"])
+@pytest.mark.parametrize("normalized", [False, True])
+def test_registered_backend_row_matrix(fixed_catalog_availability, trigger, template, model_form, normalized):
+    model = {"model_group": "public-model", "upstream_model": "private-model"}
+    models = [model] if model_form == "list" else {"map-key": model}
+    tokens = [trigger.upper(), trigger, trigger.upper(), None, 7, "unknown-trigger"] if normalized else [trigger]
+    services = {"services": {"declared-service": {
+        "capabilities": tokens, "config": {"models": models},
+    }}}
+
+    assert [dataclasses.asdict(cap) for cap in registered_model_capabilities(services)] == [
+        dataclasses.asdict(dataclasses.replace(template, model="public-model"))
+    ]
+
+
+@pytest.mark.parametrize("declaration", CATALOG_EMPTY_DECLARATIONS)
+def test_registered_models_require_declared_capabilities(fixed_catalog_availability, declaration):
+    service = {**declaration, "config": {"models": [{"id": "not-advertised"}]}}
+    assert registered_model_capabilities({"services": {"declared-service": service}}) == []
+
+
+@pytest.mark.parametrize(
+    ("models", "public_ids"),
+    [
+        ([{"model_group": "group", "public": "public", "id": "id"}], ["group"]),
+        ([{"model_group": "", "public": "public", "id": "id"}], ["public"]),
+        ([{"public": "", "id": "id"}], ["id"]),
+        ([{"model_group": 17, "id": "id"}], ["17"]),
+        ([{"upstream_model": "private"}, None, "not-a-record"], []),
+        ({"map-id": {}}, ["map-id"]),
+        ({"map-id": {"id": "explicit-id"}}, ["explicit-id"]),
+        ({"map-id": {"id": "id", "public": "public", "model_group": "group"}}, ["group"]),
+        ({"map-id": None, "second-id": "not-a-record"}, ["map-id", "second-id"]),
+        (None, []),
+        ("not-a-model-list", []),
+    ],
+)
+def test_registered_model_forms_and_public_id_precedence(fixed_catalog_availability, models, public_ids):
+    services = {"services": {"declared-service": {
+        "capabilities": ["chat"], "config": {"models": models},
+    }}}
+    expected = [
+        dataclasses.replace(CATALOG_BACKEND_TEMPLATES[0][1], model=model_id)
+        for model_id in public_ids
+    ]
+    assert [dataclasses.asdict(cap) for cap in registered_model_capabilities(services)] == [
+        dataclasses.asdict(cap) for cap in expected
+    ]
+
+
+def test_registered_disabled_service_is_skipped_before_projection(monkeypatch):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("disabled services must not reach either builder")
+    monkeypatch.setattr(models_catalog, "build_local_capabilities", unexpected)
+    monkeypatch.setattr(models_catalog, "remote_provider_model_capabilities", unexpected)
+    assert registered_model_capabilities({"services": {"disabled": {
+        "enabled": False, "capabilities": ["chat"], "config": {"models": [{"id": "hidden"}]},
+    }}}) == []
+
+
+def test_registered_remote_projection_returns_before_local_builder(monkeypatch):
+    expected = Capability(intent="chat.completions", backend="remote", model="remote-public")
+    monkeypatch.setattr(models_catalog, "remote_provider_model_capabilities", lambda *args: [expected])
+    def unexpected(*args, **kwargs):
+        raise AssertionError("remote model capabilities must bypass the local builder")
+    monkeypatch.setattr(models_catalog, "build_local_capabilities", unexpected)
+    assert [dataclasses.asdict(cap) for cap in registered_model_capabilities(
+        {"services": {"remote": {"enabled": True}}}
+    )] == [dataclasses.asdict(expected)]
+
+
+def test_registered_models_filter_service_before_model_kind(fixed_catalog_availability):
+    chat, embedding, speech = [CATALOG_BACKEND_TEMPLATES[index][1] for index in (0, 2, 3)]
+    chat_kind, speech_kind = [models_catalog.product_capability(cap) for cap in (chat, speech)]
+    assert chat_kind != speech_kind
+    assert {chat_kind, speech_kind} <= set(models_catalog.MODEL_KINDS)
+    services = {"services": {
+        "mixed": {"capabilities": ["chat", "embeddings", "speech"], "config": {"models": [
+            {"id": "chat-only", "kind": chat_kind},
+            {"id": "speech-only", "kind": speech_kind},
+            {"id": "all-kinds"},
+            {"id": "unknown-kind", "kind": "unrecognized-kind"},
+        ]}},
+        "other": {"capabilities": ["chat"], "config": {"models": [
+            {"id": "not-supported-here", "kind": speech_kind}, {"id": "other-chat", "kind": chat_kind},
+        ]}},
+    }}
+    expected = [
+        dataclasses.replace(chat, backend="mixed", model="chat-only"),
+        dataclasses.replace(speech, backend="mixed", model="speech-only"),
+        *[dataclasses.replace(cap, backend="mixed", model=model_id)
+          for model_id in ("all-kinds", "unknown-kind") for cap in (chat, embedding, speech)],
+        dataclasses.replace(chat, backend="other", model="other-chat"),
+    ]
+    assert [dataclasses.asdict(cap) for cap in registered_model_capabilities(services)] == [
+        dataclasses.asdict(cap) for cap in expected
+    ]
+
+
+def test_registered_projection_passes_only_empty_config_and_effective_backend(monkeypatch):
+    service = {"capabilities": ["chat"], "config": {
+        "models": [{"id": "public-model"}],
+        "roles": {"unused": {"backend": "other"}},
+        "videos": {"workflows": {"unused": {"file": "unused.json"}}},
+    }}
+    effective = {"capabilities": ["declared-effective-token"]}
+    with mock.patch.object(models_catalog, "runtime_backend_from_service", return_value=effective) as runtime:
+        with mock.patch.object(models_catalog, "build_local_capabilities", return_value=[]) as builder:
+            assert registered_model_capabilities({"services": {"effective-service": service}}) == []
+    runtime.assert_called_once_with(service)
+    builder.assert_called_once_with({}, backends={"effective-service": effective})
+
+
+@pytest.mark.parametrize("backend_id", ["comfyui", "unrelated-engine"])
+def test_registered_graph_service_cannot_bind_concrete_image_intermediate(fixed_catalog_availability, backend_id):
+    services = {"services": {backend_id: {
+        "capabilities": ["chat", "images", "generations", "videos", "audio"],
+        "config": {
+            "default_model": "concrete-image-model", "workflows_dir": "./unused-workflows",
+            "models": [{"id": "registered-model"}],
+            "model_compatibility": {"defaults": {"image_edits": "not-catalog-config"}},
+            "videos": {"workflows": {"video-workflow": {"file": "unused.json"}}},
+            "audio": {"workflows": {"audio-workflow": {"file": "unused.json"}}},
+        },
+    }}}
+    generic = dataclasses.replace(CATALOG_BACKEND_TEMPLATES[0][1], backend=backend_id)
+    intermediate = build_local_capabilities({}, backends={
+        backend_id: models_catalog.runtime_backend_from_service(services["services"][backend_id]),
+    })
+    expected_intermediate = [generic]
+    if backend_id == "comfyui":
+        expected_intermediate.append(Capability(
+            intent="image.generate", backend=backend_id, model="concrete-image-model",
+            input_modalities=("text",), output_modalities=("image",),
+            execution="job", streaming=False, resource_tier="batch",
+            resources=ResourceEstimate(gpu_required=True),
+        ))
+    assert [dataclasses.asdict(cap) for cap in intermediate] == [
+        dataclasses.asdict(cap) for cap in expected_intermediate
+    ]
+    expected = dataclasses.replace(generic, model="registered-model")
+    assert [dataclasses.asdict(cap) for cap in registered_model_capabilities(services)] == [
+        dataclasses.asdict(expected)
+    ]
+
+
+@pytest.mark.parametrize("flag", ["images", "videos", "audio"])
+@pytest.mark.parametrize("matches", [False, True])
+def test_registered_projection_obeys_synthetic_row_without_family_veto(
+    monkeypatch, fixed_catalog_availability, flag, matches,
+):
+    # This is deliberately not a shipped media row or a claim of new media visibility.
+    original_rows = local_capabilities._BACKEND_ROWS
+    row = {
+        "group": "endpoints", "triggers": ("synthetic-trigger",), "flag": flag,
+        "intent": "synthetic.projection", "inputs": ("text",), "outputs": ("text",),
+        "execution": "sync", "streaming": False, "gpu_required": False,
+    }
+    services = {"services": {"declared-service": {
+        "capabilities": ["synthetic-trigger" if matches else "other-trigger"],
+        "config": {"models": [{"id": "synthetic-model"}]},
+    }}}
+    with monkeypatch.context() as scoped:
+        scoped.setattr(local_capabilities, "_BACKEND_ROWS", (*original_rows, row))
+        actual = registered_model_capabilities(services)
+    assert local_capabilities._BACKEND_ROWS is original_rows
+    expected = [Capability(
+        intent="synthetic.projection", backend="declared-service", model="synthetic-model",
+        input_modalities=("text",), output_modalities=("text",), execution="sync",
+        streaming=False, resources=ResourceEstimate(gpu_required=False),
+    )] if matches else []
+    assert [dataclasses.asdict(cap) for cap in actual] == [dataclasses.asdict(cap) for cap in expected]
+
+
+@pytest.mark.parametrize("availability", [None, {"available": False, "status": "unavailable",
+                                               "reason": "fixed-test-evidence"}])
+def test_registered_projection_preserves_catalog_response_bytes(monkeypatch, availability):
+    services = {"services": {
+        "mixed": {"capabilities": [trigger for trigger, _expected in CATALOG_TRIGGER_CASES], "config": {
+            "models": [{"id": "mixed-one"}, {"id": "mixed-two", "kind": "unrecognized-kind"}],
+        }},
+        "comfyui": {"capabilities": ["chat", "images", "videos", "audio"], "config": {
+            "default_model": "discarded-image-model",
+            "models": {"map-key": {"model_group": "graph-public", "id": "private-id"}},
+        }},
+        "disabled": {"enabled": False, "capabilities": ["speech"], "config": {"models": [{"id": "hidden"}]}},
+    }}
+    supplied = {
+        "service_records": services, "alias_views": {}, "model_entries": [{"id": "mixed-one"}],
+        "health_evidence": {key: {"available": True, "status": "healthy"} for key in services["services"]},
+        "recent_receipts": [], "workflow_records": [], "model_metadata": {},
+    }
+    before = copy.deepcopy(supplied)
+    monkeypatch.setattr(models_catalog, "model_file_availability", lambda *args, **kwargs: availability)
+    monkeypatch.setattr(models_catalog.time, "time", lambda: 1700000000.0)
+    actual = registered_model_capabilities(services)
+
+    def old_projection(config, *, backends):
+        return build_local_capabilities(config, backends=backends, enabled_flags=CATALOG_OLD_FLAGS)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(models_catalog, "build_local_capabilities", old_projection)
+        old = registered_model_capabilities(services)
+
+    assert len(actual) == 13  # Two complete six-row models, plus graph service chat.
+    assert [dataclasses.asdict(cap) for cap in actual] == [dataclasses.asdict(cap) for cap in old]
+    current_body = JSONResponse(content=build_models_catalog(capabilities=actual, **supplied)).body
+    previous_body = JSONResponse(content=build_models_catalog(capabilities=old, **supplied)).body
+    assert current_body == previous_body  # No sorting or JSON reserialization.
+    assert supplied == before
