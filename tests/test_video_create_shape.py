@@ -49,7 +49,8 @@ def _inputs(*extra: str) -> dict[str, Any]:
         "frame_rate": {"type": "integer"},
     }
     if "image" in extra:
-        base["input_reference"] = {"type": "asset", "accepts": ["image/*"]}
+        # As in the shipped image-to-video manifests: the contract input is ``image``; the request map places it at input_reference.
+        base["image"] = {"type": "asset", "accepts": ["image/*"]}
         base["image_strength"] = {"type": "number", "minimum": 0, "maximum": 1, "default": 0.7}
     return base
 
@@ -58,7 +59,7 @@ def video_contract(short: str = "ltx-2.5-t2v", *, grid: dict | None = None, vari
                    chain: bool = False, image: bool = False, size: dict | None = None, length: dict | None = None) -> dict[str, Any]:
     roles = {"width": "width", "height": "height", "length": "length", "frame_rate": "frame_rate"}
     if image:
-        roles |= {"image": "input_reference", "image_strength": "image_strength"}
+        roles |= {"image": "image", "image_strength": "image_strength"}
     return {
         "id": f"video.generate.{short}", "version": "1", "schema_version": 2, "intent": "video.generate", "capability": "video",
         "inputs": _inputs("image") if image else _inputs(),
@@ -314,8 +315,8 @@ def test_an_image_to_video_model_without_a_reference_is_refused_and_a_reference_
     run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "input_reference": data, "image_strength": 5}, spool=spool)
     assert run_request.workflow_id == "video.generate.ltx-2.5-i2v"
     assert run_request.inputs["image_strength"] == 1.0                    # clamped to 0..1
-    assert [(name, blob) for name, blob, *_ in spool.staged] == [("input_reference", PNG)]
-    assert set(run_request.media) == {"input_reference"}
+    assert [(name, blob) for name, blob, *_ in spool.staged] == [("image", PNG)]   # staged under the contract input
+    assert set(run_request.media) == {"image"}
     assert run_request.facts["resolved_model"] == "video-ltx-2.5-i2v"
 
 
@@ -323,7 +324,7 @@ def test_an_image_to_video_model_without_a_reference_is_refused_and_a_reference_
 def test_ambiguous_reference_variants_return_a_structured_registry_conflict() -> None:
     first = video_contract("reference-first", image=True)
     second = video_contract("reference-second", image=True)
-    second["video"]["roles"]["anchor"] = "input_reference"
+    second["video"]["roles"]["anchor"] = "image"
     owner = video_contract("reference-owner", variants={"image": first["id"], "anchor": second["id"]})
     # snap deliberately builds a FakeSnapshot directly, bypassing WorkflowRegistry validation.
     unchecked = snap(owner, first, second)
