@@ -509,7 +509,9 @@ def test_audio_28_delivery_carries_provenance_and_the_sync_asset(tmp_path):
         assert record["requested_model"] == record["resolved_model"] == "tangoflux"
         assert record["backend"] == "comfyui"  # the fixture's engine backend
         # The file links to the request's stored receipt (not the engine job id, which names no receipt).
-        assert record["request_id"] == record["receipt"].rsplit("/", 1)[1] == _receipts(rig)[0]["request_id"]
+        assert record["request_id"] == record["receipt"].rsplit("/", 1)[1]
+        assert record["request_id"].startswith("req_") and record["request_id"] != f"audio_{ENGINE_PROMPT_ID}"
+        assert len(_receipts(rig)) == 1
         assert record["seed"] == sampler["seed"]
         assert record["parameters"]["duration"] == sampler["duration"]
         assert record["parameters"]["type"] == r.headers["x-audio-type"] == "music"

@@ -216,6 +216,10 @@
       "step": 0
     }
   ],
+  "job_prefixes": [
+    "mj",
+    "vidjob"
+  ],
   "media_jobs": {
     "definition_blob": [
       {
@@ -764,8 +768,8 @@
               "seconds": "5",
               "size": "960x512"
             },
-            "receipt": "/gateway/v1/receipts/video_p1",
-            "request_id": "video_p1",
+            "receipt": "/gateway/v1/receipts/<job:2>",
+            "request_id": "<job:2>",
             "requested_model": "ltx-2.5-t2v",
             "resolved_model": "video-ltx-2.5-t2v",
             "schema": "azizam.provenance/1",
