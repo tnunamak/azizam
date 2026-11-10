@@ -13,9 +13,8 @@
     "gateway/transforms.py": 5,
     "gateway/video_media_jobs.py": 1,
     "gateway/video_subject.py": 1,
-    "gateway/workflows_catalog.py": 2,
     "metrics_sampler.py": 8,
-    "proxy.py": 218,
+    "proxy.py": 214,
     "status_endpoint.py": 132
   }
 }
