@@ -535,6 +535,8 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     Re-captured 2026-11-09 for the combined train 38: the two video create paths and the four video WorkflowInputs schemas
     and WorkflowInputs_image_edit_qwen_image_2_1_inpaint now hold the digests of the S7 video move (its manifest edits reach the inpaint schema); the two create paths also
     list the video-mux workflow extension (the video-mux record from main). Nothing else moved.
+    Re-captured 2026-11-10 for train 45: the two video create paths and VideoGenerationRequest gained the
+    descriptor-owned com.azizam.video extension controls; nothing else moved.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())

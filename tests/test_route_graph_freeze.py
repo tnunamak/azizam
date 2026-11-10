@@ -261,7 +261,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # create-video operation now comes from the videos-create frontend row and the data-only registered_routes row.
         # Before it the digest was 28560d4c8bd8c5ed2313bc28ddb54f06ed9796e3a801f5c2207b8837cab628c1.
         # DELETE now uses the published video.deleted discriminator on both route aliases.
-        assert route_graph.openapi_digest(proxy.app) == "fde56f52f7d227f0c6134124f01d8083eaedff2589e7c3b11f749d5d90211d00"
+        # Re-captured 2026-11-10 for train 45: the JSON video create schema publishes the descriptor-owned
+        # com.azizam.video extension controls beside the workflow namespace on both create aliases and in
+        # VideoGenerationRequest (tests/fixtures/headless_openapi.json shows the same three additions and nothing else).
+        # Before it the digest was fde56f52f7d227f0c6134124f01d8083eaedff2589e7c3b11f749d5d90211d00.
+        assert route_graph.openapi_digest(proxy.app) == "34e4f7b03ab2d187d99edd673cdfb691721b7e74b90ccf2eebbeace866762e7c"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -312,4 +316,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-09 for the combined train 38: the c2d-38 sync response kinds, the mux description and the
     # emptied run-route inputs together (tests/fixtures/headless_openapi.json shows the same). Before it the frozen digest was
     # 30f9e05266fff448eb90a25b494ab5181e4001237b87a96ac0c65ca62d379232.
+    # Re-captured 2026-11-10 for train 45 (the com.azizam.video extension controls on the two video create paths and
+    # VideoGenerationRequest). Before it the frozen digest was 5d4a53fd5340c2a5a40263eaf1cdc6268f2e1a5cb23d06dd5cc3dea3010d86c0.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
