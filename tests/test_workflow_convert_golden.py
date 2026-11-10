@@ -20,7 +20,7 @@ from gateway.workflow_convert import convert_1_to_2  # noqa: E402
 
 GOLDEN = ROOT / "tests" / "fixtures" / "workflows_v1_converted" / "converted.json"
 FIXTURES = ROOT / "tests" / "fixtures" / "workflows_v1"
-EXPECTED_FIXTURE_COUNT = 38
+EXPECTED_FIXTURE_COUNT = 39
 
 
 def _serialize(document: dict, notes: list) -> str:
