@@ -111,10 +111,11 @@ def test_audio_presentation_family_uses_the_normalized_artifact_mime():
 def test_video_asset_keeps_the_supplied_media_type_and_video_kind():
     # Train 43 behaviour, captured from the review's inputs: the stored media type is kept byte for byte.
     for supplied in (" VIDEO/MP4; codecs=AVC1 ", "video/mp4; codecs=avc1", "audio/mpeg; codecs=x",
-                     "application/x-framed; version=1", "x-novel/framed", "not-a-mime", "video/", "video/mp4/extra"):
-        assert video_jobs.normalize_video_asset(filename="clip.mp4", media_type=supplied) == {
-            "kind": "video", "filename": "clip.mp4", "media_type": supplied,
-        }
+                     "application/x-framed; version=1", "x-novel/framed", "not-a-mime", "video/", "video/mp4/extra", " / ", " ; charset=utf-8"):
+        for filename in ("clip.mp4", "clip.unknown"):
+            assert video_jobs.normalize_video_asset(filename=filename, media_type=supplied) == {
+                "kind": "video", "filename": filename, "media_type": supplied,
+            }
 
 
 def test_unknown_video_filename_falls_back_to_octet_stream_as_before():
