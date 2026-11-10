@@ -518,6 +518,18 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertIs(width["accepted"], True)
         self.assertNotIn("enum", width)
 
+    def test_member_catalog_publishes_only_the_projected_aliases(self) -> None:
+        # The image edit section may not name an image.generate workflow by its canonical id: the OpenAPI
+        # projection drops that alias, and the member catalog must not bring it back by its own matching.
+        aliases = {"image_edits": {"stable": [{"alias": "edit", "resolves_to": "image.generate.simple"}]}}
+        payload = build_workflows_catalog(
+            records=_registry().records(),
+            aliases=aliases,
+            capabilities=[Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")],
+        )
+        (image,) = [row for row in payload["workflows"] if row["id"] == "image.generate.simple"]
+        self.assertEqual(image["aliases"], [])
+
     def test_json_example_body_uses_route_mapping_and_extensions(self) -> None:
         payload = build_workflows_catalog(
             records=_registry().records(),
@@ -1605,7 +1617,7 @@ class DeclaredResponseKindExampleTests(unittest.TestCase):
             with self.subTest(workflow=record.id):
                 openapi_row = openapi_rows[record.id]
                 actual = catalog_module._workflow_row(
-                    record, capability_rows=[], openapi_row=openapi_row, aliases=None,
+                    record, capability_rows=[], openapi_row=openapi_row,
                     receipts=[], jobs=[], base_url="https://gateway.test",
                 )["example_request"]
                 old_routes = namespace["_execution"](record, openapi_row["typical_seconds"])
