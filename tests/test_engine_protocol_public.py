@@ -2,6 +2,7 @@
 import base64
 import copy
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,9 +26,13 @@ def engine(monkeypatch, tmp_path):
     fake = ProtocolUpstream()
     registry = {'schema_version':2,'services':{record['id']:record}}
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: registry)
-    monkeypatch.setattr(description, 'REGISTRY_DIR', FIXTURE)
+    # The release descriptions plus the fictional engine: other release code (the mesh profile) reads the shipped defaults.
+    shipped = tmp_path/'protocols'
+    shutil.copytree(description.REGISTRY_DIR, shipped)
+    shutil.copyfile(FIXTURE/'prism.yml', shipped/'prism.yml')
+    monkeypatch.setattr(description, 'REGISTRY_DIR', shipped)
     original = description.load_registry
-    monkeypatch.setattr(description, 'load_registry', lambda directory=FIXTURE: original(directory))
+    monkeypatch.setattr(description, 'load_registry', lambda directory=shipped: original(directory))
     wire = transport.HttpxTransport.for_tests(HandlerTransport(fake))
     monkeypatch.setattr(executor, 'HttpxTransport', lambda: wire)
     monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=False))
@@ -44,6 +49,14 @@ def engine(monkeypatch, tmp_path):
     with authenticated():
         yield SimpleNamespace(record=record, fake=fake, client=TestClient(proxy.app), registry=registry)
 
+
+def test_bundled_manifests_load_inside_the_engine_world(engine):
+    """The engine fixture's shipped registry still holds every release description, so loading the bundled workflow
+    manifests with a cold cache works (gate train 43: the mesh profile needs the shipped multipart default)."""
+    from gateway import discovery
+    discovery._bundled_manifests.cache_clear()
+    assert discovery.bundled_workflow_manifests()
+    assert "prism" in description.load_registry()
 
 def chat(engine, **kw):
     return engine.client.post('/v1/chat/completions', json={'model':'prism-chat','messages':[{'role':'user','content':'Hello'}],'temperature':9,**kw})

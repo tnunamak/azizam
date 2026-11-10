@@ -372,17 +372,9 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
   await group.evaluate((node) =>
     Promise.all(Array.from(node.querySelectorAll("img")).map((img) => img.decode().catch(() => undefined))),
   );
-  await expect
-    .poll(() =>
-      group.evaluate((node) => {
-        const cards = Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]"));
-        const faces = new Set(cards.map((card) => Math.round(card.firstElementChild!.getBoundingClientRect().height)));
-        const ends = new Set(cards.map((card) => Math.round(card.getBoundingClientRect().bottom)));
-        return `${faces.size}/${ends.size}`;
-      }),
-    )
-    .toBe("1/1");
-  const shape = await group.evaluate((node) => {
+  // One function measures everything, and the assertions below read the reading that settled: two reads in a row
+  // that agree and line up. A separate later read can see a face that moved after the poll passed.
+  const measure = (node: Element) => {
     const cards = Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]"));
     const ring = cards[0].querySelector<HTMLElement>("span.absolute.inset-0");
     const faces = cards.map((card) => card.firstElementChild!.getBoundingClientRect());
@@ -393,8 +385,33 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
       captionEnds: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().bottom))).size,
       grid: node.getBoundingClientRect().toJSON(),
       cardBoxes: cards.map((card) => card.getBoundingClientRect().toJSON()),
+      // Kept so a face that moves without changing its height still counts as a change.
+      faceBoxes: faces.map((face) => face.toJSON()),
     };
-  });
+  };
+  const settledReading: { settled?: ReturnType<typeof measure> } = {};
+  let previous = "";
+  await expect
+    .poll(async () => {
+      const reading = await group.evaluate(measure);
+      const key = JSON.stringify(reading);
+      const before = previous ? (JSON.parse(previous) as Record<string, unknown>) : undefined;
+      const settled = key === previous && reading.faceHeights === 1 && reading.captionEnds === 1;
+      previous = key;
+      if (settled) {
+        settledReading.settled = reading;
+        return "settled";
+      }
+      const changed = before
+        ? Object.entries(reading)
+            .filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(before[field]))
+            .map(([field]) => field)
+        : ["first reading"];
+      return `face heights ${reading.faceHeights}, caption ends ${reading.captionEnds}, changed: ${changed.join(", ") || "none"}`;
+    }, { message: "the home cards should stop moving with one face height and one caption end" })
+    .toBe("settled");
+  const shape = settledReading.settled;
+  if (!shape) throw new Error("the card layout never settled");
   // The ring is an inset shadow on the face, so nothing is drawn outside the grid's edges.
   expect(shape.ring).toContain("inset");
   expect(shape.faceHeights).toBe(1);

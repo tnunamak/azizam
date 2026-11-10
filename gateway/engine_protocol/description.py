@@ -301,10 +301,20 @@ def _scan_code_names(node: Any, path: tuple, problems: list[str], flagged: list[
             _scan_code_names(value, path + (index,), problems, flagged)
 
 
+def _shipped_trait_row(path: Path) -> dict | None:
+    """One release file as a mapping, or None. A file that cannot be read supplies no defaults; it reports its own
+    problem when the registry loads it, and must not fail the parse of an unrelated description."""
+    try:
+        row = safe_load_strict(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    return row if isinstance(row, dict) else None
+
+
 @lru_cache(maxsize=1)
 def _shipped_trait_documents(signature: tuple) -> tuple[dict, ...]:
     """Read defaults only from release data; stat keys invalidate edits without recursive registry loading."""
-    return tuple(safe_load_strict(path.read_text(encoding="utf-8")) for path, _, _ in signature)
+    return tuple(row for path, _, _ in signature if (row := _shipped_trait_row(path)) is not None)
 
 
 def _inherit_legacy_traits(doc: dict) -> dict:
