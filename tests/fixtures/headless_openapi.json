@@ -37159,7 +37159,10 @@
           "method": "POST",
           "model": "ace-step-1.5-xl-turbo",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.ace-step-1.5-xl-turbo",
@@ -37255,7 +37258,10 @@
           "method": "POST",
           "model": "sa3-small-sfx",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.sa3-small-sfx",
@@ -37373,7 +37379,10 @@
           "method": "POST",
           "model": "tangoflux",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.tangoflux",
@@ -37477,7 +37486,10 @@
           "method": "POST",
           "model": "yue2-song",
           "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
+          "path": "/v1/audio/generate",
+          "response": {
+            "kind": "binary"
+          }
         }
       },
       "id": "audio.generate.yue2-song",
@@ -37524,7 +37536,10 @@
           },
           "method": "POST",
           "output": "JSON (see the route's response schema)",
-          "path": "/gateway/v1/faces/likeness"
+          "path": "/gateway/v1/faces/likeness",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.analyze.face-likeness",
@@ -37573,7 +37588,10 @@
           "method": "POST",
           "model": "fibo-2-edit-turbo",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.fibo-2-edit-turbo",
@@ -37660,7 +37678,10 @@
           "method": "POST",
           "model": "flux2-klein",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.flux2-klein",
@@ -37747,7 +37768,10 @@
           "method": "POST",
           "model": "flux2-klein-4b",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.flux2-klein-4b",
@@ -37843,7 +37867,10 @@
           "method": "POST",
           "model": "flux2-klein-4b-inpaint",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.flux2-klein-4b-inpaint",
@@ -37969,7 +37996,10 @@
           },
           "method": "POST",
           "output": "JSON (see the route's response schema)",
-          "path": "/gateway/v1/images/identity"
+          "path": "/gateway/v1/images/identity",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.image-identity",
@@ -38033,7 +38063,10 @@
           "method": "POST",
           "model": "qwen-image-2.1-edit",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.qwen-image-2.1-edit",
@@ -38116,7 +38149,10 @@
           "method": "POST",
           "model": "qwen-image-2.1-edit-multiref",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.qwen-image-2.1-edit-multiref",
@@ -38207,7 +38243,10 @@
           "method": "POST",
           "model": "qwen-image-2.1-inpaint",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.qwen-image-2.1-inpaint",
@@ -38274,7 +38313,10 @@
           "method": "POST",
           "model": "seedvr2-upscale",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/edits"
+          "path": "/v1/images/edits",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.edit.seedvr2-upscale",
@@ -38428,7 +38470,10 @@
           "method": "POST",
           "model": "anima-turbo",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.anima-turbo",
@@ -38581,7 +38626,10 @@
           "method": "POST",
           "model": "flux2-klein",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein",
@@ -38736,7 +38784,10 @@
           "method": "POST",
           "model": "flux2-klein-4b",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein-4b",
@@ -38937,7 +38988,10 @@
           "method": "POST",
           "model": "flux2-klein-4b-seamless-tile",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein-4b-seamless-tile",
@@ -39098,7 +39152,10 @@
           "method": "POST",
           "model": "flux2-klein-snofs",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.flux2-klein-snofs",
@@ -39245,7 +39302,10 @@
           "method": "POST",
           "model": "krea2-turbo",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.krea2-turbo",
@@ -39400,7 +39460,10 @@
           "method": "POST",
           "model": "krea2-turbo-snofs",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.krea2-turbo-snofs",
@@ -39537,7 +39600,10 @@
           "method": "POST",
           "model": "moss-image",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.moss-image",
@@ -39674,7 +39740,10 @@
           "method": "POST",
           "model": "moss-image-fast",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.moss-image-fast",
@@ -39819,7 +39888,10 @@
           "method": "POST",
           "model": "moss-image-quality",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.moss-image-quality",
@@ -40004,7 +40076,10 @@
           "method": "POST",
           "model": "sdxl-seamless-tile",
           "output": "data[].b64_json or data[].url",
-          "path": "/v1/images/generations"
+          "path": "/v1/images/generations",
+          "response": {
+            "kind": "json"
+          }
         }
       },
       "id": "image.generate.sdxl-seamless-tile",
@@ -40123,7 +40198,11 @@
           },
           "method": "POST",
           "output": "model/gltf-binary (GLB bytes)",
-          "path": "/v1/3d/generations/glb"
+          "path": "/v1/3d/generations/glb",
+          "response": {
+            "kind": "binary",
+            "media_type": "model/gltf-binary"
+          }
         }
       },
       "id": "mesh.generate.trellis-2",
@@ -40210,7 +40289,12 @@
           },
           "method": "POST",
           "output": "a media job; its content is the video",
-          "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run"
+          "path": "/gateway/v1/workflows/video.edit.rife-interpolate/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
         }
       },
       "id": "video.edit.rife-interpolate",
@@ -40387,7 +40471,12 @@
           },
           "method": "POST",
           "output": "a media job; its content is the video",
-          "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run"
+          "path": "/gateway/v1/workflows/video.edit.scail-2-replace/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
         }
       },
       "id": "video.edit.scail-2-replace",
@@ -40473,7 +40562,12 @@
           },
           "method": "POST",
           "output": "a media job; its content is the video",
-          "path": "/gateway/v1/workflows/video.edit.video-mux/run"
+          "path": "/gateway/v1/workflows/video.edit.video-mux/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
         }
       },
       "id": "video.edit.video-mux",
