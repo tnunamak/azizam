@@ -176,14 +176,14 @@ def test_missing_history_selector_inherits_shipped_data(monkeypatch):
     monkeypatch.setattr(node_graph, "load_shipped_description", lambda protocol: defaults)
     del document["result_selectors"]
     adapter = adapter_for(document)
-    status = finished({"outputs": {"1": {"woven": [{"filename": "result.bin"}]}}}, adapter)
+    status = finished({"status": {"completed": True}, "outputs": {"1": {"woven": [{"filename": "result.bin"}]}}}, adapter)
     assert status.state is JobState.succeeded
     assert [json.loads(handle)["kind"] for handle in status.assets] == ["woven"]
 
 
 def test_poll_refuses_outputs_without_any_declared_handles():
     with pytest.raises(ProtocolError) as raised:
-        finished({"outputs": {"1": {"unrecognized": [{"filename": "result.bin"}]}}}, adapter_for())
+        finished({"status": {"completed": True}, "outputs": {"1": {"unrecognized": [{"filename": "result.bin"}]}}}, adapter_for())
     assert raised.value.code == "result_missing"
 
 
