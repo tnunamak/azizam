@@ -346,7 +346,7 @@ def _example_request(
         }
         content_type = "application/json"
     elif content_type == "multipart/form-data":
-        form, files = _example_multipart_parts(record, inputs, model=selected_model)
+        form, files = _example_multipart_parts(record, inputs, mapping=mapping, model=selected_model)
         body = {}
     # Response semantics are independent of the upload format. In particular,
     # the generic video-edit run remains multipart even though it returns a job.
@@ -433,6 +433,7 @@ def _example_multipart_parts(
     record: WorkflowRecord,
     inputs: list[Mapping[str, Any]],
     *,
+    mapping: Mapping[str, Mapping[str, Any]],
     model: str | None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """The form fields and file parts the example request carries.
@@ -442,11 +443,10 @@ def _example_multipart_parts(
     ``image[]`` part), so the ordering is the manifest's and the key is the
     input, never the wire field.
     """
-    mapping = request_mapping(record, "sync")
     rows = {str(item.get("name")): item for item in inputs}
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
     form: dict[str, Any] = {}
-    if model and record.intent == "image.edit":
+    if model:
         form["model"] = model
     files: dict[str, dict[str, Any]] = {}
     extension: dict[str, Any] = {}

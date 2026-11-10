@@ -1182,8 +1182,8 @@ class JobRunExampleTests(unittest.TestCase):
 
 # Frozen from 8333cbd7a2c24ca9d51492e94089dc15855476b8. This oracle has its own
 # route selection and response rendering, so a change to the live generator
-# cannot silently redefine byte-for-byte parity. The request body helper below
-# is also frozen now that live examples take placement and models from routes.
+# cannot silently redefine byte-for-byte parity. Both request body helpers below
+# are also frozen now that live examples take placement and models from routes.
 _BASE_RESPONSE_RENDERERS = r'''def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
     """Sync and async routes for one workflow, and which to prefer."""
     intent = record.intent
@@ -1395,6 +1395,53 @@ def _example_body(
     return body
 
 
+def _example_multipart_parts(
+    record: WorkflowRecord,
+    inputs: list[Mapping[str, Any]],
+    *,
+    model: str | None,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """The form fields and file parts the example request carries.
+
+    ``files`` is keyed by input name, and each part names the multipart field
+    it travels in. Fields can repeat (the edit route takes every picture as an
+    ``image[]`` part), so the ordering is the manifest's and the key is the
+    input, never the wire field.
+    """
+    mapping = request_mapping(record, "sync")
+    rows = {str(item.get("name")): item for item in inputs}
+    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    form: dict[str, Any] = {}
+    if model and record.intent == "image.edit":
+        form["model"] = model
+    files: dict[str, dict[str, Any]] = {}
+    extension: dict[str, Any] = {}
+    combined: dict[str, list[str]] = {}
+    for name, placement in mapping.items():
+        if name not in values or placement.get("in") == "none":
+            continue
+        location = str(placement.get("in") or "")
+        field = str(placement.get("field") or name)
+        if location == "form":
+            if placement.get("combine"):
+                combined[field] = [str(part) for part in placement["combine"]]
+            else:
+                form[field] = values[name]
+        elif location == "file":
+            files[name] = {**_file_part(name, rows.get(name) or {}), "field": field}
+        elif location == "file+extension":
+            files[name] = {**_file_part(name, rows.get(name) or {}), "field": field}
+            extension[name] = {"multipart_field": field}
+        elif location == "extension":
+            extension[field] = values[name]
+    for field, parts in combined.items():
+        if field == "size" and all(part in values for part in parts):
+            form[field] = f"{values[parts[0]]}x{values[parts[1]]}"
+    if extension:
+        form["extensions"] = json.dumps({"com.azizam.workflow": extension}, separators=(",", ":"))
+    return form, files
+
+
 def _curl_example(
     url: str,
     *,
@@ -1549,7 +1596,8 @@ def _javascript_example(
 
 class RouteFieldExampleTests(unittest.TestCase):
     @staticmethod
-    def example(fields: dict, *, kind: str = "quartz_job", model: str | None = None) -> dict:
+    def example(fields: dict, *, kind: str = "quartz_job", model: str | None = None,
+                content_type: str = "application/json") -> dict:
         from types import SimpleNamespace
         from gateway.workflows_catalog import _example_request
 
@@ -1563,7 +1611,7 @@ class RouteFieldExampleTests(unittest.TestCase):
         ]
         route = {
             "kind": kind,
-            "submit": {"method": "POST", "path": "/quartz/jobs", "content_type": "application/json"},
+            "submit": {"method": "POST", "path": "/quartz/jobs", "content_type": content_type},
             "fields": fields,
         }
         if model is not None:
@@ -1616,6 +1664,58 @@ class RouteFieldExampleTests(unittest.TestCase):
 
     def test_explicit_empty_route_fields_do_not_fall_back_to_a_mapping(self) -> None:
         self.assertEqual(self.example({}, model="crystal-v1")["body"], {"model": "crystal-v1"})
+
+    def test_multipart_example_uses_unfamiliar_routes_fields_and_model(self) -> None:
+        fields = {
+            "prompt": {"in": "form", "field": "async_prompt"},
+            "texture": {"in": "form", "field": "finish"},
+        }
+        example = self.example(fields, model="crystal-v1", content_type="multipart/form-data")
+        self.assertEqual(example["path"], "/quartz/jobs")
+        self.assertEqual(example["content_type"], "multipart/form-data")
+        self.assertEqual(example["body"], {})
+        self.assertEqual(example["form"], {
+            "model": "crystal-v1",
+            "async_prompt": "A crystal lattice.",
+            "finish": "rough",
+        })
+        expected = {
+            "curl": ("-F 'model=crystal-v1'", "-F 'async_prompt=A crystal lattice.'", "-F 'finish=rough'"),
+            "python": ("'model': 'crystal-v1'", "'async_prompt': 'A crystal lattice.'", "'finish': 'rough'"),
+            "javascript": (
+                'form.append("model", "crystal-v1");',
+                'form.append("async_prompt", "A crystal lattice.");',
+                'form.append("finish", "rough");',
+            ),
+        }
+        for language, fragments in expected.items():
+            with self.subTest(language=language):
+                for fragment in fragments:
+                    self.assertIn(fragment, example[language])
+                self.assertNotIn("sync_prompt", example[language])
+                self.assertNotIn("surface", example[language])
+
+    def test_multipart_route_without_a_model_does_not_invent_one(self) -> None:
+        example = self.example(
+            {"prompt": {"in": "form", "field": "async_prompt"}},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(example["form"], {"async_prompt": "A crystal lattice."})
+        self.assertEqual(example["body"], {})
+        for language in ("curl", "python", "javascript"):
+            with self.subTest(language=language):
+                self.assertNotIn("model", example[language])
+
+    def test_shipped_image_edit_catalog_row_and_example_are_unchanged(self) -> None:
+        from tests.support import c2d_parity
+        from tests.support.c2d_snapshots import capture_workflows_catalog
+
+        workflow_id = "image.edit.qwen-image-2.1-edit"
+        actual = capture_workflows_catalog()["workflows"][workflow_id]
+        golden = c2d_parity.load_golden("workflows_catalog")["workflows"][workflow_id]
+        for part in ("row", "examples"):
+            with self.subTest(part=part):
+                self.assertEqual(actual[part]["sha256"], golden[part]["sha256"])
 
 
 class DeclaredResponseKindExampleTests(unittest.TestCase):
