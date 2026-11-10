@@ -82,3 +82,49 @@ def test_renamed_chunked_implementation_requires_filenames():
     raw.pop("multipart_filenames")
     with pytest.raises(DescriptionError, match="multipart_filenames"):
         description.parse_description(raw, source="fixture-transcriber.yml")
+
+
+def test_every_legacy_shipped_copy_selects_original_traits(tmp_path, monkeypatch):
+    originals = description.load_registry(description.REGISTRY_DIR)
+    for name in originals:
+        raw = raw_document(name)
+        for key in ("implementation", "multipart", "catalog"):
+            raw.pop(key, None)
+        (tmp_path / f"{name}.yml").write_text(yaml.safe_dump(raw))
+    monkeypatch.setattr(description, "user_directory", lambda: tmp_path)
+    loaded = description.load_registry()
+    assert set(loaded) == set(originals)
+    for name, original in originals.items():
+        assert traits(loaded[name]) == traits(original), name
+        assert loaded[name].multipart_filenames == original.multipart_filenames
+
+
+def test_explicit_catalog_and_multipart_traits_keep_precedence():
+    raw = raw_document("openai-compatible")
+    raw["catalog"] = {"intent": "fixture.intent", "aliases": ["fixture-alias"]}
+    doc = description.parse_description(raw, source="fixture.yml")
+    assert (doc.catalog_intent, doc.catalog_aliases) == ("fixture.intent", ("fixture-alias",))
+    raw = raw_document("http-multipart")
+    raw.pop("implementation")
+    raw["binding_fields"]["endpoint"] = raw["binding_fields"].pop("service")
+    raw["multipart"]["service"] = "endpoint"
+    doc = description.parse_description(raw, source="fixture.yml")
+    assert doc.implementation == "multipart_post"
+    assert doc.multipart["service"] == "endpoint"
+
+
+def test_legacy_inherited_traits_still_require_valid_binding_fields():
+    raw = raw_document("http-multipart")
+    raw.pop("implementation")
+    raw.pop("multipart")
+    raw["binding_fields"]["service"]["required"] = False
+    with pytest.raises(DescriptionError, match="required service"):
+        description.parse_description(raw, source="fixture.yml")
+
+
+def test_shared_http_executor_does_not_inherit_unrelated_catalog():
+    raw = raw_document("openai-compatible")
+    raw.update(id="fixture-http")
+    raw.pop("catalog")
+    doc = description.parse_description(raw, source="fixture.yml")
+    assert (doc.catalog_intent, doc.catalog_aliases) == ("", ())
