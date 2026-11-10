@@ -98,8 +98,8 @@ def _background(value: Any, graph: str, nodes: Mapping[str, Any],
 
 
 def _batch(value: Any, graph: str, nodes: Mapping[str, Any], mapped: set[tuple[str, str]]) -> None:
-    if not isinstance(value, (list, tuple)) or not value:
-        _fail(graph, "batch_size", "must contain node/input targets")
+    if not isinstance(value, (list, tuple)) or len(value) != 1:
+        _fail(graph, "batch_size", "must contain exactly one node/input target")
     seen = set()
     for index, target in enumerate(value):
         key = f"batch_size[{index}]"

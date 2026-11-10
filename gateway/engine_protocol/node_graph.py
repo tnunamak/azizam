@@ -45,7 +45,7 @@ from gateway import log_scrub
 
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2, AdapterOrigin
 from gateway.engine_protocol.assets import AssetStore, served_media_type
-from gateway.engine_protocol.description import ProtocolDescription
+from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description
 from gateway.engine_protocol.errors import (
     MalformedResponse, ProtocolError, SelectionRefused, TransportFailure, UnknownOperation, UnsupportedByAdapter, UpstreamError,
 )
@@ -68,7 +68,16 @@ OPERATIONS = (
 # manifest in ``params`` and the typed inputs in ``body``, and the adapter compiles the graph (``compile_workflow``).
 GRAPH_SUBMIT = "graph.submit"
 CONTROL_TIMEOUT_S = 5.0          # the read timeout of a status look or a cancel; callers may pass their own
-OUTPUT_KEYS = ("images", "videos", "gifs", "audios", "audio", "wav", "mp3")
+
+
+def _output_keys(description: ProtocolDescription) -> tuple[str, ...]:
+    descriptor = description.result_selectors
+    field = descriptor.fields.get("key") if descriptor is not None else None
+    return field.values if field is not None else ()
+
+
+# Compatibility for direct callers of the module constant and static helper.
+OUTPUT_KEYS = _output_keys(load_shipped_description(ADAPTER_ID))
 _DEFAULT_LABEL = "the engine"
 
 
@@ -445,6 +454,7 @@ class NodeGraphAdapter:
         self.binding = description.binding if description is not None else ""
         # The selector form this engine's bindings take, declared in its protocol description (None: it takes none).
         self.result_selectors = description.result_selectors if description is not None else None
+        self._output_keys = _output_keys(description) if description is not None else OUTPUT_KEYS
         # The run operations' poll cadence, as the description declares it (empty: built without a description).
         self._operations = description.operations if description is not None else {}
         self._assets = assets
@@ -657,17 +667,17 @@ class NodeGraphAdapter:
             return JobStatus(ref, JobState.failed, error)
         if state == "running":
             return JobStatus(ref, JobState.running)
-        return JobStatus(ref, JobState.succeeded, assets=self._handles(job),
+        return JobStatus(ref, JobState.succeeded, assets=self._handles(job, self._output_keys),
                          record=FinishedRecord(job, len(reply.raw or b"")))
 
     @staticmethod
-    def _handles(job: Mapping[str, Any]) -> tuple[str, ...]:
+    def _handles(job: Mapping[str, Any], output_keys: tuple[str, ...] = OUTPUT_KEYS) -> tuple[str, ...]:
         """One handle per output file, in node order, naming the kind of output it came from."""
         handles: list[str] = []
         for node_output in ((job or {}).get("outputs", {}) or {}).values():
             if not isinstance(node_output, Mapping):
                 continue
-            for key in OUTPUT_KEYS:
+            for key in output_keys:
                 if key in node_output:
                     handles.extend(encode_output(key, entry) for entry in node_output[key] if isinstance(entry, Mapping))
         return tuple(handles)

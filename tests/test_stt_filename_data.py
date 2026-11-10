@@ -37,8 +37,7 @@ def test_filename_defaults_reach_exact_multipart_bytes(fake_upstreams, tmp_path,
     if custom:
         doc["multipart_filenames"] = defaults
     adapter = ChunkedSttAdapter(description.parse_description(doc, source="fixture.yml")) if custom else ChunkedSttAdapter()
-    # httpx's boundary generation is the only random element in the request bytes.
-    monkeypatch.setattr(httpx._multipart.os, "urandom", lambda n: b"\x00" * n)
+    # Fix only multipart framing; leave all other random sources alone.
     original = httpx._multipart.MultipartStream.__init__
     def fixed(self, data, files, boundary=None):
         original(self, data, files, boundary=b"fixed-boundary")
@@ -82,7 +81,8 @@ def test_filename_defaults_reach_exact_multipart_bytes(fake_upstreams, tmp_path,
     assert seen[0].headers["content-type"] == "multipart/form-data; boundary=fixed-boundary"
 
 
-@pytest.mark.parametrize("value", [None, {}, {**DEFAULTS, "unknown": "x"},
+@pytest.mark.parametrize("value", [None, {}, [], "invalid", 1, {**DEFAULTS, "unknown": "x"},
+    *[{k: v for k, v in DEFAULTS.items() if k != missing} for missing in DEFAULTS],
     *[{**DEFAULTS, key: bad} for key in DEFAULTS for bad in (None, 1, True, "", " ", "../x", "a/b", "a\\b", ".", "..", "a\n", "a\x7f", "a\x00")]])
 def test_malformed_filename_defaults_refuse_description_load(value):
     doc = document()

@@ -18,6 +18,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping
 
 import jsonschema
@@ -188,6 +189,7 @@ class ProtocolDescription:
     label: str = ""
     binding: str = ""
     retention_facts: tuple[Mapping[str, Any], ...] = ()
+    multipart_filenames: Mapping[str, str] = field(default_factory=dict)
     result_selectors: SelectorDescriptor | None = None
     # What a binding of this adapter may hold: its fields, roles and how inputs reach the engine (gateway/binding_descriptors.py).
     binding_descriptor: BindingDescriptor | None = None
@@ -374,6 +376,7 @@ class _Compiler:
             binding=str(doc.get("binding") or ""),
             retention_facts=tuple(copy.deepcopy(doc.get("retention_facts") or ())),
             result_selectors=selectors, binding_descriptor=binding_descriptor,
+            multipart_filenames=MappingProxyType(dict(doc.get("multipart_filenames") or {})),
             revision="sha256:" + hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest(),
         )
 
@@ -677,6 +680,17 @@ def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescriptio
             loaded.pop(Path(file).stem, None)
         loaded.update(records)
     return loaded
+
+
+def load_shipped_description(protocol_id: str) -> ProtocolDescription:
+    """Load one release description, independently of operator registry overrides."""
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", protocol_id):
+        raise ValueError("invalid protocol id")
+    path = REGISTRY_DIR / (protocol_id + ".yml")
+    parsed = parse_description_text(path.read_text(encoding="utf-8"), source=path.name)
+    if parsed.id != protocol_id:
+        raise DescriptionError(path.name, ["The file name must equal the description id."])
+    return parsed
 
 
 def get_description(protocol_id: str) -> ProtocolDescription | None:
