@@ -67,6 +67,23 @@ def test_malformed_model_schema_names_the_schema_file(tmp_path, monkeypatch):
     assert isinstance(failure.value.__cause__, json.JSONDecodeError)
 
 
+def test_missing_model_schema_names_the_schema_file(tmp_path):
+    path = tmp_path / "missing-models.schema.json"
+    with pytest.raises(ValueError) as failure:
+        product_contracts.load_model_metadata_vocabularies(path)
+    assert str(failure.value).startswith(f"{path}: cannot read model metadata schema:")
+    assert isinstance(failure.value.__cause__, FileNotFoundError)
+
+
+def test_invalid_utf8_model_schema_names_the_schema_file(tmp_path):
+    path = tmp_path / "invalid-utf8-models.schema.json"
+    path.write_bytes(b"\xff")
+    with pytest.raises(ValueError) as failure:
+        product_contracts.load_model_metadata_vocabularies(path)
+    assert str(failure.value).startswith(f"{path}: cannot read model metadata schema:")
+    assert isinstance(failure.value.__cause__, UnicodeDecodeError)
+
+
 def test_generated_browser_types_are_current():
     generator = _load_generator()
     assert generator.OUTPUT.read_bytes() == generator.render().encode("utf-8")

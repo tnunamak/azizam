@@ -548,7 +548,39 @@ def test_registry_load_reports_ambiguous_variants_as_a_load_error(reference_vari
     monkeypatch.setattr(registry, "records", lambda: list(reference_variant_records))
     monkeypatch.setattr(discovery, "_iter_manifest_files", lambda _root: [])
     registry.load_directory(ROOT / "manifests" / "workflows", policy={})
+    assert [error.source_path for error in registry.errors] == [ROOT / "manifests" / "workflows"]
     assert [error.message for error in registry.errors] == [
         f"{reference_variant_records[0].id}: multiple variants accept the reference: "
         f"{sorted([reference_variant_records[1].id, reference_variant_records[2].id])!r}"
     ]
+
+
+def test_reference_variants_skip_missing_workflows_and_video_facts():
+    from gateway.video_grid import reference_variants
+
+    eligible = SimpleNamespace(id="eligible", contract={
+        "capability": "clip", "clip": {"roles": {"guide": "guide_frame"}},
+    })
+    without_facts = SimpleNamespace(id="without-facts", contract={"capability": "clip"})
+    candidates = {"eligible": eligible, "without-facts": without_facts}
+    manifest = VideoManifest(variants={
+        "missing": "missing-workflow", "bare": "without-facts", "guide": "eligible",
+    })
+    looked_up, referenced = [], []
+
+    def get_workflow(workflow_id):
+        looked_up.append(workflow_id)
+        return candidates.get(workflow_id)
+
+    def reference_input(candidate):
+        referenced.append(candidate)
+        assert candidate is eligible
+        return "guide_frame"
+
+    result = reference_variants(manifest, get_workflow, reference_input)
+    assert looked_up == ["missing-workflow", "without-facts", "eligible"]
+    assert referenced == [eligible]
+    assert len(result) == 1
+    assert result[0][0] is eligible
+    assert result[0][1] == VideoManifest(roles={"guide": "guide_frame"})
+

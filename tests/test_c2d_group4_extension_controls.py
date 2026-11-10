@@ -365,18 +365,27 @@ def test_production_controls_reject_invalid_descriptors(tmp_path, path, value, e
     assert expected in str(failure.value)
 
 
-@pytest.mark.parametrize(("path", "value"), [
-    (("namespace",), "com.azizam.vidoe"),
-    (("namespace",), "org.example.options"),
-    (("controls", "retain_sound", "field"), "aduio"),
+@pytest.mark.parametrize(("path", "value", "expected_namespace", "expected_properties"), [
+    (("namespace",), "com.azizam.vidoe", "com.azizam.vidoe",
+     {"audio": {"type": "boolean", "default": True}}),
+    (("namespace",), "org.example.options", "org.example.options",
+     {"audio": {"type": "boolean", "default": True}}),
+    (("controls", "retain_sound", "field"), "aduio", "com.azizam.video",
+     {"aduio": {"type": "boolean", "default": True}}),
     (("controls",), {
         "retain_sound": {"field": "audio", "type": "boolean", "default": True},
         "extra_option": {"field": "extra", "type": "boolean", "default": False},
+    }, "com.azizam.video", {
+        "audio": {"type": "boolean", "default": True},
+        "extra": {"type": "boolean", "default": False},
     }),
-    (("controls", "retain_sound", "default"), False),
+    (("controls", "retain_sound", "default"), False, "com.azizam.video",
+     {"audio": {"type": "boolean", "default": False}}),
 ], ids=["namespace-is-data", "unfamiliar-namespace", "field-is-data",
         "additional-field", "default-is-data"])
-def test_descriptor_changes_define_published_contract(tmp_path, monkeypatch, path, value):
+def test_descriptor_changes_define_published_contract(
+    tmp_path, monkeypatch, path, value, expected_namespace, expected_properties,
+):
     from gateway import extension_controls as controls
     from gateway import openai_media_schemas as schemas
 
@@ -385,19 +394,18 @@ def test_descriptor_changes_define_published_contract(tmp_path, monkeypatch, pat
     registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     groups = controls.load_extension_controls(registry)
     monkeypatch.setattr(controls, "_CONTROL_GROUPS", groups)
-    declared = document["groups"]["clip_delivery"]
     published = schemas._video_create_request_schema()["properties"]["extensions"]
-    assert published["properties"] == {
-        declared["namespace"]: {
-            "type": "object",
-            "properties": {
-                item["field"]: {"type": item["type"], "default": item["default"]}
-                for item in declared["controls"].values()
+    assert published == {
+        "type": "object",
+        "properties": {
+            expected_namespace: {
+                "type": "object",
+                "properties": expected_properties,
+                "additionalProperties": False,
             },
-            "additionalProperties": False,
         },
+        "additionalProperties": True,
     }
-    assert published["additionalProperties"] is True
 
 
 def test_extension_control_namespaces_are_unique(tmp_path):
@@ -498,3 +506,43 @@ def test_shipped_extension_controls_match_published_contract():
                  {"extensions": {group.namespace: None}}):
         assert controls.parse_control_group(body, group) == {}
     assert controls.parse_control_group({"extensions": {group.namespace: {}}}, group) == {"audio": True}
+
+
+def test_extension_schema_accepts_two_explicit_groups(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    other = deepcopy(document["groups"]["clip_delivery"])
+    other["namespace"] = "org.example.options"
+    other["controls"] = {
+        "keep_option": {"field": "keep_copy", "type": "boolean", "default": False},
+    }
+    document["groups"]["general_delivery"] = other
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    assert controls.extension_controls_schema(groups=controls.load_extension_controls(registry)) == {
+        "type": "object",
+        "properties": {
+            "com.azizam.video": {
+                "type": "object",
+                "properties": {"audio": {"type": "boolean", "default": True}},
+                "additionalProperties": False,
+            },
+            "org.example.options": {
+                "type": "object",
+                "properties": {"keep_copy": {"type": "boolean", "default": False}},
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": True,
+    }
+
+
+def test_extension_schema_accepts_empty_explicit_groups():
+    from gateway import extension_controls as controls
+
+    assert controls.extension_controls_schema(groups={}) == {
+        "type": "object", "properties": {}, "additionalProperties": True,
+    }
+
