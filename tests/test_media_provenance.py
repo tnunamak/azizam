@@ -557,7 +557,7 @@ class _NullClient:
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")
 class AvDeliveryTests(unittest.TestCase):
-    def _make(self, suffix: str, *, audio: bool) -> bytes:
+    def _make(self, suffix: str, *, audio: bool, prompt_json: str = PROMPT_JSON) -> bytes:
         workdir = Path(tempfile.mkdtemp())
         try:
             target = workdir / f"in{suffix}"
@@ -566,7 +566,7 @@ class AvDeliveryTests(unittest.TestCase):
             else:
                 src = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=0.5", "-pix_fmt", "yuv420p"]
             cmd = ["ffmpeg", "-v", "error", "-y", *src,
-                   "-metadata", f"prompt={PROMPT_JSON}", "-metadata", f"workflow={WORKFLOW_JSON}", str(target)]
+                   "-metadata", f"prompt={prompt_json}", "-metadata", f"workflow={WORKFLOW_JSON}", str(target)]
             if suffix == ".mp4":
                 cmd[-1:-1] = ["-movflags", "+use_metadata_tags"]
             subprocess.run(cmd, check=True)
@@ -637,7 +637,11 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             caller = admin_store.upsert_oidc_user("test", "video-reader", path=admin_db)
             self.assertNotEqual(caller["id"], maker["id"])
         auth = proxy.AuthContext(identity=replace(auth.identity, person_id=caller["id"]))
-        raw = AvDeliveryTests()._make(".mp4", audio=False)
+        # A real engine writes the person's words into the prompt graph it embeds in the file; the route
+        # delivers those tags and the stored row only decides who may have them (as test_prompt_memory_identity
+        # does for images). The fixture's graph carries the kept text the same way.
+        raw = AvDeliveryTests()._make(".mp4", audio=False, prompt_json=json.dumps(
+            {"3": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt_text}}}))
         prompt_id = "pid-1"
         record = {
             "owner_key_hash": proxy._asset_owner_key(auth), "deleted_at": None,
