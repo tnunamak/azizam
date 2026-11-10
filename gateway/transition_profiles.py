@@ -133,7 +133,9 @@ def parse_profile(raw: Any, *, source: str) -> Profile:
     for field, value in named.items():
         if not isinstance(value, str) or not value.strip():
             raise ProfileError(f"{source}: {field} names an observation")
-        if value.strip() not in observed:
+        if value != value.strip():
+            raise ProfileError(f"{source}: {field} must not contain surrounding whitespace")
+        if value not in observed:
             raise ProfileError(f"{source}: {field} names an unknown observation {value!r}")
     return Profile(id=profile_id.strip(), title=str(raw.get("title") or profile_id), operations=names, attested=attested,
                    declared=declared, observations=observed)

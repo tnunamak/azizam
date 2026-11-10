@@ -209,7 +209,7 @@ async def _effect(call: Awaitable[EffectResult], deadline_s: float, name: str = 
         return EffectResult(outcome="unknown", evidence_ref="deadline_passed")
     try:
         return task.result()
-    except Exception as exc:  # noqa: BLE001 - an adapter failure is an unknown outcome
+    except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 - a cancelled child is unknown, too
         return EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
 
 
