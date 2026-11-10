@@ -15,12 +15,12 @@
     {
       "if": {
         "properties": {
-          "executor": {
-            "const": "adapter:chunked-stt"
+          "implementation": {
+            "const": "chunked_transcription"
           }
         },
         "required": [
-          "executor"
+          "implementation"
         ]
       },
       "then": {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -41,7 +42,10 @@ def test_adapter_identity_comes_from_validated_registration(monkeypatch):
             asyncio.run(adapter.invoke(Connection(address="https://example.com"), "fixture.nope", CanonicalRequest("fixture.nope")))
         assert "fixture.nope" in str(caught.value)
         raw["implementation"] = "not_registered"
-        unknown = parsed(raw)
+        with pytest.raises(DescriptionError, match="implementation"):
+            parsed(raw)
+        # Keep the execution-boundary refusal covered even for a forged compiled description.
+        unknown = replace(doc, implementation=raw["implementation"])
         with pytest.raises(ProtocolError, match="Unknown reviewed implementation"):
             reviewed._build(unknown)
         monkeypatch.setattr(reviewed, "_candidates", lambda *_: [unknown, parsed(document(name))])
@@ -87,7 +91,8 @@ def test_protocol_aliases_select_declared_traits(monkeypatch):
             rows = remote_provider_model_capabilities("example", service)
             assert [row.intent for row in rows] == [doc.catalog_intent]
     incomplete = document("http-multipart")
-    incomplete.update(id="http-multipart-like", binding="http-multipart-like")
+    # No shipped executor default exists for this identity, so absent traits stay absent.
+    incomplete.update(id="http-multipart-like", binding="http-multipart-like", executor="adapter:fixture-unregistered")
     del incomplete["multipart"]
     del incomplete["implementation"]
     doc = parsed(incomplete)
@@ -152,5 +157,5 @@ def test_explicit_reviewed_registration_keeps_precedence(monkeypatch):
 def test_multipart_unknown_implementation_is_refused():
     raw = document("http-multipart")
     raw["implementation"] = "unregistered"
-    with pytest.raises(ValueError, match="multipart traits"):
+    with pytest.raises(DescriptionError, match="implementation"):
         runner(None, parsed(raw))

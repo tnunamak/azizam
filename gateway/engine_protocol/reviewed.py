@@ -64,6 +64,11 @@ _BUILTIN_FACTORIES: dict[str, AdapterFactory] = {
 }
 
 
+def is_reviewed_implementation(name: str) -> bool:
+    """Whether a description may select this code, including the separate binding runner."""
+    return name in _BUILTIN_FACTORIES or name == "multipart_post"
+
+
 def _named_protocol(record: Mapping[str, Any]) -> str | None:
     connection = record.get("connection")
     for source in (connection if isinstance(connection, Mapping) else {}, record):

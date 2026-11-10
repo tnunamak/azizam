@@ -17,6 +17,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -300,11 +301,35 @@ def _scan_code_names(node: Any, path: tuple, problems: list[str], flagged: list[
             _scan_code_names(value, path + (index,), problems, flagged)
 
 
+@lru_cache(maxsize=1)
+def _shipped_trait_documents(signature: tuple) -> tuple[dict, ...]:
+    """Read defaults only from release data; stat keys invalidate edits without recursive registry loading."""
+    return tuple(safe_load_strict(path.read_text(encoding="utf-8")) for path, _, _ in signature)
+
+
+def _inherit_legacy_traits(doc: dict) -> dict:
+    """Fill absent legacy traits before validation. Explicit implementation choices keep their own requirements."""
+    executor = doc.get("executor")
+    if not isinstance(executor, str):
+        return doc
+    signature = tuple((path, path.stat().st_mtime_ns, path.stat().st_size)
+                      for path in sorted(REGISTRY_DIR.glob("*.yml")))
+    defaults = [row for row in _shipped_trait_documents(signature) if row.get("executor") == executor
+                and (executor.startswith("adapter:") or row.get("id") == doc.get("id"))]
+    if len(defaults) != 1:
+        return doc
+    keys = ("catalog",) if "implementation" in doc else ("implementation", "multipart", "catalog")
+    inherited = {key: copy.deepcopy(defaults[0][key]) for key in keys
+                 if key not in doc and key in defaults[0]}
+    return {**doc, **inherited}
+
+
 def parse_description(doc: Any, *, source: str, budgets: Budgets = DEFAULT_BUDGETS) -> ProtocolDescription:
     """Validate ``doc`` and compile it. Raises ``DescriptionError`` listing every problem."""
     problems: list[str] = []
     if not isinstance(doc, dict):
         raise DescriptionError(source, ["the file must hold one mapping at the top level"])
+    doc = _inherit_legacy_traits(doc)
     if "retention_facts" in doc:
         from gateway.retention_facts import validate_facts
         try:
@@ -326,6 +351,10 @@ def parse_description(doc: Any, *, source: str, budgets: Budgets = DEFAULT_BUDGE
     errors = sorted(validator.iter_errors(shadow), key=lambda e: [str(p) for p in e.absolute_path])
     for error in errors:
         problems.append(f"{_place(error.absolute_path)}: {error.message}")
+    if isinstance(doc.get("implementation"), str):
+        from gateway.engine_protocol.reviewed import is_reviewed_implementation
+        if not is_reviewed_implementation(doc["implementation"]):
+            problems.append(f"implementation: unknown reviewed implementation '{doc['implementation']}'")
     if problems:
         raise DescriptionError(source, problems)
     parsed = _Compiler(doc, source, budgets).compile()
