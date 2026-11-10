@@ -1137,3 +1137,4 @@ def test_measurement_startup_cleanup_refuses_scratch_symlink_without_crashing(se
     assert marker.read_text() == "untouched"
     assert scratch.is_symlink()
     assert runner._lease_fd is None
+

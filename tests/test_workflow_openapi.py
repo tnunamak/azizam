@@ -279,7 +279,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         """The people-facing workflow row for mesh, which carries the example request."""
         (record,) = [r for r in self.registry.records() if r.id == "mesh.generate.trellis-2"]
         return _workflow_row(
-            record, capability_rows=[], openapi_row=self.catalog[record.id], aliases=None,
+            record, capability_rows=[], openapi_row=self.catalog[record.id],
             receipts=[], jobs=[], base_url="http://testserver",
         )
 

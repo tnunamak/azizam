@@ -13,7 +13,7 @@ import binascii
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Protocol
 
-from gateway import media_jobs
+from gateway import compatibility, media_jobs
 
 AUDIO_ASSET_KIND = "aud"
 DEFAULT_AUDIO_MEDIA_TYPE = "audio/wav"
@@ -98,7 +98,7 @@ def store_audio_artifacts(
     store_asset: AudioAssetStore,
     owner_key_hash: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Persist audio bytes through the supplied asset-store contract."""
+    """Persist typed artifacts; prefer this path over legacy result envelopes."""
     assets: list[dict[str, Any]] = []
     for index, artifact in enumerate(artifacts):
         if not artifact.content:
@@ -114,7 +114,7 @@ def store_audio_artifacts(
         assets.append(
             {
                 "asset_id": asset_id,
-                "kind": "audio",
+                "kind": media_type.split("/", 1)[0],
                 "media_type": media_type,
                 "size_bytes": len(artifact.content),
                 "index": index,
@@ -196,7 +196,14 @@ def _artifact_from_mapping(
 ) -> AudioArtifact | None:
     media_type = str(item.get("media_type") or item.get("content_type") or default_media_type)
     suffix = _suffix_from_media_type(media_type) or default_suffix
-    raw = item.get("audio") or item.get("b64_json") or item.get("data")
+    # Match the legacy short-circuit chain, including its final falsy value.
+    # This table describes only the wrapper; engine selectors resolve elsewhere.
+    keys = compatibility.COMPATIBILITY.legacy_audio_result_keys
+    raw = item.get(keys[0])
+    for key in keys[1:]:
+        if raw:
+            break
+        raw = item.get(key)
     if isinstance(raw, str):
         try:
             return AudioArtifact(base64.b64decode(raw, validate=True), media_type, suffix)

@@ -37,6 +37,9 @@ SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_secon
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 # This context is created only by the authenticated operator worker, never by an HTTP header.
 TRIAL: contextvars.ContextVar[dict | None] = contextvars.ContextVar("stt_measurement_trial", default=None)
+# The prepared sample inside a job's private workspace. The parent and the sample worker share this name;
+# the engine never sees it (the upload names its own file).
+STAGED_SAMPLE = "sample.wav"
 
 
 def trial_config(service_id: str, config: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -369,7 +372,7 @@ class Measurements:
                 finally:
                     await process.wait()
         words = [measure.RefWord(*w) for w in json.loads((workspace / "reference.json").read_text())]
-        return workspace / "audio.wav", words
+        return workspace / STAGED_SAMPLE, words
 
     async def _transcription(self, ctx: Any, job: dict, audio: Path, settings: dict) -> measure.Run:
         record, _ = await asyncio.to_thread(self.record, job["service_id"])
@@ -611,7 +614,7 @@ def _prepare_main() -> None:
     def progress(done, total, phase):
         print(json.dumps({"done": done, "total": total, "phase": phase}), flush=True)
     sample = stt_samples.fetch_sample(spec, folder / "sources", max_bytes=int(max_bytes), progress=progress)
-    os.replace(sample.audio_path, folder / "audio.wav")
+    os.replace(sample.audio_path, folder / STAGED_SAMPLE)
     private_io.atomic_write_text(folder / "reference.json", json.dumps(sample.words))
 
 

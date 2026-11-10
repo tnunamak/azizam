@@ -1,0 +1,494 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "base_sha": "95993ec541e461ce5bba7de2670853323265ca18",
+    "source": "gateway/video_controls.py:15-60",
+    "capture": "Manually transcribed from the prechange parser before production edits; execution was forbidden for this assignment."
+  },
+  "exports": {
+    "VIDEO_EXTENSION_NAMESPACE": {
+      "type": "str",
+      "value": "com.azizam.video"
+    },
+    "AUDIO_CONTROL": {
+      "type": "str",
+      "value": "audio"
+    },
+    "VIDEO_CONTROLS": {
+      "type": "frozenset",
+      "value": [
+        "audio"
+      ]
+    },
+    "parse_video_controls": {
+      "signature": "(body: 'Mapping[str, Any]') -> 'dict[str, Any]'"
+    },
+    "VideoControlError": {
+      "class": "gateway.video_controls.VideoControlError",
+      "base": "builtins.ValueError"
+    }
+  },
+  "cases": [
+    {
+      "id": "absent-body",
+      "body": null,
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "body-list",
+      "body": [],
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "body-string",
+      "body": "bad",
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "body-integer",
+      "body": 1,
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "body-bool",
+      "body": true,
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "absent-extensions",
+      "body": {},
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "extensions-null",
+      "body": {
+        "extensions": null
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "extensions-list",
+      "body": {
+        "extensions": []
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "extensions-string",
+      "body": {
+        "extensions": "bad"
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "extensions-integer",
+      "body": {
+        "extensions": 1
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "extensions-bool",
+      "body": {
+        "extensions": true
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "namespace-absent",
+      "body": {
+        "extensions": {}
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "namespace-other",
+      "body": {
+        "extensions": {
+          "com.example.other": {
+            "audio": false
+          }
+        }
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "namespace-null",
+      "body": {
+        "extensions": {
+          "com.azizam.video": null
+        }
+      },
+      "expected": {
+        "result": {}
+      }
+    },
+    {
+      "id": "namespace-empty",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {}
+        }
+      },
+      "expected": {
+        "result": {
+          "audio": true
+        }
+      }
+    },
+    {
+      "id": "namespace-list",
+      "body": {
+        "extensions": {
+          "com.azizam.video": []
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "extensions.com.azizam.video must be an object",
+          "param": "extensions.com.azizam.video"
+        }
+      }
+    },
+    {
+      "id": "namespace-string",
+      "body": {
+        "extensions": {
+          "com.azizam.video": "bad"
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "extensions.com.azizam.video must be an object",
+          "param": "extensions.com.azizam.video"
+        }
+      }
+    },
+    {
+      "id": "namespace-zero",
+      "body": {
+        "extensions": {
+          "com.azizam.video": 0
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "extensions.com.azizam.video must be an object",
+          "param": "extensions.com.azizam.video"
+        }
+      }
+    },
+    {
+      "id": "namespace-one",
+      "body": {
+        "extensions": {
+          "com.azizam.video": 1
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "extensions.com.azizam.video must be an object",
+          "param": "extensions.com.azizam.video"
+        }
+      }
+    },
+    {
+      "id": "namespace-false",
+      "body": {
+        "extensions": {
+          "com.azizam.video": false
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "extensions.com.azizam.video must be an object",
+          "param": "extensions.com.azizam.video"
+        }
+      }
+    },
+    {
+      "id": "namespace-true",
+      "body": {
+        "extensions": {
+          "com.azizam.video": true
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "extensions.com.azizam.video must be an object",
+          "param": "extensions.com.azizam.video"
+        }
+      }
+    },
+    {
+      "id": "control-true",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": true
+          }
+        }
+      },
+      "expected": {
+        "result": {
+          "audio": true
+        }
+      }
+    },
+    {
+      "id": "control-false",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": false
+          }
+        }
+      },
+      "expected": {
+        "result": {
+          "audio": false
+        }
+      }
+    },
+    {
+      "id": "control-zero",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": 0
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "control-one",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": 1
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "control-string-false",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": "false"
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "control-empty-string",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": ""
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "control-null",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": null
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "control-list",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": []
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "control-object",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": {}
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "audio must be true or false",
+          "param": "extensions.com.azizam.video.audio"
+        }
+      }
+    },
+    {
+      "id": "unknown",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "other": true
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "other is not a video control",
+          "param": "extensions.com.azizam.video.other"
+        }
+      }
+    },
+    {
+      "id": "invalid-known-before-unknown",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "audio": 0,
+            "other": false
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "other is not a video control",
+          "param": "extensions.com.azizam.video.other"
+        }
+      }
+    },
+    {
+      "id": "unknown-before-invalid-known",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "other": false,
+            "audio": 0
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "other is not a video control",
+          "param": "extensions.com.azizam.video.other"
+        }
+      }
+    },
+    {
+      "id": "two-unknown-a-first",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "first": null,
+            "second": 0
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "first is not a video control",
+          "param": "extensions.com.azizam.video.first"
+        }
+      }
+    },
+    {
+      "id": "two-unknown-b-first",
+      "body": {
+        "extensions": {
+          "com.azizam.video": {
+            "second": 0,
+            "first": null
+          }
+        }
+      },
+      "expected": {
+        "error": {
+          "class": "gateway.video_controls.VideoControlError",
+          "message": "second is not a video control",
+          "param": "extensions.com.azizam.video.second"
+        }
+      }
+    }
+  ]
+}

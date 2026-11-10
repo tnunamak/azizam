@@ -32,9 +32,6 @@ from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS, 
 from gateway.capability_ids import CAPABILITY_LABELS, MODALITY_WORDS, MEDIA_TYPE_MODALITIES
 from gateway.service_registry import service_base_url
 
-# Legacy import aliases only. Route and workflow readers below never use these values.
-FRONTEND_ID = "mesh"
-CAPABILITY = "mesh"
 MESH_PROTOCOL = "openai.mesh"
 # The route the record's tiers are read from (the catalog row lists the 3D routes by these tiers).
 LISTING_PATH = "/v1/3d/generations"

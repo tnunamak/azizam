@@ -100,3 +100,93 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the audio value defined by FFprobe's JSON output in streams[].codec_type.
+  - file: gateway/frontend_shapes/shapes.py
+    literal: image
+    count: 1
+    category: wire_enum
+    reason: Names the OpenAI Images edits and variations multipart request field image; the surrounding tuple keeps the gateway's image[] and images aliases.
+  - file: gateway/image_extensions.py
+    literal: image
+    count: 2
+    category: wire_enum
+    reason: Names the OpenAI Images edits and variations request field image in their separate public-field acceptance sets.
+  - file: gateway/chat_extensions.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: Names the OpenAI Chat Completions request field audio in the standard-field set, not a workflow or modality dispatch.
+  - file: gateway/speech_stream.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: Names the audio payload field of the OpenAI Audio speech.audio.delta streaming event.
+  - file: gateway/workflows_catalog.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names the IANA audio media type family in the MIME-family-to-example-filename-suffix table.
+  - file: gateway/workflows_catalog.py
+    literal: image
+    count: 1
+    category: media_type
+    reason: Names the IANA image media type family in the MIME-family-to-example-filename-suffix table.
+  - file: gateway/workflows_catalog.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names the IANA video media type family in the MIME-family-to-example-filename-suffix table.
+  - file: gateway/video_media_jobs.py
+    literal: video
+    count: 1
+    category: wire_enum
+    reason: Names the video discriminator defined by the OpenAI Videos API in the Video object's object field.
+  - file: gateway/workflow_call.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names the IANA audio media type family in the MIME-family-to-asset-prefix lookup table.
+  - file: gateway/workflow_call.py
+    literal: image
+    count: 1
+    category: media_type
+    reason: Names the IANA image media type family in the MIME-family-to-asset-prefix lookup table.
+  - file: gateway/workflow_call.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names the IANA video media type family in the MIME-family-to-asset-prefix lookup table.
+  - file: gateway/custom_voices.py
+    literal: audio.voice_consent
+    count: 1
+    category: wire_enum
+    reason: Names the audio.voice_consent discriminator of the OpenAI Audio voice-consent object's object field.
+  - file: gateway/custom_voices.py
+    literal: audio.voice
+    count: 1
+    category: wire_enum
+    reason: Names the audio.voice discriminator of the OpenAI Audio Voice object's object field.
+  - file: gateway/video_media_jobs.py
+    literal: video.generation
+    count: 1
+    category: wire_enum
+    reason: Names the azizam_object discriminator the gateway publishes on its /v1/videos job responses; changing it is an API change, not configuration.
+  - file: gateway/video_media_job_http.py
+    literal: video.content
+    count: 1
+    category: wire_enum
+    reason: Names the object discriminator the gateway publishes on its signed video content-URL response; changing it is an API change, not configuration.
+  - file: gateway/model_metadata.py
+    literal: audio
+    count: 2
+    category: media_type
+    reason: Names the IANA top-level media type family in the media-major-to-modality table used to classify a manifest output's declared media type.
+  - file: gateway/model_metadata.py
+    literal: image
+    count: 2
+    category: media_type
+    reason: Names the IANA top-level media type family in the media-major-to-modality table used to classify a manifest output's declared media type.
+  - file: gateway/model_metadata.py
+    literal: video
+    count: 2
+    category: media_type
+    reason: Names the IANA top-level media type family in the media-major-to-modality table used to classify a manifest output's declared media type.

@@ -76,7 +76,7 @@ def test_a_route_that_is_not_set_up_or_turned_off_lists_as_off_not_as_a_fault(ga
     # A gateway without the 3D route (no frontend or service record) lists the row as not configured, and a turned-off
     # service as disabled: the Home pill counts neither as an issue.
     harness = Harness()
-    harness.frontends = [record for record in harness.frontends if record.get("id") != mesh_api.FRONTEND_ID]
+    harness.frontends = [record for record in harness.frontends if record.get("id") != "mesh"]  # the harness's 3D frontend row
     _probe_with(monkeypatch, harness)
     unset = _mesh_rows(_member_catalog(gateway["cookies"]))[0]["availability"]
     assert (unset["status"], unset["configured"], unset["enabled"]) == ("unavailable", False, True)

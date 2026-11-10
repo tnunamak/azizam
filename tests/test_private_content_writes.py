@@ -143,7 +143,7 @@ def test_measurement_prepare_writes_private_audio_and_reference(tmp_path, monkey
     ))
     stt_measurement._prepare_main()
     assert mode(workspace) == 0o700
-    assert mode(workspace / "audio.wav") == mode(workspace / "reference.json") == 0o600
+    assert mode(workspace / stt_measurement.STAGED_SAMPLE) == mode(workspace / "reference.json") == 0o600
 
 
 def test_voice_decode_source_is_private_even_with_permissive_umask(monkeypatch, permissive_umask):

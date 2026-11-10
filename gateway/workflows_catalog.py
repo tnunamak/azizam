@@ -102,8 +102,7 @@ def build_workflows_catalog(
         workflow = _workflow_row(
             record,
             capability_rows=caps_by_workflow.get(workflow_id, []),
-            openapi_row=openapi_rows.get(workflow_id, {}),
-            aliases=aliases,
+            openapi_row=openapi_rows[workflow_id],
             receipts=receipt_rows.get(workflow_id, []),
             jobs=job_rows.get(workflow_id, []),
             base_url=base_url,
@@ -143,7 +142,6 @@ def _workflow_row(
     *,
     capability_rows: list[Capability],
     openapi_row: Mapping[str, Any],
-    aliases: Mapping[str, Any] | None,
     receipts: list[dict[str, Any]],
     jobs: list[dict[str, Any]],
     base_url: str,
@@ -155,7 +153,8 @@ def _workflow_row(
     preferred = routes.get(str(routes.get("recommended") or "sync"))
     native_route = gateway_route(record)
     short = short_id(record)
-    stable_aliases = list(openapi_row.get("aliases") or _aliases_for(record.id, aliases))
+    # The OpenAPI projection owns alias resolution; an empty list there is a decision, not a gap.
+    stable_aliases = list(openapi_row["aliases"])
     effective_inputs = _input_rows(record, routes)
     example = _example_request(record, effective_inputs, preferred or sync_route or async_route, base_url)
     engine_binding = _engine_binding_label(summary.get("supported_backends") or [], capability_rows)
@@ -864,24 +863,6 @@ def _nested(row: Mapping[str, Any], *path: str) -> Any:
             return None
         value = value.get(part)
     return value
-
-
-def _aliases_for(workflow_id: str, aliases: Mapping[str, Any] | None) -> list[str]:
-    if not aliases:
-        return []
-    out: list[str] = []
-    for view in aliases.values():
-        if not isinstance(view, Mapping):
-            continue
-        for row in view.get("stable") or []:
-            if not isinstance(row, Mapping):
-                continue
-            target = str(row.get("resolves_to") or "")
-            if target == workflow_id or workflow_id.endswith(f".{target}"):
-                alias = row.get("alias")
-                if isinstance(alias, str) and alias not in out:
-                    out.append(alias)
-    return out
 
 
 def _availability_reason_code(capabilities: list[Capability]) -> str:

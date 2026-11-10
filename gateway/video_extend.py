@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from gateway import segment_chain
+from gateway import openai_media_schemas
 
 DEFAULT_CONTEXT_SECONDS = 1.0
 DEFAULT_CONTEXT_STRENGTH = 0.9
@@ -34,10 +35,17 @@ CHAIN_DIR = Path(__file__).resolve().parent.parent / "workflows" / "videos" / "c
 class PlanError(ValueError):
     """A request cannot be turned into a chain. ``code`` is the API error code."""
 
-    def __init__(self, message: str, *, code: str, param: str | None = None):
+    def __init__(self, message: str, *, code: str, param: str | None = None,
+                 domain: str | None = None, logical_param: str | None = None):
+        if param is not None and logical_param is not None:
+            raise TypeError("param and logical_param are mutually exclusive")
+        if logical_param is not None and domain is None:
+            raise TypeError("domain is required with logical_param")
         super().__init__(message)
         self.code = code
-        self.param = param
+        self.domain = domain
+        self.logical_param = logical_param
+        self.param = openai_media_schemas.wire_error_param(domain, logical_param) if logical_param is not None else param
 
 
 @dataclass(frozen=True)
@@ -135,7 +143,8 @@ class ChainEngine:
         """Raise ``PlanError`` when a source video of this frame rate cannot be extended."""
         check = self.binding.source_check
         if check is not None and abs(fps - check.fps) > check.tolerance:
-            raise PlanError(check.message.format(fps=fps), code="video_fps_unsupported", param="video")
+            raise PlanError(check.message.format(fps=fps), code="video_fps_unsupported",
+                            domain="segment_chain", logical_param="source_clip")
 
     def plan_segments(
         self,
