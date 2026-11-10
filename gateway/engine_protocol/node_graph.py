@@ -454,7 +454,10 @@ class NodeGraphAdapter:
         self.binding = description.binding if description is not None else ""
         # The selector form this engine's bindings take, declared in its protocol description (None: it takes none).
         self.result_selectors = description.result_selectors if description is not None else None
-        self._output_keys = _output_keys(description) if description is not None else OUTPUT_KEYS
+        self._output_keys = _output_keys(
+            description if description is not None and description.result_selectors is not None
+            else load_shipped_description(ADAPTER_ID)
+        )
         # The run operations' poll cadence, as the description declares it (empty: built without a description).
         self._operations = description.operations if description is not None else {}
         self._assets = assets
@@ -667,7 +670,10 @@ class NodeGraphAdapter:
             return JobStatus(ref, JobState.failed, error)
         if state == "running":
             return JobStatus(ref, JobState.running)
-        return JobStatus(ref, JobState.succeeded, assets=self._handles(job, self._output_keys),
+        handles = self._handles(job, self._output_keys)
+        if not handles and job.get("outputs"):
+            raise ProtocolError("The completed graph has outputs but no declared result handles.", code="result_missing")
+        return JobStatus(ref, JobState.succeeded, assets=handles,
                          record=FinishedRecord(job, len(reply.raw or b"")))
 
     @staticmethod
