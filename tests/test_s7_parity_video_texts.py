@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 from pathlib import Path
 
 import pytest
@@ -225,14 +226,17 @@ def test_create_engine_unavailable_answers_queued_then_the_job_fails_without_the
         async def go():
             made = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": MODEL})
             job = None
-            for _ in range(500):
+            # The rig skips gateway sleeps, so a poll count is not a time bound: wait on the real clock, as a loaded host needs.
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
                 job = await rig.call("GET", f"/v1/videos/{made.json()['id']}")
-                if job.json().get("status") == "failed":
+                if job.status_code == 200 and job.json().get("status") == "failed":
                     break
                 await asyncio.sleep(0.01)
             return made, job
         made, job = asyncio.run(go())
     assert (made.status_code, made.json()["status"]) == (200, "queued"), made.text
+    assert job.status_code == 200 and "status" in job.json(), (job.status_code, job.text)
     failed = job.json()
     assert failed["status"] == "failed" and failed["error"]["code"] == "video_generation_failed", failed
     # The old text, up to the address; the address is not in any body.
