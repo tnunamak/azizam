@@ -181,10 +181,11 @@ def test_missing_history_selector_inherits_shipped_data(monkeypatch):
     assert [json.loads(handle)["kind"] for handle in status.assets] == ["woven"]
 
 
-def test_poll_refuses_outputs_without_any_declared_handles():
-    with pytest.raises(ProtocolError) as raised:
-        finished({"status": {"completed": True}, "outputs": {"1": {"unrecognized": [{"filename": "result.bin"}]}}}, adapter_for())
-    assert raised.value.code == "result_missing"
+def test_poll_reports_undeclared_outputs_as_an_empty_result():
+    # The run core turns an empty result into the pinned OpenAI answer (tests/test_s7_parity_video_texts.py
+    # content_no_video_output: 502 "No videos generated"); a protocol error here would change that answer.
+    status = finished({"status": {"completed": True}, "outputs": {"1": {"unrecognized": [{"filename": "result.bin"}]}}}, adapter_for())
+    assert status.state is JobState.succeeded and status.assets == ()
 
 
 def test_poll_keeps_empty_output_completion_compatible():

@@ -670,10 +670,8 @@ class NodeGraphAdapter:
             return JobStatus(ref, JobState.failed, error)
         if state == "running":
             return JobStatus(ref, JobState.running)
-        handles = self._handles(job, self._output_keys)
-        if not handles and job.get("outputs"):
-            raise ProtocolError("The completed graph has outputs but no declared result handles.", code="result_missing")
-        return JobStatus(ref, JobState.succeeded, assets=handles,
+        # No declared handle is an empty result, not a protocol fault: the run core answers it ("No videos generated").
+        return JobStatus(ref, JobState.succeeded, assets=self._handles(job, self._output_keys),
                          record=FinishedRecord(job, len(reply.raw or b"")))
 
     @staticmethod
