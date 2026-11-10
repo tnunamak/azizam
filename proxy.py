@@ -441,6 +441,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_CONTENT_OPENAPI,
     VIDEOS_CREATE_OPENAPI,
     VIDEOS_DELETE_OPENAPI,
+    VIDEO_DELETED_OBJECT,
     VIDEOS_LIST_OPENAPI,
     VIDEOS_EDIT_OPENAPI,
     VIDEOS_EXTEND_OPENAPI,
@@ -584,9 +585,15 @@ def _generation_of_registry(registry: Mapping[str, Any]) -> Any:
     """
     try:
         stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
-        # ``registry`` is the normalized effective registry, so the stored effective one is normalized to compare.
-        same = stored is not None and service_registry.stable_hash(
-            service_registry.normalize_service_registry(stored["value"])) == service_registry.stable_hash(registry)
+        if stored is None:
+            return None
+        # A timestamp absent from the document was generated while normalizing
+        # ``registry``. Reuse that observation; a new clock tick is not an edit.
+        value = stored["value"]
+        if isinstance(value, Mapping) and not value.get("updated_at"):
+            value = {**value, "updated_at": registry.get("updated_at")}
+        same = service_registry.stable_hash(
+            service_registry.normalize_service_registry(value)) == service_registry.stable_hash(registry)
     except Exception as error:  # noqa: BLE001 - the generation is a label; the load goes on without it
         # The failure is named once, by type only: the text of an error can quote a stored value.
         _log_generation_read_failure(error)
@@ -13726,7 +13733,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
     if record and record.get("asset_id"):
         await asyncio.to_thread(prompt_memory.delete_asset, str(record["asset_id"]))
     return Response(
-        content=json.dumps({"id": video_id, "object": "video", "deleted": True}),
+        content=json.dumps({"id": video_id, "object": VIDEO_DELETED_OBJECT, "deleted": True}),
         status_code=200,
         media_type="application/json",
     )
@@ -16736,7 +16743,8 @@ MULTIPART_HOST = multipart_adapter.MultipartHost(
     jobs_path=lambda: media_jobs.DB_PATH,
     limits=lambda: result_bundle.limits_from_config(runtime().config),
 )
-workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
+for _multipart_runner in multipart_adapter.runners(MULTIPART_HOST):
+    workflow_adapters.register(_multipart_runner)
 
 
 _MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts
@@ -27484,6 +27492,12 @@ def _row_receipt_owner(auth: AuthContext, request_id: str, path: str, row: Any, 
         receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
         if identity is not None:
             receipt.visibility = identity.access.receipt_detail
+    if row.backend_at_run:
+        # Freeze the declared destination before egress, without claiming a
+        # dispatch yet. Only dispatching() exposes the backend on the receipt.
+        receipt.backend = row_routes.route_backend(row, declared_at)
+        _capture_retention_facts(receipt, auth_context=auth)
+        receipt.backend = None
     owner = _RunReceiptOwner(receipt)
     owner.short_names = row.receipt_names == "short"
     _ROW_RECEIPT.set(owner.receipt)

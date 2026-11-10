@@ -31,6 +31,7 @@ import pytest
 
 import proxy
 from tests.media_test_bytes import mp4_bytes
+from tests.support.adapter_differential_rig import trace_property  # noqa: F401
 from tests.support.adapter_differential_rig import (
     REAL_OBJECT_INFO_LOOKUP, comfy_exchanges, comfy_object_info, exchange, history_done, play, scenario,
 )

@@ -113,3 +113,11 @@ class TestVideoWorkflowExtensions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_managed_input_without_hint_has_a_readable_refusal():
+    from gateway.video_extensions import _reject_route_managed_inputs
+
+    kept, rejected = _reject_route_managed_inputs({"reference": "x"}, frozenset({"reference"}), {})
+    assert kept == {}
+    assert rejected == {"reference": "reference is managed by the standard request shape; do not pass it as a workflow extension"}

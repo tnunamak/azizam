@@ -458,7 +458,7 @@ class TestVideosDelete(VideoRegistryTestCase):
             )
         self.assertEqual(response.status_code, 200)
         body = json.loads(response.body)
-        self.assertEqual(body["object"], "video")
+        self.assertEqual(body["object"], "video.deleted")
         self.assertTrue(body["deleted"])
         # Tombstoned, not popped: the job record stays (so the GC/retention
         # story is coherent) but is no longer visible.

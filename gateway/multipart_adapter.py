@@ -215,18 +215,27 @@ async def probe_pool(host: PoolProbeHost, spec: ExclusivePoolSpec, service: Mapp
 
 
 # The protocol description this runner speaks (registry/protocols).
-PROTOCOL_ID = "http-multipart"
+PROTOCOL_ID = protocol_description.shipped_for_implementation("multipart_post").id
 
 
-def runner(host: MultipartHost) -> "MultipartRunner":
+def runner(host: MultipartHost, description: protocol_description.ProtocolDescription | None = None) -> "MultipartRunner":
     """The runner for the shipped protocol description, over ``host``."""
-    return MultipartRunner(host, protocol_description.load_registry()[PROTOCOL_ID])
+    return MultipartRunner(host, description or protocol_description.load_registry()[PROTOCOL_ID])
+
+
+def runners(host: MultipartHost) -> tuple["MultipartRunner", ...]:
+    """One runner per validated description selecting this reviewed implementation."""
+    return tuple(runner(host, doc) for doc in protocol_description.load_registry().values()
+                 if doc.implementation == "multipart_post")
 
 
 class MultipartRunner:
     """``workflow_adapters.BindingRunner`` for the multipart protocol description."""
 
     def __init__(self, host: MultipartHost, description: protocol_description.ProtocolDescription) -> None:
+        if description.implementation != "multipart_post" or not description.multipart:
+            raise ValueError("The protocol requires reviewed multipart traits")
+        self._fields = description.multipart
         self._host = host
         self._description = description
         self.binding_key = description.binding or description.id
@@ -235,11 +244,11 @@ class MultipartRunner:
     # -- before a job exists -----------------------------------------------------------------------------------
 
     def binding_problem(self, binding: Any) -> str | None:
-        problem, _, _ = exclusive_pool_problem(self._host.services(), str(_body(binding).get("service") or ""))
+        problem, _, _ = exclusive_pool_problem(self._host.services(), str(_body(binding).get(self._fields["service"]) or ""))
         return None if problem is None else BINDING_UNAVAILABLE
 
     def identity(self, entry: Any, _binding_key: str, binding: Any) -> AdapterIdentity:
-        service_id = str(_body(binding).get("service") or "")
+        service_id = str(_body(binding).get(self._fields["service"]) or "")
         capability = entry.contract.get("capability")
         problem, _, service = exclusive_pool_problem(
             self._host.services(), service_id, capability if isinstance(capability, str) else None)
@@ -261,7 +270,7 @@ class MultipartRunner:
             # A send whose answer was never committed is not repeated: the service may have done the work.
             raise RunError(SUBMISSION_UNKNOWN, "upstream")
         binding = _body(ctx.pin.binding)
-        service_id = str(binding.get("service") or "")
+        service_id = str(binding.get(self._fields["service"]) or "")
         capability = ctx.pin.contract.get("capability")
         problem, spec, service = exclusive_pool_problem(
             self._host.services(), service_id, capability if isinstance(capability, str) else None)
@@ -284,7 +293,7 @@ class MultipartRunner:
                 raise RunError(SERVICE_UNAVAILABLE, "capacity", retryable=True) from error
             try:
                 answer = await self._lease_and_send(
-                    ctx, client, spec, (observer_issue, observer_url), base + str(binding.get("path") or ""), file_field, file,
+                    ctx, client, spec, (observer_issue, observer_url), base + str(binding.get(self._fields["path"]) or ""), file_field, file,
                     fields, float(config.get("timeout") or _DEFAULT_TIMEOUT_S))
             except (PoolCapacityError, PoolObserverError) as error:
                 LOG.info("multipart capacity refused: %s", error)
@@ -332,7 +341,7 @@ class MultipartRunner:
         contract_inputs = ctx.pin.contract.get("inputs") or {}
         file_field: str | None = None
         file: ImageAsset | None = None
-        for logical, target in (binding.get("map") or {}).items():
+        for logical, target in (binding.get(self._fields["map"]) or {}).items():
             if (contract_inputs.get(logical) or {}).get("type") == "asset":
                 refs = ctx.media.get(logical) or ()
                 if len(refs) != 1:
@@ -340,7 +349,7 @@ class MultipartRunner:
                 file_field, file = str(target), await self._read_file(ctx, refs[0])
         if file is None or file_field is None:
             raise RunError(INPUT_UNAVAILABLE, "invalid_input")
-        return file_field, file, scalar_fields(contract_inputs, binding.get("map") or {}, {**ctx.generated, **ctx.inputs})
+        return file_field, file, scalar_fields(contract_inputs, binding.get(self._fields["map"]) or {}, {**ctx.generated, **ctx.inputs})
 
     async def _read_file(self, ctx: RunContext, ref: Any) -> ImageAsset:
         if ref.spool_key is not None:

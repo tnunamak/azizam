@@ -12,6 +12,7 @@ id: inline-tts
 title: OpenAI-shaped speech route
 label: speech engine
 executor: adapter:inline-tts
+implementation: inline_speech
 serves: [speech]
 operations:
   speech.synthesize: {class: generate}

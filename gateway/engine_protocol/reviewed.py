@@ -2,15 +2,16 @@
 
 A backend record selects its adapter with data, never with a branch on its name.
 The record's ``protocol`` (or ``connection.protocol``) names a protocol
-description. When that description says ``executor: adapter:<id>``, the factory
-registered under ``<id>`` builds the adapter. A record that names no adapter
+description. Its ``executor: adapter:<id>`` declares identity; its ``implementation``
+selects a factory in the reviewed code allow-list. Explicit factory registrations
+may replace that factory by identity. A record that names no adapter
 protocol is answered by the reviewed adapter whose description lists the
 record's capability in ``serves``. That is how every record stored before this
 field existed keeps working without a migration.
 
 Core calls ``adapter_for_backend(record, capability)``; nothing here knows what
 any engine is. The factories below are the reviewed in-tree adapters and the
-only place their ids are written next to their code.
+only place implementation symbols are written next to their code.
 """
 
 from __future__ import annotations
@@ -57,9 +58,9 @@ def _chunked_stt(doc: Any) -> EngineAdapter:
 
 # The reviewed in-tree adapters. "builtin" is provenance only: a package adapter registers the same way.
 _BUILTIN_FACTORIES: dict[str, AdapterFactory] = {
-    "inline-tts": _inline_tts,
-    "node-graph": _node_graph,
-    "chunked-stt": _chunked_stt,
+    "inline_speech": _inline_tts,
+    "graph_submission": _node_graph,
+    "chunked_transcription": _chunked_stt,
 }
 
 
@@ -129,18 +130,34 @@ def _with_assets(factory: AdapterFactory, assets: Any) -> AdapterFactory:
     return lambda doc: factory(doc, assets=assets)  # type: ignore[call-arg]
 
 
+def _factories_for(doc: description.ProtocolDescription) -> dict[str, AdapterFactory]:
+    factories = dict(_FACTORIES)
+    implementation = doc.implementation
+    if not implementation:
+        # Existing operator descriptions may predate this field. Their identity can inherit a shipped registration.
+        defaults = [row for row in description.load_registry(description.REGISTRY_DIR).values()
+                    if row.adapter_id == doc.adapter_id and row.implementation]
+        implementation = defaults[0].implementation if len(defaults) == 1 else ""
+    if implementation in _BUILTIN_FACTORIES:
+        factories.setdefault(doc.adapter_identity, _BUILTIN_FACTORIES[implementation])
+    return factories
+
+
 def _build(doc: description.ProtocolDescription, assets: Any = None) -> EngineAdapter:
     adapter_id = doc.adapter_id or ""
+    # Explicit implementation symbols never fall through to an identity-based registration.
+    if doc.implementation and doc.implementation not in _BUILTIN_FACTORIES:
+        raise ProtocolError(f"Unknown reviewed implementation '{doc.implementation}'.", code="adapter_not_registered")
     if assets is not None:      # an adapter bound to one caller's store is never shared
         registry = AdapterRegistry({doc.id: doc}, assets=assets)
-        for known, factory in {**_BUILTIN_FACTORIES, **_FACTORIES}.items():
+        for known, factory in _factories_for(doc).items():
             registry.register(known, _with_assets(factory, assets))
         return registry.adapter_for(doc.id)
     with _LOCK:
         cached = _BUILT.get((adapter_id, id(doc)))
         if cached is not None:
             return cached[1]
-        factories = {**_BUILTIN_FACTORIES, **_FACTORIES}
+        factories = _factories_for(doc)
     registry = AdapterRegistry({doc.id: doc})
     for known, factory in factories.items():
         registry.register(known, factory)
@@ -157,12 +174,14 @@ def adapter_for_backend(record: Mapping[str, Any], capability: str, *, assets: A
     With ``assets``, a fresh adapter that keeps the result files in that store (not cached).
 
     A description that names an adapter nobody registered, or one of another interface version, is skipped for the
-    next candidate, ending at the shipped description.
+    next candidate, ending at the shipped description. An explicit unknown implementation is refused immediately.
     """
     refusal: ProtocolError | None = None
     for doc in _candidates(record, capability):
         try:
             return _build(doc, assets)
         except ProtocolError as error:
+            if doc.implementation and doc.implementation not in _BUILTIN_FACTORIES:
+                raise
             refusal = error
     raise refusal or ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")

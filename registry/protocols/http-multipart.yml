@@ -10,9 +10,14 @@ id: http-multipart
 title: Multipart form POST
 label: Service
 executor: adapter:http-multipart
+implementation: multipart_post
 binding: http-multipart
 check_targets: form
 inputs_via: map
+multipart:
+  service: service
+  path: path
+  map: map
 binding_fields:
   service: {kind: service, required: true}
   path: {kind: relative_path, required: true}

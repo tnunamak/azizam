@@ -28,14 +28,40 @@
           "multipart_filenames"
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "implementation": {
+            "const": "multipart_post"
+          }
+        },
+        "required": [
+          "implementation"
+        ]
+      },
+      "then": {
+        "required": [
+          "multipart"
+        ]
+      }
     }
   ],
   "properties": {
     "protocol_version": {
       "const": 1
     },
-    "retention_facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
-    "result_selectors": {"type": "object", "description": "The selector form a binding of this engine accepts (gateway/output_selectors.py). Checked when the file loads; a malformed block refuses the whole description."},
+    "retention_facts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object"
+      }
+    },
+    "result_selectors": {
+      "type": "object",
+      "description": "The selector form a binding of this engine accepts (gateway/output_selectors.py). Checked when the file loads; a malformed block refuses the whole description."
+    },
     "multipart_filenames": {
       "type": "object",
       "additionalProperties": false,
@@ -69,15 +95,21 @@
       "type": "object",
       "minProperties": 1,
       "maxProperties": 32,
-      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
-      "additionalProperties": {"$ref": "#/$defs/binding_field"},
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/binding_field"
+      },
       "description": "Every field a binding of this adapter may hold, and its kind. Closes the binding block (gateway/binding_descriptors.py). Checked when the file loads; an adapter executor only."
     },
     "roles": {
       "type": "object",
       "minProperties": 1,
       "maxProperties": 16,
-      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -85,16 +117,27 @@
           "fields": {
             "type": "object",
             "maxProperties": 32,
-            "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
-            "additionalProperties": {"$ref": "#/$defs/binding_field"}
+            "propertyNames": {
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/binding_field"
+            }
           }
         }
       },
       "description": "The reviewed implementations a binding's role field may name, each with the fields only that role reads. Code registers an implementation by the same id (gateway/binding_registry.py); an id with no registered code never executes."
     },
-    "check_targets": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "The name of the reviewed hook (gateway/binding_targets.py) that checks what a binding's engine-side references point at."},
+    "check_targets": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "description": "The name of the reviewed hook (gateway/binding_targets.py) that checks what a binding's engine-side references point at."
+    },
     "inputs_via": {
-      "enum": ["map", "role"],
+      "enum": [
+        "map",
+        "role"
+      ],
       "description": "Whether the engine receives inputs only through the binding's input map, or the role's implementation reads them."
     },
     "id": {
@@ -163,18 +206,101 @@
       "additionalProperties": {
         "$ref": "#/$defs/operation"
       }
+    },
+    "implementation": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent"
+      ],
+      "properties": {
+        "intent": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "multipart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "path",
+        "map"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "map": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        }
+      }
     }
   },
   "$defs": {
     "binding_field": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "properties": {
-        "kind": {"enum": ["template","input_map","input_list","target","target_list","relative_path","selectors","requirements","service","role","text","enum","enum_list","boolean"]},
-        "required": {"type": "boolean"},
-        "max": {"type": "integer", "minimum": 1, "maximum": 256, "description": "Longest text, or most list items."},
-        "values": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 128}}
+        "kind": {
+          "enum": [
+            "template",
+            "input_map",
+            "input_list",
+            "target",
+            "target_list",
+            "relative_path",
+            "selectors",
+            "requirements",
+            "service",
+            "role",
+            "text",
+            "enum",
+            "enum_list",
+            "boolean"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Longest text, or most list items."
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
       }
     },
     "id": {
@@ -295,12 +421,34 @@
     "poll": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ramp_s", "interval_s"],
+      "required": [
+        "ramp_s",
+        "interval_s"
+      ],
       "description": "How often the gateway asks the engine whether a run finished: the first checks wait the `ramp_s` gaps in order (0 is an immediate check), then every `interval_s`. `max_polls` bounds the checks; null leaves the deployment's wait budget as the bound.",
       "properties": {
-        "ramp_s": {"type": "array", "maxItems": 16, "items": {"type": "number", "minimum": 0, "maximum": 60}},
-        "interval_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
-        "max_polls": {"type": ["integer", "null"], "minimum": 1, "maximum": 100000}
+        "ramp_s": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 60
+          }
+        },
+        "interval_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 60
+        },
+        "max_polls": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100000
+        }
       }
     },
     "request": {

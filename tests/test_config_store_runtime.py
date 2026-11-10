@@ -992,3 +992,23 @@ def test_n6_with_no_section_a_load_reads_no_registry_generation(live, monkeypatc
     monkeypatch.setattr(proxy, "_generation_of_registry", lambda registry: pytest.fail("the generation was read and thrown away"))
     effective = proxy._load_effective_runtime_config(proxy._bootstrap_config)
     assert type(effective) is dict and effective["backends"]
+
+
+def test_registry_generation_comparison_survives_a_clock_tick(live, monkeypatch):
+    """A missing document timestamp is derived at read time, not a registry edit."""
+    from gateway import service_registry
+
+    monkeypatch.setattr(service_registry.time, "time", lambda: 1000.0)
+    registry = service_registry.ensure_service_registry(path=live)
+    stored = admin_store.get_service_registry_with_generation(path=live)
+    assert not stored["value"].get("updated_at")
+    assert registry["updated_at"] == 1000
+    monkeypatch.setattr(service_registry.time, "time", lambda: 2000.0)
+    assert proxy._generation_of_registry(registry) == stored["operator_settings_generation"]
+    # An explicit timestamp in the stored document remains meaningful, even if
+    # a restore/import reused its generation number.
+    with sqlite3.connect(live) as conn:
+        document = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='service_registry'").fetchone()[0])
+        document["updated_at"] = 3000
+        conn.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(document),))
+    assert proxy._generation_of_registry(registry) is None

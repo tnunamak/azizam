@@ -1,7 +1,6 @@
 # Versioned OpenAPI fragments. Method/path and MIME/status keys are protocol addresses.
 # Extracted without wire changes from 638af7b7f7790fc958d7bb68dd9c0643d83d2e74.
-# DELETE is a preserved compatibility discrepancy: published object is video.deleted.
-# See docs/reviews/c2d-openai-media-schemas-data-build-1110-notes.md before any correction.
+# DELETE matches the published video.deleted discriminator.
 {
   "schema_version": 1,
   "endpoints": {
@@ -230,7 +229,7 @@
                   },
                   "object": {
                     "enum": [
-                      "video"
+                      "video.deleted"
                     ],
                     "type": "string"
                   }

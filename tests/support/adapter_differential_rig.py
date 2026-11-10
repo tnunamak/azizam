@@ -525,6 +525,12 @@ def _restore_dict(target: dict, saved: dict) -> None:
     target.update(saved)
 
 
+@pytest.fixture(name="record_testsuite_property")
+def trace_property(record_property):
+    """Keep exported traces on test reports: suite properties are lost under xdist."""
+    return record_property
+
+
 def play(name: str, tmp_path: Path, record_testsuite_property, setup, drive, *, description: str = "",
          runs: int = 2) -> dict[str, Any]:
     """Run one scenario ``runs`` times in this process, require identical traces, compare with the golden.

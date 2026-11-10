@@ -24,6 +24,7 @@ import proxy
 from tests import test_adapter_differential as base
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential import FIXTURE_DIR
+from tests.support.adapter_differential_rig import trace_property  # noqa: F401
 from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done, play
 
 MATRIX = FIXTURE_DIR / "s7_matrix.csv"
