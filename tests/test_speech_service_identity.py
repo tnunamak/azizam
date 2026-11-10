@@ -148,3 +148,51 @@ def test_translation_support_is_read_from_the_selected_transcription_service(mon
         "ears-one": _transcription(18101), "ears-two": _transcription(18102, priority=200, capabilities=[
             "audio", "transcriptions", "translations"])}))
     assert proxy.stt_backend_supports_translation() is False
+
+
+# -- speech routing and operator overrides follow the selected service -----------------------------------------------
+
+from unittest.mock import patch  # noqa: E402
+
+from tests.test_custom_voice_speech import CustomVoiceRouteCase, _FakeClient  # noqa: E402
+
+
+class RenamedDefaultSpeechRouteTests(CustomVoiceRouteCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.cfg["backends"].pop("tts", None)
+        self.cfg["backends"]["voice-one"] = _speech(18101, priority=10)
+        patcher = derived_patch("TTS_ENABLED", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_selected_service_receives_the_default_model_request(self) -> None:
+        self.assertEqual(proxy._speech_service()[0], "voice-one")
+        resp = self.speak("alloy", model="tts-1")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(_FakeClient.requests[-1]["url"], "http://127.0.0.1:18101/v1/audio/speech")
+
+    def test_the_selected_services_operator_override_blocks_the_request(self) -> None:
+        self.assertEqual(proxy._speech_service()[0], "voice-one")
+        next(p for p in self.patches if getattr(p, "attribute", None) == "_service_availability_response").stop()
+        overrides = {
+            "service_availability": {"voice-one": {"state": "maintenance", "retry_after_seconds": 31}},
+            "media_job_admission": {},
+        }
+        with patch.object(proxy.ADMIN_STORE, "operator_overrides", return_value=overrides):
+            resp = self.speak("alloy", model="tts-1")
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(resp.headers["retry-after"], "31")
+        self.assertEqual(_FakeClient.requests, [])
+
+    def test_an_override_on_the_old_service_id_does_not_block_the_request(self) -> None:
+        self.assertEqual(proxy._speech_service()[0], "voice-one")
+        next(p for p in self.patches if getattr(p, "attribute", None) == "_service_availability_response").stop()
+        overrides = {
+            "service_availability": {"tts": {"state": "maintenance", "retry_after_seconds": 31}},
+            "media_job_admission": {},
+        }
+        with patch.object(proxy.ADMIN_STORE, "operator_overrides", return_value=overrides):
+            resp = self.speak("alloy", model="tts-1")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(_FakeClient.requests[-1]["url"], "http://127.0.0.1:18101/v1/audio/speech")

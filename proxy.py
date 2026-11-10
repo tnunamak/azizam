@@ -4951,7 +4951,6 @@ async def _stream_tts_upstream(
     response_format: str,
     native_rate: int,
     service_id: str,
-    host_service_id: str | None = None,
 ) -> Response:
     """Forward an engine's PCM stream to the client while it is still synthesizing.
 
@@ -4966,8 +4965,7 @@ async def _stream_tts_upstream(
     # including cancellation.
     try:
         try:
-            # The host in ``url`` can belong to another service than ``service_id``: both need the lease.
-            _require_egress_lease(host_service_id or service_id)
+            _require_egress_lease(service_id)
             upstream = await _tts_adapter(service_id).invoke(
                 _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH), service_id=service_id), "speech.stream",
                 AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
@@ -5252,16 +5250,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if not_ready is not None:
         return not_ready
 
-    # The host can belong to another service than ``tts_service_id``; the lease check names both.
-    _speech_capability = _SPEECH_CAPABILITY
-    _tts_selected = service_for_capability(_speech_capability)
-    _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
-    _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
-    if tts_service_id != default_service_id:
-        _tts_host = _speech_service_base(tts_service_id)
-        _tts_host_service = tts_service_id
-        if not _tts_host:
-            return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
+    # The request goes to the address of the service that serves it: the selected default, or the alias's own service.
+    _tts_host = _speech_service_base(tts_service_id)
+    if not _tts_host:
+        return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
         service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class="audio", receipt=receipt,
@@ -5284,12 +5276,11 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             response_format=requested_response_format,
             native_rate=native_rate,
             service_id=tts_service_id,
-            host_service_id=_tts_host_service,
         )
 
     try:
         # The adapter owns the HTTP client; the answer handling below is unchanged.
-        _require_egress_lease(_tts_host_service)
+        _require_egress_lease(tts_service_id)
         resp = await _tts_adapter(tts_service_id).invoke(
             _tts_connection(_tts_host, service_id=tts_service_id), "speech.synthesize",
             AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
