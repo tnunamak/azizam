@@ -77,7 +77,7 @@ def test_catalog_and_advisory_copy_are_data(tmp_path, monkeypatch):
     registry = c2d_parity.shipped_registry()
     before = {audience: catalog.summarize_extensions(registry, audience) for audience in catalog.VALID_AUDIENCES}
     routes = catalog.EXTENSION_ROUTES
-    markers = list(detection.TOOLCALL_MARKERS)
+    markers = tuple(detection.TOOLCALL_MARKERS)
     changed = _document()
     changed.update({
         "metadata_description": "Operator-written metadata help.",
