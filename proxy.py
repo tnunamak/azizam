@@ -1024,7 +1024,7 @@ def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | N
 def host_for_capability(capability: str) -> str | None:
     """Return the host URL of the highest-priority enabled backend for *capability*.
 
-    Returns the first backend's ``http://host:port`` from backends_for_capability,
+    Returns the first backend's base address (scheme, host, port or base URL) from backends_for_capability,
     or None if no enabled backend declares the capability.  Health-checking is
     out of scope for this step; the caller should fall back to the legacy constant
     when None is returned.
@@ -1032,7 +1032,7 @@ def host_for_capability(capability: str) -> str | None:
     selected = service_for_capability(capability)
     if selected is not None:
         _service_id, service = selected
-        return f"http://{service.get('host')}:{service.get('port')}"
+        return service_registry.engine_base_address(service) or None
     return None
 
 
@@ -4376,11 +4376,19 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
     return None
 
 
+def _backend_banner_lines(derived: Mapping[str, Any]) -> list[str]:
+    """The startup lines for the speech, transcription and ComfyUI backends; each address is shown without user info or query."""
+    return [
+        f"[proxy] {label} backend: {projection.public_url(str(derived[key + '_HOST'] or ''))} (enabled: {derived[key + '_ENABLED']})"
+        for label, key in (("TTS", "TTS"), ("STT", "STT"), ("ComfyUI", "COMFY"))
+    ]
+
+
 def _probe_join(base: str, path: str) -> str:
     """How the resource probe puts a health path on its address: an absolute URL as it is, else the two joined by one slash."""
     if path.startswith(("http://", "https://")):
         return path
-    return f"{base.rstrip('/')}/{path.lstrip('/')}"
+    return service_registry.join_base_path(base, path)
 
 
 def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
@@ -4607,10 +4615,14 @@ def _speech_engine_endpoint(engine_id: str) -> tuple[str, str] | None:
     if not isinstance(spec, Mapping) or not _alias_engine_available_for("speech")(engine_id, spec):
         return None  # unknown, or disabled in the registry: never start a disabled engine's unit
     service_id = str(spec.get("service") or "")
+    base = _speech_service_base(service_id)
+    return (service_id, base) if base else None
+
+
+def _speech_service_base(service_id: str) -> str:
+    """The base address a speech service's record names, or ``""`` when the record is missing or names none."""
     service = (config.get("backends") or {}).get(service_id)
-    if not isinstance(service, Mapping) or not service.get("host") or not service.get("port"):
-        return None
-    return service_id, f"http://{service['host']}:{service['port']}"
+    return service_registry.engine_base_address(service) if isinstance(service, Mapping) else ""
 
 
 async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
@@ -5195,9 +5207,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
     _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
     if tts_service_id != "tts":
-        _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
-        _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
+        _tts_host = _speech_service_base(tts_service_id)
         _tts_host_service = tts_service_id
+        if not _tts_host:
+            return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
         service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
@@ -5205,7 +5218,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if admission is not None:
         return admission
 
-    url = f"{_tts_host}/v1/audio/speech"
+    url = service_registry.join_base_path(_tts_host, "/v1/audio/speech")
     if receipt is not None:
         receipt.backend = tts_service_id
         receipt.resolved_model = body_json.get("model") if isinstance(body_json, dict) else None
@@ -14099,9 +14112,8 @@ async def _serve(app: FastAPI):
     from gateway.lifecycle_drivers import _process_driver
     await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
-    print(f"[proxy] TTS backend: {DERIVED.TTS_HOST} (enabled: {DERIVED.TTS_ENABLED})", flush=True)
-    print(f"[proxy] STT backend: {DERIVED.STT_HOST} (enabled: {DERIVED.STT_ENABLED})", flush=True)
-    print(f"[proxy] ComfyUI backend: {DERIVED.COMFY_HOST} (enabled: {DERIVED.COMFY_ENABLED})", flush=True)
+    for line in _backend_banner_lines(runtime().derived):
+        print(line, flush=True)
     print(f"[proxy] Model compatibility: {'enabled' if model_compat_enabled() else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
@@ -20985,7 +20997,8 @@ async def _handle_realtime(websocket: WebSocket) -> None:
         return await _deny_realtime(websocket, denied)
 
     service = (config.get("backends") or {}).get(_REALTIME_SERVICE_ID)
-    if not service or not service.get("port") or not service.get("host"):
+    if (not service or not service.get("port") or not service.get("host")
+            or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     admission = _dispatch_admission_response(
         "audio.realtime", auth_context=auth_context, resource_class="audio",
@@ -26575,8 +26588,7 @@ def _result_reader_for(auth_context: AuthContext) -> result_bundle.Reader | None
 
 
 def _backend_address(record: Mapping[str, Any]) -> str | None:
-    host, port = record.get("host"), record.get("port")
-    return f"http://{host}:{port}" if host and port else None
+    return service_registry.engine_base_address(record) or None
 
 
 def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:

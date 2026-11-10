@@ -56,6 +56,7 @@ from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
 from gateway import engine_egress
+from gateway.service_registry import join_base_path
 
 ADAPTER_ID = "chunked-stt"
 ROUTES = {"stt.transcribe": "/v1/audio/transcriptions", "stt.translate": "/v1/audio/translations"}
@@ -318,7 +319,7 @@ class ChunkedSttAdapter:
         route = ROUTES.get(op)
         if route is None:
             raise UnknownOperation(f"The transcription adapter has no operation '{op}'.")
-        url = f"{conn.address}{route}"
+        url = join_base_path(conn.address, route)
         timeout = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
         if isinstance(request, SttRun):
             return await self._run(url, timeout, request)

@@ -57,6 +57,7 @@ from gateway.engine_protocol.types import (
 )
 from gateway.manifests import bind_backend_request, validate_inputs
 from gateway import binding_registry, engine_egress, output_selectors
+from gateway.service_registry import join_base_path
 
 ADAPTER_ID = "node-graph"
 OPERATIONS = (
@@ -371,7 +372,7 @@ class GraphSession:
         self.client = client
 
     def _url(self, path: str) -> str:
-        return f"{self.conn.address}{path}"
+        return join_base_path(self.conn.address, path)
 
     async def _send(self, call: Any, path: str, *, want_text: bool = False, **kwargs: Any) -> WireReply:
         try:
