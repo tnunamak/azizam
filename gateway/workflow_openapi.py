@@ -384,7 +384,7 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     if gateway_route(record) or _carried_by_run_route(record):
         return out
     execution = workflow_request_maps._MAPS.execution
-    row = execution.row(record.intent)
+    row = workflow_request_maps.execution_row(record.intent)
     if row is None:
         return out
     for ref in row.route_inputs:
@@ -636,8 +636,30 @@ def _json_body(schema: Mapping[str, Any], required: bool = True) -> dict[str, An
     return {"required": required, "content": {_JSON: {"schema": dict(schema)}}}
 
 
-def _by_intent(records: Iterable[WorkflowRecord], *prefixes: str) -> list[WorkflowRecord]:
-    return [r for r in records if any(r.intent.startswith(p) for p in prefixes)]
+def _by_route(
+    records: Iterable[WorkflowRecord], path: str | Mapping[str, str],
+    *, content_type: str | None = None,
+) -> list[WorkflowRecord]:
+    """Records whose declared sync or async submission uses this path or path slot."""
+    selected = []
+    for record in records:
+        row = workflow_request_maps.execution_row(record.intent)
+        if row is None:
+            continue
+        routes = (row.sync, row.async_["submit"] if row.async_ is not None else None)
+        for route in routes:
+            if route is not None and route["path"] == path \
+                    and (content_type is None or route["content_type"] == content_type):
+                selected.append(record)
+                break
+    return selected
+
+
+def _uses_extension_schema(record: WorkflowRecord) -> bool:
+    """The resource transport separates top-level fields from extension inputs."""
+    row = workflow_request_maps.execution_row(record.intent)
+    # This is the published async transport kind, not the workflow's modality.
+    return row is not None and row.async_ is not None and row.async_["kind"] == "video"
 
 
 def _extension_property(records: list[WorkflowRecord]) -> dict[str, Any]:
@@ -645,7 +667,7 @@ def _extension_property(records: list[WorkflowRecord]) -> dict[str, Any]:
         # The video route takes its own fields at the top level and refuses
         # them inside the extension namespace, so advertise the extension-only
         # input schema there. Other routes share one schema for both places.
-        prefix = EXTENSION_SCHEMA_PREFIX if record.intent.startswith("video.") else SCHEMA_PREFIX
+        prefix = EXTENSION_SCHEMA_PREFIX if _uses_extension_schema(record) else SCHEMA_PREFIX
         return _ref(_schema_name(record, prefix))
 
     return {
@@ -707,7 +729,7 @@ def augment_openapi(
     components["MediaJobContent"] = copy.deepcopy(_MEDIA_JOB_CONTENT_SCHEMA)
     for record in records:
         components[_schema_name(record)] = advertised_inputs_schema(record)
-        if record.intent.startswith("video."):
+        if _uses_extension_schema(record):
             components[_schema_name(record, EXTENSION_SCHEMA_PREFIX)] = extension_inputs_schema(record)
 
     paths = spec.setdefault("paths", {})
@@ -715,10 +737,10 @@ def augment_openapi(
 
     # Typed workflow knobs on the routes that take them.
     route_records = {
-        ("/v1/images/generations", "/openai/v1/images/generations"): _by_intent(records, "image.generate"),
+        ("/v1/images/generations", "/openai/v1/images/generations"): _by_route(records, "/v1/images/generations"),
         ("/v1/images/edits", "/openai/v1/images/edits"): [],  # multipart; documented in the catalog
-        ("/v1/videos", "/openai/v1/videos"): _by_intent(records, "video."),
-        ("/v1/audio/generate", "/openai/v1/audio/generate"): _by_intent(records, "audio."),
+        ("/v1/videos", "/openai/v1/videos"): _by_route(records, "/v1/videos"),
+        ("/v1/audio/generate", "/openai/v1/audio/generate"): _by_route(records, "/v1/audio/generate"),
     }
     for route_paths, recs in route_records.items():
         for path in route_paths:
@@ -828,7 +850,7 @@ def augment_openapi(
                                                   if k not in op["responses"]})
 
     # Workflow run route: generic template typed, plus a concrete path per workflow.
-    run_records = [r for r in records if r.intent == "video.edit"]
+    run_records = _by_route(records, {"from": "workflow_run_path"}, content_type=_MULTIPART)
     for record in run_records:
         form_name = _schema_name(record, FORM_PREFIX)
         components[form_name] = workflow_inputs_schema(record, form=True)

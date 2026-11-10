@@ -1140,6 +1140,64 @@ class ExecutionDataTests(unittest.TestCase):
         self.load_document(document, records=[self.record("unfamiliar.render", native="/native-fixture")])
 
 
+    def test_unfamiliar_intent_openapi_follows_declared_execution_routes(self):
+        document = self.document()
+        intent = "unfamiliar.render"
+        row = {
+            "model_prefix": "fixture-", "route_inputs": [], "sync": None,
+            "async": "video_resource", "native_alternate": None,
+        }
+        document["execution"]["intents"][intent] = row
+        document["maps"].insert(0, {
+            "select": {"intent": intent, "mode": "async"},
+            "inputs": {"prompt": {"in": "body", "field": "prompt"}},
+            "default": {"in": "extension"},
+        })
+        record = self.record(intent)
+        record.contract.update({
+            "typical_seconds": 60,
+            "inputs": {
+                "prompt": {"type": "string", "required": True},
+                "detail": {"type": "number", "default": 0.5},
+            },
+        })
+        route_paths = ("/v1/videos", "/openai/v1/videos")
+        spec = {"paths": {
+            path: {"post": {"requestBody": {"content": {"application/json": {
+                "schema": {"type": "object", "properties": {}},
+            }}}}} for path in route_paths
+        }}
+        spec["paths"]["/gateway/v1/workflows/{workflow_id}/run"] = {"post": {}}
+        maps = self.load_document(document, records=[record])
+        with patch.object(workflow_request_maps, "_MAPS", maps):
+            published = augment_openapi(copy.deepcopy(spec), [record])
+        extension_name = extension_schema_name(record.id)
+        schemas = published["components"]["schemas"]
+        self.assertIn(extension_name, schemas)
+        self.assertEqual(set(schemas[extension_name]["properties"]), {"detail"})
+        self.assertNotIn("required", schemas[extension_name])
+        expected_ref = {"$ref": "#/components/schemas/" + extension_name}
+        for path in route_paths:
+            body = published["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]
+            self.assertEqual(body["properties"]["extensions"]["properties"][
+                "com.azizam.workflow"]["anyOf"], [expected_ref])
+        run_path = f"/gateway/v1/workflows/{record.id}/run"
+        self.assertNotIn(run_path, published["paths"])
+
+        # A data-only sync route adds the form even when async remains recommended.
+        row["sync"] = "workflow_job"
+        document["maps"].insert(0, {
+            "select": {"intent": intent, "mode": "sync"},
+            "default": {"in": "form"},
+        })
+        maps = self.load_document(document, records=[record])
+        with patch.object(workflow_request_maps, "_MAPS", maps):
+            published = augment_openapi(copy.deepcopy(spec), [record])
+        form_ref = {"$ref": "#/components/schemas/" + schema_name(record.id, "WorkflowForm_")}
+        self.assertEqual(published["paths"][run_path]["post"]["requestBody"][
+            "content"]["multipart/form-data"]["schema"], form_ref)
+        self.assertEqual(published[ROOT_EXTENSION][0]["execution"]["recommended"], "async")
+
     def test_route_inputs_follow_ordered_guards_and_settable_dimensions(self):
         from gateway.workflow_openapi import route_inputs
 
