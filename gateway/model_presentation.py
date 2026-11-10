@@ -69,6 +69,11 @@ def _load_presentation_words(path: Path) -> Mapping[str, Any]:
         if not isinstance(value, list) or not value:
             fail(key, "expected a non-empty list")
         loaded[key] = tuple(string(word, f"{key}[{index}]") for index, word in enumerate(value))
+        seen = set()
+        for index, word in enumerate(loaded[key]):
+            if word in seen:
+                fail(f"{key}[{index}]", "duplicate word")
+            seen.add(word)
     for key in ("capability_engine_suffixes", "acronyms", "unclassified"):
         value = mapping(raw[key], key)
         if key == "unclassified":
