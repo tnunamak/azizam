@@ -171,7 +171,7 @@ def validate_video_workflow_extensions(
 
     _, block = _selected_binding(manifest, backend)
     binding_map = block.get("map") or {}
-    managed = frozenset(block.get("route_bound_inputs", ROUTE_MANAGED_VIDEO_INPUTS))
+    managed = ROUTE_MANAGED_VIDEO_INPUTS | frozenset(block.get("route_bound_inputs") or ())
     hints = {**ROUTE_MANAGED_VIDEO_HINTS, **(manifest.get("input_fields") or {})}
     supported_names = set(binding_map) - managed if isinstance(binding_map, Mapping) else set()
     supplied, route_managed_rejected = _reject_route_managed_inputs(

@@ -75,7 +75,7 @@ def test_extensions_and_source_roles_ignore_workflow_spelling(monkeypatch):
                                                 doc, {"count": 1}, backend=selected)
         assert result.validation.rejected[picture] == (
             f"{picture} is managed by the standard input_reference request field; do not pass it as a workflow extension")
-        assert "unmapped" in result.validation.unsupported
+        assert "unmapped" in result.validation.ignored
         assert result.binding.applied_inputs == ["steps"]
         assert result.request == {"count": 7}
         assert result.binding.backend == selected
@@ -86,6 +86,6 @@ def test_extensions_and_source_roles_ignore_workflow_spelling(monkeypatch):
         attached = asyncio.run(build_shape(row).to_run_request(json_request({}), row, snap(doc), spool=FakeSpool()))
         assert isinstance(attached, RunRequest), getattr(attached, "body", attached)
         assert list(attached.media) == [source]
-        outcomes.append((result.request, result.validation.accepted, result.validation.unsupported,
+        outcomes.append((result.request, result.validation.accepted, result.validation.ignored,
                          [asdict(ref) for ref in attached.media[source]], dict(attached.facts)))
     assert outcomes[0] == outcomes[1]
