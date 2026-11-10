@@ -518,7 +518,7 @@ class NodeGraphAdapter:
 
     async def invoke(self, conn: Connection, op: str, request: CanonicalRequest) -> Reply | StreamReply:
         if op not in OPERATIONS:
-            raise UnknownOperation(f"The node-graph adapter has no operation '{op}'.")
+            raise UnknownOperation(f"The {self.label} adapter has no operation '{op}'.")
         params = request.params
         headers = _headers_of(request)
         timeout = params.get("timeout", UNSET)
@@ -586,7 +586,7 @@ class NodeGraphAdapter:
         body is made."""
         manifest = request.params.get("manifest")
         if not isinstance(manifest, Mapping):
-            raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
+            raise UnknownOperation(f"The {self.label} adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
                                    f"manifest; '{op}' carries none.")
         pinned = request.params.get("template")
         template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)

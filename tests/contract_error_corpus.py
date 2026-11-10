@@ -298,7 +298,7 @@ FIRST_MESSAGES: dict[str, tuple[str, str]] = {
     'bind-map-not-list': ('ManifestError', 'binding map for prompt must be a list'),
     'bind-mapping-not-mapping': ('ManifestError', 'binding mapping must be a mapping'),
     'bind-node-without-input': ('ManifestError', 'binding mapping needs both node and input, or path'),
-    'bind-target-missing': ('ManifestError', 'ComfyUI binding target missing: node 1 input text'),
+    'bind-target-missing': ('ManifestError', 'binding target missing: node 1 input text'),
     'bind-path-type': ('ManifestError', 'binding mapping path must be a dotted string'),
     'bind-path-crosses': ('ManifestError', 'binding path crosses non-mapping value at c'),
     'bind-path-target': ('ManifestError', 'binding path target is not a mapping'),

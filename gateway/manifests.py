@@ -816,7 +816,7 @@ def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any,
         try:
             request[node_id]["inputs"][input_name] = value
         except KeyError as exc:
-            raise refusal(at, "target_missing", f"ComfyUI binding target missing: node {node_id} input {input_name}") from exc
+            raise refusal(at, "target_missing", f"binding target missing: node {node_id} input {input_name}") from exc
         return
 
     path = mapping.get("path")
