@@ -95,3 +95,19 @@ def test_source_role_must_be_bound():
     doc["inputs"]["unbound_source"] = {"type": "asset", "accepts": ["image/*"]}
     doc["roles"] = {"source": "unbound_source"}
     assert any(error.code == "role_input_unbound" for error in check_contract(doc).errors)
+
+
+@pytest.mark.parametrize("duplicate", ["extension_hints", "source_role_paths", "input_contract", "hint"])
+def test_input_contract_refuses_duplicate_yaml_keys(tmp_path, duplicate):
+    row = "  extension_hints:\n    seed: seed\n  source_role_paths: [[roles, source]]\n"
+    if duplicate == "input_contract":
+        text = "input_contract:\n" + row + "input_contract:\n" + row
+    elif duplicate == "hint":
+        text = "input_contract:\n" + row.replace("    seed: seed\n", "    seed: seed\n    seed: replacement\n")
+    else:
+        replacement = "  extension_hints: {picture: input_reference}\n" if duplicate == "extension_hints" else "  source_role_paths: [[legacy, source]]\n"
+        text = "input_contract:\n" + row + replacement
+    path = tmp_path / "frontends.yml"
+    path.write_text(text)
+    with pytest.raises(ValueError, match="duplicate key"):
+        load_input_contract(path)
