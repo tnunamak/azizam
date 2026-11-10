@@ -1046,6 +1046,34 @@ def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | N
     return None
 
 
+# The speech and transcription services are the services selected for these capabilities, never records of a fixed id.
+_SPEECH_CAPABILITY = "audio.speech"
+_TRANSCRIPTION_CAPABILITY = "audio.transcriptions"
+
+
+def _selected_service(backends: Mapping[str, Any], capability: str) -> tuple[str, Mapping[str, Any]] | None:
+    """The highest-priority enabled record in *backends* that declares *capability* (ties go to the lower id), or None.
+
+    Pure: the boot and a reload select from the candidate config they are deriving. A selected record that names no
+    address is still the selection; it is not configured, and no other service takes its place.
+    """
+    for service_id in backends_for_capability(capability, backends=backends):
+        record = backends.get(service_id)
+        if isinstance(record, Mapping):
+            return service_id, record
+    return None
+
+
+def _speech_service() -> tuple[str, Mapping[str, Any]] | None:
+    """The selected speech service in the live config."""
+    return _selected_service(config.get("backends") or {}, _SPEECH_CAPABILITY)
+
+
+def _transcription_service() -> tuple[str, Mapping[str, Any]] | None:
+    """The selected transcription service in the live config."""
+    return _selected_service(config.get("backends") or {}, _TRANSCRIPTION_CAPABILITY)
+
+
 def host_for_capability(capability: str) -> str | None:
     """Return the host URL of the highest-priority enabled backend for *capability*.
 
@@ -1147,12 +1175,7 @@ def _normalize_models_catalog(raw) -> dict:
 
 MODELS_CATALOG = _normalize_models_catalog(config.get("models"))
 
-# TTS backend
-tts_cfg = config.get("backends", {}).get("tts", {})
-_TTS_BACKEND_ID = "tts"
-
-
-def _tts_adapter(service_id: str = _TTS_BACKEND_ID):
+def _tts_adapter(service_id: str):
     """The reviewed adapter a speech service's record selects (contract v2.1 section 4); core never branches on what it is."""
     return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(service_id) or {}, "speech")
 
@@ -1165,9 +1188,6 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
     _require_egress_lease(service_id)
     read = read_s or DERIVED.TTS_TIMEOUT
     return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
-
-# STT backend
-stt_cfg = config.get("backends", {}).get("stt", {})
 
 # The embeddings, ComfyUI (graph engine) and speech/transcription addresses, timeouts, workflow directories and default
 # model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
@@ -1463,8 +1483,8 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     stored registry does). Pure: it reads no global state, so a bad candidate raises before anything goes live.
     """
     backends = effective_cfg.get("backends") or {}
-    tts_c = backends.get("tts") or {}
-    stt_c = backends.get("stt") or {}
+    tts_c = (_selected_service(backends, _SPEECH_CAPABILITY) or ("", {}))[1]
+    stt_c = (_selected_service(backends, _TRANSCRIPTION_CAPABILITY) or ("", {}))[1]
     emb_c = backends.get("embeddings") or {}
     cfy_c = backends.get(_GRAPH_BACKEND_ID) or {}
     protocol_registry = registry or service_registry.release_registry()
@@ -3381,7 +3401,8 @@ def model_compat_aliases() -> Mapping[str, Any]:
 
 
 def tts_backend_model() -> str:
-    return model_compat_defaults().get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+    record = (_speech_service() or ("", {}))[1]
+    return model_compat_defaults().get("speech") or record.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
 
 
 SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3", "opus", "aac", "flac", "pcm"}
@@ -3396,7 +3417,8 @@ TTS_RESPONSE_MEDIA_TYPES = {
 
 
 def stt_backend_model() -> str:
-    return model_compat_defaults().get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
+    record = (_transcription_service() or ("", {}))[1]
+    return model_compat_defaults().get("transcriptions") or record.get("default_model", "parakeet-tdt-0.6b-v3")
 
 
 def embeddings_model() -> str:
@@ -4913,7 +4935,7 @@ async def _stream_tts_upstream(
     stream_format: str,
     response_format: str,
     native_rate: int,
-    service_id: str = _TTS_BACKEND_ID,
+    service_id: str,
     host_service_id: str | None = None,
 ) -> Response:
     """Forward an engine's PCM stream to the client while it is still synthesizing.
@@ -5213,7 +5235,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         return not_ready
 
     # The host can belong to another service than ``tts_service_id``; the lease check names both.
-    _speech_capability = "audio.speech"
+    _speech_capability = _SPEECH_CAPABILITY
     _tts_selected = service_for_capability(_speech_capability)
     _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
     _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
