@@ -405,7 +405,7 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
     """Sync and async routes for one workflow, and which to prefer."""
     intent = record.intent
     native = gateway_route(record)
-    row = workflow_request_maps.execution_row(intent, required=not native)
+    row = workflow_request_maps.execution_row(intent)
     model = (row.model_prefix if row is not None else "") + short_id(record)
     sync: dict[str, Any] | None = None
     async_: dict[str, Any] | None = None

@@ -1087,27 +1087,21 @@ class ExecutionDataTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "execution-fixture.yml.*cannot read"):
                 workflow_request_maps.load(Path("execution-fixture.yml"))
 
-    def test_missing_execution_intents_fail_at_load_and_before_publication(self):
+    def test_intent_without_execution_row_gets_no_templated_routes(self):
         from gateway.workflow_openapi import _execution, workflow_catalog
 
-        record = self.record("unfamiliar.render", native="/native-fixture")
-        with self.assertRaisesRegex(ValueError, "execution-fixture.yml.*unfamiliar.render.*fixture"):
-            self.load_document(self.document(), records=[record])
-        maps = self.load_document(self.document())
+        native = self.record("unfamiliar.render", native="/native-fixture")
+        bare_record = self.record("unfamiliar.render")
+        maps = self.load_document(self.document(), records=[native, bare_record])
         with patch.object(workflow_request_maps, "_MAPS", maps):
-            # Direct native convenience is intentionally distinct from publication.
-            self.assertEqual(_execution(record, 1)["sync"]["path"], "/native-fixture")
-            self.assertNotIn("alternate", _execution(record, 1)["sync"])
-            bare = {"paths": {}}
-            with self.assertRaisesRegex(ValueError, "execution-fixture.yml.*unfamiliar.render"):
-                augment_openapi(bare, [record])
-            self.assertEqual(bare, {"paths": {}})
-            known = self.record("image.generate")
-            workflow_catalog([known])
-            with self.assertRaisesRegex(ValueError, "unfamiliar.render"):
-                workflow_catalog([known, record])
-            with self.assertRaisesRegex(ValueError, "unfamiliar.render"):
-                _execution(self.record("unfamiliar.render"), 1)
+            self.assertIsNone(workflow_request_maps.execution_row("unfamiliar.render"))
+            self.assertEqual(_execution(native, 1)["sync"]["path"], "/native-fixture")
+            self.assertNotIn("alternate", _execution(native, 1)["sync"])
+            self.assertIsNone(_execution(native, 1)["async"])
+            self.assertEqual(_execution(bare_record, 1), {"recommended": "sync", "sync": None, "async": None})
+            self.assertIsNone(maps.execution.render_sync(bare_record))
+            self.assertIsNone(maps.execution.render_async(bare_record))
+            workflow_catalog([self.record("image.generate"), native])
 
     def test_native_only_execution_row_requires_native_binding(self):
         document = self.document()

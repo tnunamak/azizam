@@ -417,30 +417,24 @@ class ExecutionMaps:
     async_templates: Mapping[str, Mapping[str, Any]]
     intents: Mapping[str, ExecutionRow]
 
-    def row(self, intent: str, *, required: bool = True) -> ExecutionRow | None:
-        row = self.intents.get(intent)
-        if row is None and required:
-            raise ValueError(f"{self.path}: execution.intents: missing intent {intent!r}")
-        return row
+    def row(self, intent: str) -> ExecutionRow | None:
+        """The row for ``intent``; None means the intent has no templated routes (only a native or run route)."""
+        return self.intents.get(intent)
 
     def validate_records(self, records: Any) -> None:
-        missing: dict[str, list[str]] = {}
         for record in records:
-            row = self.row(record.intent, required=False)
-            if row is None:
-                missing.setdefault(record.intent, []).append(record.id)
-            elif row.sync is None and row.async_ is None and not _workflow_openapi().gateway_route(record):
+            row = self.row(record.intent)
+            if row is not None and row.sync is None and row.async_ is None \
+                    and not _workflow_openapi().gateway_route(record):
                 raise ValueError(
                     f"{self.path}: execution.intents.{record.intent}: "
                     f"record {record.id!r} needs a native binding when both routes are null"
                 )
-        if missing:
-            details = "; ".join(f"{intent!r} ({', '.join(sorted(ids))})"
-                                for intent, ids in sorted(missing.items()))
-            raise ValueError(f"{self.path}: execution.intents: missing intents: {details}")
 
     def render_sync(self, record: Any, *, native: bool = False) -> dict[str, Any] | None:
-        row = self.row(record.intent, required=not native)
+        row = self.row(record.intent)
+        if not native and row is None:
+            return None
         template = self.native_sync if native else row.sync
         result = self._render(template, record, row)
         if native and row is not None and row.native_alternate is not None:
@@ -449,7 +443,7 @@ class ExecutionMaps:
 
     def render_async(self, record: Any) -> dict[str, Any] | None:
         row = self.row(record.intent)
-        return self._render(row.async_, record, row)
+        return None if row is None else self._render(row.async_, record, row)
 
     def render_alternate(self, row: ExecutionRow, *, model: str) -> dict[str, Any] | None:
         return _render_execution(row.native_alternate, lambda _slot: model)
@@ -742,9 +736,9 @@ def place(row: Row, record: Any, mode: str) -> dict[str, dict[str, Any]]:
 
 
 
-def execution_row(intent: str, *, required: bool = True) -> ExecutionRow | None:
-    """Exact lookup; native standalone helpers may explicitly allow a missing row."""
-    return _MAPS.execution.row(intent, required=required)
+def execution_row(intent: str) -> ExecutionRow | None:
+    """Exact lookup; None means the intent has no templated sync or async route."""
+    return _MAPS.execution.row(intent)
 
 
 def validate_execution_records(records: Any) -> None:
