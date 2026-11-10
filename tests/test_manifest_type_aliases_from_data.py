@@ -167,4 +167,6 @@ def test_every_shipped_manifest_loads_without_rewriting() -> None:
     assert paths
     for path in paths:
         original = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if "inputs" not in original or "bindings" not in original:
+            continue  # Profiles are not workflow manifests; their refusal is pinned by the shipped golden.
         assert m.load_workflow_manifest(path) == original, str(path.relative_to(ROOT))
