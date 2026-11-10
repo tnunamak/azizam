@@ -300,7 +300,10 @@
        }
       },
       "extensions_field": "extensions (JSON string)",
-      "output": "data[].b64_json or data[].url"
+      "output": "data[].b64_json or data[].url",
+      "response": {
+        "kind": "json"
+      }
      },
      "async": null
     }

@@ -1,6 +1,5 @@
 """Keep the TypeScript capability labels aligned with the gateway table."""
 
-import ast
 import json
 from pathlib import Path
 import re
@@ -10,13 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def gateway_capability_labels() -> dict[str, str]:
-    module = ast.parse((ROOT / "gateway/capability_ids.py").read_text())
-    for statement in module.body:
-        if not isinstance(statement, ast.Assign):
-            continue
-        if any(isinstance(target, ast.Name) and target.id == "CAPABILITY_LABELS" for target in statement.targets):
-            return ast.literal_eval(statement.value)
-    raise AssertionError("gateway CAPABILITY_LABELS assignment was not found")
+    # The labels are shipped rows in registry/capability_words.yml, loaded by the module.
+    from gateway.capability_ids import CAPABILITY_LABELS
+
+    return dict(CAPABILITY_LABELS)
 
 
 def typescript_capability_labels() -> dict[str, str]:

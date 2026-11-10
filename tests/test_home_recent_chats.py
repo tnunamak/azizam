@@ -120,10 +120,10 @@ def test_cost_hint_is_free_for_local_paid_for_remote_and_unknown_otherwise():
 def test_required_input_modalities_come_from_the_manifest_else_from_what_the_capability_takes():
     edit = Capability(intent="image.edit", backend="engine", workflow="edit", input_modalities=("text", "image"))
     records = (SimpleNamespace(id="edit", facts=STANDARD_FACTS, contract={"inputs": {
-        "prompt": {"type": "string"}, "source_image": {"type": "asset", "required": True}, "mask": {"type": "asset"}}}),)
+        "prompt": {"type": "string"}, "source_image": {"type": "asset", "required": True, "accepts": ["image/png"]}, "mask": {"type": "asset", "accepts": ["image/png"]}}}),)
     assert _required_input_modalities(edit, records) == ["image"]
     records = (SimpleNamespace(id="edit", facts=STANDARD_FACTS, contract={"inputs": {
-        "prompt": {"type": "string", "required": True}, "source_image": {"type": "asset", "required": True}}}),)
+        "prompt": {"type": "string", "required": True}, "source_image": {"type": "asset", "required": True, "accepts": ["image/png"]}}}),)
     assert _required_input_modalities(edit, records) == ["text", "image"]
     # No manifest: a vision model needs words, and a picture only helps; a capability with no text needs what it takes.
     vision = Capability(intent="chat.generate", backend="engine", model="v", input_modalities=("text", "image"))
@@ -149,7 +149,7 @@ def test_a_manifest_declares_the_start_word_and_which_inputs_can_be_recorded():
     from gateway.capabilities import capability_from_workflow_record as capability_from_workflow
     record = SimpleNamespace(
         id="listen", intent="audio.transcriptions", supported_backends=("engine",), identity=SimpleNamespace(trusted=True), facts=STANDARD_FACTS,
-        contract={"action_label": "  Transcribe ", "inputs": {"clip": {"type": "asset", "recordable": True},
+        contract={"action_label": "  Transcribe ", "inputs": {"clip": {"type": "asset", "recordable": True, "accepts": ["audio/wav"]},
                                                               "note": {"type": "string"}},
                   "outputs": {"text": {"modality": "text"}}})
     cap = capability_from_workflow(record)
