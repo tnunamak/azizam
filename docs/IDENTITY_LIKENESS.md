@@ -148,7 +148,7 @@ look at the picture.
    ~/applications/face-service/venv/bin/python -r services/face-service/requirements.txt`.
 2. Models in `/path/to/models/insightface/models/{buffalo_l,antelopev2}/`; the operator chooses the root and sets `FACE_MODEL_ROOT` to the parent `insightface` directory (about 1.1 GB; the
    unzipped `buffalo_l.zip` and `antelopev2.zip` from the insightface v0.7 release).
-3. `cp services/face-service/face-service.service ~/.config/systemd/user/ && systemctl --user
-   daemon-reload`. The gateway starts it on demand (`identity.face_service`, an `identity` config section entry the owner sets with the config API; an install that had it in `proxy_config.yml` has it imported once at first boot);
+3. `cp services/face-service/face-service.service ~/.config/systemd/user/`, set the unit's `FACE_MODEL_ROOT` line to
+   that `insightface` directory, then `systemctl --user daemon-reload`. The gateway starts it on demand (`identity.face_service`, an `identity` config section entry the owner sets with the config API; an install that had it in `proxy_config.yml` has it imported once at first boot);
    it exits after 15 idle minutes.
 4. Restart the gateway with `scripts/safe-restart`.

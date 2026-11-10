@@ -1,4 +1,6 @@
-# Install: copy to ~/.config/systemd/user/decider.service, then `systemctl --user daemon-reload`.
+# Install: create ~/.config/azizam/decider.env with one line, DECIDER_MODEL=/path/to/model.gguf (the model file),
+# copy this file to ~/.config/systemd/user/decider.service, then `systemctl --user daemon-reload`.
+# The unit does not start without that file.
 # Do NOT enable it. The gateway starts the default decisions engine on demand.
 [Unit]
 Description=Decision engine (decider-2b v11 Q8_0, placement-configured), port 8023

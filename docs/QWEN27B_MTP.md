@@ -38,7 +38,7 @@ Why this is not the default yet:
 
 `scripts/local/run_qwen27b_mtp.sh` defaults to:
 
-- app: `/path/to/llama-tq-mtp`
+- app: `$HOME/applications/llama-tq-mtp` (set `LLAMA_MTP_APP` or `LLAMA_MTP_BIN` for another checkout)
 - port: `5051`
 - GPU: `CUDA_VISIBLE_DEVICES=1`
 - context: `196608`

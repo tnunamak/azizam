@@ -17,9 +17,8 @@ import onnxruntime as ort
 from insightface.app import FaceAnalysis
 from insightface.app.common import Face
 
-MODEL_ROOT = os.environ.get("FACE_MODEL_ROOT")
-if not MODEL_ROOT or not MODEL_ROOT.strip():
-    raise RuntimeError("FACE_MODEL_ROOT must name the parent insightface directory")
+# The parent insightface directory. It is checked when a model loads, so the health route works without it.
+MODEL_ROOT = (os.environ.get("FACE_MODEL_ROOT") or "").strip()
 KNOWN_MODELS = ("buffalo_l", "antelopev2")
 SCALES = (1.0, 0.5, 2.0, 0.3)
 MAX_CANVAS = 1920
@@ -48,6 +47,8 @@ def analyzer(model: str) -> FaceAnalysis:
     if model not in KNOWN_MODELS:
         raise ValueError(f"model must be one of {', '.join(KNOWN_MODELS)}")
     if model not in _analyzers:
+        if not MODEL_ROOT:
+            raise RuntimeError("FACE_MODEL_ROOT must name the parent insightface directory")
         fa = FaceAnalysis(
             name=model,
             root=MODEL_ROOT,

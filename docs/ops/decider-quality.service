@@ -1,4 +1,6 @@
-# Install: copy to ~/.config/systemd/user/decider-quality.service, then `systemctl --user daemon-reload`.
+# Install: create ~/.config/azizam/decider-quality.env with one line, DECIDER_MODEL=/path/to/model.gguf (the model file),
+# copy this file to ~/.config/systemd/user/decider-quality.service, then `systemctl --user daemon-reload`.
+# The unit does not start without that file.
 # Do NOT enable it. The gateway starts it only for decide-quality.
 [Unit]
 Description=Decision engine (decider-4b v2.1 Q4_K_M, placement-configured), port 8025
