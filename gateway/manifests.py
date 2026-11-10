@@ -191,6 +191,8 @@ def normalize_input_spec(spec: Mapping[str, Any], _depth: int = 0) -> dict[str, 
         declared = result.get("accepts") or ([result["media_type"]] if result.get("media_type") else alias["accepts"])
         if isinstance(declared, str):
             declared = [declared]
+        elif not isinstance(declared, (list, tuple)):
+            declared = []
         def within(narrow: str, broad: str) -> bool:
             if not isinstance(narrow, str) or not isinstance(broad, str):
                 return False
