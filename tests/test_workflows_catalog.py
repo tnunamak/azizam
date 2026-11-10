@@ -1692,7 +1692,7 @@ class RouteFieldExampleTests(unittest.TestCase):
             with self.subTest(language=language):
                 for fragment in fragments:
                     self.assertIn(fragment, example[language])
-                self.assertNotIn("sync_prompt", example[language])
+                self.assertNotRegex(example[language], r"(?<!a)sync_prompt")  # async_prompt contains the substring
                 self.assertNotIn("surface", example[language])
 
     def test_multipart_route_without_a_model_does_not_invent_one(self) -> None:

@@ -40,21 +40,6 @@ sites:
     count: 1
     category: media_type
     reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/engine_protocol/media.py
-    literal: audio
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
-  - file: gateway/engine_protocol/media.py
-    literal: image
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
-  - file: gateway/engine_protocol/media.py
-    literal: video
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
   - file: gateway/media_delivery.py
     literal: audio
     count: 1
