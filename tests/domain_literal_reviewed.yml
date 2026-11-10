@@ -137,9 +137,9 @@ sites:
     reason: Names the IANA video media type family in the MIME-family-to-example-filename-suffix table.
   - file: gateway/video_media_jobs.py
     literal: video
-    count: 1
+    count: 2
     category: wire_enum
-    reason: Names the video discriminator defined by the OpenAI Videos API in the Video object's object field.
+    reason: Names the video discriminators in the gateway-published video response contract, both the OpenAI Video object's object field and the gateway assets[].kind extension; neither occurrence selects a workflow, model, engine or intent.
   - file: gateway/workflow_call.py
     literal: audio
     count: 1
@@ -175,3 +175,28 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the object discriminator the gateway publishes on its signed video content-URL response; changing it is an API change, not configuration.
+  - file: gateway/manifests.py
+    literal: audio
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
+  - file: gateway/manifests.py
+    literal: image
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
+  - file: gateway/manifests.py
+    literal: video
+    count: 1
+    category: media_type
+    reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
+  - file: gateway/local_capabilities.py
+    literal: image
+    count: 1
+    category: wire_enum
+    reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
+  - file: gateway/openai_media_schemas.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: Names the audio stream_format value defined by the OpenAI Audio speech request in the published OpenAPI schema.
