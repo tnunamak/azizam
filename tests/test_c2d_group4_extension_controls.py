@@ -407,8 +407,22 @@ def test_extension_control_namespaces_are_unique(tmp_path):
     document["groups"]["duplicate"] = deepcopy(document["groups"]["clip_delivery"])
     registry = tmp_path / "controls.yml"
     registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-    with pytest.raises(ValueError, match="duplicate namespace"):
+    with pytest.raises(ValueError, match="duplicate namespace") as caught:
         controls.load_extension_controls(registry)
+    assert str(registry) in str(caught.value)
+
+
+def test_unsupported_control_type_names_the_descriptor_file(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    control = next(iter(document["groups"]["clip_delivery"]["controls"].values()))
+    control["type"] = "string"
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported control type") as caught:
+        controls.load_extension_controls(registry)
+    assert str(registry) in str(caught.value)
 
 
 def test_shipped_extension_schema_preserves_literal_bytes():

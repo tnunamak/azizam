@@ -107,9 +107,16 @@ def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
     document = _mapping(document, str(path), {"schema_version", "groups"})
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise ValueError(f"{path}: unsupported schema_version")
+    try:
+        return _load_groups(document["groups"])
+    except ValueError as exc:  # name the file: an owner editing it needs to know which one
+        raise ValueError(f"{path}: {exc}") from exc
+
+
+def _load_groups(raw_groups: Any) -> Mapping[str, ControlGroup]:
     groups: dict[str, ControlGroup] = {}
     namespaces: set[str] = set()
-    for name, raw in _logical_mapping(document["groups"], "groups").items():
+    for name, raw in _logical_mapping(raw_groups, "groups").items():
         raw = _mapping(raw, name, {"namespace", "controls", "errors"})
         namespace = _text(raw["namespace"], f"{name}.namespace")
         if namespace in namespaces:
