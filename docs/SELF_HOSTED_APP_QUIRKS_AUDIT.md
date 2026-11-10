@@ -36,7 +36,7 @@ Workflow inventory:
 
 Proxy status observations:
 
-- Health is `warn`, not `ok`: disk `/media/windows` 89.1% full, CPU temp warning, recent GPU Xid events, stale Daisy audit.
+- Health is `warn`, not `ok`: the model disk 89.1% full, CPU temp warning, recent GPU Xid events, stale Daisy audit.
 - Two RTX 3090 GPUs.
 - GPU0 carries desktop, TTS, and ComfyUI; GPU1 carries llama-server.
 - TTS is over its configured VRAM budget: about 5.86 GiB used against a 4 GiB budget.
