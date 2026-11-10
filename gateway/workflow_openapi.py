@@ -37,11 +37,10 @@ import re
 from typing import Any, Iterable, Mapping
 
 from gateway.workflow_view import settable_inputs
-from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
 from gateway.discovery import WorkflowRecord
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
+from gateway import workflow_request_maps
 from gateway.manifests import media_bearing
-from gateway.video_extensions import ROUTE_MANAGED_VIDEO_INPUTS
 from gateway.video_limits import limits_for_workflow
 
 # Component names use only letters, digits and underscores: a dot in a name
@@ -72,7 +71,6 @@ _IMAGE_EDIT_MANAGED = frozenset(
 )
 # The multipart part the OpenAI-compatible edit route reads pictures from. One
 # part per picture, in submission order; the field repeats.
-_IMAGE_EDIT_IMAGE_PART = "image[]"
 # The contract input a video request's ``input_reference`` fills. The projection and the route read it from here.
 VIDEO_REFERENCE_INPUT = "image"
 _MESH_PATH = "/v1/3d/generations/glb"
@@ -269,99 +267,14 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     * ``{"in": "form", "field": name}``: a plain multipart form field (run route);
     * ``{"in": "none"}``: accepted by the manifest, not settable on this route.
     """
-    out = _route_mapping(record, mode)
+    # Where each input goes is data: the rows in registry/workflow_request_maps.yml (gateway/workflow_request_maps.py).
+    row = workflow_request_maps.select(record, mode)
+    if row is None:
+        raise ValueError(f"{record.id} ({mode}): no row in registry/workflow_request_maps.yml places its inputs")
+    out = workflow_request_maps.place(row, record, mode)
     for name, spec in settable_inputs(record.contract).items():
         if media_bearing(spec) and spec.get("type") != "asset":
             out[name] = {"in": "none"}
-    return out
-
-
-def _route_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, Any]]:
-    inputs = settable_inputs(record.contract)
-    intent = record.intent
-    out: dict[str, dict[str, Any]] = {}
-    # One reference per input: a scalar asset is a file part. A container that holds assets is not (the caller above sets it aside).
-    is_asset = {n: media_bearing(s) and (s or {}).get("type") == "asset" for n, s in inputs.items()}
-
-    if mode == "sync" and gateway_route(record):  # a native route: plain multipart form
-        for name in inputs:
-            field = "image" if name == "source_image" else name
-            out[name] = {"in": "file" if is_asset[name] else "form", "field": field}
-        return out
-
-    if intent == "mesh.generate" and mode == "sync":  # one picture part, plain text fields
-        # An input no service binding maps (the reserved extensions) is refused by the route, so it is
-        # not a form field here either.
-        bound = _bound_input_names(record)
-        for name in inputs:
-            if name not in bound:
-                out[name] = {"in": "none"}
-            else:
-                out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
-        return out
-
-    if intent == "video.edit" and mode == "sync":  # run route: plain form
-        for name in inputs:
-            out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
-        return out
-
-    # The OpenAI-compatible edit route takes every reference picture as a
-    # repeated ``image[]`` part, in submission order: the source picture first,
-    # then each input a backend binding marks ``route_bound_inputs``. Naming a
-    # second picture as its own part would describe a file that route never
-    # reads, so the catalog would teach a request that cannot work.
-    route_images = _native_route_image_inputs(record, is_asset) if intent == "image.edit" else []
-    for name in route_images:
-        out[name] = {"in": "file", "field": _IMAGE_EDIT_IMAGE_PART}
-
-    for name in inputs:
-        if name in out:
-            continue
-        if intent == "image.generate":
-            managed = _IMAGE_GENERATE_MANAGED
-            if name == "prompt":
-                out[name] = {"in": "body", "field": "prompt"}
-            elif name in ("width", "height"):
-                out[name] = {"in": "body", "field": "size", "combine": ["width", "height"]}
-            elif name in managed:
-                out[name] = {"in": "none"}
-            else:
-                out[name] = {"in": "extension", "field": name}
-        elif intent == "image.edit":
-            if name == "prompt":
-                out[name] = {"in": "form", "field": "prompt"}
-            elif name == "source_image":
-                out[name] = {"in": "file", "field": _IMAGE_EDIT_IMAGE_PART}
-            elif name == "mask":
-                out[name] = {"in": "file", "field": "mask"}
-            elif name in ("width", "height"):
-                out[name] = {"in": "form", "field": "size", "combine": ["width", "height"]}
-            elif name in _IMAGE_EDIT_MANAGED:
-                out[name] = {"in": "none"}
-            elif is_asset[name]:
-                out[name] = {"in": "file+extension", "field": name}
-            else:
-                out[name] = {"in": "extension", "field": name}
-        elif intent == "audio.generate":
-            if name in ROUTE_MANAGED_AUDIO_INPUTS:
-                out[name] = {"in": "body", "field": name}
-            else:
-                out[name] = {"in": "extension", "field": name}
-        elif intent.startswith("video."):
-            if name in ("prompt", "negative_prompt", "seed", "image_strength"):
-                out[name] = {"in": "body", "field": name}
-            elif name in ("width", "height"):
-                out[name] = {"in": "body", "field": "size", "combine": ["width", "height"]}
-            elif name == "length":
-                out[name] = {"in": "body", "field": "seconds"}
-            elif name == VIDEO_REFERENCE_INPUT:
-                out[name] = {"in": "body", "field": "input_reference"}
-            elif name in ROUTE_MANAGED_VIDEO_INPUTS:
-                out[name] = {"in": "none"}
-            else:
-                out[name] = {"in": "extension", "field": name}
-        else:
-            out[name] = {"in": "extension", "field": name}
     return out
 
 

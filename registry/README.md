@@ -274,9 +274,9 @@ Route-managed sets stay in Python. A row names a static word
 (`image_generate_managed`, `image_edit_managed`, `audio_route_managed`,
 `video_route_managed`, `video_reference`) or a per-record word (`unbound`,
 `route_images`), and the loader resolves it from the existing constant or
-helper, never a copy of the members. The bundled rows cover every branch of
-`gateway/workflow_openapi._route_mapping`, so `select` never returns `None` for
-a bundled workflow.
+helper, never a copy of the members. `gateway.workflow_openapi.request_mapping`
+places inputs only from these rows: a workflow no row selects is refused, with
+no fallback in code. Every bundled workflow has a row in both modes.
 
 The loader refuses, with the file and row index, an unknown key, an unknown `in`
 word, an unknown set word, two rows with the same selector, and a row with no

@@ -1,7 +1,7 @@
 """Request-map rows: where each workflow input goes in a route's request.
 
-The bundled ``registry/workflow_request_maps.yml`` states as data what
-``gateway.workflow_openapi._route_mapping`` states as code. A row selects records
+The bundled ``registry/workflow_request_maps.yml`` states where each input goes;
+``gateway.workflow_openapi.request_mapping`` reads it through this module. A row selects records
 by precedence -- a native route and mode, an exact intent and mode, an exact
 intent in either mode, the longest intent prefix, then the default row -- and
 then places every settable input with the first part that matches: ``first``

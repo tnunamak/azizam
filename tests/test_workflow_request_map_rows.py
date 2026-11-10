@@ -1,9 +1,7 @@
-"""The request-map rows: the loader refuses malformed rows, and where a row
-claims a record it reproduces ``gateway.workflow_openapi._route_mapping`` exactly.
-
-Jobs B and C add the image, audio and video rows. This file asserts that every
-row the file holds is chosen and correct; it does not assert that every record
-has a row yet.
+"""The request-map rows: the loader refuses malformed rows, every bundled
+workflow has a row in both modes, every row is used, and what
+``gateway.workflow_openapi.request_mapping`` serves from the rows is frozen,
+in order, in a golden file captured before the rows replaced the route code.
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gateway import workflow_request_maps  # noqa: E402
 from gateway.discovery import WorkflowRecord, WorkflowRegistry  # noqa: E402
 from gateway.manifests import ManifestIdentity  # noqa: E402
-from gateway.workflow_openapi import _route_mapping, request_mapping  # noqa: E402
+from gateway.workflow_openapi import request_mapping  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
 GOLDEN = ROOT / "tests" / "fixtures" / "workflow_request_maps" / "request_mapping_golden.json"
@@ -194,7 +192,7 @@ def test_a_second_route_image_keeps_the_repeated_image_part_order() -> None:
     assert row is not None
     assert row.selector == ("intent", "image.edit", "any")
     placed = list(maps().place(row, record, "sync").items())
-    assert placed == list(_route_mapping(record, "sync").items())
+    assert placed == list(request_mapping(record, "sync").items())
     assert [name for name, _ in placed] == ["source_image", "reference_image", "prompt", "steps"]
     assert placed[0][1] == {"in": "file", "field": "image[]"}
     assert placed[1][1] == {"in": "file", "field": "image[]"}
@@ -215,7 +213,7 @@ def test_request_mapping_matches_the_frozen_golden_file() -> None:
         assert live[key] == expected, f"{key}: request_mapping changed since the golden capture"
 
 
-def test_where_a_row_is_selected_it_matches_the_route_code() -> None:
+def test_every_row_is_chosen_by_a_bundled_record() -> None:
     chosen: dict[int, list[tuple[str, str]]] = {}
     for record in registry().records():
         for mode in MODES:
@@ -223,10 +221,6 @@ def test_where_a_row_is_selected_it_matches_the_route_code() -> None:
             if row is None:
                 continue
             chosen.setdefault(row.index, []).append((record.id, mode))
-            # Order is part of the answer: repeated parts (image[]) go out in the order the mapping lists them.
-            assert list(maps().place(row, record, mode).items()) == list(_route_mapping(record, mode).items()), (
-                f"{record.id} ({mode}): request map row {row.index} disagrees with _route_mapping"
-            )
     assert sorted(chosen) == list(range(1, len(maps().rows) + 1)), (
         f"every bundled row is chosen by a bundled record and mode; chosen: {chosen}"
     )
