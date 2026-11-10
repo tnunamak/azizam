@@ -27989,7 +27989,7 @@
                     },
                     "object": {
                       "enum": [
-                        "video"
+                        "video.deleted"
                       ],
                       "type": "string"
                     }
@@ -35552,7 +35552,7 @@
                     },
                     "object": {
                       "enum": [
-                        "video"
+                        "video.deleted"
                       ],
                       "type": "string"
                     }

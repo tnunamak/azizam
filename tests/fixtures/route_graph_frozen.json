@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "4cef2c2e7fcf5af3ac078c0ff313515c88aaec5ff1e2d2781c048ef115e301e4",
+ "openapi_sha256": "5d4a53fd5340c2a5a40263eaf1cdc6268f2e1a5cb23d06dd5cc3dea3010d86c0",
  "policy": {
   "aliases": [
    {
@@ -9293,7 +9293,7 @@
     "DELETE"
    ],
    "name": "videos_delete",
-   "openapi_extra": "0e3001585d6a9a7583f3c163e0f1e2192f66bdd7365e5805ff2d88c9354a6736",
+   "openapi_extra": "ffe845df0981fabbef4ee3370d911b7b082b9c35a386bd514a3d7cccd70c527f",
    "path": "/openai/v1/videos/{video_id}",
    "response_class": null,
    "status_code": null,
@@ -9306,7 +9306,7 @@
     "DELETE"
    ],
    "name": "videos_delete",
-   "openapi_extra": "0e3001585d6a9a7583f3c163e0f1e2192f66bdd7365e5805ff2d88c9354a6736",
+   "openapi_extra": "ffe845df0981fabbef4ee3370d911b7b082b9c35a386bd514a3d7cccd70c527f",
    "path": "/v1/videos/{video_id}",
    "response_class": null,
    "status_code": null,
