@@ -414,8 +414,6 @@ RERECORDED: dict[str, str] = {
     "s7_vc_admission_refusal": "a disabled video service answers 503 service_disabled with the resource decision on the receipt; "
                                "the body is compact JSON (video_id_namespace and json spacing only)",
     "s7_ve_admission_refusal": "as s7_vc_admission_refusal",
-    "s7_ve_validation_refusal": "the extend body names the new video id video_<job> where the old route named video_p1 (video_id_namespace)",
-    "s7_ve_disconnect": "as s7_ve_validation_refusal",
 }
 #: Re-records that change what is sent to the engine. These are the behaviour-preservation exceptions to report, not hide.
 ENGINE_FACING_CHANGES = frozenset({"video_lifecycle", "video_extend", "s7_ve_success", "s7_ve_replay_same", "s7_ve_replay_conflict",

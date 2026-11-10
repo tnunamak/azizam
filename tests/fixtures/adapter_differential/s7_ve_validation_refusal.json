@@ -6,10 +6,10 @@
       "request": {
         "body": {
           "kind": "json",
-          "text": "{\"video\":{\"id\":\"video_<job:1>\"}}"
+          "text": "{\"video\":{\"id\":\"video_p1\"}}"
         },
         "headers": {
-          "content-length": "<32 after normalisation>",
+          "content-length": "27",
           "content-type": "application/json"
         },
         "method": "POST",

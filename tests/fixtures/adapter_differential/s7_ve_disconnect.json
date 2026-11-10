@@ -6,7 +6,7 @@
       "request": {
         "body": {
           "kind": "json",
-          "text": "{\"prompt\": \"make it dusk\", \"video\": {\"id\": \"video_<job:1>\"}}"
+          "text": "{\"prompt\": \"make it dusk\", \"video\": {\"id\": \"video_p1\"}}"
         },
         "headers": {
           "content-type": "application/json"

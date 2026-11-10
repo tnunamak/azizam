@@ -404,11 +404,6 @@ project = "chromium"
 case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the sso-only sign-in with remembered people at 1440 and 390, light and dark"
 reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
 
-[[skip]]
-framework = "pytest"
-case = "tests/test_s7_parity_video_lifecycle.py::test_video_62_absent_engine_job_is_orphaned"
-reason = "orphan marking runs only in the lifespan reconcile loop, which the HTTP rig does not start; pinned at unit level by test_video_handler_coverage_gaps.py"
-
 # Gate cases that xfail. A new xfail fails the gate.
 [[xfail]]
 framework = "pytest"
@@ -438,161 +433,6 @@ reason = "needs the audio job route on the run core: the base audio branch ignor
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_16_background_removal_headers"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_18_poll_schedule"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_21_generation_timeout_504_with_queue_position"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_24_transient_history_errors_are_retried"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_29_receipt_opens_before_the_route_policy"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_31_receipt_closes_with_the_outcome"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_33_cancel_of_queued_and_of_finished"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_34_wait_timeout_answers_and_closes_the_receipt"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_37_response_headers"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_E07_default_size_from_the_input_image"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_E12_policy_and_admission_cells"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_E13_refused_image"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_E19_response_headers"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_E20_round_loop_traffic"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_E21_receipt_records_inputs_and_workflow"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_F05_timeout"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J03_metadata_control_is_checked"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J04_policy_then_admission"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J05_admission_refusal_writes_a_receipt"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J07_job_metadata"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J09_replay_returns_the_existing_job"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J11_job_store_failure_500"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J14_refusals_leave_no_job"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J15_admission_refusal_leaves_no_job"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J16_wait_timeout_keeps_the_job"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J17_cancel_queued_and_finished"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J18_disconnect_does_not_cancel_the_job"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J19_success_mirrors_assets_and_drops_payload"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J21_failure_copy_per_category[timeout-timeout]"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_J22_oom_retries_with_events"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_images_V05_delegated_prompt_workflow_and_denoise"
-reason = "needs RH open_receipt"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_s7_parity_images.py::test_images_V07_offset_inpaint_needs_its_workflows"
 reason = "row path pending: builder I steps 2-4"
 
@@ -603,26 +443,41 @@ reason = "row path pending: builder I steps 2-4"
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule"
-reason = "row path pending: builder I steps 2-4"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_s7_parity_images.py::test_s7_background_fallback_and_offset_inpaint_preserve_composition"
 reason = "row path pending: builder I steps 2-4"
 
+# Video run-core train (release 2026-11-09, 38): strict xfails for the known V5d item, each turned green when V5d lands.
 [[xfail]]
 framework = "pytest"
-case = "tests/test_s7_parity_images.py::test_s7_edit_post_composite_mask_changes_delivered_and_stored_pixels"
-reason = "row path pending: builder I steps 2-4"
+case = "tests/test_adapter_differential.py::test_video_delete_while_running"
+reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_s7_parity_video_create.py::test_video_05_same_key_deduplicates_under_the_allowed_delta"
-reason = "idempotency_acceptance: section 4 now permits video-create deduplication"
+case = "tests/test_adapter_differential.py::test_video_execution_error"
+reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
 
 [[xfail]]
 framework = "pytest"
-case = "tests/test_s7_parity_video_extra.py::test_video_1_05_same_idempotency_key_twice_submits_once"
-reason = "delta idempotency_acceptance: lands with the videos.create move"
+case = "tests/test_adapter_differential_s7.py::test_s7_cell[vc-disconnect]"
+reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
 
+[[xfail]]
+framework = "pytest"
+case = "tests/test_adapter_differential_s7.py::test_s7_cell[vc-wait_timeout]"
+reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
+
+[[xfail]]
+framework = "pytest"
+case = "tests/test_adapter_differential_s7.py::test_s7_cell[ve-upstream_failure]"
+reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
+
+[[xfail]]
+framework = "pytest"
+case = "tests/test_adapter_differential_s7.py::test_s7_cell[ve-wait_timeout]"
+reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
+
+[[xfail]]
+framework = "pytest"
+case = "tests/test_retention_media_snapshots.py::test_media_dispatch_persists_exact_fact_snapshot[video-False]"
+reason = "V5d: a content download answers 403 prompt_not_accessible when no metadata mode is set"
