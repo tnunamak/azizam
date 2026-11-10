@@ -40,7 +40,8 @@ error-parameter group stops startup. These checks are in
 The workflow catalog's curl, Python and JavaScript request examples follow the
 selected execution route. Its field mapping determines JSON body and extension
 placement; a route without a field mapping uses the synchronous request mapping.
-A submit declaration supplies its method, content type and extra headers.
+A submit declaration supplies its method and extra headers. The examples support
+JSON (`application/json`) and multipart form data (`multipart/form-data`).
 Extra headers are carried into all three examples. The request uses the model
 named by the route or its submit declaration and adds no model when neither
 names one. See `gateway/workflows_catalog.py:152-162`,

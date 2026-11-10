@@ -1961,5 +1961,60 @@ class DeclaredResponseKindExampleTests(unittest.TestCase):
                 self.assertEqual(actual, expected)
         self.assertTrue(affected, "the shipped image-edit regression must be exercised")
         self.assertEqual(changed, affected, f"changed workflows: {sorted(changed)}")
+
+    def test_put_submit_method_is_used_by_every_client(self) -> None:
+        for content_type in ("application/json", "multipart/form-data"):
+            for is_job in (False, True):
+                with self.subTest(content_type=content_type, is_job=is_job):
+                    submit = {
+                        "method": "PUT", "path": "/fixture/jobs",
+                        "content_type": content_type,
+                    }
+                    if is_job:
+                        submit["response"] = {
+                            "kind": "media_job", "poll": "/jobs/{job_id}",
+                            "content": "/jobs/{job_id}/content",
+                        }
+                    example = self.example("unfamiliar.render", {
+                        "kind": "respond_async", "submit": submit,
+                    })
+                    self.assertEqual(example["method"], "PUT")
+                    self.assertEqual(example["curl"].count("--request 'PUT'"), 1)
+                    self.assertIn("requests.request('PUT',", example["python"])
+                    self.assertIn('method: "PUT",', example["javascript"])
+
+    def test_every_shipped_example_keeps_legacy_post_bytes(self) -> None:
+        import gateway.workflow_openapi as route_module
+        import gateway.workflows_catalog as catalog_module
+
+        # Reuse the frozen pre-change curl renderer, not the implementation
+        # under test, including its recursive job-submit rendering.
+        namespace = {**vars(route_module), **vars(catalog_module)}
+        exec(compile(_BASE_RESPONSE_RENDERERS, "<legacy curl oracle>", "exec"), namespace)
+        legacy_curl = namespace["_curl_example"]
+
+        def render_legacy(url, *, method="POST", **kwargs):
+            self.assertEqual(method, "POST", "shipped routes must retain implicit POST")
+            return legacy_curl(url, **kwargs)
+
+        registry = WorkflowRegistry.from_directory(
+            Path(__file__).resolve().parents[1] / "manifests" / "workflows",
+        )
+        self.assertEqual(registry.errors, [])
+        records = registry.records()
+        self.assertTrue(records)
+        openapi_rows = {row["id"]: row for row in route_module.workflow_catalog(records)}
+        for record in records:
+            with self.subTest(workflow=record.id):
+                kwargs = dict(
+                    capability_rows=[], openapi_row=openapi_rows[record.id],
+                    receipts=[], jobs=[], base_url="https://gateway.test",
+                )
+                actual = catalog_module._workflow_row(record, **kwargs)["example_request"]
+                with patch("gateway.workflows_catalog._curl_example", side_effect=render_legacy):
+                    expected = catalog_module._workflow_row(record, **kwargs)["example_request"]
+                # Full equality pins all three client strings byte-for-byte,
+                # along with the request's method, path, body, form and files.
+                self.assertEqual(actual, expected)
 if __name__ == "__main__":
     unittest.main()

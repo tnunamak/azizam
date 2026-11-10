@@ -338,7 +338,7 @@ def _example_request(
     ]
     extra_headers = wire.get("headers")
     curl = _curl_example(
-        url, content_type=content_type, body=body, form=form, files=paths,
+        url, method=method, content_type=content_type, body=body, form=form, files=paths,
         binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
     )
     return {
@@ -500,6 +500,7 @@ def _shell_single_quote(value: str) -> str:
 def _curl_example(
     url: str,
     *,
+    method: str = "POST",
     content_type: str,
     body: Mapping[str, Any],
     form: Mapping[str, Any],
@@ -510,12 +511,13 @@ def _curl_example(
 ) -> str:
     if job_urls is not None:
         submit = _curl_example(
-            url, content_type=content_type, body=body, form=form, files=files,
+            url, method=method, content_type=content_type, body=body, form=form, files=files,
             binary_response=False, headers=headers,
         )
         return _curl_job_example(submit, *job_urls)
     lines = [
         f"curl {_shell_single_quote(url)} \\",
+        *([f"  --request {_shell_single_quote(method)} \\"] if method != "POST" else []),
         "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\",
         *[f"  -H {_shell_single_quote(f'{name}: {value}')} \\" for name, value in (headers or {}).items()],
     ]
