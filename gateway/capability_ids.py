@@ -17,7 +17,9 @@ CAPABILITY_WORDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "c
 
 
 def _modality_words(document: Mapping[str, Any], path: Path) -> frozenset[str]:
-    words = document.get("modality_words")
+    if "modality_words" not in document:
+        return frozenset()
+    words = document["modality_words"]
     if (not isinstance(words, list) or not words
             or any(not isinstance(word, str) or not word.strip() or word != word.strip() for word in words)):
         raise ValueError(f"{path.name}: modality_words must be a non-empty list of non-empty words")

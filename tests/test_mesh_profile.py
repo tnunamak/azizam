@@ -311,10 +311,13 @@ def test_the_profile_is_given_every_shape_and_never_raises() -> None:
         assert mesh_api.mesh_profile_errors(contract), contract
 
 
-def test_a_different_intent_is_a_different_frontends_workflow() -> None:
-    assert mesh_api.mesh_profile_errors(edited(at(("intent",), "images.generate"))) == [
-        "intent must be 'mesh.generate'"]
-    frontend_profiles.check(edited(at(("intent",), "images.generate")))  # no frontend registered for it: nothing to refuse
+def test_declared_intent_can_use_the_same_frontend_shape() -> None:
+    contract = edited(at(("intent",), "fixture.generate"))
+    assert mesh_api.mesh_profile_errors(contract) == []
+    assert mesh_api.mesh_workflow(contract, "fixture-hash").intent == "fixture.generate"
+    assert mesh_api.mesh_profile_errors(edited(at(("intent",), " "))) == [
+        "workflow intent must be a non-empty string"]
+    frontend_profiles.check(contract)  # no frontend registered for it: nothing to refuse
 
 
 # --- the rules the decoder cannot enforce: refused, never served with the rule dropped ---------------------------------------

@@ -57,9 +57,9 @@ The unchanged workflow contract remains authoritative for its identity and I/O:
   MODALITY_WORDS. Existing capability labels remain the capability vocabulary.
 - `registry/capability_words.yml:3-4` declares the distinct modality vocabulary.
   No sculpture or surface-model value is added to shipped data.
-- `registry/protocol_frontends.yml:957-959,965-967` adds the existing
-  model_metadata shape to both mesh POST rows. Other rows already use that
-  shape at base `registry/protocol_frontends.yml:42-45,82-85`.
+- `registry/protocol_frontends.yml:957-959,965-967` adds the
+  discovery_metadata modality shape to both mesh POST rows. Stable-alias
+  model_metadata rows have a separate schema with operation and type fields.
 
 ## Tests first, fixtures, and base outcomes
 
@@ -73,7 +73,7 @@ The vocabulary-loader cases mock file reads rather than writing files (lines 266
 Expected failures on the unmodified base, established from source:
 
 - Shipped metadata assertion at test lines 91-94: base route row has no
-  model_metadata (`registry/protocol_frontends.yml:953-957`).
+  discovery_metadata (`registry/protocol_frontends.yml:953-957`).
 - Renamed-owner assertion at lines 97-110: base `mesh_api.py:152` selects
   record ID `mesh`, so `atelier-3d` is treated as absent.
 - Duplicate-owner cases at lines 125-131: base line 152 takes the first
@@ -111,7 +111,7 @@ to route_row and compare its exact returned tuple. Line 255 compares every
 pre-existing field of the newly shipped row, and lines 91-94 independently
 assert the requested metadata addition.
 
-A raw shipped route mapping cannot simultaneously acquire model_metadata
+A raw shipped route mapping cannot simultaneously acquire discovery_metadata
 and remain byte-for-byte identical to the old mapping. The patch therefore
 preserves all prior route fields and the complete Capability, with exactly
 the explicitly requested new metadata. This interpretation and the new
@@ -150,3 +150,10 @@ The lead should then run the repository's normal full gate to establish that
 every existing test remains green, including shared registry/vocabulary
 consumers outside this assignment's read scope. No test, lint, compilation,
 or full-suite success is asserted by this report.
+
+## Integration correction
+
+The initial modality-only fields collided with the stable-alias model_metadata
+loader, which requires both operation and a model type. Integration uses
+discovery_metadata for these route facts. The new tests assert that field with
+the same modality validation and complete capability parity checks.

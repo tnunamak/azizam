@@ -96,8 +96,9 @@ def test_shipped_rows_are_the_literal_display_order_with_only_protocol_overrides
     document = yaml.safe_load(DATA.read_text(encoding="utf-8"))
     rows = document.get("capabilities")
     base_fields = {"id", "label", "policy_protocol"}
-    allowed_fields = base_fields | {"icon", "recommended_alias", "summary", "hidden_by"}
+    allowed_fields = base_fields | {"icon", "recommended_alias", "summary", "hidden_by", "display_order"}
     assert isinstance(rows, list)
+    assert [row["display_order"] for row in rows] == [0, 1, 2, 6, 8, 4, 5, 7, 9, 10, 11, 3]
     assert all(isinstance(row, dict) and set(row) <= allowed_fields for row in rows)
     assert [{key: value for key, value in row.items() if key in base_fields}
             for row in rows] == _rows()
@@ -173,6 +174,7 @@ def test_test_only_row_extends_labels_and_both_word_maps_without_code(tmp_path):
     assert module.capability_of_word("fixture.word") == "fixture"
     assert module.capability_of_word("fixture.generate") == "fixture"
     assert module.MODEL_KIND_LABELS == MODEL_LABELS
+    assert module.MODALITY_WORDS == frozenset(), "omitted optional vocabulary invents no modalities"
     protocol, intents = module.load_capability_words(data)
     assert protocol["fixture.word"] == intents["fixture.generate"] == "fixture"
     changed = copy.deepcopy(document)
