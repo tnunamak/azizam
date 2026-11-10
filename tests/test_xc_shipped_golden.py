@@ -35,6 +35,9 @@ def capture(monkeypatch):
             validation = {"equal": loaded == doc}
         except manifests.ManifestError as exc:
             validation = {"error": str(exc), "errors": exc.as_list() if hasattr(exc, "as_list") else []}
+        if "inputs" not in doc or "bindings" not in doc:
+            found[str(path.relative_to(ROOT))] = {"validation": validation}
+            continue
         bindings = doc.get("bindings") or {}
         graph = {}
         values = {}
@@ -54,8 +57,11 @@ def capture(monkeypatch):
                         for part in parts[:-1]:
                             target = target.setdefault(part, {})
                         target[parts[-1]] = "original"
-        result = bind_video_workflow_extensions({"inputs": {**values, "undeclared_probe": 1}}, doc, graph)
-        extension = asdict(result)
+        try:
+            result = bind_video_workflow_extensions({"inputs": {**values, "undeclared_probe": 1}}, doc, graph)
+            extension = asdict(result)
+        except manifests.ManifestError as exc:
+            extension = {"error": str(exc)}
         source = None
         if (doc.get("video") or {}).get("roles", {}).get("source"):
             run = read({"model": doc["id"], "prompt": "sample", "video": {"id": "video_mj_source"}},
