@@ -1050,9 +1050,11 @@ def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | N
     return None
 
 
-# The speech and transcription services are the services selected for these capabilities, never records of a fixed id.
+# The speech, transcription and embeddings services are the services selected for these capabilities, never records of
+# a fixed id.
 _SPEECH_CAPABILITY = "audio.speech"
 _TRANSCRIPTION_CAPABILITY = "audio.transcriptions"
+_EMBEDDINGS_CAPABILITY = "embeddings"
 
 
 def _selected_service(backends: Mapping[str, Any], capability: str) -> tuple[str, Mapping[str, Any]] | None:
@@ -1077,6 +1079,11 @@ def _speech_service() -> tuple[str, Mapping[str, Any]] | None:
 def _transcription_service() -> tuple[str, Mapping[str, Any]] | None:
     """The selected transcription service in the live config."""
     return _selected_service(config.get("backends") or {}, _TRANSCRIPTION_CAPABILITY)
+
+
+def _embeddings_service() -> tuple[str, Mapping[str, Any]] | None:
+    """The selected embeddings service in the live config."""
+    return _selected_service(config.get("backends") or {}, _EMBEDDINGS_CAPABILITY)
 
 
 def host_for_capability(capability: str) -> str | None:
@@ -1477,8 +1484,9 @@ def _workflows_directory(configured: Any) -> Path:
 
 
 def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
-    """The model id the embeddings service's record names (its default when the record names none)."""
-    return engine_record_defaults.record_value("embeddings", (backends or {}).get("embeddings"), "model_id")
+    """The model id the selected embeddings service's record names (the role's default when it names none)."""
+    record = (_selected_service(backends or {}, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
+    return engine_record_defaults.record_value("embeddings", record, "model_id")
 
 
 def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
@@ -1492,7 +1500,7 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     backends = effective_cfg.get("backends") or {}
     tts_c = (_selected_service(backends, _SPEECH_CAPABILITY) or ("", {}))[1]
     stt_c = (_selected_service(backends, _TRANSCRIPTION_CAPABILITY) or ("", {}))[1]
-    emb_c = backends.get("embeddings") or {}
+    emb_c = (_selected_service(backends, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
     cfy_c = backends.get(_GRAPH_BACKEND_ID) or {}
     protocol_registry = registry or service_registry.release_registry()
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
@@ -4449,10 +4457,11 @@ async def check_service_health(service_id: str) -> bool:
 
 
 async def check_embeddings_health() -> bool:
-    """Check if the dedicated embeddings backend is healthy."""
-    if not DERIVED.EMBEDDINGS_ENABLED:
+    """Check if the selected embeddings service is healthy."""
+    selected = _embeddings_service()
+    if not DERIVED.EMBEDDINGS_ENABLED or selected is None:
         return False
-    return await check_service_health("embeddings")
+    return await check_service_health(selected[0])
 
 
 # =============================================================================
@@ -15069,7 +15078,8 @@ def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
         config,
         enabled_flags={
             "llm": bool(DERIVED.LLM_BACKEND_HOSTS),
-            "embeddings": DERIVED.EMBEDDINGS_ENABLED and bool((runtime().config.get("backends") or {}).get("embeddings")),
+            "embeddings": DERIVED.EMBEDDINGS_ENABLED and _selected_service(
+                runtime().config.get("backends") or {}, _EMBEDDINGS_CAPABILITY) is not None,
             "tts": DERIVED.TTS_ENABLED,
             "stt": DERIVED.STT_ENABLED,
             "images": DERIVED.COMFY_ENABLED,
@@ -15390,7 +15400,7 @@ async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
                 if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
                     selected[0]
-                    for capability in (_SPEECH_CAPABILITY, _TRANSCRIPTION_CAPABILITY, "audio.translations", "embeddings")
+                    for capability in (_SPEECH_CAPABILITY, _TRANSCRIPTION_CAPABILITY, "audio.translations", _EMBEDDINGS_CAPABILITY)
                     if (selected := service_for_capability(capability)) is not None
                 ] + [service_id for service_id in [_highest_priority_chat_backend()] if service_id]
                 + [str(route["service_id"])
