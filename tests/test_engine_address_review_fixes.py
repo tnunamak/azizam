@@ -295,3 +295,148 @@ def test_join_base_path_endpoint_overrides_decoded_parameter_name(base, endpoint
     from gateway import service_registry
     joined = service_registry.join_base_path(base, endpoint)
     assert [v for k, v in parse_qsl(urlsplit(joined).query) if k == name] == ["new"]
+
+
+# --- S8a address review: the remaining sites read the record's one address ---------------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+from gateway import engine_protocol, model_presentation, service_registry  # noqa: E402
+from gateway.engine_protocol.types import CanonicalRequest, Connection  # noqa: E402
+
+QUERY_BASE = "https://example.com/p?tenant=a"
+
+
+def _query_conn():
+    """A connection whose address holds a query. ``Connection`` refuses one today; the sites must still join correctly if one arrives."""
+    return SimpleNamespace(address=QUERY_BASE, credentials={}, headers={}, timeouts=Connection(address="https://example.com").timeouts)
+
+
+def test_capability_host_keeps_scheme(monkeypatch):
+    rec = {"host": "example.com", "port": 8443, "scheme": "https"}
+    monkeypatch.setattr(proxy, "service_for_capability", lambda _cap: ("tts", rec))
+    assert proxy.host_for_capability("audio.speech") == "https://example.com:8443"
+    monkeypatch.setattr(proxy, "service_for_capability", lambda _cap: ("tts", {"base_url": "https://example.com/p"}))
+    assert proxy.host_for_capability("audio.speech") == "https://example.com/p"
+    monkeypatch.setattr(proxy, "service_for_capability", lambda _cap: ("tts", {}))
+    assert proxy.host_for_capability("audio.speech") is None
+
+
+def test_alias_engine_without_host_never_builds_none_url(monkeypatch):
+    backends = {"alias-eng": {"base_url": "https://example.com/p"}, "bare": {}}
+    monkeypatch.setattr(proxy, "config", {**proxy.config, "backends": backends})
+    monkeypatch.setattr(proxy, "_speech_engines", lambda: {"e": {"service": "alias-eng"}, "f": {"service": "bare"}})
+    monkeypatch.setattr(proxy, "_alias_engine_available_for", lambda _kind: (lambda _id, _spec: True))
+    assert proxy._speech_engine_endpoint("e") == ("alias-eng", "https://example.com/p")
+    assert proxy._speech_engine_endpoint("f") is None
+    assert proxy._speech_service_base("alias-eng") == "https://example.com/p"
+    assert proxy._speech_service_base("bare") == ""
+    assert proxy._speech_service_base("missing") == ""
+    assert "None" not in (proxy._speech_service_base("alias-eng") or "")
+
+
+def test_backend_address_reads_the_record_address():
+    assert proxy._backend_address({"host": "example.com", "port": 8443, "scheme": "https"}) == "https://example.com:8443"
+    assert proxy._backend_address({"base_url": "https://example.com/p"}) == "https://example.com/p"
+    assert proxy._backend_address({}) is None
+
+
+def test_probe_join_keeps_base_query():
+    assert proxy._probe_join(QUERY_BASE, "/health") == "https://example.com/p/health?tenant=a"
+    assert proxy._probe_join(QUERY_BASE, "https://example.com/h") == "https://example.com/h"
+
+
+def test_inline_tts_url_keeps_base_query():
+    from gateway.engine_protocol import inline_tts
+    seen = []
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def post(self, url, **_kw):
+            seen.append(url)
+            raise inline_tts.httpx.ConnectError("stop")
+
+    conn = _query_conn()
+    with patch.object(inline_tts.engine_egress, "async_client", lambda **_k: _Client()):
+        for op in ("speech.synthesize", "speech.voice_check"):
+            with pytest.raises(Exception):
+                asyncio.run(inline_tts.InlineTtsAdapter().invoke(conn, op, CanonicalRequest(op=op, body={})))
+    assert seen == ["https://example.com/p/v1/audio/speech?tenant=a", "https://example.com/p/v1/audio/voice-check?tenant=a"]
+
+
+def test_chunked_stt_url_keeps_base_query():
+    from gateway.engine_protocol import chunked_stt
+    seen = []
+
+    async def post_once(url, timeout, request):
+        seen.append(url)
+        return None
+
+    route = next(iter(chunked_stt.ROUTES))
+    with patch.object(chunked_stt.ChunkedSttAdapter, "_post_once", staticmethod(post_once)):
+        asyncio.run(chunked_stt.ChunkedSttAdapter().invoke(
+            _query_conn(), route, chunked_stt.SttUpload.__new__(chunked_stt.SttUpload)))
+    assert seen == [service_registry.join_base_path(QUERY_BASE, chunked_stt.ROUTES[route])]
+    assert seen[0].endswith("?tenant=a") and "?tenant=a/" not in seen[0]
+
+
+def test_node_graph_url_keeps_base_query():
+    from gateway.engine_protocol import node_graph
+    session = node_graph.GraphSession(_query_conn(), None)
+    assert session._url("/view") == "https://example.com/p/view?tenant=a"
+
+
+def test_executor_url_keeps_base_query():
+    from gateway.engine_protocol import description, executor
+    from gateway.engine_protocol.assets import MemoryAssetStore
+    doc = {"protocol_version": 1, "id": "t", "executor": "http-v1", "operations": {
+        "ping": {"class": "inventory", "request": {"method": "GET", "path": "/ping", "query": [{"name": "q", "from": "/params/q"}]}, "response": {"framing": "json"}}}}
+    desc = description.parse_description(doc, source="t.yml")
+    ex = executor.HttpV1Executor(desc, assets=MemoryAssetStore())
+    spec = desc.operations["ping"].request
+    source = {"body": {}, "params": {"q": "x y"}, "files": {}}
+    wire = asyncio.run(ex._build(_query_conn(), spec, desc.operations["ping"], source))
+    assert wire.url == "https://example.com/p/ping?tenant=a&q=x%20y"
+
+
+def test_startup_banner_prints_no_userinfo_or_query(monkeypatch, capsys):
+    secret_url = "https://u:pw@example.com:9/p?token=abc"
+    cfg = {"backends": {k: {"base_url": secret_url} for k in ("tts", "stt", "comfyui")}}
+    derived = proxy._derive_backend_constants(cfg)
+    lines = proxy._backend_banner_lines(derived)
+    text = "\n".join(lines)
+    assert "pw" not in text and "token=abc" not in text and "u:" not in text
+    assert "example.com" in text
+
+
+@pytest.mark.parametrize("record", [
+    {"host": "example.com", "port": 1, "base_url": "https://203.0.113.5:2/p"},
+    {"host": "example.com", "connection": {"address": "https://203.0.113.9:9"}},
+    {"base_url": "https://example.com/p"},
+    {"host": "example.com", "port": 8443, "scheme": "https"},
+    {},
+])
+def test_health_base_agrees_with_engine_base_address(record):
+    expected = service_registry.engine_base_address(record) or None
+    assert model_presentation.health_base({"config": record}) == expected
+    assert model_presentation.health_base(record) == expected
+
+
+@pytest.mark.parametrize("record", [
+    {"host": "http://evil", "port": 80},
+    {"host": "a b", "port": 80},
+    {"host": "example.com", "port": False},
+    {"host": "example.com", "port": 0},
+    {"host": "example.com", "port": 70000},
+])
+def test_host_port_origin_refuses_malformed_host_or_port(record):
+    with pytest.raises(service_registry.EngineAddressError) as caught:
+        service_registry.checked_engine_base_address(record)
+    assert "evil" not in str(caught.value) and "a b" not in str(caught.value)
+    assert service_registry.engine_base_address(record) == ""

@@ -43,6 +43,7 @@ from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
 from gateway import engine_egress
+from gateway.service_registry import join_base_path
 
 SPEECH_PATH = "/v1/audio/speech"
 VOICE_CHECK_PATH = "/v1/audio/voice-check"
@@ -72,8 +73,8 @@ class InlineTtsAdapter:
         if op not in OPERATIONS:
             raise UnknownOperation(f"The speech adapter has no operation '{op}'.")
         if op in _JSON_ROUTES:
-            return await self._posted_json(f"{conn.address}{_JSON_ROUTES[op]}", request.body, conn)
-        url = f"{conn.address}{SPEECH_PATH}"
+            return await self._posted_json(join_base_path(conn.address, _JSON_ROUTES[op]), request.body, conn)
+        url = join_base_path(conn.address, SPEECH_PATH)
         body = request.raw_body if request.raw_body is not None else json.dumps(request.body).encode()
         headers = request.headers
         timeout = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)

@@ -42,6 +42,7 @@ from typing import Any, AsyncIterator, Callable, Mapping
 from urllib.parse import quote, quote_plus, urljoin, urlsplit
 
 from gateway.engine_protocol import framing, pointer
+from gateway.service_registry import join_base_path
 from gateway.engine_protocol.assets import AssetStore, served_media_type
 from gateway.engine_protocol.budgets import Budgets
 from gateway.engine_protocol.description import (
@@ -394,11 +395,10 @@ class HttpV1Executor:
             body, headers["content-type"] = await self._multipart(spec, source)
         if body is not None and len(body) > budgets.max_request_bytes:
             raise BudgetExceeded("max_request_bytes", f"The request body is larger than {budgets.max_request_bytes} bytes.")
-        base = conn.address.rstrip("/")
-        url = base + path
         if query:
             from urllib.parse import urlencode
-            url += "?" + urlencode(query, quote_via=quote)
+            path += "?" + urlencode(query, quote_via=quote)
+        url = join_base_path(conn.address, path)
         if _origin(url) != _origin(conn.address):
             raise MappingError("The request would leave the engine's origin.")  # unreachable by construction; a guard, not a feature
         return WireRequest(spec.method, url, headers, body)
