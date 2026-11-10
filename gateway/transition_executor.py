@@ -962,7 +962,11 @@ class Executor:
             if step == "restore" and outcome != "unknown":
                 # Restore settlement may write a reset intent, which requires a running operation. Keep the held
                 # intent: a reset lives under "restore" but must use the reset's attestation and clean verification.
-                resumed = await asyncio.to_thread(self.store.resume, op_id)
+                # A restore's own success needs no new intent: its outcome commits while the row still holds, and
+                # the hand-off resumes it (a crash between the two recovers on the next start).
+                resumed = operation
+                if operation.step_intent.effect == "reset" or outcome != "success":
+                    resumed = await asyncio.to_thread(self.store.resume, op_id)
                 settled = await self._settle(self._steps.get(step), resumed, ctx.adapter, ctx.policy,
                                              operation.step_intent, result)
                 if settled in ("continue", "skip"):
