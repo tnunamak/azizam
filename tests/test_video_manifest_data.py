@@ -186,6 +186,9 @@ def reference_variant_records(monkeypatch) -> tuple[SimpleNamespace, ...]:
          "default": {"in": "extension"}},
         {"select": {"any": True}, "default": {"in": "extension"}},
     ]}
+    # The execution table is required; the bundled one serves, since no fixture intent has a row.
+    bundled = (ROOT / "registry" / "workflow_request_maps.yml").read_text(encoding="utf-8")
+    document["execution"] = yaml.safe_load(bundled)["execution"]
     with monkeypatch.context() as context:
         context.setattr(Path, "read_text", lambda *_args, **_kwargs: json.dumps(document))
         maps = workflow_request_maps.load(Path("variant-reference-fixture.yml"))
