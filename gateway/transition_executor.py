@@ -929,8 +929,9 @@ class Executor:
         """The owner settles a held step (decision G3). Only a reconciling operation, at that step, takes it.
 
         ``success`` lets the operation go on with its next step; ``unknown`` changes nothing; ``no_change``
-        follows the servable rule (see the module notes) when the profile attests it for the step, and holds
-        ``failed_closed`` otherwise; any other outcome holds ``failed_closed``. A stale call raises ``StaleOutcome`` and changes nothing.
+        follows the step's settlement rule. Restore and reset use the stored effect identity, the corresponding
+        profile attestation and clean verification; other steps follow the servable rule. Continuing restores
+        recheck readiness at the open boundary. A stale call raises ``StaleOutcome`` and changes nothing.
         """
         operation = await asyncio.to_thread(self.store.get, op_id)
         if operation is None:
@@ -958,6 +959,17 @@ class Executor:
             result = EffectResult(outcome=outcome, evidence_ref=evidence_ref)  # type: ignore[arg-type]
             ctx = StepContext(operation=operation, store=self.store, adapter=self._adapter_for(operation.domain),
                               snapshots=self._snapshots, policy=self._policy_of(operation.domain))
+            if step == "restore" and outcome != "unknown":
+                # Restore settlement may write a reset intent, which requires a running operation. Keep the held
+                # intent: a reset lives under "restore" but must use the reset's attestation and clean verification.
+                resumed = await asyncio.to_thread(self.store.resume, op_id)
+                settled = await self._settle(self._steps.get(step), resumed, ctx.adapter, ctx.policy,
+                                             operation.step_intent, result)
+                if settled in ("continue", "skip"):
+                    await self._resume_from(op_id, ctx.adapter, ctx.policy, step)
+                else:
+                    await self._finish_for(resumed, settled)
+                return (await asyncio.to_thread(self.store.get, op_id))  # type: ignore[return-value]
             verdict = verdict_for(outcome)
             if outcome == "no_change":
                 # The owner says the step changed nothing: believe it as a profile-attested no_change is believed. A check

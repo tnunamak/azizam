@@ -554,15 +554,14 @@ class RestoreStep:
 
     async def _clean(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter) -> Optional[bool]:
         """Is the target clean and serving? The profile's reset ``verify`` observation, else (only
-        after a reset that succeeded) the resident observation naming the target."""
+        after a reset that succeeded) the resident observation naming the exact target and confirming ready."""
         domain, target = ctx.operation.domain, ctx.operation.target
         call = adapter.observe(domain, sp.reset_verify) if sp.reset_verify else adapter.resident(domain)
         evidence = await _evidence(call, sp.deadline("query"))
         value = _observed(evidence, ctx.operation, sp, self._clock)
-        if value is True and not sp.reset_verify and evidence is not None and target is not None:
-            offering = evidence.detail.get("offering")
-            if offering is not None and offering != target:
-                return False
+        if value is True and not sp.reset_verify and evidence is not None:
+            return (target is not None and evidence.detail.get("offering") == target
+                    and evidence.detail.get("ready") is True)
         return value
 
 
