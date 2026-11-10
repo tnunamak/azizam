@@ -1597,6 +1597,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     updates = _derive_backend_constants(new_cfg, registry=registry)
     # The workflow registry is built whole here too, so a failure leaves the old one serving; ``adopt`` below swaps it in.
     workflow_registry = _load_gateway_workflow_registry(strict=True)
+    # The image graph roles are checked against that registry here too; a table that does not match leaves the old config serving.
+    image_roles = _load_image_graph_roles(new_cfg.get("images"), workflow_registry, updates["_GRAPH_BINDING"])
     # The registry snapshot is built whole here too (strict), so a revision that does not build leaves the old one serving.
     next_registry_snapshot = _build_registry_snapshot(new_cfg.get("model_aliases"), strict=True)
     # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
@@ -1640,6 +1642,7 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
         _g[name] = updates[name]
     # Swapped in place, not assigned: a router and a bound method hold the registry from import (8.4).
     GATEWAY_WORKFLOW_REGISTRY.adopt(workflow_registry)
+    _g["_IMAGE_GRAPH_ROLES"] = image_roles
     GATEWAY_REGISTRY_PROVIDER.swap(next_registry_snapshot)
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
 
@@ -14427,11 +14430,20 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
 
 
 GATEWAY_WORKFLOW_REGISTRY = _load_gateway_workflow_registry()
-# The images section's graph_roles, checked once against the registry's graphs: an invalid table stops the boot. A
-# registry that could not be read (reported above) has no graphs to check them against.
-_IMAGE_GRAPH_ROLES: Mapping[str, Any] = (
-    image_graph_roles.load(_images_section(), GATEWAY_WORKFLOW_REGISTRY, DERIVED._GRAPH_BINDING)
-    if GATEWAY_WORKFLOW_REGISTRY.records() else {})
+
+
+def _load_image_graph_roles(images: Any, registry: WorkflowRegistry, binding: str) -> Mapping[str, Any]:
+    """The images section's ``graph_roles``, checked against ``registry``'s graphs; an invalid table raises.
+
+    A registry that could not be read (reported when it loaded) has no graphs to check the table against.
+    """
+    return image_graph_roles.load(images if isinstance(images, Mapping) else {}, registry, binding) if registry.records() else {}
+
+
+# Read at the boot and again by each reload, before the reload publishes (`_publish_runtime_config`): a table that does
+# not match the registry stops the boot, and keeps the config that is serving.
+_IMAGE_GRAPH_ROLES: Mapping[str, Any] = _load_image_graph_roles(
+    _images_section(), GATEWAY_WORKFLOW_REGISTRY, DERIVED._GRAPH_BINDING)
 
 
 def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict: bool = False) -> registry_snapshot.Snapshot:

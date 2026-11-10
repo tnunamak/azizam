@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 
 import proxy
+import yaml
+from gateway.discovery import WorkflowRegistry
+from tests.test_image_graph_golden import release_graph_roles
 
 ROOT = Path(__file__).resolve().parents[1]
 # The keys the image routes read from a graph's roles.
@@ -39,9 +42,32 @@ def _roles(manifest, path, graph_meta):
     return proxy._image_graph_roles(copy.deepcopy(manifest), graph_meta, graph, Path(path).stem)
 
 
-def test_the_boot_loaded_the_roles_of_all_eighteen_shipped_graphs():
+@pytest.fixture(autouse=True)
+def release_table(monkeypatch):
+    """The test deployment boots with an empty table (see release_graph_roles); the release's own is put in place."""
+    monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", release_graph_roles())
+
+
+def _release_section():
+    return yaml.safe_load((ROOT / "registry" / "defaults" / "images.yml").read_text())
+
+
+def test_the_release_table_covers_all_eighteen_shipped_graphs():
     assert len(SHIPPED) == 18
     assert {param.values[1] for param in SHIPPED} == set(proxy._IMAGE_GRAPH_ROLES)
+
+
+def test_the_loader_the_boot_and_each_reload_use_checks_the_table_against_the_registry():
+    registry = proxy.GATEWAY_WORKFLOW_REGISTRY
+    binding = proxy.DERIVED._GRAPH_BINDING
+    assert len(proxy._load_image_graph_roles(_release_section(), registry, binding)) == 18
+    section = _release_section()
+    section["graph_roles"]["workflows/images/not-a-graph.json"] = {}
+    with pytest.raises(ValueError, match="not-a-graph"):
+        proxy._load_image_graph_roles(section, registry, binding)
+    # A registry that could not be read has no graphs to check against; an images section that is not a mapping has no table.
+    assert proxy._load_image_graph_roles(section, WorkflowRegistry(), binding) == {}
+    assert proxy._load_image_graph_roles(None, registry, binding) == {}
 
 
 @pytest.mark.parametrize(("manifest", "path"), SHIPPED)

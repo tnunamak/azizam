@@ -6,6 +6,9 @@ every posted graph byte for byte as it was. ``tests/fixtures/image_graph_golden/
 posted to ``/prompt`` (parsed from the raw request body, in post order), the receipt's requested and resolved workflow
 names, and the key each round asked the VRAM estimate for (the batching key).
 
+Each case runs with the release's graph_roles table in place and with an empty one (the graph's own ``_meta`` block then
+supplies what no other home carries), and the engine must receive the same graphs both ways.
+
 Cases: every generate workflow with a size that is not the default, with ``n=2`` (and a known VRAM estimate, so one round
 carries the batch), with ``background=transparent``, with no seed sent, and with the workflow's own ``batch_size`` input;
 every edit workflow with one source image and with ``background=transparent``; the two-reference workflow with two
@@ -33,6 +36,7 @@ from PIL import Image
 
 import proxy
 from tests import test_adapter_differential as base
+from gateway import image_graph_roles
 from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, history_done
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,8 +165,24 @@ def _mask_seeds(graph: dict, manifest: dict) -> None:
         graph[target["node"]]["inputs"][target["input"]] = "<random-seed>"
 
 
-def observe(tmp_path: Path, scenario: str, name: str, run: int) -> dict:
-    """One case on a fresh rig: the graphs the engine received and what the route recorded about them."""
+def release_graph_roles() -> dict:
+    """The graph_roles table the release ships (registry/defaults/images.yml), checked against the registry.
+
+    The test deployment's images block was imported as the owner's whole state before the table existed, so the
+    config it boots with has an empty table; the release's own table is put in place for the "release" runs.
+    """
+    section = yaml.safe_load((ROOT / "registry" / "defaults" / "images.yml").read_text())
+    table = image_graph_roles.load(section, proxy.GATEWAY_WORKFLOW_REGISTRY, proxy.DERIVED._GRAPH_BINDING)
+    assert len(table) == 18
+    return table
+
+
+def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "release") -> dict:
+    """One case on a fresh rig: the graphs the engine received and what the route recorded about them.
+
+    ``roles`` is "release" (the shipped graph_roles table is in place) or "graph-meta" (the table is empty, as for an
+    install whose images section does not carry it): the engine must receive the same graphs either way.
+    """
     path, call = _request(scenario, name)
     posted: list[dict] = []
     vram_keys: list[list] = []
@@ -181,6 +201,7 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int) -> dict:
             return await inner(transport, request)
 
         rig.monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", tap)
+        rig.monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", release_graph_roles() if roles == "release" else {})
         estimate = 100 if scenario in ("generate-n2", "edit-n2", "generate-batch-input") else None
 
         def spy(workflow_name, width, height):
@@ -208,15 +229,17 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int) -> dict:
     }
 
 
+@pytest.mark.parametrize("roles", ["release", "graph-meta"])
 @pytest.mark.parametrize(("scenario", "name"), CASES, ids=[f"{s}:{n}" for s, n in CASES])
-def test_the_engine_receives_the_recorded_graph(tmp_path, record_testsuite_property, scenario, name):
-    first = observe(tmp_path, scenario, name, 0)
+def test_the_engine_receives_the_recorded_graph(tmp_path, record_testsuite_property, scenario, name, roles):
+    first = observe(tmp_path, scenario, name, 0, roles)
     key = f"{scenario}/{name}"
-    record_testsuite_property(f"image_graph_golden.{key}", json.dumps(first, sort_keys=True))
+    if roles == "release":
+        record_testsuite_property(f"image_graph_golden.{key}", json.dumps(first, sort_keys=True))
     assert first["status"] == [200], f"{key}: the route did not answer 200, so the scenario proves nothing"
     assert first["graphs"], f"{key}: no graph reached the engine"
     # Two runs on fresh rigs agree: the recorded values do not depend on the run.
-    assert observe(tmp_path, scenario, name, 1) == first, f"{key}: two runs differ"
+    assert observe(tmp_path, scenario, name, 1, roles) == first, f"{key}: two runs differ"
     golden = json.loads(FIXTURE.read_text()) if FIXTURE.exists() else {}
     assert key in golden, f"{key}: not in {FIXTURE.name}; record it (see the module docstring)"
     assert first == golden[key]
