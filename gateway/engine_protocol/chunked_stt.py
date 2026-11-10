@@ -49,7 +49,7 @@ import httpx
 
 from gateway import private_io, stt_chunking
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
-from gateway.engine_protocol.description import ProtocolDescription
+from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description
 from gateway.engine_protocol.errors import UnknownOperation, UnsupportedByAdapter
 from gateway.engine_protocol.httpx_wire import failure, lower_headers, reply_from
 from gateway.engine_protocol.types import (
@@ -178,11 +178,12 @@ def _backend_errors(label: str) -> Iterator[None]:
 class _RunWire:
     """The requests of one run, over the run's one client."""
 
-    def __init__(self, label: str, client: httpx.AsyncClient, url: str, run: SttRun) -> None:
+    def __init__(self, label: str, client: httpx.AsyncClient, url: str, run: SttRun, filenames: Mapping[str, str] | None = None) -> None:
         self._label = label
         self._client = client
         self._url = url
         self._run = run
+        self._filenames = filenames if filenames is not None else load_shipped_description(ADAPTER_ID).multipart_filenames
 
     async def send_files(self, files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
         run, client = self._run, self._client
@@ -216,7 +217,7 @@ class _RunWire:
         try:
             for index, (name, upload) in enumerate(self._run.uploads):
                 handle = stt_chunking.source_path(upload).open("rb")
-                opened.append((name, handle, upload.filename or "audio", upload.content_type or "application/octet-stream"))
+                opened.append((name, handle, upload.filename or self._filenames["unnamed"], upload.content_type or "application/octet-stream"))
                 cleanup.add(f"direct_upload_handle_{index}", handle.close)
             return await self.send_files([(name, (filename, handle, media_type)) for name, handle, filename, media_type in opened])
         finally:
@@ -307,7 +308,11 @@ class ChunkedSttAdapter:
     interface_version = ADAPTER_INTERFACE_VERSION
 
     def __init__(self, description: ProtocolDescription | None = None) -> None:
-        self.label = (description.label if description is not None else "") or _DEFAULT_LABEL
+        description = description if description is not None else load_shipped_description(ADAPTER_ID)
+        self.label = description.label or _DEFAULT_LABEL
+        self._filenames = description.multipart_filenames
+        if not self._filenames:
+            raise ValueError("multipart_filenames is required")
 
     async def health(self, conn: Connection) -> Health:
         return Health("unknown", "Readiness of this engine is observed by its lifecycle driver, not by this adapter.")
@@ -370,7 +375,7 @@ class ChunkedSttAdapter:
         execution = run.execution
         client = engine_egress.async_client(timeout=timeout)
         run.cleanup.add("http_client", client.aclose)
-        wire = _RunWire(self.label, client, url, run)
+        wire = _RunWire(self.label, client, url, run, self._filenames)
         uploads = run.uploads
         prepared_source: Path | None = None
         if len(uploads) == 1:
@@ -379,7 +384,7 @@ class ChunkedSttAdapter:
                 prepared_source = await wire.prepared_wav(upload)
             outcome = await stt_chunking.execute_chunking(
                 source_path=prepared_source or stt_chunking.source_path(upload),
-                source_stem=Path(upload.filename or "audio").stem or "audio",
+                source_stem=Path(upload.filename or self._filenames["chunk_stem"]).stem or self._filenames["chunk_stem"],
                 fields=run.fields,
                 config=execution,
                 post_file=lambda path, filename: wire.post_file(path, filename, "audio/wav"),
@@ -412,10 +417,10 @@ class ChunkedSttAdapter:
         if run.stream and len(uploads) == 1:
             return await wire.open_stream(
                 prepared_source or stt_chunking.source_path(uploads[0][1]),
-                "audio.wav" if prepared_source else (uploads[0][1].filename or "audio"),
+                self._filenames["normalized"] if prepared_source else (uploads[0][1].filename or self._filenames["unnamed"]),
             )
         if prepared_source is not None:
-            direct = await wire.post_file(prepared_source, "audio.wav", "audio/wav")
+            direct = await wire.post_file(prepared_source, self._filenames["normalized"], "audio/wav")
         else:
             direct = await wire.post_uploads()
         return _transcript(direct, "direct")

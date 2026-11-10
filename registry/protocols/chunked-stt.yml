@@ -13,6 +13,11 @@ title: OpenAI-shaped transcription route
 label: STT backend
 executor: adapter:chunked-stt
 serves: [transcriptions]
+# Multipart names used only when an upload supplies no name or is normalized.
+multipart_filenames:
+  unnamed: audio
+  chunk_stem: audio
+  normalized: audio.wav
 operations:
   stt.transcribe: {class: generate}
   stt.translate: {class: generate}

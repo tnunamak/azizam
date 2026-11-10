@@ -2,7 +2,6 @@
   "files": {
     "firehose_render.py": 65,
     "gateway/a1111_api.py": 2,
-    "gateway/extension_catalog.py": 1,
     "gateway/lifecycle_drivers.py": 11,
     "gateway/local_capabilities.py": 3,
     "gateway/model_files.py": 2,

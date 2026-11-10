@@ -11,12 +11,60 @@
     "executor",
     "operations"
   ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "executor": {
+            "const": "adapter:chunked-stt"
+          }
+        },
+        "required": [
+          "executor"
+        ]
+      },
+      "then": {
+        "required": [
+          "multipart_filenames"
+        ]
+      }
+    }
+  ],
   "properties": {
     "protocol_version": {
       "const": 1
     },
     "retention_facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
     "result_selectors": {"type": "object", "description": "The selector form a binding of this engine accepts (gateway/output_selectors.py). Checked when the file loads; a malformed block refuses the whole description."},
+    "multipart_filenames": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unnamed",
+        "chunk_stem",
+        "normalized"
+      ],
+      "properties": {
+        "unnamed": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "chunk_stem": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?![\\s\\S])"
+        },
+        "normalized": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?![\\s\\S])"
+        }
+      }
+    },
     "binding_fields": {
       "type": "object",
       "minProperties": 1,

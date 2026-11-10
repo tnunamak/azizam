@@ -12,6 +12,7 @@ import yaml
 from starlette.convertors import CONVERTOR_TYPES
 from starlette.routing import PARAM_REGEX
 
+from gateway import toolcall_detection as _message_data
 from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.chat_extensions import (
@@ -181,11 +182,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                         "name": "metadata",
                         "values": ["full", "none"],
                         "default": "the app profile's media_metadata.default",
-                        "description": (
-                            "Whether delivered media keeps its embedded ComfyUI workflow "
-                            "and gateway provenance (full) or has all metadata removed "
-                            "losslessly (none). Valid on every route that returns generated media."
-                        ),
+                        "description": _message_data.GATEWAY_MESSAGES["metadata_description"],
                     }
                 ],
                 "routes": [
