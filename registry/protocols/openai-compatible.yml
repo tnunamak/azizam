@@ -10,6 +10,9 @@ protocol_version: 1
 id: openai-compatible
 title: OpenAI-compatible HTTP API
 executor: http-v1
+catalog:
+  intent: chat.completions
+  aliases: [openai-chat, anthropic-messages]
 
 auth:
   inference: {kind: bearer}

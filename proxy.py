@@ -16743,7 +16743,8 @@ MULTIPART_HOST = multipart_adapter.MultipartHost(
     jobs_path=lambda: media_jobs.DB_PATH,
     limits=lambda: result_bundle.limits_from_config(runtime().config),
 )
-workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
+for _multipart_runner in multipart_adapter.runners(MULTIPART_HOST):
+    workflow_adapters.register(_multipart_runner)
 
 
 _MOUNTED_ROW_IDS = ("mesh-generations", "mesh-glb")        # the bundled frontend rows this gateway mounts

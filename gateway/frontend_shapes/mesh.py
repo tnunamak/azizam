@@ -13,12 +13,11 @@ from typing import Any
 
 from starlette.responses import JSONResponse, Response
 
+from gateway.engine_protocol import description
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import Shape
 from gateway.mesh_manifest import MESH_MEDIA_TYPE as OUTPUT_MEDIA_TYPE
 from gateway.workflow_runtime_types import CallerContext, JobService, RunJobView
-
-_MESH_ADAPTER = "http-multipart"
 
 _ROUTE_TYPES = frozenset({"asset", "integer", "string", "object"})
 # The picture types the route sniffs (``sniff_image``). The picture input must accept exactly these: a type the route cannot
@@ -113,11 +112,19 @@ def mesh_profile(contract: Mapping[str, Any]) -> list[str]:
     if len(bindings) != 1:
         problems.append("exactly one binding")
     binding = next(iter(bindings.values()), None) if len(bindings) == 1 else None
-    if len(bindings) == 1 and (next(iter(bindings)) != _MESH_ADAPTER or not isinstance(binding, Mapping)
-                               or not isinstance(binding.get("service"), str) or not isinstance(binding.get("path"), str)
-                               or not isinstance(binding.get("map"), Mapping)):
-        problems.append(f"the binding must be a {_MESH_ADAPTER} binding with a service, a path and a map")
-    mapping = binding.get("map") if isinstance(binding, Mapping) and isinstance(binding.get("map"), Mapping) else {}
+    documents = description.load_registry()
+    candidates = [doc for doc in documents.values() if doc.binding in bindings and doc.multipart
+                  and doc.implementation == "multipart_post"]
+    selected = candidates[0] if len(candidates) == 1 else None
+    fields = selected.multipart if selected is not None else {}
+    if len(bindings) == 1 and (selected is None or not isinstance(binding, Mapping)
+                               or not isinstance(binding.get(fields.get("service")), str)
+                               or not isinstance(binding.get(fields.get("path")), str)
+                               or not isinstance(binding.get(fields.get("map")), Mapping)):
+        default = description.shipped_for_implementation("multipart_post")
+        problems.append(f"the binding must be a {default.binding} binding with a service, a path and a map")
+    mapping = binding.get(fields.get("map")) if isinstance(binding, Mapping) else None
+    mapping = mapping if isinstance(mapping, Mapping) else {}
     for name, spec in inputs.items():
         problems.extend(_input_problems(name, spec, name in mapping))
     for logical, target in mapping.items():
