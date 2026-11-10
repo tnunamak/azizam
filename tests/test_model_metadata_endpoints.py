@@ -25,6 +25,7 @@ from tests.support.config_snapshot import derived_patch
 from tests.support.access import access_context, authenticated, identity, plan_for  # noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
+from gateway.product_contracts import load_model_metadata_vocabularies  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
 from tests.support.config_snapshot import section_published
 
@@ -126,6 +127,38 @@ SHIPPED_METADATA_CONTRACT = mm.MetadataContract(
     ),
     implications=(mm.TagInputImplication("language", "vision", "image"),),
 )
+
+
+class ModelMetadataDocumentationTests(unittest.TestCase):
+    def test_documented_vocabularies_match_schema_in_order(self) -> None:
+        path = ROOT / "docs/api/MODEL_METADATA.md"
+        document = path.read_text(encoding="utf-8")
+        vocabularies = load_model_metadata_vocabularies(ROOT / "registry/defaults/models.schema.json")
+        for vocabulary, values in vocabularies.items():
+            with self.subTest(vocabulary=vocabulary):
+                start = f"<!-- model-metadata:{vocabulary}:start -->"
+                end = f"<!-- model-metadata:{vocabulary}:end -->"
+                expected_values = ", ".join(f"`{value}`" for value in values)
+                expected_span = f"{start} {expected_values} {end}"
+                for marker in (start, end):
+                    self.assertEqual(
+                        document.count(marker), 1,
+                        f"{path}: expected exactly one {marker}\nExpected marked list: {expected_span}",
+                    )
+                line = next(line for line in document.splitlines() if start in line)
+                prefix, marked = line.split(start, 1)
+                self.assertIn(
+                    end, marked,
+                    f"{path}: {vocabulary} markers must surround one list on the same line"
+                    f"\nExpected marked list: {expected_span}",
+                )
+                documented_values, suffix = marked.split(end, 1)
+                expected_line = f"{prefix}{expected_span}{suffix}"
+                self.assertEqual(
+                    documented_values, f" {expected_values} ",
+                    f"{path}: {vocabulary} must match the schema enum in order"
+                    f"\nExpected line:\n{expected_line}",
+                )
 
 
 class ModelListEndpointTests(unittest.TestCase):

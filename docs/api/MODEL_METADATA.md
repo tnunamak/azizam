@@ -18,12 +18,12 @@ The new fields are additive; OpenAI clients ignore unknown keys (checked against
 
 | Field | Type | Values | When present |
 |---|---|---|---|
-| `type` | string | `language`, `embedding`, `reranking`, `image`, `video`, `audio`, `decision` | Every entry the gateway can classify. |
-| `architecture.input_modalities` | string[] | subset of `text`, `image`, `audio`, `video`, `file` | Whenever `type` is present. |
-| `architecture.output_modalities` | string[] | subset of `text`, `image`, `audio`, `video`, `embedding` | Whenever `type` is present. |
+| `type` | string | <!-- model-metadata:types:start --> `language`, `embedding`, `reranking`, `image`, `video`, `audio`, `decision` <!-- model-metadata:types:end --> | Every entry the gateway can classify. |
+| `architecture.input_modalities` | string[] | subset of <!-- model-metadata:input_modalities:start --> `text`, `image`, `audio`, `video`, `file` <!-- model-metadata:input_modalities:end --> | Whenever `type` is present. |
+| `architecture.output_modalities` | string[] | subset of <!-- model-metadata:output_modalities:start --> `text`, `image`, `audio`, `video`, `embedding` <!-- model-metadata:output_modalities:end --> | Whenever `type` is present. |
 | `context_window` | int | total tokens | Already emitted before this contract; unchanged. Omitted if unknown. |
 | `max_tokens` | int | max output tokens per request | Only when an operator declares it. Never guessed. |
-| `tags` | string[] | subset of `tool-use`, `reasoning`, `vision`, `file-input` | `language` entries only, and only declared or derivable facts. Omitted when empty. |
+| `tags` | string[] | subset of <!-- model-metadata:tags:start --> `tool-use`, `reasoning`, `vision`, `file-input` <!-- model-metadata:tags:end --> | `language` entries only, and only declared or derivable facts. Omitted when empty. |
 | `azizam_availability` | object | `{"state": "available" \| "unavailable" \| "unknown", "reason"?: string}` | Every entry the gateway can map to the service or services that serve it. `reason` only when `unavailable`. |
 
 Semantics:
