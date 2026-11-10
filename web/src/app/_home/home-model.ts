@@ -246,10 +246,12 @@ function receiptRow(receipt: HomeReceipt, rows: HomeCapability[]): HomeCapabilit
 }
 
 function inFlightKind(receipt: HomeReceipt, row: HomeCapability | undefined): MakingKind | null {
-  if (row?.output_modalities?.length) {
+  // Declared outputs speak for the receipt only when the row is the receipt's own intent. A row found by the legacy
+  // kind alone (image.analyze for an image.generate receipt) can make something else.
+  if (row?.output_modalities?.length && receipt.intent && row.intent === receipt.intent) {
     return row.output_modalities.find((output) => ["image", "video", "audio"].includes(output)) ?? "item";
   }
-  // Older rows without output metadata keep the established media presentation.
+  // Otherwise the established media presentation names the kind.
   const intent = String(receipt.intent ?? "").toLowerCase();
   const path = String(receipt.path ?? "").toLowerCase();
   if (intent.startsWith("image") || path.includes("/images/")) return "image";
