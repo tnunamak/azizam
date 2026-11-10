@@ -182,8 +182,9 @@ records:
         translator: identity
         intent: assets.delete
         canonical: /openai/v1/assets/{asset_id}
+      # Data only: no translator, because the videos-create frontend row below serves this route. The row stays here for the
+      # extension catalog and the model metadata, which read their facts from registered_routes.
       - methods: [POST]
-        translator: identity
         intent: videos.create
         canonical: /v1/videos
         extensions: [com.azizam.prompts, com.azizam.workflow]
