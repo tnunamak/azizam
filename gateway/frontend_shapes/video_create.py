@@ -165,7 +165,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
         eligible = video_grid.reference_variants(manifest, snapshot.get, _reference_input)
         # Defensive only: a registry that passed check_video_variants cannot reach this branch.
         if len(eligible) > 1:
-            raise ValueError(f"{chosen.id}: multiple variants accept the reference: {sorted(entry.id for entry, _ in eligible)!r}")
+            return refuse(500,
+                          f"{chosen.id}: multiple variants accept the reference: {sorted(entry.id for entry, _ in eligible)!r}",
+                          code="registry_conflict")
         if eligible:
             chosen, manifest = eligible[0]
     if manifest.length is None or manifest.grid is None or manifest.size is None:

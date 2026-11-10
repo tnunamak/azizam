@@ -232,6 +232,63 @@ def test_registry_check_uses_the_variant_role_not_just_reference_acceptance(refe
     check_video_variants(reference_variant_records)
 
 
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_add_manifest_rejects_ambiguous_variants_without_changing_contents(reference_variant_records, replace) -> None:
+    from gateway.discovery import RegistryLoadError, WorkflowRegistry
+
+    owner, first, second = reference_variant_records
+
+    def document(record):
+        return {"id": record.id, "version": "1", "schema_version": 2, **copy.deepcopy(record.contract)}
+
+    registry = WorkflowRegistry()
+    registry.add_manifest(document(owner))
+    registry.add_manifest(document(first))
+    if replace:
+        previous = document(second)
+        previous["clip"]["roles"]["anchor"] = "length"
+        registry.add_manifest(previous)
+    records, errors = registry.contents()
+    errors.append(RegistryLoadError(Path("existing.yml"), "existing load error"))
+    before_records, before_errors = dict(records), list(errors)
+
+    with pytest.raises(ValueError) as caught:
+        registry.add_manifest(document(second), replace=replace)
+
+    assert str(caught.value) == (
+        f"{owner.id}: multiple variants accept the reference: {sorted([first.id, second.id])!r}")
+    after_records, after_errors = registry.contents()
+    assert after_records is records and after_records == before_records
+    assert after_errors is errors and after_errors == before_errors
+    assert all(after_records[key] is value for key, value in before_records.items())
+
+
+def test_adopt_rejects_ambiguous_variants_without_changing_contents(reference_variant_records) -> None:
+    from gateway.discovery import RegistryLoadError, WorkflowRegistry
+
+    owner, first, second = reference_variant_records
+    registry = WorkflowRegistry()
+    # Deliberately bypass add_manifest to exercise adoption of an unchecked incoming registry.
+    old_records = {first.id: first}
+    old_errors = [RegistryLoadError(Path("old.yml"), "old load error")]
+    registry.restore((old_records, old_errors))
+    incoming = WorkflowRegistry()
+    incoming_records = {record.id: record for record in reference_variant_records}
+    incoming_errors = [RegistryLoadError(Path("incoming.yml"), "incoming load error")]
+    incoming.restore((incoming_records, incoming_errors))
+
+    with pytest.raises(ValueError) as caught:
+        registry.adopt(incoming)
+
+    assert str(caught.value) == (
+        f"{owner.id}: multiple variants accept the reference: {sorted([first.id, second.id])!r}")
+    records, errors = registry.contents()
+    assert records is old_records and records == {first.id: first}
+    assert errors is old_errors and errors == [RegistryLoadError(Path("old.yml"), "old load error")]
+    assert incoming.contents()[0] is incoming_records and incoming.contents()[1] is incoming_errors
+
+
 def test_shipped_registry_has_unambiguous_reference_variants() -> None:
     from gateway.discovery import WorkflowRegistry
 

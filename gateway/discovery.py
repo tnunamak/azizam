@@ -171,6 +171,9 @@ class WorkflowRegistry:
             source_path=Path(source_path) if source_path else Path(""),
             facts=facts,
         )
+        candidate = dict(self._records)
+        candidate[identity.id] = record
+        video_grid.check_video_variants(candidate.values())
         self._records[identity.id] = record
         return record
 
@@ -194,7 +197,9 @@ class WorkflowRegistry:
 
         A reload builds the next registry whole and swaps it in here, so a reader sees the old records or the new ones.
         """
-        self.restore(other.contents())
+        contents = other.contents()
+        video_grid.check_video_variants(contents[0].values())
+        self.restore(contents)
 
     def restore(self, contents: tuple[dict[str, WorkflowRecord], list[RegistryLoadError]]) -> None:
         self._records, self._errors = contents

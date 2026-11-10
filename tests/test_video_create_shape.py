@@ -319,6 +319,27 @@ def test_an_image_to_video_model_without_a_reference_is_refused_and_a_reference_
     assert run_request.facts["resolved_model"] == "video-ltx-2.5-i2v"
 
 
+
+def test_ambiguous_reference_variants_return_a_structured_registry_conflict() -> None:
+    first = video_contract("reference-first", image=True)
+    second = video_contract("reference-second", image=True)
+    second["video"]["roles"]["anchor"] = "input_reference"
+    owner = video_contract("reference-owner", variants={"image": first["id"], "anchor": second["id"]})
+    # snap deliberately builds a FakeSnapshot directly, bypassing WorkflowRegistry validation.
+    unchecked = snap(owner, first, second)
+    spool = FakeSpool()
+    response = read({"prompt": "x", "model": owner["id"],
+                     "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode()},
+                    unchecked, spool=spool)
+    expected = {"message": (
+        f"{owner['id']}: multiple variants accept the reference: {sorted([first['id'], second['id']])!r}"),
+        "type": "invalid_request_error", "code": "registry_conflict"}
+    assert isinstance(response, Response)
+    assert response.status_code == 500
+    assert json.loads(response.body) == {"error": expected}
+    assert spool.staged == []
+
+
 def test_a_silent_clip_is_recorded_as_a_fact_and_an_option() -> None:
     run_request = read({"prompt": "x", "model": "ltx-2.5-t2v", "extensions": {"com.azizam.video": {"audio": False}}})
     assert run_request.facts["audio"] is False and run_request.options["audio"] is False
