@@ -1113,6 +1113,98 @@ class ExecutionDataTests(unittest.TestCase):
             self.load_document(document, records=[self.record("unfamiliar.render")])
         self.load_document(document, records=[self.record("unfamiliar.render", native="/native-fixture")])
 
+
+    def test_route_inputs_follow_ordered_guards_and_settable_dimensions(self):
+        from gateway.workflow_openapi import route_inputs
+
+        fields = _execution_fixture()["field_rows"]
+        cases = [
+            ("image.generate", {}, ["count", "size_body"]),
+            ("image.generate", {"n": {}}, ["count", "size_body"]),
+            ("image.generate", {"width": {}}, ["count", "size_body"]),
+            ("image.generate", {"height": {}}, ["count", "size_body"]),
+            ("image.generate", {"width": {}, "height": {}}, ["count"]),
+            ("image.generate", {"width": {}, "height": {"settable": False}},
+             ["count", "size_body"]),
+            ("image.edit", {}, ["count", "size_form"]),
+            ("audio.generate", {}, []),
+            ("mesh.generate", {}, ["size_body"]),
+            ("video.generate", {}, ["duration", "size_body"]),
+            ("video.generate", {"length": {}}, ["size_body"]),
+            ("video.generate", {"length": {"settable": False}}, ["duration", "size_body"]),
+            ("video.generate", {"width": {}, "height": {}, "length": {}}, []),
+        ]
+        for intent, inputs, refs in cases:
+            with self.subTest(intent=intent, inputs=inputs):
+                record = self.record(intent)
+                record.contract["inputs"] = {
+                    name: {"type": "number", **spec} for name, spec in inputs.items()
+                }
+                self.assertEqual(route_inputs(record), [fields[ref]["value"] for ref in refs])
+
+    def test_route_inputs_use_unfamiliar_data_rows_and_return_fresh_fields(self):
+        from gateway.workflow_openapi import route_inputs
+
+        for intent in ("unfamiliar.render", "another.compose"):
+            document = self.document()
+            execution = document["execution"]
+            execution["field_rows"]["custom"] = {
+                "unless_all_inputs": ["alpha", "beta"],
+                "value": {"name": "choice", "type": "string", "description": "Configured.",
+                          "in": "form", "field": "choice"},
+            }
+            execution["intents"][intent] = {
+                "model_prefix": "", "route_inputs": ["custom", "count"],
+                "sync": "generated_image", "async": None, "native_alternate": None,
+            }
+            record = self.record(intent)
+            record.contract["inputs"] = {"alpha": {"type": "number"}}
+            maps = self.load_document(document)
+            expected = [execution["field_rows"][ref]["value"] for ref in ("custom", "count")]
+            with patch.object(workflow_request_maps, "_MAPS", maps):
+                first = route_inputs(record)
+                self.assertEqual(first, expected)
+                first[0]["description"] = "Changed by caller."
+                first.reverse()
+                self.assertEqual(route_inputs(record), expected)
+                self.assertEqual(maps.execution.field_rows["custom"]["value"]["description"],
+                                 "Configured.")
+                record.contract["inputs"]["beta"] = {"type": "number"}
+                self.assertEqual(route_inputs(record), expected[1:])
+            # Change only row data: order, placement and guard determine the new projection.
+            execution["intents"][intent]["route_inputs"] = ["count", "custom"]
+            execution["field_rows"]["custom"]["unless_all_inputs"] = []
+            execution["field_rows"]["custom"]["value"]["in"] = "body"
+            with patch.object(workflow_request_maps, "_MAPS", self.load_document(document)):
+                self.assertEqual(route_inputs(record), [
+                    execution["field_rows"][ref]["value"] for ref in ("count", "custom")
+                ])
+
+    def test_route_inputs_missing_row_has_no_templated_fields(self):
+        from gateway.workflow_openapi import route_inputs
+
+        self.assertEqual(route_inputs(self.record("unregistered.render")), [])
+        document = self.document()
+        del document["execution"]["intents"]["image.generate"]
+        with patch.object(workflow_request_maps, "_MAPS", self.load_document(document)):
+            self.assertEqual(route_inputs(self.record("image.generate")), [])
+
+    def test_route_inputs_preserve_native_and_recommended_run_suppression(self):
+        from gateway.workflow_openapi import route_inputs
+
+        for intent in (*workflow_request_maps._MAPS.execution.intents, "unregistered.render"):
+            with self.subTest(intent=intent):
+                self.assertEqual(route_inputs(self.record(intent, native="/native-fixture")), [])
+        fields = _execution_fixture()["field_rows"]
+        for typical in (None, 0, 29.999, 30, 30.001, 60):
+            with self.subTest(typical=typical):
+                record = self.record("video.edit")
+                record.contract["typical_seconds"] = typical
+                expected = [] if typical is not None and typical <= 30 else [
+                    fields[ref]["value"] for ref in ("duration", "size_body")
+                ]
+                self.assertEqual(route_inputs(record), expected)
+
     def test_unfamiliar_intent_prefix_and_alternate_come_only_from_data(self):
         from gateway.workflow_openapi import _execution
 

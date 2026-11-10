@@ -380,24 +380,20 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     count.
     """
     inputs = settable_inputs(record.contract)
-    has_size = "width" in inputs and "height" in inputs
     out: list[dict[str, Any]] = []
     if gateway_route(record) or _carried_by_run_route(record):
         return out
-    if record.intent in ("image.generate", "image.edit"):
-        out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
-                    "label": "number of results",
-                    "description": "Number of images.", "in": "body", "field": "n"})
-    if record.intent.startswith("video."):
-        if "length" not in inputs:
-            out.append({"name": "seconds", "type": "number", "minimum": 1,
-                        "description": "Clip length in seconds.",
-                        "in": "body", "field": "seconds"})
-    if not has_size and record.intent != "audio.generate":
-        out.append({"name": "size", "type": "string",
-                    "description": "WIDTHxHEIGHT, e.g. 960x512.",
-                    "in": "body" if record.intent != "image.edit" else "form",
-                    "field": "size"})
+    execution = workflow_request_maps._MAPS.execution
+    row = execution.row(record.intent)
+    if row is None:
+        return out
+    for ref in row.route_inputs:
+        field_row = execution.field_rows[ref]
+        guard = field_row["unless_all_inputs"]
+        if guard and all(name in inputs for name in guard):
+            continue
+        # The strict reader restricts field values to scalars.
+        out.append(dict(field_row["value"]))
     return out
 
 
