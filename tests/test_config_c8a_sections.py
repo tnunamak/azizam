@@ -312,3 +312,21 @@ def test_the_first_snapshot_takes_every_stored_value_including_a_restart_entry()
 
 def test_the_semaphores_are_sized_from_the_concurrency_at_start():
     assert proxy.IMAGE_MEDIA_JOB_CONCURRENCY == max(1, int(proxy.runtime().config["images"]["media_jobs"]["concurrency"]))
+
+
+def test_the_image_workflow_defaults_have_no_fallback_name():
+    """The release defaults name both workflows; a snapshot without one refuses, naming the setting."""
+    for group, key, reader in (
+        ("variations", "default_workflow", proxy._image_variations_default_workflow),
+        ("edits", "multiref_default_workflow", proxy._image_multiref_edit_default_workflow),
+    ):
+        dotted = f"images.{group}.{key}"
+        for broken in ({}, {group: {}}, {group: {key: None}}, {group: {key: ""}}, {group: {key: 7}}):
+            with section_published("images", broken), pytest.raises(proxy.SettingMissing, match=re.escape(dotted)):
+                reader()
+        with section_published("images", {group: {key: "unfamiliar-workflow"}}):
+            assert reader() == "unfamiliar-workflow"
+    # Each setting is its own: changing variations leaves the multireference default alone.
+    with section_published("images", _images(variations={"default_workflow": "a"},
+                                             edits={"multiref_default_workflow": "b"})):
+        assert (proxy._image_variations_default_workflow(), proxy._image_multiref_edit_default_workflow()) == ("a", "b")

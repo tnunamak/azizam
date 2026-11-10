@@ -821,6 +821,18 @@ auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
 
 
+class SettingMissing(RuntimeError):
+    """A setting the release defaults ship is absent or empty in the effective snapshot."""
+
+
+def required_text_setting(group: Mapping[str, Any], key: str, dotted: str) -> str:
+    """A nonempty string setting, exactly as configured. No fallback name: the release defaults supply the value."""
+    value = group.get(key)
+    if not isinstance(value, str) or not value:
+        raise SettingMissing(f"setting {dotted} must be a nonempty string")
+    return value
+
+
 def bool_from_config(value, default: bool) -> bool:
     """Parse permissive bool config without making YAML null mean false."""
     if value is None:
@@ -1251,10 +1263,9 @@ def _image_background_removal_timeout() -> float:
 
 
 # Routes /v1/images/variations through an edit-capable workflow with a fixed
-# generic prompt (variations has no prompt of its own). The packaged default
-# mirrors the configured image-edit model.
+# generic prompt (variations has no prompt of its own). The release defaults name the workflow.
 def _image_variations_default_workflow() -> str:
-    return str(_images_group("variations").get("default_workflow", "qwen-image-2.1-edit"))
+    return required_text_setting(_images_group("variations"), "default_workflow", "images.variations.default_workflow")
 
 
 # Partial-denoise strength applied only when the resolved workflow's manifest
@@ -1264,7 +1275,8 @@ def _image_variations_denoise() -> float:
 
 
 def _image_multiref_edit_default_workflow() -> str:
-    return str(_images_group("edits").get("multiref_default_workflow", "qwen-image-2.1-edit-multiref"))
+    return required_text_setting(_images_group("edits"), "multiref_default_workflow",
+                                 "images.edits.multiref_default_workflow")
 
 
 def _image_media_jobs_group() -> Mapping[str, Any]:
@@ -1317,7 +1329,7 @@ def _videos() -> Mapping[str, Any]:
 
 
 def _video_default_workflow() -> str:
-    return _videos().get("default_workflow", "video-ltx-13b-q8")
+    return required_text_setting(_videos(), "default_workflow", "videos.default_workflow")
 
 
 def _video_workflow_table() -> Mapping[str, Any]:
@@ -28053,7 +28065,7 @@ def _audio() -> Mapping[str, Any]:
 
 
 def _audio_default_workflow() -> str:
-    return _audio().get("default_workflow", "ace-step-1.5-xl-turbo")
+    return required_text_setting(_audio(), "default_workflow", "audio.default_workflow")
 
 
 def _audio_workflow_table() -> Mapping[str, Any]:

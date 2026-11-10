@@ -194,3 +194,28 @@ def test_an_owner_added_workflow_is_one_entry_and_is_refused_when_it_is_not_vali
             if_match={"audio": str(state["revisions"].get("audio", "0"))}, kind="edit", origin="api",
             validate=proxy.CONFIG_HOME.write_validator(None), path=db,
         )
+
+
+@pytest.mark.parametrize("section, reader", [
+    ("videos", "_video_default_workflow"), ("audio", "_audio_default_workflow"),
+])
+def test_the_media_default_workflow_has_no_fallback_name(section, reader):
+    """A snapshot without default_workflow refuses, naming the setting, instead of choosing a built-in name."""
+    read = getattr(proxy, reader)
+    for broken in ({}, {"default_workflow": None}, {"default_workflow": ""}):
+        with section_published(section, broken), pytest.raises(proxy.SettingMissing, match=f"{section}.default_workflow"):
+            read()
+    with section_published(section, {"default_workflow": "unfamiliar-workflow"}):
+        assert read() == "unfamiliar-workflow"
+
+
+def test_the_release_defaults_name_each_default_workflow():
+    import yaml
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "registry" / "defaults"
+    for name in ("videos", "audio"):
+        shipped = yaml.safe_load((root / f"{name}.yml").read_text(encoding="utf-8"))
+        assert isinstance(shipped["default_workflow"], str) and shipped["default_workflow"]
+    images = yaml.safe_load((root / "images.yml").read_text(encoding="utf-8"))
+    assert images["variations"]["default_workflow"] and images["edits"]["multiref_default_workflow"]
