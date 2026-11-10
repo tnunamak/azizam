@@ -2,9 +2,9 @@
 // directory on the gateway host. No screen shows it outside an owner's
 // technical details.
 export const GGUF =
-  "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
+  "/srv/models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 export const HOST_PATH =
-  /\/media\/windows|AI Models|\/GGUF\/|\/home\/[a-z]+\//;
+  /\/srv\/models\/|\/GGUF\/|\/home\/[a-z]+\//;
 
 /** Text a person can read now: closed disclosures keep only their summary. */
 export function readableText(root: HTMLElement = document.body): string {

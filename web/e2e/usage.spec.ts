@@ -195,7 +195,7 @@ test("usage reads the real account summary and seeded receipt", async ({
 });
 
 const GGUF =
-  "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
+  "/srv/models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 
 const phoneSummary = {
   ...seededSummary,

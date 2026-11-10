@@ -3,7 +3,7 @@ import unittest
 from gateway.model_ids import display_model_id, is_path_like_model_id
 from gateway.receipts import serialize_receipt_for_audience
 
-GGUF = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+GGUF = "/srv/models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
 
 
 class ModelIdTests(unittest.TestCase):

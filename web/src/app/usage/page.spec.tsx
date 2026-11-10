@@ -642,10 +642,10 @@ test("Usage uses shared empty panels for missing daily and model breakdowns", as
   }
 });
 
-const GGUF = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
+const GGUF = "/srv/models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 
 test("Usage preserves exact path IDs for distinct catalog names and receipt lookups", async () => {
-  const other = GGUF.replace("/media/windows/", "/other/");
+  const other = GGUF.replace("/srv/models/", "/other/");
   renderUsage({
     by_model: [
       { model: GGUF, capability: "chat", requests: 2 },
@@ -746,7 +746,7 @@ test("Usage model rows read as names, never as a path on the gateway host", asyn
     { aliases: [{ id: "decide-quality", title: "Careful choices" }], models: [] },
   );
   await screen.findByText("Request counts and recorded spend this month, busiest models first");
-  expect(document.body.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\//);
+  expect(document.body.textContent).not.toMatch(/\/srv\/models\/|\/GGUF\//);
   const chat = modelRow("Qwen3.8 27B Uncensored");
   expect(chat).toBeTruthy();
   // Not even the tooltip names the weight file: it repeats the readable name.
@@ -825,7 +825,7 @@ test("Usage receipts show host paths only in owner technical details", async () 
   });
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "View recent requests" }));
-  expect(document.body.textContent).not.toMatch(/\/media\/|AI Models/);
+  expect(document.body.textContent).not.toMatch(/\/srv\/models\//);
   await user.click(screen.getByRole("button", { name: /Receipt details for Chat request/ }));
   const sheet = screen.getByRole("dialog");
   expect(sheet.textContent).toContain("Qwen3.8-27B-Uncensored-Q4_K_M.gguf");
@@ -1313,7 +1313,7 @@ test("Usage model table shows names, never a path or packing tag, and a Cost in 
   renderUsage(phoneSummary, undefined, { aliases: [{ id: "decide-quality", title: "Careful choices" }], models: [] });
   const table = await screen.findByRole("table", { name: "Models" });
   await waitFor(() => expect(table).toHaveTextContent("Careful choices"));
-  expect(table.textContent).not.toMatch(/\/media\/|AI Models|\/GGUF\/|\.gguf/);
+  expect(table.textContent).not.toMatch(/\/srv\/models\/|\/GGUF\/|\.gguf/);
   expect(table.textContent).not.toMatch(/Q4 K M|Q4_K_M/);
   expect(table).toHaveTextContent("Qwen3.8 27B Uncensored");
   expect(table).toHaveTextContent("Transcribe a recording");
