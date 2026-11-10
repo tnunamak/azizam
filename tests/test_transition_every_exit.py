@@ -40,11 +40,14 @@ class Cell:
     verifier: bool = True
     mode: str = "live"
     mark: str = ""
+    # What the owner-resolved reset meets once the engine is healthy again.
+    late: str = "clean"
 
     @property
     def id(self):
-        return ":".join(map(str, (self.mode, self.stage, self.fault, self.policy,
+        base = ":".join(map(str, (self.mode, self.stage, self.fault, self.policy,
                                   self.value, self.reset, self.verifier)))
+        return base if self.late == "clean" else f"{base}:late-{self.late}"
 
 
 def cells():
@@ -73,6 +76,11 @@ def cells():
     rows += [Cell("restore", "U", oracle, value=value)
              for value, oracle in ((True, "O"), (False, "F"), (None, "R"))]
     rows.append(Cell("restore", "U", "F", reset=False))
+    # A held restore the owner resolves partial: no declared reset, a reset that fails, or a target
+    # that verifies not clean all stay failed_closed; only a clean, ready target serves cold.
+    rows += [Cell("restore", "E", "R", reset=False),
+             Cell("restore", "E", "R", late="reset_fails"),
+             Cell("restore", "E", "R", late="dirty")]
     rows += [Cell("reset", fault, oracle) for fault, oracle in
              (("E", "R"), ("D", "R"), ("U", "F"), ("Q", "R"))]
     rows += [Cell("reset", "N", oracle, value=value)
@@ -214,6 +222,8 @@ class Engine:
             wants_reset = cell.stage in ("reset", "verify_reset")
             if self.enabled and wants_reset and name == "restore":
                 return SimpleNamespace(status=200, selected={"outcome": "failed"})
+            if not self.enabled and name == "reset" and cell.late == "reset_fails":
+                return SimpleNamespace(status=200, selected={"outcome": "failed"})
             if live and cell.stage == name:
                 if cell.fault == "E":
                     raise InjectedFailure(name)
@@ -261,7 +271,7 @@ class Engine:
                 "offering": self.offering, "ready": True, "incarnation": "inc-1"})
         if name == "idle":
             return SimpleNamespace(status=200, selected={"idle": True, "incarnation": "inc-1"})
-        value = cell.value if self.enabled else True
+        value = cell.value if self.enabled else cell.late != "dirty"
         if verification and cell.fault == "false":
             value = False
         return SimpleNamespace(status=200, selected={"value": value, "incarnation": "inc-1"})
@@ -586,7 +596,13 @@ def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: C
                 else:
                     # A known partial outcome is owner resolution, not a production rollback.
                     resolved = await rig.executor.resolve(done.op_id, step=done.step, outcome="partial", evidence_ref="owner:known")
-                    assert (rig.gates.state("dom"), resolved.state) == PAIRS["F"]
+                    # A recorded partial restore runs its declared reset (SERVICE_TRANSITION_GATE.md, restore
+                    # partial); only a verified clean, ready target serves cold. Without a reset, or without a
+                    # clean verification, the gate stays failed_closed.
+                    resets_clean = cell.stage == "restore" and cell.reset and cell.late == "clean"
+                    if resets_clean:
+                        resolved = await rig.executor.wait(done.op_id)
+                    assert (rig.gates.state("dom"), resolved.state) == PAIRS["O" if resets_clean else "F"]
             await unlocked(rig.lock)
             follow_up = await rig.submit("healthy", healthy=True)
             await unlocked(rig.lock)
