@@ -61,6 +61,7 @@ read -r -a own_stat < <(sed 's/^.*) //' "/proc/$$/stat")  # start time is field 
 owner_tag="$$-${own_stat[19]}"
 "$repo_root/scripts/sweep-stale-pytest-tmpfs.sh" "$state_root" 2>/dev/null || true
 state_dir=$(mktemp -d "$state_root/azizam-pytest.$owner_tag.XXXXXXXX")
+scratch_reap_on_death "$state_dir"
 tmpfs_tmp=
 tmpfs_fallback=
 bwrap_pid=
@@ -101,6 +102,7 @@ tmpfs_min_kib=${AZIZAM_PYTEST_TMPFS_MIN_KIB:-4194304}
 tmpfs_free_kib=$(df --output=avail -k -- "$tmpfs_root" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
 if [[ $(stat -f -c %T -- "$tmpfs_root" 2>/dev/null || true) == tmpfs && ${tmpfs_free_kib:-0} -ge $tmpfs_min_kib ]] \
    && tmpfs_tmp=$(mktemp -d "$tmpfs_root/azizam-pytest.$owner_tag.XXXXXXXX" 2>/dev/null); then
+  scratch_reap_on_death "$tmpfs_tmp"
   tmpfs_source=$tmpfs_tmp
   echo "pytest TMPDIR: tmpfs ($tmpfs_source)" >&2
 else

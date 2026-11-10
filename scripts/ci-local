@@ -71,6 +71,7 @@ command -v flock >/dev/null || { echo "ci-local requires flock" >&2; exit 2; }
 command -v timeout >/dev/null || { echo "ci-local requires GNU timeout" >&2; exit 2; }
 
 repo=$(git rev-parse --show-toplevel)
+source "$repo/scripts/lib/scratch.sh"
 cd "$repo"
 if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
   echo "ci-local runs on HEAD: commit or stash tracked changes first" >&2
@@ -172,6 +173,8 @@ done
 run=$(mktemp -d "$scratch/azizam-ci-local.XXXXXXXX")
 run=$(cd "$run" && pwd)
 : > "$run/.ci-local-run"
+# A SIGKILLed run runs no EXIT trap: remove its directory when this shell is gone.
+scratch_reap_on_death "$run"
 work=$run/web-build
 worktrees=()
 pids=()
