@@ -108,6 +108,14 @@ def test_refuses_a_row_with_no_select(tmp_path: Path) -> None:
     assert "select" in message
 
 
+@pytest.mark.parametrize("version", [True, 1.0, "1"])
+def test_refuses_a_schema_version_that_only_compares_equal_to_1(tmp_path: Path, version: object) -> None:
+    path = tmp_path / "workflow_request_maps.yml"
+    path.write_text(yaml.safe_dump({"schema_version": version, "maps": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="schema_version must be 1"):
+        workflow_request_maps.load(path)
+
+
 # ---------------------------------------------------------------- equivalence
 
 
@@ -196,6 +204,30 @@ def test_a_second_route_image_keeps_the_repeated_image_part_order() -> None:
     assert [name for name, _ in placed] == ["source_image", "reference_image", "prompt", "steps"]
     assert placed[0][1] == {"in": "file", "field": "image[]"}
     assert placed[1][1] == {"in": "file", "field": "image[]"}
+
+
+@pytest.mark.parametrize("name", ["prompt", "mask", "width", "height"])
+def test_a_route_image_with_a_named_input_name_is_still_a_repeated_image_part(name: str) -> None:
+    """The deleted route code placed every route picture at image[] before the named inputs (review 2478)."""
+    record = synthetic_record(
+        {
+            "id": "image.edit.named-reference",
+            "intent": "image.edit",
+            "inputs": {
+                "source_image": {"type": "asset"},
+                name: {"type": "asset"},
+                "steps": {"type": "integer"},
+            },
+            "bindings": {"comfy": {"route_bound_inputs": ["source_image", name], "map": {}}},
+        }
+    )
+    for mode in MODES:
+        placed = list(request_mapping(record, mode).items())
+        assert placed == [
+            ("source_image", {"in": "file", "field": "image[]"}),
+            (name, {"in": "file", "field": "image[]"}),
+            ("steps", {"in": "extension", "field": "steps"}),
+        ], mode
 
 
 def test_request_mapping_matches_the_frozen_golden_file() -> None:
