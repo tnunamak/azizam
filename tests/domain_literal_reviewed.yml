@@ -40,21 +40,6 @@ sites:
     count: 1
     category: media_type
     reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/capabilities.py
-    literal: image
-    count: 1
-    category: wire_enum
-    reason: Names the image output_modalities value the gateway publishes in capability summaries, derived from image/ MIME types; this is the gateway's API vocabulary, not an external protocol's modality enum.
-  - file: gateway/capabilities.py
-    literal: audio
-    count: 1
-    category: wire_enum
-    reason: Names the audio output_modalities value the gateway publishes in capability summaries, derived from audio/ MIME types; this is the gateway's API vocabulary, not an external protocol's modality enum.
-  - file: gateway/capabilities.py
-    literal: video
-    count: 1
-    category: wire_enum
-    reason: Names the video output_modalities value the gateway publishes in capability summaries, derived from video/ MIME types; this is the gateway's API vocabulary, not an external protocol's modality enum.
   - file: gateway/engine_protocol/media.py
     literal: audio
     count: 1
@@ -197,6 +182,6 @@ sites:
     reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
   - file: gateway/openai_media_schemas.py
     literal: audio
-    count: 1
+    count: 2
     category: wire_enum
-    reason: Names the audio stream_format value defined by the OpenAI Audio speech request in the published OpenAPI schema.
+    reason: Names the audio stream_format value defined by the OpenAI Audio speech request, and the audio field of the com.azizam.video extension the gateway publishes on its JSON video create request; both are published OpenAPI schema property names or values.
