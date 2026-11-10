@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 import proxy
+from tests.support.speech_roles import declared
 from gateway import engine_record_defaults
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,7 +18,7 @@ NO_ADDRESS = {}
 
 
 def _derive(**records):
-    return proxy._derive_backend_constants({"backends": {k: dict(v) for k, v in records.items()}})
+    return proxy._derive_backend_constants({"backends": declared(records)})
 
 
 def test_the_release_defaults_give_the_values_the_code_gave():

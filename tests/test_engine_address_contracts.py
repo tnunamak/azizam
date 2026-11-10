@@ -6,6 +6,7 @@ import asyncio
 import pytest
 
 import proxy
+from tests.support.speech_roles import declared
 import status_endpoint
 from gateway import service_registry, stt_chunking
 
@@ -153,10 +154,10 @@ def test_disabled_invalid_record_remains_unprobed_and_unlisted(observed):
 def test_a_malformed_engine_address_leaves_that_engine_off_and_the_gateway_up():
     # Startup derives every engine's address; one malformed record must not stop the rest. It reads as not configured,
     # never as the lower-priority address the record also names.
-    effective = {"backends": {
+    effective = {"backends": declared({
         "stt": {"base_url": "not a url", "default_base_url": "http://203.0.113.10:9999/fallback"},
         "tts": {"base_url": "http://203.0.113.9:9999/v1"},
-    }}
+    })}
     derived = proxy._derive_backend_constants(effective)
     assert derived["STT_HOST"] == "" and derived["STT_ENABLED"] is False
     assert derived["TTS_HOST"] == "http://203.0.113.9:9999/v1" and derived["TTS_ENABLED"] is True

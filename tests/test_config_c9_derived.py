@@ -19,6 +19,7 @@ import proxy
 from gateway import service_registry
 from tests.registry_test_helpers import seed_registry_document, write_service_registry_for_test
 from tests.support.gateway import use_admin_db
+from tests.support.speech_roles import declared
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -212,7 +213,7 @@ def test_route_policies_follow_a_frontend_change_without_a_restart(live):
 
 def test_a_snapshot_built_without_values_is_derived_where_it_is_built():
     """``snapshot()`` derives a snapshot it is not handed values for, so a reader never meets one without them."""
-    config = {"backends": {"tts": {"host": "198.51.100.71", "port": 1234}}}
+    config = {"backends": declared({"tts": {"host": "198.51.100.71", "port": 1234}})}
     snapshot = proxy.CONFIG_HOME.snapshot(config)
     assert snapshot.derived["TTS_HOST"] == "http://198.51.100.71:1234"
     assert set(snapshot.derived) >= set(CLASS_A + CLASS_B + ROUTE_POLICIES)

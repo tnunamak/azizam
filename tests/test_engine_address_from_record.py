@@ -12,13 +12,14 @@ import pytest
 import proxy
 import status_endpoint
 from gateway import lifecycle_drivers, service_registry, stt_chunking
+from tests.support.speech_roles import declared
 
 NON_DEFAULT = {"host": "203.0.113.7", "port": 9999}
 OTHER_HOST_NAMES = ("tts", "stt", "embeddings", "comfyui")
 
 
 def _config(**records):
-    return {"backends": {name: dict(rec) for name, rec in records.items()}}
+    return {"backends": declared(records)}
 
 
 class _Probe:

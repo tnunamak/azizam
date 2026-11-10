@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import pytest
 
 import proxy
+from tests.support.speech_roles import declared
 
 ORACLE = Path(__file__).parent / "support" / "fresh_gateway_oracle.py"
 
@@ -61,8 +62,8 @@ def test_an_import_time_attempt_that_swallows_its_error_still_fails(tmp_path, ki
     {"host": "203.0.113.9", "port": 9999, "enabled": False},
 ], ids=["empty", "enabled-only", "no-port", "no-host", "disabled"])
 def test_absent_partial_and_disabled_records_never_dial(record):
-    derived = proxy._derive_backend_constants({"backends": {
-        "tts": dict(record), "stt": dict(record), "embeddings": dict(record), "comfyui": dict(record)}})
+    derived = proxy._derive_backend_constants({"backends": declared({
+        "tts": dict(record), "stt": dict(record), "embeddings": dict(record), "comfyui": dict(record)})})
     complete_enabled = bool(record.get("host") and record.get("port")) and record.get("enabled", True) is not False
     for key in ("TTS_ENABLED", "STT_ENABLED", "COMFY_ENABLED"):
         assert derived[key] is complete_enabled, key
@@ -71,12 +72,12 @@ def test_absent_partial_and_disabled_records_never_dial(record):
 
 
 def test_removed_on_reload_record_is_unconfigured():
-    before = proxy._derive_backend_constants({"backends": {"tts": {"host": "203.0.113.9", "port": 9999}}})
+    before = proxy._derive_backend_constants({"backends": declared({"tts": {"host": "203.0.113.9", "port": 9999}})})
     after = proxy._derive_backend_constants({"backends": {}})
     assert before["TTS_ENABLED"] is True and before["TTS_HOST"] == "http://203.0.113.9:9999"
     assert after["TTS_ENABLED"] is False and after["TTS_HOST"] == ""
 
 
 def test_explicit_loopback_address_from_the_operator_stays_allowed():
-    derived = proxy._derive_backend_constants({"backends": {"tts": {"host": "127.0.0.1", "port": 8880}}})
+    derived = proxy._derive_backend_constants({"backends": declared({"tts": {"host": "127.0.0.1", "port": 8880}})})
     assert derived["TTS_HOST"] == "http://127.0.0.1:8880" and derived["TTS_ENABLED"] is True

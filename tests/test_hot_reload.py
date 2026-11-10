@@ -384,7 +384,7 @@ class TestReadSiteLiveness(unittest.TestCase):
             "kobold": _kobold_backend(),
             "tts": {
                 "enabled": True,
-                "capabilities": ["tts"],
+                "capabilities": ["audio", "speech"],
                 "host": "127.0.0.1",
                 "port": 9988,
             },
@@ -540,8 +540,8 @@ class TestDeriveBackendConstants(unittest.TestCase):
             "backends": {
                 "vision-llm": _vision_backend(host="10.1.0.1", port=5050),
                 "kobold": _kobold_backend(host="10.1.0.2", port=5051),
-                "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880},
-                "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321},
+                "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880, "capabilities": ["audio", "speech"]},
+                "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321, "capabilities": ["audio", "transcriptions"]},
                 "embeddings": {"enabled": True, "host": "10.1.0.5", "port": 5061},
                 "comfyui": {"enabled": True, "host": "10.1.0.6", "port": 7890},
             }

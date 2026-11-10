@@ -7,6 +7,7 @@ import asyncio
 import pytest
 
 import proxy
+from tests.support.speech_roles import declared
 import status_endpoint
 from gateway import stt_chunking
 
@@ -64,7 +65,7 @@ def probed(monkeypatch):
 @pytest.mark.parametrize("url", VARIANTS.values(), ids=VARIANTS.keys())
 def test_derived_hosts_keep_the_explicit_url(field, url):
     rec = _record(field, url)
-    derived = proxy._derive_backend_constants({"backends": {"tts": rec, "stt": rec, "embeddings": rec, "comfyui": rec}})
+    derived = proxy._derive_backend_constants({"backends": declared({"tts": rec, "stt": rec, "embeddings": rec, "comfyui": rec})})
     for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
         assert derived[key] == url, key
 
