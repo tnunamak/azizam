@@ -57,11 +57,21 @@ def test_inputs_bind_to_the_load_nodes() -> None:
 
 
 def test_the_new_track_and_the_original_frame_rate_feed_create_video() -> None:
+    manifest = load_workflow_manifest(MANIFEST)
+    mapping = manifest["bindings"]["comfyui"]["map"]
+    (source_audio,) = mapping["source_audio"]
+    (source_video,) = mapping["source_video"]
+    assert source_audio["input"] == "audio"
+    assert source_video["input"] == "file"
     nodes = _nodes()
     (create,) = [node for node in nodes.values() if node["class_type"] == "CreateVideo"]
     assert nodes[create["inputs"]["audio"][0]]["class_type"] == "LoadAudio"
+    assert create["inputs"]["audio"] == [source_audio["node"], 0]
     components = nodes[create["inputs"]["images"][0]]
     assert components["class_type"] == "GetVideoComponents"
+    components_id = create["inputs"]["images"][0]
+    assert components["inputs"]["video"] == [source_video["node"], 0]
+    assert create["inputs"]["images"] == [components_id, 0]
     assert create["inputs"]["fps"] == [create["inputs"]["images"][0], 2]
 
 
@@ -80,3 +90,19 @@ def test_the_mcp_run_tool_exposes_both_inputs_as_asset_inputs() -> None:
     assert set(properties) == {"source_video", "source_audio"}
     assert set(entry["inputs"]["required"]) == {"source_video", "source_audio"}
     assert all(properties[name]["x-azizam-asset"] is True for name in properties)
+
+
+def test_the_source_video_sound_reaches_nothing() -> None:
+    # "The new sound replaces the old": GetVideoComponents output 1 (the video's own audio) feeds no node.
+    nodes = _nodes()
+    (components_id,) = [key for key, node in nodes.items() if node["class_type"] == "GetVideoComponents"]
+    links = [value for node in nodes.values() for value in node["inputs"].values() if isinstance(value, list) and len(value) == 2]
+    assert [components_id, 1] not in links
+
+
+def test_the_description_states_the_length_rule_measured_on_live() -> None:
+    # Measured 2026-11-09 with ffprobe on live runs: a 10 s video with a 20 s, a 5 s and a 22.05 kHz mono sound.
+    description = load_workflow_manifest(MANIFEST)["description"]
+    assert "as long as the video" in description
+    assert "cut off when the picture ends" in description
+    assert "keeps its own sample rate and channels" in description
