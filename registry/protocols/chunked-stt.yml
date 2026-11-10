@@ -12,6 +12,7 @@ id: chunked-stt
 title: OpenAI-shaped transcription route
 label: STT backend
 executor: adapter:chunked-stt
+implementation: chunked_transcription
 serves: [transcriptions]
 # Multipart names used only when an upload supplies no name or is normalized.
 multipart_filenames:

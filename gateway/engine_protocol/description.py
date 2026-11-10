@@ -185,6 +185,10 @@ class ProtocolDescription:
     auth: Mapping[str, AuthSpec] = field(default_factory=dict)
     errors: tuple[Advice, ...] = ()
     budgets: Budgets = DEFAULT_BUDGETS
+    implementation: str = ""
+    catalog_intent: str = ""
+    catalog_aliases: tuple[str, ...] = ()
+    multipart: Mapping[str, str] = field(default_factory=dict)
     serves: tuple[str, ...] = ()
     label: str = ""
     binding: str = ""
@@ -367,11 +371,25 @@ class _Compiler:
             binding_descriptor = descriptor_from_document(doc)
         except BindingDescriptorError as exc:
             self.bad("binding_fields", str(exc))
+        if doc.get("implementation") and not executor.startswith("adapter:"):
+            self.bad("implementation", "only an adapter executor selects a reviewed implementation")
+        if doc.get("multipart"):
+            if binding_descriptor is None or binding_descriptor.check_targets != "form" or binding_descriptor.inputs_via != "map":
+                self.bad("multipart", "requires a form binding with mapped inputs")
+            else:
+                for role, kind in (("service", "service"), ("path", "relative_path"), ("map", "input_map")):
+                    spec = binding_descriptor.fields.get(doc["multipart"][role])
+                    if spec is None or spec.kind != kind or not spec.required:
+                        self.bad("multipart", f"{role} must name a required {kind} binding field")
         if self.problems:
             raise DescriptionError(self.source, self.problems)
         return ProtocolDescription(
             id=doc["id"], title=doc.get("title", doc["id"]), executor=executor, source=self.source,
             operations={k: v for k, v in operations.items() if v is not None}, auth=auth, errors=advice, budgets=self.budgets,
+            implementation=doc.get("implementation", ""),
+            catalog_intent=(doc.get("catalog") or {}).get("intent", ""),
+            catalog_aliases=tuple((doc.get("catalog") or {}).get("aliases", ())),
+            multipart=MappingProxyType(dict(doc.get("multipart") or {})),
             serves=tuple(doc.get("serves") or ()), label=str(doc.get("label") or ""),
             binding=str(doc.get("binding") or ""),
             retention_facts=tuple(copy.deepcopy(doc.get("retention_facts") or ())),
@@ -716,3 +734,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def shipped_for_implementation(implementation: str) -> ProtocolDescription:
+    """The unique shipped default for a reviewed implementation, independent of its protocol spelling."""
+    matches = [doc for doc in load_registry(REGISTRY_DIR).values() if doc.implementation == implementation]
+    if len(matches) != 1:
+        raise DescriptionError(str(REGISTRY_DIR), [f"implementation {implementation!r} requires exactly one shipped default"])
+    return matches[0]

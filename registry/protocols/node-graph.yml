@@ -18,6 +18,7 @@ id: node-graph
 title: Node-graph prompt engine
 label: ComfyUI
 executor: adapter:node-graph
+implementation: graph_submission
 serves: [images, videos, audio.generate]
 binding: comfyui
 check_targets: graph
