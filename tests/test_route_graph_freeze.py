@@ -282,4 +282,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-08 for the generic run route (S6): the video-edit run paths name full ids and the run route
     # documents the media job it answers. Before it the frozen digest was
     # 31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1.
+    # Re-captured 2026-11-09 for the video mux description (the length rule measured on live): only that text moved
+    # (tests/fixtures/headless_openapi.json shows the same change). Before it the frozen digest was
+    # 0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

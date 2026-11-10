@@ -1042,7 +1042,7 @@
       },
       "WorkflowExtensionInputs_video_edit_video_mux": {
         "additionalProperties": false,
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "properties": {
           "source_audio": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
@@ -1418,7 +1418,7 @@
       },
       "WorkflowForm_video_edit_video_mux": {
         "additionalProperties": false,
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "properties": {
           "source_audio": {
             "description": "The song or sound to put on the video.",
@@ -2976,7 +2976,7 @@
       },
       "WorkflowInputs_video_edit_video_mux": {
         "additionalProperties": false,
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "properties": {
           "source_audio": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The song or sound to put on the video.",
@@ -21516,7 +21516,7 @@
     },
     "/gateway/v1/workflows/video.edit.video-mux/run": {
       "post": {
-        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+        "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
         "operationId": "run_video_mux",
         "requestBody": {
           "content": {
@@ -40430,7 +40430,7 @@
     },
     {
       "aliases": [],
-      "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+      "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old. The result is as long as the video. A longer sound is cut off when the picture ends; a shorter one ends early and the picture plays on in silence. The sound keeps its own sample rate and channels.",
       "display_name": "Add a Soundtrack to a Video",
       "execution": {
         "async": {
