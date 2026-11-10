@@ -246,11 +246,11 @@ def test_an_adjusted_duration_is_told_in_the_header_and_an_exact_one_is_not() ->
     request.state.video_facts = dict(run_request.facts)
     answer = asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request))
     assert answer.headers["X-Duration-Adjusted"].startswith("requested=3.2 actual=3.3750 reason=")
-    close = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 3})       # 3.0417 s is within the old 0.05 s tolerance
+    close = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 3})       # even a one-frame adjustment is reported
     request = make_request()
     request.state.video_facts = dict(close.facts)
-    assert "X-Duration-Adjusted" not in asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request)).headers
-    exact = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 5, "size": "960x512"})      # 5 s is 121 frames: exact
+    assert "X-Duration-Adjusted" in asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request)).headers
+    exact = read({"prompt": "x", "model": "ltx-2.5-t2v", "seconds": 121 / 24, "size": "960x512"})      # 121 frames: exact
     request = make_request()
     request.state.video_facts = dict(exact.facts)
     quiet = asyncio.run(shape.to_response(view, ROWS["videos-create"], jobs=_NoFacts(), caller=CALLER, request=request))

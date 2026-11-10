@@ -178,9 +178,6 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
             or (reference is not None and _reference_bytes(reference) is None)
             or any(not _wire.declared(chosen, key) or _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
-    for missing in _wire.asset_input_names(chosen):      # a required picture the body leaves out, before any other problem
-        if missing != kind and _wire.entry_required(chosen, missing) is True and missing not in block:
-            return refuse(400, f"{missing} is required for this model", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{missing}")
     return chosen, manifest, name, public_model
 
 
@@ -314,6 +311,11 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
                 put("image_strength", max(0.0, min(1.0, float(body["image_strength"]))))
             except (TypeError, ValueError):
                 put("image_strength", 1.0)
+
+    # Required secondary assets are workflow-extension checks, after seconds, size and the primary reference.
+    for missing in _wire.asset_input_names(chosen):
+        if missing not in media and _wire.entry_required(chosen, missing) is True and missing not in block:
+            return refuse(400, f"{missing} is required for this model", param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{missing}")
 
     audio_off = controls.get(video_controls.AUDIO_CONTROL) is False
     context = media_delivery.current()
