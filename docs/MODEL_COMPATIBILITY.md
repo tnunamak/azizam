@@ -202,14 +202,15 @@ This is intentional:
 
 ## Classification
 
-The proxy combines three sources:
+The proxy reads three sources, in this order; the first that names the model wins:
 
-1. Built-in stable OpenAI naming patterns.
-2. Optional manual aliases in `proxy_config.yml`.
-3. Optional generated aliases from `refresh-openai-models`.
+1. Manual aliases in the `model_compatibility` section.
+2. OpenAI's naming conventions, as rows in `registry/openai_model_families.yml`:
+   exact model IDs, then ordered prefix, suffix and contains rules.
+3. Generated aliases from `refresh-openai-models`.
 
-Manual aliases can be added when a new model name appears before the heuristic
-knows how to categorize it:
+A new OpenAI family needs one row in the families file. Manual aliases can be
+added when a new model name appears before the families file knows it:
 
 ```yaml
 model_compatibility:
