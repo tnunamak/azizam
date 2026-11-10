@@ -285,3 +285,39 @@ def test_missing_error_mapping_fails_startup(monkeypatch):
             with pytest.raises(KeyError) as failure:
                 _fresh_module(monkeypatch)
         assert "identity_scene" in str(failure.value) or "segment_chain" in str(failure.value)
+
+
+def test_sentinel_binding_rejects_misspelled_request_property(tmp_path):
+    document = _document()
+    domain, logical = "sentinel-domain", "payload"
+    public, misspelled = "sentinel_payload", "sentinel_paylaod"
+    endpoint = "POST /v1/probe"
+    document["endpoints"][endpoint] = {"requestBody": {
+        "required": True,
+        "content": {"application/json": {"schema": {
+            "type": "object",
+            "properties": {public: {"type": "string"}},
+        }}},
+    }}
+    document["wire_error_params"] = {domain: {logical: public}}
+    document["wire_error_param_endpoints"] = {domain: endpoint}
+    path = _write(tmp_path, document)
+
+    # A valid unfamiliar binding loads, so rejection cannot be a name allow-list.
+    registry = schemas.load_media_schema_registry(path)
+    assert schemas.wire_error_param(domain, logical, registry=registry) == public
+
+    # Change only the target spelling, not its syntax or the declared schema.
+    document["wire_error_params"][domain][logical] = misspelled
+    _write(tmp_path, document)
+    with pytest.raises(ValueError) as failure:
+        schemas.load_media_schema_registry(path)
+    message = str(failure.value)
+    for expected in (str(path), domain, logical, repr(misspelled), repr(endpoint)):
+        assert expected in message
+    assert "not a request property" in message
+
+    # Without the binding, that spelling is legal: the cross-reference must bite.
+    del document["wire_error_param_endpoints"]
+    registry = schemas.load_media_schema_registry(_write(tmp_path, document))
+    assert schemas.wire_error_param(domain, logical, registry=registry) == misspelled
