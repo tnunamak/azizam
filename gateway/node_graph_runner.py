@@ -319,6 +319,9 @@ class NodeGraphRunner:
         async with adapter.open(conn) as session:
             plan = (await batching.plan(session, ctx, ctx.inputs, options) if batching is not None and resume is None
                     else Plan(total=1, max_rounds=1))
+            if resume is not None:
+                # Harvest one saved prompt, but keep its requested batch rather than one file.
+                plan.total = min(MAX_FILES_PER_REQUEST, max(1, int(ctx.inputs.get("n") or 1)))
             batching = batching if resume is None else None
             offset = 0
             remaining = plan.total
