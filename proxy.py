@@ -26651,7 +26651,7 @@ def _workflow_run_slots() -> asyncio.Semaphore:
     if _workflow_run_semaphore is None:
         _workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
     return _workflow_run_semaphore
-_workflow_core_cache: tuple[Any, Any, Any] | None = None
+_workflow_core_cache: tuple[Any, Any, Any, Any, Any] | None = None
 
 
 def _caller_owner_scope(auth_context: AuthContext) -> str:
@@ -27272,13 +27272,15 @@ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
     global _workflow_core_cache
     if WORKFLOW_SNAPSHOTS is None or WORKFLOW_PROJECTIONS is None:
         return None
+    # The core holds the jobs database path and the spool it was built with, so a change to either builds a new core.
+    spool, path = _workflow_job_spool(), media_jobs.DB_PATH
     cached = _workflow_core_cache
-    if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
+    if (cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS
+            or cached[2] is not spool or cached[3] != path):
         core = workflow_run.WorkflowRunCore(
-            snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
-            spool=_workflow_job_spool(), path=media_jobs.DB_PATH)
-        cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
-    return cached[2]
+            snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT, spool=spool, path=path)
+        cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, spool, path, core)
+    return cached[4]
 
 
 def _workflow_job_service() -> workflow_run.WorkflowJobService:
