@@ -175,3 +175,33 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the video async transport kind that the gateway publishes in each workflow's execution block of the workflow catalog; the reader checks the kind's declared shape and never selects a workflow, model, engine or intent by it.
+  - file: gateway/workflow_openapi.py
+    literal: "video"
+    count: 1
+    category: wire_enum
+    reason: Names the published async transport kind that separates top-level body fields from workflow extension inputs, not a workflow, model, engine or intent identity.
+  - file: gateway/workflow_openapi.py
+    literal: "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content."
+    count: 1
+    category: wire_enum
+    reason: Documents the published workflow discovery and asynchronous route contract; this prose does not select workflow behavior.
+  - file: gateway/workflow_openapi.py
+    literal: "image.generate"
+    count: 1
+    category: wire_enum
+    reason: Names a published media-job submit request intent enum value; this schema documents the wire contract and does not dispatch execution.
+  - file: gateway/workflow_openapi.py
+    literal: "audio.generate"
+    count: 1
+    category: wire_enum
+    reason: Names a published media-job submit request intent enum value; this schema documents the wire contract and does not dispatch execution.
+  - file: gateway/workflow_openapi.py
+    literal: "video.generate"
+    count: 1
+    category: wire_enum
+    reason: Names a published media-job submit request intent enum value; this schema documents the wire contract and does not dispatch execution.
+  - file: gateway/workflow_openapi.py
+    literal: "The body you would send to the matching sync route: `/v1/images/generations` (image.generate), `/v1/audio/generate` (audio.generate, music.generate, sfx.generate) or `/v1/videos` (video.generate)."
+    count: 1
+    category: wire_enum
+    reason: Documents the published media-job request body routes and intent aliases; this prose does not select workflow behavior.
