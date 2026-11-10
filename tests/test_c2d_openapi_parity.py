@@ -209,3 +209,104 @@ def test_shipped_execution_rows_render_published_blocks(shipped_execution_public
             assert {
                 "recommended": recommended, "sync": sync, "async": async_,
             } == entry["execution"], f"{record.id}: rendered execution differs"
+
+
+def test_data_only_video_intent_preserves_shipped_publications():
+    import copy
+
+    from gateway.discovery import BUNDLED_WORKFLOWS_DIR, WorkflowRegistry
+    from gateway.openai_media_schemas import VIDEOS_CREATE_OPENAPI
+    from gateway.workflow_openapi import (
+        ROOT_EXTENSION, augment_openapi, extension_schema_name, schema_name, workflow_catalog,
+    )
+
+    registry = WorkflowRegistry.from_directory(BUNDLED_WORKFLOWS_DIR)
+    assert not registry.errors
+    shipped = registry.records()
+    assert shipped
+
+    # Clone manifest data, never an execution row or a publisher implementation.
+    source = next(record for record in shipped if record.id == "video.generate.ltx-2.5-t2v")
+    manifest = copy.deepcopy(source.manifest)
+    manifest.update(id="video.interpolate.fixture", intent="video.interpolate")
+    manifest.get("video", {}).pop("variants", None)
+    manifest["inputs"]["fixture_detail"] = {"type": "number", "default": 0.5}
+    manifest["bindings"]["comfyui"]["map"]["fixture_detail"] = copy.deepcopy(
+        manifest["bindings"]["comfyui"]["map"]["prompt"]
+    )
+
+    video_paths = ("/v1/videos", "/openai/v1/videos")
+    seed_spec = {"paths": {
+        path: {"post": copy.deepcopy(VIDEOS_CREATE_OPENAPI)} for path in video_paths
+    }}
+    # Include the other shared publishers and concrete run paths in noninterference.
+    for path in (
+        "/v1/images/generations", "/openai/v1/images/generations",
+        "/v1/audio/generate", "/openai/v1/audio/generate",
+    ):
+        seed_spec["paths"][path] = {"post": {"requestBody": {"content": {
+            "application/json": {"schema": {"type": "object", "properties": {}}},
+        }}}}
+    seed_spec["paths"]["/gateway/v1/workflows/{workflow_id}/run"] = {"post": {}}
+    seed_spec["paths"]["/gateway/v1/media/jobs"] = {"post": {}}
+
+    baseline_catalog = workflow_catalog(shipped)
+    baseline_spec = augment_openapi(copy.deepcopy(seed_spec), shipped)
+    fixture = registry.add_manifest(manifest)
+    records = registry.records()
+    assert {record.id for record in records} == {record.id for record in shipped} | {fixture.id}
+    published_catalog = workflow_catalog(records)
+    published_spec = augment_openapi(copy.deepcopy(seed_spec), records)
+
+    entry = next(row for row in published_catalog if row["id"] == fixture.id)
+    execution = entry["execution"]
+    assert execution["sync"] is None
+    assert execution["recommended"] == "async"
+    assert execution["async"] is not None
+    assert execution["async"]["kind"] == "video"
+    assert execution["async"]["submit"]["path"] == "/v1/videos"
+    assert execution["async"]["submit"]["model"] == "video-fixture"
+    assert next(row for row in published_spec[ROOT_EXTENSION] if row["id"] == fixture.id) == entry
+
+    extension_name = extension_schema_name(fixture.id)
+    full_name = schema_name(fixture.id)
+    extension_ref = {"$ref": "#/components/schemas/" + extension_name}
+    full_ref = {"$ref": "#/components/schemas/" + full_name}
+    schemas = published_spec["components"]["schemas"]
+    assert "prompt" in schemas[full_name]["properties"]
+    extension = schemas[extension_name]
+    assert extension["properties"]["fixture_detail"] == {"type": "number", "default": 0.5}
+    assert extension["additionalProperties"] is False
+    assert not ({"prompt", "width", "height", "length", "seed", "negative_prompt", "image"}
+                & set(extension["properties"]))
+    assert "prompt" not in extension.get("required", [])
+    for path in video_paths:
+        body = published_spec["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        refs = body["properties"]["extensions"]["properties"]["com.azizam.workflow"]["anyOf"]
+        assert refs.count(extension_ref) == 1
+        assert full_ref not in refs
+        # The descriptor-owned video controls survive alongside the workflow schema.
+        original = VIDEOS_CREATE_OPENAPI["requestBody"]["content"]["application/json"]["schema"]
+        for namespace, control in original["properties"]["extensions"]["properties"].items():
+            assert body["properties"]["extensions"]["properties"][namespace] == control
+
+    assert [row for row in published_catalog if row["id"] != fixture.id] == baseline_catalog
+
+    # Remove precisely the added record, its two components and references.
+    # Everything else, including every shipped schema, catalog row, route union
+    # and concrete run operation, must match the independently published baseline.
+    without_fixture = copy.deepcopy(published_spec)
+    without_fixture[ROOT_EXTENSION] = [
+        row for row in without_fixture[ROOT_EXTENSION] if row["id"] != fixture.id
+    ]
+    del without_fixture["components"]["schemas"][extension_name]
+    del without_fixture["components"]["schemas"][full_name]
+
+    def remove_fixture_refs(value):
+        if isinstance(value, list):
+            return [remove_fixture_refs(item) for item in value if item != extension_ref]
+        if isinstance(value, dict):
+            return {key: remove_fixture_refs(item) for key, item in value.items()}
+        return value
+
+    assert remove_fixture_refs(without_fixture) == baseline_spec
