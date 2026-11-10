@@ -361,65 +361,111 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
   const member = await isolated.member();
   const { page } = member;
   await page.setViewportSize({ width: 768, height: 1024 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await seedFirstVisitMember(page, member.context.request);
   await page.goto("/");
   const group = page.getByRole("region", { name: "What you can make here" }).getByRole("group", { name: "What to make" });
   const chat = group.getByRole("button", { name: "Chat About 1 s · no charge" });
   await chat.click();
-  await expect(chat).toHaveAttribute("aria-pressed", "true");
-  // Faces settle as their pictures load. Wait for every picture to decode first, so a late one cannot change a face
-  // after the poll below has seen them line up; then wait until every face and caption lines up.
-  await group.evaluate((node) =>
-    Promise.all(Array.from(node.querySelectorAll("img")).map((img) => img.decode().catch(() => undefined))),
-  );
-  // One function measures everything, and the assertions below read the reading that settled: two reads in a row
-  // that agree and line up. A separate later read can see a face that moved after the poll passed.
-  const measure = (node: Element) => {
-    const cards = Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]"));
-    const ring = cards[0].querySelector<HTMLElement>("span.absolute.inset-0");
-    const faces = cards.map((card) => card.firstElementChild!.getBoundingClientRect());
-    return {
-      ring: ring ? getComputedStyle(ring).boxShadow : "",
-      outline: getComputedStyle(cards[0]).outlineStyle,
-      faceHeights: new Set(faces.map((face) => Math.round(face.height))).size,
-      captionEnds: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().bottom))).size,
-      grid: node.getBoundingClientRect().toJSON(),
-      cardBoxes: cards.map((card) => card.getBoundingClientRect().toJSON()),
-      // Kept so a face that moves without changing its height still counts as a change.
-      faceBoxes: faces.map((face) => face.toJSON()),
+  // Selection, not the hover lift, is under test.
+  await page.mouse.move(0, 0);
+  const shape = await group.evaluate(async (node) => {
+    await Promise.all(Array.from(node.querySelectorAll("img")).map((img) => img.decode().catch(() => undefined)));
+    await document.fonts.ready;
+    await Promise.all(document.getAnimations()
+      .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
+      .map((animation) => animation.finished.catch(() => undefined)));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const box = (element: Element) => {
+      const { top, right, bottom, left, width, height } = element.getBoundingClientRect();
+      return { top, right, bottom, left, width, height };
     };
-  };
-  const settledReading: { settled?: ReturnType<typeof measure> } = {};
-  let previous = "";
-  await expect
-    .poll(async () => {
-      const reading = await group.evaluate(measure);
-      const key = JSON.stringify(reading);
-      const before = previous ? (JSON.parse(previous) as Record<string, unknown>) : undefined;
-      const settled = key === previous && reading.faceHeights === 1 && reading.captionEnds === 1;
-      previous = key;
-      if (settled) {
-        settledReading.settled = reading;
-        return "settled";
+    const measure = () => ({
+      grid: box(node),
+      cards: Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]")).map((card) => {
+        // Only the two caption spans name this button; its sample face and icons are aria-hidden.
+        const name = Array.from(card.children)
+          .filter((child) => child.getAttribute("aria-hidden") !== "true")
+          .map((child) => child.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
+        const face = card.firstElementChild;
+        const ring = card.querySelector<HTMLElement>("span.absolute.inset-0");
+        const caption = card.querySelector<HTMLElement>(":scope > span.text-badge");
+        if (!face || !ring || !caption) throw new Error(name + ": missing face, ring, or caption");
+        const shadow = getComputedStyle(ring).boxShadow;
+        // Split between layers, not the commas inside a computed color function.
+        const shadows = shadow === "none" ? [] : shadow.split(/,\s*(?![^()]*\))/).map((layer) => {
+          const color = layer.match(/(?:rgba?|hsla?|oklch|oklab|lch|lab|color)\([^)]*\)/)?.[0] ?? "";
+          const alpha = color.match(/\/\s*([\d.]+)(%)?\s*\)$/);
+          const opacity = alpha ? Number(alpha[1]) / (alpha[2] ? 100 : 1)
+            : color.startsWith("rgba(") ? Number(color.slice(5, -1).split(",")[3]) : 1;
+          const tokens = layer.replace(color, "").trim().split(/\s+/);
+          return {
+            inset: tokens.includes("inset"),
+            lengths: tokens.filter((token) => token !== "inset").map((token) => Number.parseFloat(token)),
+            opacity,
+          };
+        });
+        return { name, pressed: card.getAttribute("aria-pressed"), card: box(card), face: box(face), ring: box(ring), caption: box(caption), shadow, shadows };
+      }),
+    });
+    // Observe every painted frame for a whole interval, not two matching samples of an animation.
+    const stableInterval = 500;
+    const deadline = performance.now() + 5_000;
+    let previous = measure();
+    let stableSince = performance.now();
+    let lastChange = "first reading: " + previous.cards.map((card) => card.name).join(", ");
+    while (performance.now() < deadline) {
+      await new Promise(requestAnimationFrame);
+      const reading = measure();
+      const now = performance.now();
+      if (JSON.stringify(reading) === JSON.stringify(previous)) {
+        if (now - stableSince >= stableInterval) return { ...reading, stableForMs: now - stableSince };
+      } else {
+        const changed = reading.cards.flatMap((card) => {
+          const before = previous.cards.find((item) => item.name === card.name);
+          if (!before) return [card.name + ": appeared or changed name"];
+          const fields = (Object.keys(card) as (keyof typeof card)[])
+            .filter((field) => JSON.stringify(card[field]) !== JSON.stringify(before[field]));
+          return fields.length ? [card.name + ": " + fields.join(", ")] : [];
+        });
+        changed.push(...previous.cards.filter((card) => !reading.cards.some((item) => item.name === card.name))
+          .map((card) => card.name + ": disappeared or changed name"));
+        lastChange = changed.join("; ") || "grid moved around " + reading.cards.map((card) => card.name).join(", ");
+        stableSince = now;
       }
-      const changed = before
-        ? Object.entries(reading)
-            .filter(([field, value]) => JSON.stringify(value) !== JSON.stringify(before[field]))
-            .map(([field]) => field)
-        : ["first reading"];
-      return `face heights ${reading.faceHeights}, caption ends ${reading.captionEnds}, changed: ${changed.join(", ") || "none"}`;
-    }, { message: "the home cards should stop moving with one face height and one caption end" })
-    .toBe("settled");
-  const shape = settledReading.settled;
-  if (!shape) throw new Error("the card layout never settled");
-  // The ring is an inset shadow on the face, so nothing is drawn outside the grid's edges.
-  expect(shape.ring).toContain("inset");
-  expect(shape.faceHeights).toBe(1);
-  expect(shape.captionEnds).toBe(1);
-  for (const card of shape.cardBoxes) {
-    expect(card.left).toBeGreaterThanOrEqual(shape.grid.left - 0.5);
-    expect(card.right).toBeLessThanOrEqual(shape.grid.right + 0.5);
+      previous = reading;
+    }
+    throw new Error("Home cards did not stay still for 500 ms; last change: " + lastChange);
+  });
+  expect(shape.stableForMs).toBeGreaterThanOrEqual(500);
+  expect(shape.cards).toHaveLength(4);
+  expect(shape.cards.every((card) => card.name.length > 0)).toBe(true);
+  expect(new Set(shape.cards.map((card) => card.name)).size).toBe(4);
+  const selected = shape.cards.filter((card) => card.pressed === "true");
+  expect(selected.map((card) => card.name)).toEqual(["Chat About 1 s · no charge"]);
+  expect(shape.cards.filter((card) => card.pressed === "false")).toHaveLength(3);
+  expect(new Set(shape.cards.map((card) => Math.round(card.face.height))).size).toBe(1);
+  const captionBottoms = shape.cards.map((card) => card.caption.bottom);
+  expect(Math.max(...captionBottoms) - Math.min(...captionBottoms), "caption text-box bottoms").toBeLessThanOrEqual(1);
+  for (const card of shape.cards) {
+    expect(card.caption.height, card.name + ": caption height").toBeGreaterThan(0);
+    expect(card.card.left, card.name + ": grid left").toBeGreaterThanOrEqual(shape.grid.left - 0.5);
+    expect(card.card.right, card.name + ": grid right").toBeLessThanOrEqual(shape.grid.right + 0.5);
   }
+  const chosen = selected[0];
+  for (const [part, bounds] of [["face", chosen.face], ["ring", chosen.ring]] as const) {
+    expect(bounds.width, chosen.name + ": " + part + " width").toBeGreaterThan(0);
+    expect(bounds.height, chosen.name + ": " + part + " height").toBeGreaterThan(0);
+    expect(bounds.top, chosen.name + ": " + part + " top").toBeGreaterThanOrEqual(chosen.card.top - 0.5);
+    expect(bounds.right, chosen.name + ": " + part + " right").toBeLessThanOrEqual(chosen.card.right + 0.5);
+    expect(bounds.bottom, chosen.name + ": " + part + " bottom").toBeLessThanOrEqual(chosen.card.bottom + 0.5);
+    expect(bounds.left, chosen.name + ": " + part + " left").toBeGreaterThanOrEqual(chosen.card.left - 0.5);
+  }
+  // Zero-size outer shadow placeholders draw nothing; every visible layer must be the 2 px inset ring.
+  const visibleShadows = chosen.shadows.filter((shadow) => shadow.opacity > 0 && shadow.lengths.some((length) => length !== 0));
+  expect(visibleShadows, chosen.name + ": computed box-shadow " + chosen.shadow).toEqual([
+    { inset: true, lengths: [0, 0, 0, 2], opacity: expect.any(Number) },
+  ]);
 });
 
 test("H11 without an access plan the composer is absent, and Ask posts once and confirms in place", async ({ isolated, request }) => {
