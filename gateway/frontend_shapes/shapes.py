@@ -681,8 +681,8 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         entry = snapshot.get(run.workflow_id)
         targets = _wire.asset_input_names(entry) if entry is not None else []
         contract = entry.contract if entry is not None else {}
-        roles = (contract.get("video") or {}).get("roles") or {}
-        target = roles.get("source")
+        from gateway.extension_catalog import source_input
+        target = source_input(contract)
         if target is None:
             target = next((name for name in targets
                            if any(kind.startswith(self.output_prefix)
