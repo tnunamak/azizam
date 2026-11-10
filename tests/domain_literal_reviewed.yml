@@ -167,9 +167,9 @@ sites:
     reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
   - file: gateway/openai_media_schemas.py
     literal: audio
-    count: 2
+    count: 1
     category: wire_enum
-    reason: Names the audio stream_format value defined by the OpenAI Audio speech request, and the audio field of the com.azizam.video extension the gateway publishes on its JSON video create request; both are published OpenAPI schema property names or values.
+    reason: Names the audio stream_format value defined by the OpenAI Audio speech request; a published OpenAPI schema value.
   - file: gateway/workflow_request_maps.py
     literal: video
     count: 1
