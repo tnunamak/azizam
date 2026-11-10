@@ -48,7 +48,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Iterator, Literal, M
 import httpx
 
 from gateway import private_io, stt_chunking
-from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
+from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION, AdapterOrigin
 from gateway.engine_protocol.description import ProtocolDescription, load_shipped_description, shipped_for_implementation
 from gateway.engine_protocol.errors import UnknownOperation, UnsupportedByAdapter
 from gateway.engine_protocol.httpx_wire import failure, lower_headers, reply_from
@@ -310,7 +310,6 @@ class ChunkedSttAdapter:
 
     def __init__(self, description: ProtocolDescription | None = None) -> None:
         description = description if description is not None else load_shipped_description(_DEFAULT_PROTOCOL.id)
-        from gateway.engine_protocol.adapter import AdapterOrigin
         self.adapter_id = description.adapter_identity
         self.built_from = AdapterOrigin.of(description)
         self.label = description.label or _DEFAULT_LABEL

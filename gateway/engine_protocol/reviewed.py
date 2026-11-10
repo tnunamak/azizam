@@ -138,7 +138,7 @@ def _factories_for(doc: description.ProtocolDescription) -> dict[str, AdapterFac
                     if row.adapter_id == doc.adapter_id and row.implementation]
         implementation = defaults[0].implementation if len(defaults) == 1 else ""
     if implementation in _BUILTIN_FACTORIES:
-        factories[doc.adapter_identity] = _BUILTIN_FACTORIES[implementation]
+        factories.setdefault(doc.adapter_identity, _BUILTIN_FACTORIES[implementation])
     return factories
 
 
@@ -180,7 +180,7 @@ def adapter_for_backend(record: Mapping[str, Any], capability: str, *, assets: A
         try:
             return _build(doc, assets)
         except ProtocolError as error:
-            if doc.implementation:
+            if doc.implementation and doc.implementation not in _BUILTIN_FACTORIES:
                 raise
             refusal = error
     raise refusal or ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")

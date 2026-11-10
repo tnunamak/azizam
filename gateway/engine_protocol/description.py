@@ -711,6 +711,14 @@ def load_shipped_description(protocol_id: str) -> ProtocolDescription:
     return parsed
 
 
+def shipped_for_implementation(implementation: str) -> ProtocolDescription:
+    """The unique shipped default for a reviewed implementation, independent of its protocol spelling."""
+    matches = [doc for doc in load_registry(REGISTRY_DIR).values() if doc.implementation == implementation]
+    if len(matches) != 1:
+        raise DescriptionError(str(REGISTRY_DIR), [f"implementation {implementation!r} requires exactly one shipped default"])
+    return matches[0]
+
+
 def get_description(protocol_id: str) -> ProtocolDescription | None:
     return load_registry().get(protocol_id)
 
@@ -734,11 +742,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def shipped_for_implementation(implementation: str) -> ProtocolDescription:
-    """The unique shipped default for a reviewed implementation, independent of its protocol spelling."""
-    matches = [doc for doc in load_registry(REGISTRY_DIR).values() if doc.implementation == implementation]
-    if len(matches) != 1:
-        raise DescriptionError(str(REGISTRY_DIR), [f"implementation {implementation!r} requires exactly one shipped default"])
-    return matches[0]

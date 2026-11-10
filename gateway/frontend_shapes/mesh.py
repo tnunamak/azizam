@@ -13,12 +13,11 @@ from typing import Any
 
 from starlette.responses import JSONResponse, Response
 
+from gateway.engine_protocol import description
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import Shape
 from gateway.mesh_manifest import MESH_MEDIA_TYPE as OUTPUT_MEDIA_TYPE
 from gateway.workflow_runtime_types import CallerContext, JobService, RunJobView
-
-from gateway.engine_protocol import description
 
 _ROUTE_TYPES = frozenset({"asset", "integer", "string", "object"})
 # The picture types the route sniffs (``sniff_image``). The picture input must accept exactly these: a type the route cannot

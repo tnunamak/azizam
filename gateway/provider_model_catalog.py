@@ -7,7 +7,6 @@ from typing import Any, Mapping
 
 from gateway.capabilities import Capability
 from gateway import service_registry
-
 from gateway.engine_protocol import description
 
 

@@ -122,3 +122,26 @@ def test_protocol_traits_refuse_duplicate_keys_and_unknown_catalog_fields():
     text = yaml.safe_dump(document("http-multipart")) + "implementation: other\n"
     with pytest.raises(DescriptionError):
         description.parse_description_text(text, source="fixture.yml")
+
+
+def test_legacy_descriptions_inherit_shipped_registration():
+    for name, expected in (("node-graph", "NodeGraphAdapter"), ("chunked-stt", "ChunkedSttAdapter"),
+                           ("inline-tts", "InlineTtsAdapter")):
+        raw = document(name)
+        del raw["implementation"]
+        assert type(reviewed._build(parsed(raw))).__name__ == expected
+
+
+def test_explicit_reviewed_registration_keeps_precedence(monkeypatch):
+    doc = parsed(document("node-graph"))
+    sentinel = SimpleNamespace(interface_version=2)
+    monkeypatch.setattr(reviewed, "_FACTORIES", {doc.adapter_identity: lambda _: sentinel})
+    monkeypatch.setattr(reviewed, "_BUILT", {})
+    assert reviewed._build(doc) is sentinel
+
+
+def test_multipart_unknown_implementation_is_refused():
+    raw = document("http-multipart")
+    raw["implementation"] = "unregistered"
+    with pytest.raises(ValueError, match="multipart traits"):
+        runner(None, parsed(raw))
