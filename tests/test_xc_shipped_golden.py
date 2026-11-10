@@ -74,10 +74,14 @@ def capture(monkeypatch):
     return found
 
 
-def test_shipped_outputs(monkeypatch):
+def test_shipped_outputs(monkeypatch, record_property):
     actual = capture(monkeypatch)
     expected = json.loads(GOLDEN.read_text())
     actual = json.loads(json.dumps(actual, default=str))
+    if actual != expected:
+        record_property("golden_differences", json.dumps({
+            name: result for name, result in actual.items() if result != expected.get(name)
+        }))
     assert actual == expected
 
 
