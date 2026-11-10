@@ -16,6 +16,7 @@ Features:
 """
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
+from gateway.service_priority import service_priority
 from gateway import engine_egress, engine_record_defaults
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.frontend_shapes.video_views import VideoViews
@@ -943,7 +944,7 @@ def _highest_priority_chat_backend() -> Optional[str]:
         bcfg = backends.get(bid)
         if not isinstance(bcfg, Mapping):
             continue
-        priority = int(bcfg.get("priority") or 100)
+        priority = service_priority(bcfg)
         candidates.append((priority, bid))
     if not candidates:
         return None
@@ -967,7 +968,7 @@ def vision_capable_llm_backends() -> list[str]:
         caps = {str(c).strip().lower() for c in (bcfg.get("capabilities") or []) if str(c).strip()}
         if "vision" not in caps:
             continue
-        priority = int(bcfg.get("priority") or 100)
+        priority = service_priority(bcfg)
         result.append((priority, bid))
     result.sort()
     return [bid for _, bid in result]
@@ -1024,7 +1025,7 @@ def backends_for_capability(
             matched = cap in caps
         if not matched:
             continue
-        priority = int(bcfg.get("priority") or 100)
+        priority = service_priority(bcfg)
         result.append((priority, bid))
     result.sort()
     return [bid for _, bid in result]
@@ -1751,7 +1752,7 @@ def _llm_backend_candidates() -> list[str]:
     # Sort by priority (lower = higher priority) so the preferred backend wins.
     return sorted(
         snapshot.derived["LLM_BACKEND_HOSTS"].keys(),
-        key=lambda bid: int((backends.get(bid) or {}).get("priority") or 100),
+        key=lambda bid: service_priority(backends.get(bid)),
     )
 
 

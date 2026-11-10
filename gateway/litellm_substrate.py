@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from gateway.provider_catalog import load_provider_catalog
+from gateway.service_priority import service_priority
 from gateway.secret_refs import is_secret_entry
 from gateway.secret_store import credential_origin_from_url
 from gateway.service_registry import (
@@ -362,7 +363,7 @@ def _litellm_service_record(registry: Mapping[str, Any]) -> Mapping[str, Any]:
     ]
     if not candidates:
         return {}
-    return sorted(candidates, key=lambda item: int(item.get("priority") or 100))[0]
+    return sorted(candidates, key=service_priority)[0]
 
 
 def _normalize_services(services: Mapping[str, Any]) -> list[dict[str, Any]]:
