@@ -36,6 +36,8 @@ import fnmatch
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from gateway.compatibility import COMPATIBILITY
+
 from gateway.config_layers import DANGLING, INVALID, Problem
 from gateway.public_failure import describe
 
@@ -445,8 +447,6 @@ def concrete_targets(cfg: Mapping[str, Any] | None, operation: str) -> dict[str,
 
 # (operation in model_aliases, config section that holds its legacy ``aliases`` table), in the order of the two proxy
 # constants VIDEO_ALIASES and AUDIO_ALIASES.
-from gateway.compatibility import COMPATIBILITY
-
 LEGACY_ALIAS_TABLES = tuple(COMPATIBILITY.legacy_alias_tables.items())
 
 

@@ -800,7 +800,11 @@ VIDEOS_DELETE_OPENAPI: JsonObjectSchema = {
 }
 
 
-VIDEO_DELETED_OBJECT = VIDEOS_DELETE_OPENAPI["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["object"]["enum"][0]
+VIDEO_DELETED_OBJECT = (
+    VIDEOS_DELETE_OPENAPI["responses"]["200"]["content"]["application/json"]["schema"]
+    ["properties"]["object"]["enum"][0]
+)
+
 
 VIDEOS_REMIX_OPENAPI: JsonObjectSchema = {
     "responses": {

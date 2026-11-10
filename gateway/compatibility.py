@@ -1,6 +1,6 @@
 """Closed, versioned compatibility declarations; no recurring migration policy."""
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -30,7 +30,7 @@ class MigrationSelector(Contract):
 
 
 class CompatibilityContract(Contract):
-    schema_version: Literal[1]
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)]
     migration: MigrationSelector
     legacy_alias_tables: dict[Word, Word]
     limit_key_aliases: dict[Word, Word]

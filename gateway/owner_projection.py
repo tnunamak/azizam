@@ -14,11 +14,10 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from gateway.storage_kinds import load_storage_kinds
-
 from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES
 from gateway.discovery_metadata import PUBLIC_PROTOCOLS, _load_protocol_frontend_records
 from gateway.resource_decisions import CALLER_REASONS
+from gateway.storage_kinds import load_storage_kinds
 from gateway.receipts import RETENTION_KINDS, RETENTION_DECISIONS, REFUSAL_CODES, sanitize_admin_metadata
 
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")]

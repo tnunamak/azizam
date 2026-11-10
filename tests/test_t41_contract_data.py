@@ -1,6 +1,4 @@
 """Contract files refuse ambiguous or undeclared policy."""
-import copy
-from pathlib import Path
 
 import pytest
 import yaml
@@ -14,7 +12,8 @@ def test_contract_refuses_unknown_duplicate_and_invalid_fields(tmp_path, name, l
     original = (REGISTRY / f"{name}.yml").read_text()
     path = tmp_path / "contract.yml"
     for document in (original + "\nunknown: true\n", original + "\nschema_version: 1\n",
-                     original.replace("schema_version: 1", "schema_version: 2")):
+                     original.replace("schema_version: 1", "schema_version: 2"),
+                     original.replace("schema_version: 1", "schema_version: true")):
         path.write_text(document)
         with pytest.raises((ValueError, yaml.YAMLError)):
             loader(path)

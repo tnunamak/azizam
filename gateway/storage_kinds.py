@@ -1,6 +1,6 @@
 """Internal storage accounting vocabulary shared by schema and projection."""
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -11,7 +11,7 @@ STORAGE_KINDS_PATH = Path(__file__).resolve().parent.parent / "registry" / "stor
 
 class StorageKinds(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    schema_version: Literal[1]
+    schema_version: Annotated[int, Field(strict=True, ge=1, le=1)]
     kinds: Annotated[list[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]*$")]], Field(min_length=1)]
 
     @model_validator(mode="after")

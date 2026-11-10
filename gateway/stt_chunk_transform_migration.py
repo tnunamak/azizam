@@ -14,9 +14,9 @@ import sqlite3
 from typing import Any, Mapping
 
 from gateway import service_registry
+from gateway.compatibility import COMPATIBILITY
 
 TIMING_DIAGNOSTIC_ROW: dict[str, Any] = {"kind": "drop-params", "phase": "response", "drop": ["timing"]}
-from gateway.compatibility import COMPATIBILITY
 
 
 def attach_timing_row(config: dict[str, Any], capabilities: Any) -> bool:
