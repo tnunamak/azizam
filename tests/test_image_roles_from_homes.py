@@ -76,3 +76,29 @@ def test_the_roles_the_routes_read_do_not_depend_on_the_graphs_meta_block(manife
     with_meta = _roles(manifest, path, meta)
     without_meta = _roles(manifest, path, {})
     assert {key: with_meta.get(key) for key in READ} == {key: without_meta.get(key) for key in READ}
+
+
+def test_partial_role_entry_preserves_metadata_reference_order(monkeypatch):
+    path = "workflows/images/qwen-image-2.1-edit-multiref.json"
+    manifest = next(p.values[0] for p in SHIPPED if p.values[1] == path)
+    meta = json.loads((ROOT / path).read_text())["_meta"]
+    table = release_graph_roles()
+    monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", {path: {"background": table[path]["background"]}})
+    assert _roles(manifest, path, meta)["image_nodes"] == ["4", "11"]
+
+
+@pytest.mark.parametrize("family", ["name", "prompt", "size", "seed", "batch", "references", "source", "background"])
+def test_data_wins_when_graph_metadata_disagrees(family):
+    path = ("workflows/images/qwen-image-2.1-edit-multiref.json" if family == "references"
+            else "workflows/images/flux2-klein-edit.json" if family in ("batch", "source")
+            else "workflows/images/krea2-turbo.json")
+    manifest = next(p.values[0] for p in SHIPPED if p.values[1] == path)
+    meta = json.loads((ROOT / path).read_text())["_meta"]
+    keys = {"name": ["name"], "prompt": ["prompt_node"], "size": ["size_node"],
+            "seed": ["seed_node"], "batch": ["batch_size_node"],
+            "references": ["image_node", "image_nodes"], "source": ["image_node", "image_nodes"], "background": ["background_removal"]}[family]
+    expected = _roles(manifest, path, meta)
+    for key in keys:
+        meta[key] = ["wrong-b", "wrong-a"] if key == "image_nodes" else "wrong"
+    actual = _roles(manifest, path, meta)
+    assert {k: actual.get(k) for k in keys} == {k: expected.get(k) for k in keys}

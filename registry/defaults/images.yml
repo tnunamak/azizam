@@ -30,18 +30,22 @@ graph_roles:
   workflows/images/anima-turbo.json:
     background: {output: image, processor: "10", slot: 0}
   workflows/images/fibo-2-edit-turbo.json:
+    reference_order: [source_image]
     background: {output: image, processor: "11", slot: 0}
   workflows/images/flux2-klein.json:
     background: {output: image, processor: "90", slot: 0}
   workflows/images/flux2-klein-4b.json:
     background: {output: image, processor: "90", slot: 0}
   workflows/images/flux2-klein-4b-edit.json:
+    reference_order: [source_image]
     background: {output: image, processor: "90", slot: 0}
     batch_size:
       - {node: "47", input: batch_size}
   workflows/images/flux2-klein-4b-inpaint.json:
+    reference_order: [source_image]
     background: {output: image, processor: "90", slot: 0}
   workflows/images/flux2-klein-edit.json:
+    reference_order: [source_image]
     background: {output: image, processor: "90", slot: 0}
     batch_size:
       - {node: "47", input: batch_size}
@@ -58,13 +62,16 @@ graph_roles:
   workflows/images/moss-image-quality.json:
     background: {output: image, processor: "15", slot: 0}
   workflows/images/qwen-image-2.1-edit.json:
+    reference_order: [source_image]
     background: {output: image, processor: "11", slot: 0}
   workflows/images/qwen-image-2.1-edit-multiref.json:
     background: {output: image, processor: "99", slot: 0}
     reference_order: [source_image, reference_image_2]
   workflows/images/qwen-image-2.1-inpaint.json:
+    reference_order: [source_image]
     background: {output: image, processor: "99", slot: 0}
   workflows/images/sdxl-seamless-tile.json:
     background: {output: image, processor: "90", slot: 0}
   workflows/images/seedvr2-upscale.json:
+    reference_order: [source_image]
     background: {output: image, processor: "99", slot: 0}

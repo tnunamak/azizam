@@ -12,6 +12,8 @@ import yaml
 from starlette.convertors import CONVERTOR_TYPES
 from starlette.routing import PARAM_REGEX
 
+from gateway import toolcall_detection as _message_data
+from gateway.strict_yaml import safe_load_strict
 from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.chat_extensions import (
@@ -181,11 +183,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                         "name": "metadata",
                         "values": ["full", "none"],
                         "default": "the app profile's media_metadata.default",
-                        "description": (
-                            "Whether delivered media keeps its embedded ComfyUI workflow "
-                            "and gateway provenance (full) or has all metadata removed "
-                            "losslessly (none). Valid on every route that returns generated media."
-                        ),
+                        "description": _message_data.GATEWAY_MESSAGES["metadata_description"],
                     }
                 ],
                 "routes": [
@@ -332,3 +330,56 @@ def _aliases_from_caveats(caveats: Iterable[str]) -> set[str]:
 def _check_audience(audience: str) -> None:
     if audience not in VALID_AUDIENCES:
         raise ValueError(f"audience must be one of {VALID_AUDIENCES!r}, got {audience!r}")
+
+
+@dataclass(frozen=True)
+class InputContract:
+    extension_hints: Mapping[str, str]
+    source_role_paths: tuple[tuple[str, ...], ...]
+
+
+def load_input_contract(path: str | Path = _EXTENSION_ROWS_PATH) -> InputContract:
+    """Closed, modality-neutral compatibility mapping; never executable names."""
+    import re
+    def bad(reason: str) -> ValueError:
+        return ValueError(f"{path}: input_contract: {reason}")
+    try:
+        doc = safe_load_strict(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        raise bad(str(exc)) from exc
+    row = doc.get("input_contract") if isinstance(doc, Mapping) else None
+    if not isinstance(row, Mapping) or set(row) != {"extension_hints", "source_role_paths"}:
+        raise bad("expected only extension_hints and source_role_paths")
+    hints = row["extension_hints"]
+    if not isinstance(hints, Mapping) or not hints:
+        raise bad("extension_hints must be a nonempty map")
+    for name, value in hints.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", name)
+                or not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_ -]*", value)):
+            raise bad("hints must name data fields")
+    paths = row["source_role_paths"]
+    if not isinstance(paths, list) or not paths:
+        raise bad("source_role_paths must be a nonempty list")
+    found = []
+    for parts in paths:
+        if (not isinstance(parts, list) or not parts
+                or any(not isinstance(part, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", part) for part in parts)):
+            raise bad("role paths must be lists of data keys")
+        if tuple(parts) in found:
+            raise bad("duplicate role path")
+        found.append(tuple(parts))
+    return InputContract(MappingProxyType(dict(hints)), tuple(found))
+
+
+INPUT_CONTRACT = load_input_contract()
+
+
+def source_input(contract: Mapping[str, Any]) -> str | None:
+    """An explicit source role, in declared compatibility order."""
+    for parts in INPUT_CONTRACT.source_role_paths:
+        value: Any = contract
+        for part in parts:
+            value = value.get(part) if isinstance(value, Mapping) else None
+        if value is not None:
+            return value
+    return None

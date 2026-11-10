@@ -108,3 +108,86 @@ def test_diagnostics_use_protocol_label_and_binding_context(case):
     assert raised.value.primary.pointer == "/bindings/fixture_loom/map/source/0"
     assert str(raised.value) == "binding target missing: node 77 input payload"
     assert "do-not-echo" not in str(raised.value) and request == before
+
+
+def test_graph_handles_use_declared_output_keys():
+    adapter = adapter_for()
+    job = {"status": {"completed": True}, "outputs": {
+        "20": {
+            "bundles": [{"filename": "tail.bin"}],
+            "videos": [{"filename": "undeclared.mp4"}],
+            "images": [{"filename": "preview.png", "type": "temp"}],
+            "woven": [{"filename": "first.bin", "subfolder": "nested/results", "type": "output"},
+                      {"filename": "second.bin"}],
+        },
+        "3": {"woven": [{"filename": "third.bin", "subfolder": "", "type": "output"}],
+              "audio": [{"filename": "undeclared.wav"}]},
+        "invalid": "not an output block",
+    }}
+    status = finished(job, adapter)
+    assert status.state is JobState.succeeded
+    assert [json.loads(handle) for handle in status.assets] == [
+        {"kind": "woven", "filename": "first.bin", "subfolder": "nested/results", "type": "output"},
+        {"kind": "woven", "filename": "second.bin", "subfolder": "", "type": "output"},
+        {"kind": "images", "filename": "preview.png", "subfolder": "", "type": "temp"},
+        {"kind": "bundles", "filename": "tail.bin", "subfolder": "", "type": "output"},
+        {"kind": "woven", "filename": "third.bin", "subfolder": "", "type": "output"},
+    ]
+    block = {"selectors": {
+        "result": {"node": "20", "key": "woven", "from": "output_dir"},
+        "tail": {"node": "20", "key": "bundles", "from": "output_dir"},
+    }}
+    picked = adapter.collect(job, block, {"result": {}, "tail": {}}, limits=limits())
+    assert list(picked) == ["result", "tail"]
+    assert picked["result"] == (
+        {"filename": "first.bin", "subfolder": "nested/results", "type": "output"},
+        {"filename": "second.bin", "subfolder": "", "type": "output"},
+    )
+    assert picked["tail"] == ({"filename": "tail.bin", "subfolder": "", "type": "output"},)
+
+
+def test_legacy_default_handles_and_explicit_selector_absence():
+    job = {"status": {"completed": True}, "outputs": {
+        "9": {"videos": [{"filename": "v.mp4"}], "images": [{"filename": "a.png"}],
+              "woven": [{"filename": "undeclared.bin"}]},
+    }}
+    adapter = NodeGraphAdapter()
+    expected = [
+        {"kind": "images", "filename": "a.png", "subfolder": "", "type": "output"},
+        {"kind": "videos", "filename": "v.mp4", "subfolder": "", "type": "output"},
+    ]
+    assert [json.loads(handle) for handle in finished(job, adapter).assets] == expected
+    assert [json.loads(handle) for handle in NodeGraphAdapter._handles(job)] == expected
+    assert adapter.result_selectors is None and adapter.built_from is None
+    document = protocol_document()
+    del document["result_selectors"]
+    unselecting = adapter_for(document)
+    assert [json.loads(handle) for handle in finished(job, unselecting).assets] == expected
+    with pytest.raises(SelectionRefused) as raised:
+        unselecting.collect(job, {"selectors": {"result": {
+            "node": "9", "key": "images", "from": "output_dir"}}}, {"result": {}}, limits=limits())
+    assert raised.value.code == "selectors_unsupported"
+
+
+def test_missing_history_selector_inherits_shipped_data(monkeypatch):
+    from gateway.engine_protocol import node_graph
+    document = protocol_document()
+    defaults = description.parse_description(document, source="defaults.yml")
+    monkeypatch.setattr(node_graph, "load_shipped_description", lambda protocol: defaults)
+    del document["result_selectors"]
+    adapter = adapter_for(document)
+    status = finished({"status": {"completed": True}, "outputs": {"1": {"woven": [{"filename": "result.bin"}]}}}, adapter)
+    assert status.state is JobState.succeeded
+    assert [json.loads(handle)["kind"] for handle in status.assets] == ["woven"]
+
+
+def test_poll_reports_undeclared_outputs_as_an_empty_result():
+    # The run core turns an empty result into the pinned OpenAI answer (tests/test_s7_parity_video_texts.py
+    # content_no_video_output: 502 "No videos generated"); a protocol error here would change that answer.
+    status = finished({"status": {"completed": True}, "outputs": {"1": {"unrecognized": [{"filename": "result.bin"}]}}}, adapter_for())
+    assert status.state is JobState.succeeded and status.assets == ()
+
+
+def test_poll_keeps_empty_output_completion_compatible():
+    status = finished({"status": {"completed": True}, "outputs": {}}, adapter_for())
+    assert status.state is JobState.succeeded and status.assets == ()

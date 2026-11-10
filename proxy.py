@@ -8701,10 +8701,10 @@ def _image_graph_roles(
     batch = [pair for pair in (found.batch_size or tuple((str(t["node"]), str(t["input"])) for t in owned.get("batch_size") or ())) if pair[1] == "batch_size"]
     if batch:
         roles["batch_size_node"] = batch[0][0]
-    # Image slots: each asset input the graph takes, in the table's reference order (the source image alone by default).
-    slot_names = tuple((_IMAGE_GRAPH_ROLES.get(path) or {}).get("reference_order") or ("source_image",))
+    # Image slots: an explicit reference order owns this role; otherwise keep the graph metadata.
+    slot_names = tuple(owned.get("reference_order") or ())
     slots = [found.assets.get(name) for name in slot_names]
-    if path in _IMAGE_GRAPH_ROLES and all(slots):
+    if slot_names and all(slots):
         roles["image_nodes"] = [pairs[0][0] for pairs in slots]
         roles.pop("image_node", None)
     # Background cut-out: the table names the processor and its output slot; the graph's own save node supplies the plain path.
@@ -12240,7 +12240,7 @@ async def _proxy_graph_video_create(
                         ext_block, video_manifest.get("inputs") or {}
                     ),
                 }
-            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest)
+            validation, unknown_fields = validate_video_workflow_extensions(body, video_manifest, backend=DERIVED._GRAPH_BINDING)
             rejected = {**validation.rejected, **unknown_fields}
             # Preserve the required-picture errors before reporting other invalid inputs.
             for name, reason in validation.rejected.items():
@@ -12608,6 +12608,7 @@ async def _proxy_graph_video_create(
                 body,
                 manifest,
                 workflow,
+                backend=DERIVED._GRAPH_BINDING,
             )
         except (ExtensionError, ManifestError) as e:
             return Response(

@@ -1,0 +1,2938 @@
+{
+  "manifests/categories/adult.yml": {
+    "validation": {
+      "error": "this schema version is not supported; convert the document with scripts/workflow_contract.py convert",
+      "errors": [
+        {
+          "code": "schema_version_unsupported",
+          "message": "this schema version is not supported; convert the document with scripts/workflow_contract.py convert",
+          "path": [
+            "schema_version"
+          ],
+          "pointer": "/schema_version"
+        }
+      ]
+    }
+  },
+  "manifests/categories/experimental.yml": {
+    "validation": {
+      "error": "this schema version is not supported; convert the document with scripts/workflow_contract.py convert",
+      "errors": [
+        {
+          "code": "schema_version_unsupported",
+          "message": "this schema version is not supported; convert the document with scripts/workflow_contract.py convert",
+          "path": [
+            "schema_version"
+          ],
+          "pointer": "/schema_version"
+        }
+      ]
+    }
+  },
+  "manifests/workflows/ace-step-1.5-xl-turbo.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "tags",
+          "lyrics",
+          "duration",
+          "bpm",
+          "timesignature",
+          "language",
+          "keyscale",
+          "cfg_scale",
+          "temperature",
+          "top_p",
+          "top_k",
+          "min_p",
+          "steps",
+          "cfg",
+          "sampler",
+          "scheduler"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/audio/ace-step-1.5-xl-turbo.json"
+        },
+        "identity": {
+          "id": "audio.generate.ace-step-1.5-xl-turbo",
+          "manifest_hash": "b574c6997655268c9fdf1abad9007f043151956b963a5d6cf7f05ac3bb03a95f",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "seconds": 1.0
+            }
+          },
+          "20": {
+            "inputs": {
+              "cfg": 1.0,
+              "sampler_name": "sample",
+              "scheduler": "sample",
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "5": {
+            "inputs": {
+              "bpm": 1,
+              "cfg_scale": 1.0,
+              "duration": 1.0,
+              "keyscale": "sample",
+              "language": "sample",
+              "lyrics": "sample",
+              "min_p": 1.0,
+              "tags": "sample",
+              "temperature": 1.0,
+              "timesignature": "sample",
+              "top_k": 1,
+              "top_p": 1.0
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "bpm": 1,
+          "cfg": 1.0,
+          "cfg_scale": 1.0,
+          "duration": 1.0,
+          "keyscale": "sample",
+          "language": "sample",
+          "lyrics": "sample",
+          "min_p": 1.0,
+          "sampler": "sample",
+          "scheduler": "sample",
+          "steps": 1,
+          "tags": "sample",
+          "temperature": 1.0,
+          "timesignature": "sample",
+          "top_k": 1,
+          "top_p": 1.0
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/anima-turbo.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/anima-turbo.json"
+        },
+        "identity": {
+          "id": "image.generate.anima-turbo",
+          "manifest_hash": "617f3a08532e36ead7826fb381e524b58a5d11d2f70d491007026341f4a89cf5",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "4": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "seed": "original",
+              "steps": 10
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "steps": 10
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/face-likeness.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/fibo-2-edit-turbo.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "steps"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/fibo-2-edit-turbo.json"
+        },
+        "identity": {
+          "id": "image.edit.fibo-2-edit-turbo",
+          "manifest_hash": "f362106d058f174d33bcb438236b86f383d51820493c2f4f2f32a616d07019b2",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "4": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "6": {
+            "inputs": {
+              "prompt": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "seed": "original",
+              "steps": 4
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "source_image": "asset:sample",
+          "steps": 4
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein-4b-edit.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "steps",
+          "guidance",
+          "denoise"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "edge_only_inputs": [
+            "mask"
+          ],
+          "result_processing": [
+            "post_composite_mask"
+          ],
+          "workflow": "workflows/images/flux2-klein-4b-edit.json"
+        },
+        "identity": {
+          "id": "image.edit.flux2-klein-4b",
+          "manifest_hash": "0a24459eb52ef556b027d9cdcb6df3b475e82ff56a3899df48cdfeac3ad324df",
+          "source": null,
+          "trusted": false,
+          "version": "0.3.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "25": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "26": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "47": {
+            "inputs": {
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "48": {
+            "inputs": {
+              "height": "original",
+              "steps": 1,
+              "width": "original"
+            }
+          },
+          "49": {
+            "inputs": {
+              "denoise": 1
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "denoise": 1,
+          "guidance": 1.0,
+          "source_image": "asset:sample",
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {
+          "mask": "input not supported by current binding"
+        },
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein-4b-inpaint.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "mask",
+          "steps",
+          "guidance",
+          "denoise",
+          "mask_expand",
+          "mask_feather"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/flux2-klein-4b-inpaint.json"
+        },
+        "identity": {
+          "id": "image.edit.flux2-klein-4b-inpaint",
+          "manifest_hash": "2348f5ad17f56926972b698825261734b6ae30008d3ebad79760681505db9e62",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.1"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "11": {
+            "inputs": {
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "12": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "14": {
+            "inputs": {
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "18": {
+            "inputs": {
+              "expand": 0
+            }
+          },
+          "19": {
+            "inputs": {
+              "bottom": 0,
+              "left": 0,
+              "right": 0,
+              "top": 0
+            }
+          },
+          "25": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "26": {
+            "inputs": {
+              "guidance": 4
+            }
+          },
+          "48": {
+            "inputs": {
+              "height": "original",
+              "steps": 8,
+              "width": "original"
+            }
+          },
+          "49": {
+            "inputs": {
+              "denoise": 0.75
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "denoise": 0.75,
+          "guidance": 4,
+          "mask": "asset:sample",
+          "mask_expand": 0,
+          "mask_feather": 0,
+          "source_image": "asset:sample",
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein-4b-seamless-tile.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein-4b.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "guidance",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/flux2-klein-4b.json"
+        },
+        "identity": {
+          "id": "image.generate.flux2-klein-4b",
+          "manifest_hash": "99838f5f40b7f44197c2806c8d72e26c7a6f09d95db3b62e5debfabe0a07c11a",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "27": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "35": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "guidance": 1.0,
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein-edit.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "steps",
+          "guidance"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "edge_only_inputs": [
+            "mask"
+          ],
+          "result_processing": [
+            "post_composite_mask"
+          ],
+          "workflow": "workflows/images/flux2-klein-edit.json"
+        },
+        "identity": {
+          "id": "image.edit.flux2-klein",
+          "manifest_hash": "5964581d34248af917db361307528357618efed2ad442e0583a491531635e5ed",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "25": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "26": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "47": {
+            "inputs": {
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "48": {
+            "inputs": {
+              "height": "original",
+              "steps": 1,
+              "width": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "guidance": 1.0,
+          "source_image": "asset:sample",
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {
+          "mask": "input not supported by current binding"
+        },
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein-snofs.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "guidance",
+          "lora_strength",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/flux2-klein-snofs.json"
+        },
+        "identity": {
+          "id": "image.generate.flux2-klein-snofs",
+          "manifest_hash": "fbbacdee250095d9cf8b0603aab88304a49d4ceccf0af97553725fd93173eb4d",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "11": {
+            "inputs": {
+              "strength_model": 1.0
+            }
+          },
+          "27": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "35": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "guidance": 1.0,
+          "lora_strength": 1.0,
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/flux2-klein.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "guidance",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/flux2-klein.json"
+        },
+        "identity": {
+          "id": "image.generate.flux2-klein",
+          "manifest_hash": "245344d1fc5622a87cb966f0ecd96707b1df40495518b8f377ec0bf855c78029",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "27": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "35": {
+            "inputs": {
+              "guidance": 1.0
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "guidance": 1.0,
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/image-identity.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/krea2-turbo-snofs.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "lora_strength",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/krea2-turbo-snofs.json"
+        },
+        "identity": {
+          "id": "image.generate.krea2-turbo-snofs",
+          "manifest_hash": "59fda5d52ecbd9b7cea1cac38dbc3738f59ed7f342cf963d50e4c6f49781e500",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "11": {
+            "inputs": {
+              "strength_model": 1.0
+            }
+          },
+          "4": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "seed": "original",
+              "steps": 8
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "lora_strength": 1.0,
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/krea2-turbo.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/krea2-turbo.json"
+        },
+        "identity": {
+          "id": "image.generate.krea2-turbo",
+          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "4": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "seed": "original",
+              "steps": 8
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/mesh.generate.trellis-2.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/moss-image-fast.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/moss-image-fast.json"
+        },
+        "identity": {
+          "id": "image.generate.moss-image-fast",
+          "manifest_hash": "4dd0cdc6c76a3e5768543d80f9d516e9afe9755ab305975618906ff78648c3c4",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "9": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/moss-image-quality.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/moss-image-quality.json"
+        },
+        "identity": {
+          "id": "image.generate.moss-image-quality",
+          "manifest_hash": "2bf4dcecfbe01ae0c86f7f38fc6adf5c8aee52f9e39059d4f3fa36e1ed2b5912",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "4": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "8": {
+            "inputs": {
+              "steps": 50
+            }
+          },
+          "9": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "steps": 50
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/moss-image.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/moss-image.json"
+        },
+        "identity": {
+          "id": "image.generate.moss-image",
+          "manifest_hash": "2af4686bf61b08cd1e00a18517510ea2ef18aa06fc03669db56a7c4495773110",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "3": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/qwen-image-2.1-edit-multiref.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "reference_resolution",
+          "steps",
+          "cfg"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "route_bound_inputs": [
+            "reference_image_2"
+          ],
+          "workflow": "workflows/images/qwen-image-2.1-edit-multiref.json"
+        },
+        "identity": {
+          "id": "image.edit.qwen-image-2.1-edit-multiref",
+          "manifest_hash": "3e9232bc5b9cdadf424e7fce9cbef47d0408043de30b7790293195b1a02c0d50",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "11": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "4": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "negative_prompt": "original",
+              "resolution": 1024
+            }
+          },
+          "8": {
+            "inputs": {
+              "cfg": 1.0,
+              "seed": "original",
+              "steps": 25
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "cfg": 1.0,
+          "reference_resolution": 1024,
+          "source_image": "asset:sample",
+          "steps": 25
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "reference_image_2": "reference_image_2 is managed by the standard the standard request shape request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/qwen-image-2.1-edit.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "reference_resolution",
+          "steps",
+          "cfg"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/qwen-image-2.1-edit.json"
+        },
+        "identity": {
+          "id": "image.edit.qwen-image-2.1-edit",
+          "manifest_hash": "523129a6f2a3003ff9302f5e1eca8be93b07bb85043a1fd7da532232faa08931",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "4": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "negative_prompt": "original",
+              "resolution": 1024
+            }
+          },
+          "8": {
+            "inputs": {
+              "cfg": 1.0,
+              "seed": "original",
+              "steps": 25
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "cfg": 1.0,
+          "reference_resolution": 1024,
+          "source_image": "asset:sample",
+          "steps": 25
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/qwen-image-2.1-inpaint.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "steps",
+          "cfg",
+          "mask_expand",
+          "mask_feather",
+          "lanpaint_steps",
+          "prompt_mode"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "mask_to_source_alpha": true,
+          "workflow": "workflows/images/qwen-image-2.1-inpaint.json"
+        },
+        "identity": {
+          "id": "image.edit.qwen-image-2.1-inpaint",
+          "manifest_hash": "8b5c2cfdc8e7c4ee6160223074cde864124f70edccb79f2449c856e96f8ec0b7",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "11": {
+            "inputs": {
+              "LanPaint_NumSteps": 5,
+              "LanPaint_PromptMode": "Image First",
+              "cfg": 1.0,
+              "seed": "original",
+              "steps": 25
+            }
+          },
+          "14": {
+            "inputs": {
+              "expand": 0
+            }
+          },
+          "15": {
+            "inputs": {
+              "bottom": 1,
+              "left": 1,
+              "right": 1,
+              "top": 1
+            }
+          },
+          "4": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "9": {
+            "inputs": {
+              "negative_prompt": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "cfg": 1.0,
+          "lanpaint_steps": 5,
+          "mask_expand": 0,
+          "mask_feather": 1,
+          "prompt_mode": "Image First",
+          "source_image": "asset:sample",
+          "steps": 25
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/rife-interpolate.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_video",
+          "multiplier"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/rife-interpolate.json"
+        },
+        "identity": {
+          "id": "video.edit.rife-interpolate",
+          "manifest_hash": "5bca1f48d10b6a4733e1b8bea212ba4a4d19b86cc114e9af39a91d25dfe2ee07",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "1": {
+            "inputs": {
+              "file": "asset:sample"
+            }
+          },
+          "3": {
+            "inputs": {
+              "multiplier": 2
+            }
+          },
+          "4": {
+            "inputs": {
+              "b": 2
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "multiplier": 2,
+          "source_video": "asset:sample"
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/sa3-small-sfx.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "duration"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/audio/sa3-small-sfx.json"
+        },
+        "identity": {
+          "id": "audio.generate.sa3-small-sfx",
+          "manifest_hash": "66dcdc02f1d8ced3b4f32ae3fb9fd8328be09012e7ce9c470253cb289e6e6234",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "3": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "seconds": 10
+            }
+          },
+          "6": {
+            "inputs": {
+              "seed": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "duration": 10
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/sdxl-seamless-tile.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "guidance",
+          "batch_size",
+          "sampler",
+          "scheduler"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/sdxl-seamless-tile.json"
+        },
+        "identity": {
+          "id": "image.generate.sdxl-seamless-tile",
+          "manifest_hash": "b95c0acea29327404c52d48e1a93ec9f7934461b6a8bccff72d7000804f873cb",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.1"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "27": {
+            "inputs": {
+              "batch_size": 1,
+              "height": "original",
+              "width": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "cfg": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "karras",
+              "seed": "original",
+              "steps": 1
+            }
+          },
+          "33": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "45": {
+            "inputs": {
+              "blending": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "8": {
+            "inputs": {
+              "height": "original",
+              "width": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "guidance": 1.0,
+          "sampler": "euler",
+          "scheduler": "karras",
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seam_blending": "seam_blending must be <= 0.5",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/seedvr2-upscale.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_image",
+          "scale",
+          "color_correction_method"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/images/seedvr2-upscale.json"
+        },
+        "identity": {
+          "id": "image.edit.seedvr2-upscale",
+          "manifest_hash": "4b619255e0b04872fdaae891cb47f13241ca5b1d5edeeef23932a743bfb584ba",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "1": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "10": {
+            "inputs": {
+              "color_correction_method": "none"
+            }
+          },
+          "2": {
+            "inputs": {
+              "resize_type.multiplier": 2
+            }
+          },
+          "8": {
+            "inputs": {
+              "seed": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "color_correction_method": "none",
+          "scale": 2,
+          "source_image": "asset:sample"
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/tangoflux.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "duration",
+          "steps",
+          "guidance",
+          "batch_size"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/audio/tangoflux.json"
+        },
+        "identity": {
+          "id": "audio.generate.tangoflux",
+          "manifest_hash": "a214e32f94c6db9dd9cfe24e1d93f98579d4c5295a685e84d9e646b50d1588a5",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "2": {
+            "inputs": {
+              "batch_size": 1,
+              "duration": 1.0,
+              "guidance_scale": 1.0,
+              "prompt": "original",
+              "seed": "original",
+              "steps": 1
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "batch_size": 1,
+          "duration": 1.0,
+          "guidance": 1.0,
+          "steps": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-ltx-2.5-i2v.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-ltx-2.5-i2v.json"
+        },
+        "identity": {
+          "id": "video.generate.ltx-2.5-i2v",
+          "manifest_hash": "69b1ca96f7d274e04702e27f8d3453fac7f1f99ed6538311ee1144a8765b649a",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "20": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "21": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "23": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "24": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "30": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "70": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "79": {
+            "inputs": {
+              "value": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {},
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "image_strength": "image_strength is managed by the standard image_strength request field; do not pass it as a workflow extension",
+          "length": "length is managed by the standard seconds request field; do not pass it as a workflow extension",
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-ltx-2.5-keyframes-mid.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "last_frame",
+          "last_frame_strength",
+          "mid_frame",
+          "mid_frame_index",
+          "mid_frame_strength",
+          "img_compression"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-ltx-2.5-keyframes-mid.json"
+        },
+        "identity": {
+          "id": "video.generate.ltx-2.5-keyframes-mid",
+          "manifest_hash": "9bfbd73989fff2fe941ac6c22261d2ceb00989ffe7dec5c1795264c8c4f1cab7",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "100": {
+            "inputs": {
+              "value": 1
+            }
+          },
+          "101": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "103": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "107": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "110": {
+            "inputs": {
+              "frame_idx": 1
+            }
+          },
+          "111": {
+            "inputs": {
+              "frame_idx": 1
+            }
+          },
+          "120": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "122": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "124": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "125": {
+            "inputs": {
+              "value": 1
+            }
+          },
+          "20": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "21": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "23": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "24": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "30": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "70": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "72": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "75": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "79": {
+            "inputs": {
+              "value": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "img_compression": 18,
+          "last_frame": "asset:sample",
+          "last_frame_strength": 1,
+          "mid_frame": "asset:sample",
+          "mid_frame_index": 1,
+          "mid_frame_strength": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "frames": "frames must be >= 9",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "image_strength": "image_strength is managed by the standard image_strength request field; do not pass it as a workflow extension",
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-ltx-2.5-keyframes.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "last_frame",
+          "last_frame_strength",
+          "img_compression"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-ltx-2.5-keyframes.json"
+        },
+        "identity": {
+          "id": "video.generate.ltx-2.5-keyframes",
+          "manifest_hash": "bcd81f4e118bf9bed94d35a2bb88ce63866af6ab91ebcd6270b8402f25be174c",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "100": {
+            "inputs": {
+              "value": 1
+            }
+          },
+          "101": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "103": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "107": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "20": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "21": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "23": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "24": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "30": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "70": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "72": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "75": {
+            "inputs": {
+              "img_compression": 18
+            }
+          },
+          "79": {
+            "inputs": {
+              "value": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "img_compression": 18,
+          "last_frame": "asset:sample",
+          "last_frame_strength": 1
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "frames": "frames must be >= 9",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "image_strength": "image_strength is managed by the standard image_strength request field; do not pass it as a workflow extension",
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-ltx-2.5-long.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-ltx-2.5-long.json"
+        },
+        "identity": {
+          "id": "video.generate.ltx-2.5-long",
+          "manifest_hash": "eace076e279d79873b2903e229e984f02bf95f297ab27b6ca13409fc8e7ca1c9",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "neg": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "s0_noise": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "s0_text": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "s0_vlat": {
+            "inputs": {
+              "height": "original",
+              "width": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {},
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-ltx-2.5-t2v.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-ltx-2.5-t2v.json"
+        },
+        "identity": {
+          "id": "video.generate.ltx-2.5-t2v",
+          "manifest_hash": "ee7c0ed604edb75959e8ceec7a0ff0fc9c22f83bbcf122f6ba9a4116385bb9bc",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "20": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "21": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "23": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "24": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "30": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "31": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "text": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "text": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {},
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "length": "length is managed by the standard seconds request field; do not pass it as a workflow extension",
+          "negative_prompt": "negative_prompt is managed by the standard negative_prompt request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-minimax-h3-i2v.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-minimax-h3-i2v.json"
+        },
+        "identity": {
+          "id": "video.generate.minimax-h3-i2v",
+          "manifest_hash": "67c1a8191c3e8f2dd850f06871b074fb10d510930d9f2c83e828e586a437c6c0",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "12": {
+            "inputs": {
+              "steps": 8
+            }
+          },
+          "17": {
+            "inputs": {
+              "fps": "original"
+            }
+          },
+          "20": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "8": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "9": {
+            "inputs": {
+              "prompt": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "length": "length is managed by the standard seconds request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-minimax-h3-keyframes-mid.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "last_frame",
+          "middle_frame",
+          "mid_frame_index"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-minimax-h3-keyframes-mid.json"
+        },
+        "identity": {
+          "id": "video.generate.minimax-h3-keyframes-mid",
+          "manifest_hash": "20d1a52a4208c42f04a5c8f9e525469997ec45d04efe12f1cbb9de05cab50471",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "12": {
+            "inputs": {
+              "steps": 8
+            }
+          },
+          "17": {
+            "inputs": {
+              "fps": "original"
+            }
+          },
+          "20": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "24": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "27": {
+            "inputs": {
+              "frame_idx": 1
+            }
+          },
+          "6": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "8": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "9": {
+            "inputs": {
+              "prompt": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "last_frame": "asset:sample",
+          "mid_frame_index": 1,
+          "middle_frame": "asset:sample",
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "frames": "frames must be >= 22",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-minimax-h3-keyframes.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps",
+          "last_frame"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-minimax-h3-keyframes.json"
+        },
+        "identity": {
+          "id": "video.generate.minimax-h3-keyframes",
+          "manifest_hash": "a592e2474eb2a7718de371c1d4ac13e2c54c7fcec86b0982ac71554aafd22871",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "12": {
+            "inputs": {
+              "steps": 8
+            }
+          },
+          "17": {
+            "inputs": {
+              "fps": "original"
+            }
+          },
+          "20": {
+            "inputs": {
+              "image": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "6": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "8": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "9": {
+            "inputs": {
+              "prompt": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "last_frame": "asset:sample",
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "frames": "frames must be >= 22",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "image": "image is managed by the standard input_reference request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-minimax-h3-long.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-minimax-h3-long.json"
+        },
+        "identity": {
+          "id": "video.generate.minimax-h3-long",
+          "manifest_hash": "ea01fe9aac7de3377add3fda98437595ecc5b353ffbe47b2555900e37a035f91",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "s0_cond": {
+            "inputs": {
+              "height": "original",
+              "prompt": "original",
+              "width": "original"
+            }
+          },
+          "s0_noise": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {},
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-minimax-h3-t2v.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "steps"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-minimax-h3-t2v.json"
+        },
+        "identity": {
+          "id": "video.generate.minimax-h3-t2v",
+          "manifest_hash": "bce35d19887a88c7481b2a4c88b38c6b60fa97ad68773263629626755de2d038",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "10": {
+            "inputs": {
+              "noise_seed": "original"
+            }
+          },
+          "12": {
+            "inputs": {
+              "steps": 8
+            }
+          },
+          "17": {
+            "inputs": {
+              "fps": "original"
+            }
+          },
+          "6": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "7": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "8": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "9": {
+            "inputs": {
+              "prompt": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "steps": 8
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "frame_rate": "frame_rate is managed by the standard workflow configuration request field; do not pass it as a workflow extension",
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "length": "length is managed by the standard seconds request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-mux.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "source_video",
+          "source_audio"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/videos/video-mux.json"
+        },
+        "identity": {
+          "id": "video.edit.video-mux",
+          "manifest_hash": "849f5e7db9b8a8ad454d3582e77661db891fa7cbca81d947dd0bee701c794eeb",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "1": {
+            "inputs": {
+              "file": "asset:sample"
+            }
+          },
+          "3": {
+            "inputs": {
+              "audio": "asset:sample"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "source_audio": "asset:sample",
+          "source_video": "asset:sample"
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/video-scail-2-replace.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "reference_image",
+          "source_video",
+          "source_subject",
+          "reference_subject",
+          "subject_index"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "edge_only_inputs": [
+            "reference_fit",
+            "source_point_x",
+            "source_point_y"
+          ],
+          "workflow": "workflows/videos/video-scail-2-replace.json"
+        },
+        "identity": {
+          "id": "video.edit.scail-2-replace",
+          "manifest_hash": "77515708442677c690c768b333222709bf24ad2e41a174e8409fae2ea0c20188",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "1": {
+            "inputs": {
+              "file": "asset:sample"
+            }
+          },
+          "10": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "16": {
+            "inputs": {
+              "text": "person"
+            }
+          },
+          "17": {
+            "inputs": {
+              "text": "person"
+            }
+          },
+          "2": {
+            "inputs": {
+              "image": "asset:sample"
+            }
+          },
+          "20": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "21": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "22": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "23": {
+            "inputs": {
+              "object_indices": "0"
+            }
+          },
+          "30": {
+            "inputs": {
+              "value": "original"
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "reference_image": "asset:sample",
+          "reference_subject": "person",
+          "source_subject": "person",
+          "source_video": "asset:sample",
+          "subject_index": "0"
+        },
+        "gateway_controls": {},
+        "ignored": {
+          "reference_fit": "input not supported by current binding",
+          "source_point_x": "input not supported by current binding",
+          "source_point_y": "input not supported by current binding"
+        },
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "height": "height is managed by the standard size request field; do not pass it as a workflow extension",
+          "length": "length is managed by the standard seconds request field; do not pass it as a workflow extension",
+          "prompt": "prompt is managed by the standard prompt request field; do not pass it as a workflow extension",
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input",
+          "width": "width is managed by the standard size request field; do not pass it as a workflow extension"
+        }
+      }
+    },
+    "source": {
+      "body": {
+        "error": {
+          "code": "workflow_not_found",
+          "message": "The model 'video.edit.scail-2-replace' does not exist or is not available on this route",
+          "param": "model",
+          "type": "invalid_request_error"
+        }
+      },
+      "status": 404
+    },
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/yue2-song.yml": {
+    "extension": {
+      "binding": {
+        "applied_inputs": [
+          "tags",
+          "lyrics",
+          "duration"
+        ],
+        "backend": "comfyui",
+        "backend_metadata": {
+          "workflow": "workflows/audio/yue2-song.json"
+        },
+        "identity": {
+          "id": "audio.generate.yue2-song",
+          "manifest_hash": "f4ed4810dff8d7393dd74543482d0bce94811adad5830e841536d867bab2754e",
+          "source": null,
+          "trusted": false,
+          "version": "0.1.0"
+        },
+        "ignored_inputs": {},
+        "request": {
+          "2": {
+            "inputs": {
+              "value": "sample"
+            }
+          },
+          "3": {
+            "inputs": {
+              "value": "sample"
+            }
+          },
+          "30": {
+            "inputs": {
+              "value": "original"
+            }
+          },
+          "5": {
+            "inputs": {
+              "max_duration": 180
+            }
+          }
+        }
+      },
+      "namespace": "com.azizam.workflow",
+      "unknown_top_level": {},
+      "validation": {
+        "accepted": {
+          "duration": 180,
+          "lyrics": "sample",
+          "tags": "sample"
+        },
+        "gateway_controls": {},
+        "ignored": {},
+        "namespace": "com.azizam.workflow",
+        "rejected": {
+          "seed": "seed is managed by the standard seed request field; do not pass it as a workflow extension",
+          "undeclared_probe": "unknown input"
+        }
+      }
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  }
+}

@@ -232,6 +232,7 @@ class _Semantic:
             for name, output in outputs.items():
                 self.output(("outputs", name), output)
         self.capability_section(doc)
+        self.input_roles(doc)
         if self.annotation_bytes > self.context.annotation_bytes:
             self.errors.add(("annotations",), "annotations_too_large",
                             f"all annotations together hold more than {self.context.annotation_bytes} bytes")
@@ -355,6 +356,25 @@ class _Semantic:
                 self.errors.add(at + ("enum", index), "enum_value_invalid", "an enum value must have the type of its input")
 
     # -- the section a document keeps for its own capability
+
+    def input_roles(self, doc: Mapping[str, Any]) -> None:
+        """Neutral role and wire hints name declared inputs; a source must carry media."""
+        inputs = doc.get("inputs") if isinstance(doc.get("inputs"), Mapping) else {}
+        bindings = doc.get("bindings") if isinstance(doc.get("bindings"), Mapping) else {}
+        bound = {name for block in bindings.values() if isinstance(block, Mapping)
+                 and isinstance(block.get("map"), Mapping) for name in block["map"]}
+        for section in ("roles", "input_fields"):
+            rows = doc.get(section)
+            if not isinstance(rows, Mapping) or self._broken_below((section,)):
+                continue
+            for key, value in rows.items():
+                name = value if section == "roles" else key
+                if name not in inputs:
+                    self.errors.add((section, key), "role_input_missing", "the mapping names an undeclared input")
+                elif section == "roles" and not media_bearing(inputs[name]):
+                    self.errors.add((section, key), "role_input_not_media", "a source role must name a media input")
+                elif section == "roles" and name not in bound:
+                    self.errors.add((section, key), "role_input_unbound", "a source role must name a bound input")
 
     def capability_section(self, doc: Mapping[str, Any]) -> None:
         """What the section's schema cannot say: a role names an input the document declares and binds, a pair of

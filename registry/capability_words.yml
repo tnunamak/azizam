@@ -3,6 +3,8 @@
 schema_version: 1
 # Wire-facing modalities are distinct from capability IDs and MIME media types.
 modality_words: [text, image, audio, video, mesh]
+# MIME types whose modality is not their top-level media word.
+media_type_modalities: {model/gltf-binary: mesh}
 capabilities:
   - id: chat
     display_order: 0

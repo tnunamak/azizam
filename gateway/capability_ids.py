@@ -39,6 +39,25 @@ def load_modality_words(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
     return _modality_words(document, path)
 
 
+def load_media_type_modalities(path: Path = CAPABILITY_WORDS_PATH) -> Mapping[str, str]:
+    """Read explicit MIME-to-modality declarations; media words are validated together."""
+    from gateway.strict_yaml import safe_load_strict
+
+    document = safe_load_strict(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise ValueError(f"{path.name}: media_type_modalities requires a mapping document")
+    words = _modality_words(document, path)
+    rows = document.get("media_type_modalities", {})
+    if not isinstance(rows, dict):
+        raise ValueError(f"{path.name}: media_type_modalities must be a mapping")
+    for media_type, modality in rows.items():
+        if (not isinstance(media_type, str) or len(media_type.split("/")) != 2
+                or any(not part or part != part.strip() for part in media_type.split("/"))
+                or not isinstance(modality, str) or modality not in words):
+            raise ValueError(f"{path.name}: media_type_modalities has an invalid media type or modality")
+    return MappingProxyType(dict(rows))
+
+
 def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
@@ -62,7 +81,7 @@ def _load_capability_tables(path: Path) -> tuple[
         raise invalid("<document>", "must be a mapping")
     for key in document:
         if key not in {"schema_version", "capabilities", "protocol_words", "route_intents",
-                       "type_capabilities", "audio_rule", "modality_words"}:
+                       "type_capabilities", "audio_rule", "modality_words", "media_type_modalities"}:
             raise invalid_table("document", key, "is an unknown top-level key")
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be the integer 1")
@@ -226,6 +245,7 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
  TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER) = _load_capability_tables(CAPABILITY_WORDS_PATH)
 
 MODALITY_WORDS = load_modality_words()
+MEDIA_TYPE_MODALITIES = load_media_type_modalities()
 
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's
