@@ -2,14 +2,14 @@ schema_version: 1
 sites:
   - file: gateway/media_metadata.py
     literal: video
-    count: 14
+    count: 3
     category: media_type
-    reason: Names the IANA media type family of a file in suffix and MIME tables and media_kind comparisons.
+    reason: Compares media_kind results with the handler names of registry/media_metadata_formats.yml to pick the stripping and embedding algorithm.
   - file: gateway/media_metadata.py
     literal: audio
-    count: 27
+    count: 3
     category: media_type
-    reason: Names the IANA media type family of a file in suffix and MIME tables and media_kind comparisons.
+    reason: Compares media_kind results with the handler names of registry/media_metadata_formats.yml to pick the stripping and embedding algorithm.
   - file: gateway/video_subject.py
     literal: image
     count: 1
