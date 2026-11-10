@@ -68,10 +68,12 @@ def test_extensions_and_source_roles_ignore_workflow_spelling(monkeypatch):
             "map": {picture: [{"path": "picture"}], source: [{"path": "motion"}], "steps": [{"path": "count"}]},
             "route_bound_inputs": [picture, source],
         }}
-        result = bind_video_workflow_extensions({"inputs": {picture: "asset:override", "steps": 7, "unmapped": 3}},
+        result = bind_video_workflow_extensions({"inputs": {picture: "asset:override", "steps": 7, "unmapped": 3, "seed": 9}},
                                                 doc, {"count": 1}, backend=selected)
         assert result.validation.rejected[picture] == (
             f"{picture} is managed by the standard input_reference request field; do not pass it as a workflow extension")
+        assert "seed" in result.validation.rejected
+        assert "standard seed request field" in result.validation.rejected["seed"]
         assert "unmapped" in result.validation.ignored
         assert result.binding.applied_inputs == ["steps"]
         assert result.request == {"count": 7}

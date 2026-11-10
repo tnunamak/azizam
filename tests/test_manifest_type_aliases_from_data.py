@@ -101,6 +101,8 @@ def test_declared_media_constraints_never_widen_an_alias() -> None:
         ({"accepts": ["audio/*"]}, []),
         ({"accepts": ["image/png", "audio/*"]}, ["image/png"]),
         ({"accepts": []}, ["image/*"]),
+        ({"accepts": 7}, []),
+        ({"accepts": [7]}, []),
     ):
         legacy = {"type": "image", **declaration}
         before = copy.deepcopy(legacy)
