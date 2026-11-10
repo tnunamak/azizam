@@ -8684,8 +8684,12 @@ def _image_graph_roles(
     path = binding.get("workflow") if isinstance(binding, Mapping) else None
     if not isinstance(path, str) or Path(path).stem != graph_name:
         return roles
+    found = image_map_targets.targets(manifest, DERIVED._GRAPH_BINDING)
     if path in _IMAGE_GRAPH_ROLES:
         roles["name"] = Path(path).stem
+    # Size: the map writes width and height, so no size node is read from the graph.
+    if found.width and found.height:
+        roles.pop("size_node", None)
     return roles
 
 
