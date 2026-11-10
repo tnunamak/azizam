@@ -25,14 +25,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-# The engine's names for its dynamic input types (V3 nodes) are data: node_ui_types.json.
+# The engine's dynamic input types and upload controls are data: node_ui_types.json.
 _DYNAMIC_INPUT_TYPES = json.loads(Path(__file__).with_name("node_ui_types.json").read_text(encoding="utf-8"))
 _DYNAMIC_COMBO_TYPE = _DYNAMIC_INPUT_TYPES["dynamic_combo"]
 _AUTOGROW_TYPE = _DYNAMIC_INPUT_TYPES["autogrow"]
 _MATCH_TYPE = _DYNAMIC_INPUT_TYPES["match_type"]
+_UPLOAD_BUTTONS = _DYNAMIC_INPUT_TYPES["upload_buttons"]
 
 WIDGET_TYPES = frozenset({"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO", "COLORCODE"})
-_UPLOAD_SUFFIX = {"image_upload": "image", "video_upload": "video", "audio_upload": "audio"}
 _NODE_WIDTH = 315
 _COL_GAP = 80
 _ROW_GAP = 40
@@ -159,10 +159,10 @@ def _plan_inputs(entries: list, api_inputs: Mapping, prefix: str, plan: dict) ->
             values.append(value)
             if cfg.get("control_after_generate"):
                 values.append("fixed")
-            for flag, button in _UPLOAD_SUFFIX.items():
+            for flag, button in _UPLOAD_BUTTONS.items():
                 if cfg.get(flag):
-                    values.append(button)
-                    widgets.append({"name": "upload", "type": flag.split("_")[0].upper() + "UPLOAD",
+                    values.append(button["value"])
+                    widgets.append({"name": "upload", "type": button["type"],
                                     "link_src": None, "multiline": False, "no_value": True})
         elif linked or required:
             conns.append({"name": full, "type": str(typ), "link_src": raw if linked else None,
