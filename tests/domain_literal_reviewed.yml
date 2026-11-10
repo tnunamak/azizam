@@ -43,18 +43,18 @@ sites:
   - file: gateway/capabilities.py
     literal: image
     count: 1
-    category: media_type
-    reason: Names the IANA family returned by an explicit MIME-prefix classification.
+    category: wire_enum
+    reason: Names the image output_modalities value the gateway publishes in capability summaries, derived from image/ MIME types; this is the gateway's API vocabulary, not an external protocol's modality enum.
   - file: gateway/capabilities.py
     literal: audio
     count: 1
-    category: media_type
-    reason: Names the IANA family returned by an explicit MIME-prefix classification.
+    category: wire_enum
+    reason: Names the audio output_modalities value the gateway publishes in capability summaries, derived from audio/ MIME types; this is the gateway's API vocabulary, not an external protocol's modality enum.
   - file: gateway/capabilities.py
     literal: video
     count: 1
-    category: media_type
-    reason: Names the IANA family returned by an explicit MIME-prefix classification.
+    category: wire_enum
+    reason: Names the video output_modalities value the gateway publishes in capability summaries, derived from video/ MIME types; this is the gateway's API vocabulary, not an external protocol's modality enum.
   - file: gateway/engine_protocol/media.py
     literal: audio
     count: 1
