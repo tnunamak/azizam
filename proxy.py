@@ -4737,9 +4737,10 @@ async def _reference_transcript(
     """Transcript of a voice's reference clip (OmniVoice clones from audio plus its exact text); cached in the voice record."""
     if meta.get("transcript"):
         return str(meta["transcript"])
-    stt = (config.get("backends") or {}).get("stt")
-    if not isinstance(stt, Mapping) or not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
-        raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
+    selected = _transcription_service()
+    stt_service_id, stt = selected if selected is not None else ("", {})
+    if not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
+        raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs a transcription service.")
     if receipt is not None:
         receipt.metadata.setdefault("stt", {"field_count": 1, "file_count": 1, "attempts_started": 0, "chunked": False})
 
@@ -4752,11 +4753,11 @@ async def _reference_transcript(
             op="stt.transcribe",
             on_whole_file_attempt=record_attempt,
             execution=stt_chunking.SttExecutionConfig.from_service(
-                service_id="stt", service_config=stt, config_directory=CONFIG_PATH.parent),
+                service_id=stt_service_id, service_config=stt, config_directory=CONFIG_PATH.parent),
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
             body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
         )
-        _require_egress_lease("stt")
+        _require_egress_lease(stt_service_id)
         resp = await _stt_adapter(stt).invoke(
             AdapterConnection(address=service_registry.engine_base_address(stt),
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
@@ -5092,8 +5093,8 @@ async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | N
     return accepting, notes, accepting[0][0] if accepting[0][0] != alias.engine else None
 
 
-def _speech_alias_service_with_address(body: bytes, model_override: str | None) -> str | None:
-    """The speech service the request's model alias names, when it is not "tts" and its record names an address."""
+def _speech_alias_service_with_address(body: bytes, model_override: str | None, default_service_id: str) -> str | None:
+    """The speech service the request's model alias names, when it is not the default one and its record names an address."""
     try:
         requested = model_override or json.loads(body).get("model", "tts-1")
         resolution = resolve_model_for_operation("speech", requested)
@@ -5101,16 +5102,19 @@ def _speech_alias_service_with_address(body: bytes, model_override: str | None) 
         return None
     alias = resolution.alias
     service = (alias.service or "") if alias is not None and alias.engine_spec is not None else ""
-    return service if service and service != "tts" and _speech_service_base(service) else None
+    return service if service and service != default_service_id and _speech_service_base(service) else None
 
 
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
     body = await request.body()
-    # A model whose alias names another speech service with an address does not need the "tts" record to name an
-    # address: that service is dialed instead. The speech route's own admission and the operator's "tts" override
-    # still apply to every speech request, as before.
-    alias_service = _speech_alias_service_with_address(body, model_override)
+    # The default speech service is the one selected for the speech capability, whatever its id.
+    selected = _speech_service()
+    default_service_id = selected[0] if selected is not None else ""
+    # A model whose alias names another speech service with an address does not need the default service to name an
+    # address: that service is dialed instead. The speech route's own admission and the operator's override of the
+    # default service still apply to every speech request, as before.
+    alias_service = _speech_alias_service_with_address(body, model_override, default_service_id)
     if alias_service is None and not DERIVED.TTS_ENABLED:
         return openai_error_response(
             "TTS not enabled",
@@ -5118,18 +5122,18 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             error_type="service_unavailable",
         )
     admission = _dispatch_admission_response(
-        "speech.synthesis", auth_context=auth_context, service_id="tts",
+        "speech.synthesis", auth_context=auth_context, service_id=default_service_id,
         service_available=DERIVED.TTS_ENABLED or alias_service is not None, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
-    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
+    service_response = (await asyncio.to_thread(_service_availability_response, default_service_id, service_label="TTS"))
     if service_response is not None:
         return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
-    headers = prepare_downstream_headers(request.headers, auth_context, "tts")
-    tts_service_id = "tts"
+    headers = prepare_downstream_headers(request.headers, auth_context, default_service_id)
+    tts_service_id = default_service_id
 
     # Map voice in request body
     requested_response_format = "mp3"
@@ -5203,8 +5207,8 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 )
             body_json["voice"] = voice
         if engine is not None:
-            tts_service_id = model_resolution.alias.service or "tts"
-            if tts_service_id != "tts":
+            tts_service_id = model_resolution.alias.service or default_service_id
+            if tts_service_id != default_service_id:
                 admission = _dispatch_admission_response(
                     "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
                     resource_class="audio", receipt=receipt,
@@ -5237,7 +5241,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class='audio', receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5251,14 +5255,14 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     _tts_selected = service_for_capability(_speech_capability)
     _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
     _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
-    if tts_service_id != "tts":
+    if tts_service_id != default_service_id:
         _tts_host = _speech_service_base(tts_service_id)
         _tts_host_service = tts_service_id
         if not _tts_host:
             return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
