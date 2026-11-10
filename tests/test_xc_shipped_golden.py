@@ -78,3 +78,40 @@ def capture(monkeypatch):
 def test_shipped_outputs(monkeypatch):
     actual = capture(monkeypatch)
     assert json.loads(json.dumps(actual, default=str)) == json.loads(GOLDEN.read_text())
+
+
+def source_attachment(monkeypatch):
+    """Freeze the attachment reader after workflow selection, independent of route eligibility."""
+    from gateway.frontend_shapes import _base
+    from tests.test_frontend_shapes import json_request, FakeSpool
+    from tests.test_video_create_shape import ROWS
+    from gateway.frontend_shapes import build_shape
+
+    found = {}
+    class Hooks(shapes.VideoHooks):
+        async def source(self, *args):
+            return VideoSource(wire_id="video_mj_source", asset_id="asset-source", model="source-model",
+                               resolved_model="source-model", fps=24.0, size="960x512", seconds=4.0, has_audio=False)
+    monkeypatch.setattr(shapes, "VIDEO_HOOKS", Hooks())
+    for path in sorted((ROOT / "manifests/workflows").glob("*.yml")):
+        doc = yaml.safe_load(path.read_text())
+        if not (doc.get("video") or {}).get("roles", {}).get("source"):
+            continue
+        async def selected(*args, **kwargs):
+            return RunRequest(doc["id"], {"prompt": "sample", "video": {"id": "video_mj_source"}})
+        monkeypatch.setattr(_base.Shape, "to_run_request", selected)
+        row = ROWS["videos-edit"]
+        result = asyncio.run(build_shape(row).to_run_request(
+            json_request({}), row, snap(doc), spool=FakeSpool()))
+        assert isinstance(result, RunRequest), getattr(result, "body", result)
+        found[doc["id"]] = {"inputs": dict(result.inputs), "media": {
+            name: [asdict(ref) for ref in refs] for name, refs in result.media.items()}, "facts": dict(result.facts)}
+    return found
+
+
+def test_shipped_source_attachment(monkeypatch, record_property):
+    actual = source_attachment(monkeypatch)
+    record_property("source_golden", json.dumps(actual, sort_keys=True))
+    path = GOLDEN.with_name("xc_source.json")
+    if path.exists():
+        assert actual == json.loads(path.read_text())
