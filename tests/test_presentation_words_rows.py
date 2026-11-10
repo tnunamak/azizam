@@ -223,6 +223,20 @@ def test_every_list_refuses_bad_data_with_file_and_key(tmp_path, key, bad):
     assert str(path) in str(exc.value) and key in str(exc.value)
 
 
+@pytest.mark.parametrize("key", LIST_KEYS)
+def test_every_list_refuses_duplicate_words_with_file_key_and_index(tmp_path, key):
+    data = deepcopy(SHIPPED)
+    index = len(data[key])
+    data[key].append(data[key][0])
+    path = write_words(tmp_path, data)
+    with pytest.raises(ValueError) as exc:
+        presentation._load_presentation_words(path)
+    message = str(exc.value)
+    assert str(path) in message
+    assert f"{key}[{index}]" in message
+    assert "duplicate word" in message
+
+
 @pytest.mark.parametrize("key,value,diagnostic", [
     ("schema_version", True, "schema_version"),
     ("schema_version", 2, "schema_version"),
