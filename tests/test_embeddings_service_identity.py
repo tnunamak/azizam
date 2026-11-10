@@ -51,6 +51,8 @@ def test_a_renamed_service_derives_the_same_settings_as_embeddings():
 def test_a_renamed_record_that_names_no_values_takes_the_roles_release_defaults():
     defaults = engine_record_defaults.release_defaults()["embeddings"]
     derived = _derived(_config(**{"vectors-one": _vectors(18301)}))
+    # The renamed record is the one read: its address and enabled state, with the role's defaults for the rest.
+    assert derived["EMBEDDINGS_HOST"] == "http://127.0.0.1:18301" and derived["EMBEDDINGS_ENABLED"] is True
     assert derived["EMBEDDINGS_TIMEOUT"] == int(defaults["timeout"])
     assert derived["EMBEDDINGS_HEALTH_ENDPOINT"] == defaults["health_endpoint"]
     assert derived["EMBEDDINGS_BACKEND_MODEL"] == defaults["model_id"]
