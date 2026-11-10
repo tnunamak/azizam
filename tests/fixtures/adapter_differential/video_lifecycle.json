@@ -163,7 +163,7 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"id\":\"video_<job:1>\",\"object\":\"video\",\"deleted\":true}"
+          "text": "{\"id\":\"video_<job:1>\",\"object\":\"video.deleted\",\"deleted\":true}"
         },
         "headers": {
           "content-length": "<54 after normalisation>",

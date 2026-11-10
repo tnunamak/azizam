@@ -672,7 +672,7 @@ def test_video_10_90_delete_answers_the_deleted_object(tmp_path):
 
     _run(tmp_path, "r10-90", setup, drive)
     assert seen["status"] == 200
-    assert seen["body"] == {"id": seen["id"], "object": "video", "deleted": True}
+    assert seen["body"] == {"id": seen["id"], "object": "video.deleted", "deleted": True}
 
 
 def test_video_10_83_deleted_video_is_gone_from_status_and_list(tmp_path):

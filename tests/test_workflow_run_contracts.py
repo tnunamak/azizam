@@ -811,7 +811,7 @@ def test_a_run_core_video_job_is_read_and_deleted_through_the_video_routes_by_it
         "protocol": "openai.video", "intent": "video.generate", "backend": "comfyui", "capability_exposure": "default",
         "capability_trust_tier": "stable", "capability_resource_tier": "expensive"})
     gone = call("delete", f"/v1/videos/{wire_id}")
-    assert (gone.status_code, gone.json()) == (200, {"id": wire_id, "object": "video", "deleted": True})
+    assert (gone.status_code, gone.json()) == (200, {"id": wire_id, "object": "video.deleted", "deleted": True})
     for path in (f"/v1/videos/{wire_id}", f"/v1/videos/{wire_id}/content"):
         assert call("get", path).status_code in (400, 404)
     assert call("delete", f"/v1/videos/{wire_id}").status_code in (400, 404)

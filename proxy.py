@@ -441,6 +441,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_CONTENT_OPENAPI,
     VIDEOS_CREATE_OPENAPI,
     VIDEOS_DELETE_OPENAPI,
+    VIDEO_DELETED_OBJECT,
     VIDEOS_LIST_OPENAPI,
     VIDEOS_EDIT_OPENAPI,
     VIDEOS_EXTEND_OPENAPI,
@@ -13726,7 +13727,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
     if record and record.get("asset_id"):
         await asyncio.to_thread(prompt_memory.delete_asset, str(record["asset_id"]))
     return Response(
-        content=json.dumps({"id": video_id, "object": "video", "deleted": True}),
+        content=json.dumps({"id": video_id, "object": VIDEO_DELETED_OBJECT, "deleted": True}),
         status_code=200,
         media_type="application/json",
     )

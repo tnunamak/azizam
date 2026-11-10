@@ -85,7 +85,7 @@ def test_the_listing_wraps_the_pages_views_with_first_last_and_has_more(shape):
 
 
 def test_delete_answers_the_deleted_object_and_a_stuck_cancel_is_409(shape):
-    assert body(shape.render_deleted("mj_a")) == {"id": "video_mj_a", "object": "video", "deleted": True}
+    assert body(shape.render_deleted("mj_a")) == {"id": "video_mj_a", "object": "video.deleted", "deleted": True}
     conflict = shape.render_delete_conflict()
     assert conflict.status_code == 409 and body(conflict)["error"]["code"] == "video_cancel_failed"
     assert shape.unknown_id().status_code == 404

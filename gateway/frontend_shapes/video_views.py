@@ -15,6 +15,7 @@ from typing import Any
 from starlette.responses import JSONResponse, Response
 
 from gateway import media_delivery, media_metadata, provenance
+from gateway.openai_media_schemas import VIDEO_DELETED_OBJECT
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import TERMINAL
 from gateway.workflow_runtime_types import RESULT_REFUSED_MESSAGE, RUN_STARTED_PROGRESS, CallerContext, JobService, RequestFacts, RunJobView
@@ -133,7 +134,7 @@ class VideoViews:
                         media_type="application/json")
 
     def render_deleted(self, job_id: str) -> Response:
-        return JSONResponse({"id": self.wire_id(job_id), "object": self.wire_name, "deleted": True})
+        return JSONResponse({"id": self.wire_id(job_id), "object": VIDEO_DELETED_OBJECT, "deleted": True})
 
     def render_delete_conflict(self) -> Response:
         return _wire.error_response(409, "cancel request failed: the job did not stop", kind="api_error",

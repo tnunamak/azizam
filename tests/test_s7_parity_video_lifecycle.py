@@ -517,7 +517,7 @@ def test_video_90_delete_success_body_is_exact(tmp_path):
         vid = await w.create()
         response = await w.delete(vid)
         assert response.status_code == 200
-        assert response.json() == {"id": vid, "object": "video", "deleted": True}
+        assert response.json() == {"id": vid, "object": "video.deleted", "deleted": True}
     run(tmp_path, exercise)
 
 
@@ -649,7 +649,7 @@ def test_video_83_delete_while_running_cancels_before_the_tombstone(tmp_path, ca
             assert (await w.status(vid)).status_code == 200
         else:
             assert answer.status_code == 200
-            assert answer.json() == {"id": vid, "object": "video", "deleted": True}
+            assert answer.json() == {"id": vid, "object": "video.deleted", "deleted": True}
             assert w.deleted(vid)
             assert (await w.status(vid)).status_code == 404
             assert (await w.content(vid)).status_code == 404
@@ -795,7 +795,7 @@ def test_video_legacy_record_is_hidden_from_another_key_and_deletable_by_its_own
         assert len(w.engine.requests) == before
         answer = await w.delete(vid)
         assert answer.status_code == 200
-        assert answer.json() == {"id": vid, "object": "video", "deleted": True}
+        assert answer.json() == {"id": vid, "object": "video.deleted", "deleted": True}
         assert (await w.status(vid)).status_code == 404
     run(tmp_path, exercise)
 
