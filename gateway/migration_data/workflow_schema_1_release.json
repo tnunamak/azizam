@@ -3968,6 +3968,68 @@
    "typical_seconds": 231,
    "version": "0.1.0"
   },
+  "video.edit.video-mux": {
+   "bindings": {
+    "comfyui": {
+     "map": {
+      "source_audio": [
+       {
+        "input": "audio",
+        "node": "3"
+       }
+      ],
+      "source_video": [
+       {
+        "input": "file",
+        "node": "1"
+       }
+      ]
+     },
+     "selectors": {
+      "video": {
+       "decode": "none",
+       "from": "output_dir",
+       "key": "images",
+       "node": "5",
+       "take": "first"
+      }
+     },
+     "workflow": "workflows/videos/video-mux.json"
+    }
+   },
+   "description": "Join a song or sound to a video. The picture and its frame rate stay the same, and the new sound replaces the old.",
+   "display_name": "Add a Soundtrack to a Video",
+   "id": "video.edit.video-mux",
+   "inputs": {
+    "source_audio": {
+     "help": "The song or sound to put on the video.",
+     "label": "a sound to add",
+     "media_type": "audio/*",
+     "required": true,
+     "type": "asset"
+    },
+    "source_video": {
+     "help": "The video that gets the new sound.",
+     "label": "a video",
+     "media_type": "video/*",
+     "required": true,
+     "type": "asset"
+    }
+   },
+   "intent": "video.edit",
+   "min_gateway_version": "0.1",
+   "outputs": {
+    "video": {
+     "media_type": "video/mp4"
+    }
+   },
+   "purpose": "Put an audio track onto a video",
+   "schema_version": 1,
+   "source": "local",
+   "trusted": true,
+   "typical_seconds": 5,
+   "version": "0.1.0"
+  },
   "video.generate.ltx-2.5-i2v": {
    "bindings": {
     "comfyui": {

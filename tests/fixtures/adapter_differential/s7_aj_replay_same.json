@@ -187,6 +187,14 @@
       "step": 1
     }
   ],
+  "job_prefixes": [
+    "mj",
+    "audjob",
+    "mj",
+    "audjob",
+    "mj",
+    "audjob"
+  ],
   "media_jobs": {
     "definition_blob": [
       {
@@ -554,7 +562,7 @@
               "index": 0,
               "kind": "audio",
               "media_type": "audio/wav",
-              "size_bytes": 3642
+              "size_bytes": 3704
             }
           ],
           "attempt_number": 1,
@@ -694,7 +702,7 @@
               "count": 1,
               "kind": "assets",
               "name": "audio",
-              "size_bytes": 3642
+              "size_bytes": 3704
             }
           ]
         }
@@ -703,14 +711,14 @@
     "result_stage": [
       {
         "attempt": 1,
-        "bytes": 3642,
+        "bytes": 3704,
         "count": 1,
         "created": "<time>",
         "items_json": [
           {
             "asset_ref": "aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
             "media_type": "audio/wav",
-            "size_bytes": 3642
+            "size_bytes": 3704
           }
         ],
         "job_id": "<job:3>",
@@ -1005,7 +1013,7 @@
                   "count": 1,
                   "kind": "assets",
                   "name": "audio",
-                  "size_bytes": 3642
+                  "size_bytes": 3704
                 }
               ]
             },

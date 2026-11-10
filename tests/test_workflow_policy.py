@@ -60,7 +60,7 @@ DEMO = "image.generate.test-demo-package"
 def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_demo_package_and_nothing_else():
     bundled = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in BUNDLED.glob("*.yml")}
     policy = release_policy()
-    assert set(policy) == bundled and len(policy) == 38   # the demo package's row is a package row: not a bundled workflow's
+    assert set(policy) == bundled and len(policy) == 39   # the demo package's row is a package row: not a bundled workflow's
     assert {facts.exposure for facts in policy.values()} == {"default"}
     assert {(facts.trust_tier, facts.resource_tier, facts.tags) for facts in policy.values()} == {("stable", "batch", ())}
     # The shipped demo package keeps the facts its schema 1 file stated, so it stays runnable with the same exposure.

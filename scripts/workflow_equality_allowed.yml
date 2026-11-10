@@ -55,6 +55,7 @@ allowed:
     scopes: [capabilities, projected]
     workflows:
       - video.edit.rife-interpolate
+      - video.edit.video-mux
       - video.edit.scail-2-replace
       - video.generate.ltx-2.5-i2v
       - video.generate.ltx-2.5-keyframes
