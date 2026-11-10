@@ -48,6 +48,17 @@ describe("new API capability identity and presentation", () => {
     });
   });
 
+  it("keeps a picture a picture when only another intent's row shares its legacy kind", () => {
+    // The row is the analysis of a picture (text out). It shares the legacy "image" key with image.generate,
+    // but the receipt's own intent names no row, so the established media presentation decides.
+    const analyse = row("image", { intent: "image.analyze", output_modalities: ["text"] });
+    const receipt = { ...running, request_id: "pic-run", intent: "image.generate" };
+    expect(items([analyse], receipt)[0]).toMatchObject({ kind: "making", making: "image", capability: "image" });
+    const clip = { ...running, request_id: "clip-run", intent: "video.generate" };
+    const edit = row("video", { intent: "video.edit", output_modalities: ["text"] });
+    expect(items([edit], clip)[0]).toMatchObject({ making: "video", capability: "video" });
+  });
+
   it("uses declared outputs rather than the reused icon or intent spelling", () => {
     expect(items([row("diagram", { output_modalities: ["video"] })])[0])
       .toMatchObject({ making: "video", capability: "diagram" });

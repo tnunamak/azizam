@@ -254,7 +254,7 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
-from gateway.availability import availability_evidence_snapshot, model_availability, project_capabilities
+from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -5068,26 +5068,42 @@ async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | N
     return accepting, notes, accepting[0][0] if accepting[0][0] != alias.engine else None
 
 
+def _speech_alias_service_with_address(body: bytes, model_override: str | None) -> str | None:
+    """The speech service the request's model alias names, when it is not "tts" and its record names an address."""
+    try:
+        requested = model_override or json.loads(body).get("model", "tts-1")
+        resolution = resolve_model_for_operation("speech", requested)
+    except (ValueError, AttributeError, ModelCompatibilityError):
+        return None
+    alias = resolution.alias
+    service = (alias.service or "") if alias is not None and alias.engine_spec is not None else ""
+    return service if service and service != "tts" and _speech_service_base(service) else None
+
+
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
-    if not DERIVED.TTS_ENABLED:
-        return openai_error_response(
-            "TTS not enabled",
-            status_code=503,
-            error_type="service_unavailable",
+    body = await request.body()
+    # A model whose alias names another speech service with an address does not need the "tts" record: that
+    # service is checked below, where the alias resolves. Only a request for "tts" itself needs "tts" configured.
+    alias_service = _speech_alias_service_with_address(body, model_override)
+    if alias_service is None:
+        if not DERIVED.TTS_ENABLED:
+            return openai_error_response(
+                "TTS not enabled",
+                status_code=503,
+                error_type="service_unavailable",
+            )
+        admission = _dispatch_admission_response(
+            "speech.synthesis", auth_context=auth_context, service_id="tts",
+            service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
         )
-    admission = _dispatch_admission_response(
-        "speech.synthesis", auth_context=auth_context, service_id="tts",
-        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
-    )
-    if admission is not None:
-        return admission
-    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
-    if service_response is not None:
-        return service_response
+        if admission is not None:
+            return admission
+        service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
+        if service_response is not None:
+            return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
-    body = await request.body()
     headers = prepare_downstream_headers(request.headers, auth_context, "tts")
     tts_service_id = "tts"
 
@@ -5197,7 +5213,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED, resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class='audio', receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5218,7 +5234,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -15232,7 +15248,18 @@ async def _build_status_snapshot() -> dict[str, Any]:
 
 async def _status_payload_with_availability() -> Mapping[str, Any]:
     """The admin status and Home read the snapshot. Nothing here probes, and no request waits for a build."""
-    return await status_endpoint.get_cached_status(config)
+    payload = await status_endpoint.get_cached_status(config)
+    cached = payload.get("_availability_evidence") if isinstance(payload, Mapping) else None
+    if not isinstance(cached, Mapping):
+        return payload
+    # The snapshot is rebuilt on a timer; requests finished since then are merged in, as the capability list does.
+    try:
+        current = await asyncio.to_thread(
+            evidence_with_current_receipts, cached, receipt_store_path=receipt_store.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] status receipt overlay skipped: {type(exc).__name__}", flush=True)
+        return payload
+    return {**payload, "_availability_evidence": current}
 
 
 async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
