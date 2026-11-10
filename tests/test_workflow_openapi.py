@@ -3,13 +3,14 @@ with /gateway/v1/workflows, /gateway/v1/capabilities, /llms.txt and the skill.""
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
@@ -416,6 +417,46 @@ class WorkflowOpenApiTests(unittest.TestCase):
         )
 
 
+
+    def test_shipped_video_reference_role_relations_match_previous_selection(self) -> None:
+        """Static relation gate; full runtime outcome/golden parity remains a lead run."""
+        records = {record.id: record for record in self.registry.records()}
+        manifests = {
+            key: record.manifest["video"] for key, record in records.items()
+            if isinstance(record.manifest.get("video"), dict)
+        }
+        self.assertTrue(manifests, "No shipped video blocks were checked")
+        reference_edges = 0
+        for workflow_id, manifest in manifests.items():
+            with self.subTest(workflow=workflow_id):
+                eligible = []
+                for role, candidate_id in (manifest.get("variants") or {}).items():
+                    candidate = records.get(candidate_id)
+                    candidate_manifest = manifests.get(candidate_id)
+                    if candidate is None or candidate_manifest is None:
+                        continue
+                    target = reference_input(candidate, "async")
+                    if target is not None and (candidate_manifest.get("roles") or {}).get(role, role) == target:
+                        eligible.append(candidate_id)
+                # This is the pre-change selector's edge, captured in the scoped source.
+                old_variant = (manifest.get("variants") or {}).get("image")
+                previous = [old_variant] if old_variant in manifests else []
+                self.assertEqual(eligible, previous, f"{workflow_id}: shipped variant role-to-input relation differs")
+                reference_edges += len(previous)
+                target = reference_input(records[workflow_id], "async")
+                required = set(manifest.get("requires") or ())
+                reference_roles = {
+                    role for role in required
+                    if target is not None and (manifest.get("roles") or {}).get(role, role) == target
+                }
+                self.assertEqual(bool(reference_roles), "image" in required,
+                                 f"{workflow_id}: shipped required-reference relation differs")
+                if target is not None:
+                    self.assertEqual((manifest.get("roles") or {}).get("image", "input_reference"), target,
+                                     f"{workflow_id}: staged reference key differs")
+        self.assertGreater(reference_edges, 0, "No shipped reference variant was checked")
+
+
 class RequestMappingTypeTests(unittest.TestCase):
     def test_non_string_input_types_are_not_assets(self) -> None:
         from types import SimpleNamespace
@@ -604,6 +645,40 @@ class ReferenceInputTests(unittest.TestCase):
         self.assertEqual(record.contract, contract_before)
         self.assertEqual(placements, placements_before)
 
+
+    def test_reference_input_uses_effective_scalar_asset_placement(self) -> None:
+        record = self.record({"guide_frame": self.asset()}, intent="fixture.generate")
+        placement = {"in": "body", "field": "input_reference"}
+        with FrontendVideoReferenceTests.maps():
+            self.assertEqual(request_mapping(record, "async")["guide_frame"], placement)
+            self.assertEqual(reference_input(record, "async"), "guide_frame")
+            self.assertEqual(request_mapping(record, "sync")["guide_frame"],
+                             {"in": "file", "field": "guide_frame"})
+            self.assertIsNone(reference_input(record, "sync"))
+        for where in ("file", "form", "extension", "none"):
+            with self.subTest(where=where):
+                mapped = {"in": where} if where == "none" else {"in": where, "field": "input_reference"}
+                with self.maps(record, {"guide_frame": mapped}):
+                    self.assertIsNone(reference_input(record, "async"))
+        for inputs in ({}, {"prompt": {"type": "string"}},
+                       {"guide_frame": {"type": "array", "items": self.asset()}}):
+            with self.subTest(inputs=inputs):
+                nonmatch = self.record(inputs, intent="fixture.generate")
+                with self.maps(nonmatch, {"guide_frame": placement}):
+                    self.assertIsNone(reference_input(nonmatch, "async"))
+                    if "guide_frame" in inputs:
+                        self.assertEqual(request_mapping(nonmatch, "async")["guide_frame"], {"in": "none"})
+        # The accepted helper on this base rejects malformed scalar placement rather
+        # than treating it as absent. Preserve its existing strict validation tests.
+        malformed = self.record({"guide_frame": {"type": "string"}}, intent="fixture.generate")
+        with self.maps(malformed, {"guide_frame": placement}):
+            with self.assertRaisesRegex(ValueError, "settable scalar asset"):
+                reference_input(malformed, "async")
+        duplicate = self.record({"guide_frame": self.asset(), "other_frame": self.asset()}, intent="fixture.generate")
+        with self.maps(duplicate, {"guide_frame": placement, "other_frame": placement}):
+            with self.assertRaisesRegex(ValueError, "multiple inputs"):
+                reference_input(duplicate, "async")
+
     def test_reference_input_rejects_unsupported_modes(self) -> None:
         record = self.record({"anchor_7q": self.asset()})
         placements = {"anchor_7q": {"in": "body", "field": "input_reference"}}
@@ -615,6 +690,246 @@ class ReferenceInputTests(unittest.TestCase):
                             lookup(record, mode)
                 with self.assertRaisesRegex(ValueError, "unsupported request mode"):
                     _reference_input_from_mapping(record, mode, {})
+
+
+
+class FrontendVideoReferenceTests(unittest.IsolatedAsyncioTestCase):
+    """Selection and staging use real effective maps, with runtime seams held fixed."""
+
+    def setUp(self) -> None:
+        from gateway.frontend_shapes import shapes, video_create
+
+        self.shapes, self.video_create = shapes, video_create
+        self.shape = shapes.OpenAIVideoCreate()
+        self.caller, self.spool, self.sentinel_ref = object(), object(), object()
+        self.events = []
+        self.body = {
+            "model": "fixture.generate.base", "prompt": "move", "seed": 7,
+            "seconds": 5, "size": "640x480",
+            "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode(),
+        }
+        self.base = self.entry("base")
+        self.candidate = self.entry("guided", reference=True)
+        self.entries = {entry.id: entry for entry in (self.base, self.candidate)}
+        self.manifests = {
+            self.base.id: self.manifest(variants={"guide": self.candidate.id}),
+            self.candidate.id: self.manifest(roles={"guide": "guide_frame"}, requires={"guide"}),
+        }
+        self.snapshot = SimpleNamespace(
+            get=self.entries.get,
+            names=SimpleNamespace(owner=lambda _kind, name: name if name in self.entries else None),
+        )
+        self.row = SimpleNamespace(id="fixture.create", routes=(), job_failure_text="", job_retries=0)
+        self.hooks = shapes.VideoHooks()
+        self.check_reference = Mock(side_effect=lambda *args: self.events.append(("check", args)))
+        self.hooks.check_reference = self.check_reference
+        self.enterContext(patch.object(shapes, "VIDEO_HOOKS", self.hooks))
+        self.enterContext(patch.object(video_create._wire, "choose_workflow",
+                                       side_effect=lambda _snapshot, _row, *, target, **_kw: self.entries[target]))
+        self.enterContext(patch.object(video_create.video_grid, "video_facts",
+                                       side_effect=lambda entry: self.manifests.get(entry.id)))
+        # The assignment does not read the production snapshot/manifest constructor.
+        # Keep unrelated runtime projection and size arithmetic at explicit seams.
+        self.enterContext(patch.object(video_create.video_grid, "resolve_size", return_value=(640, 480)))
+        self.enterContext(patch.object(video_create.video_grid, "frame_count", return_value=120))
+        self.enterContext(patch.object(video_create._wire, "declared",
+                                       side_effect=lambda entry, key: key in entry.contract["inputs"]))
+        self.enterContext(patch.object(video_create._wire, "asset_input_names", side_effect=lambda entry: [
+            key for key, spec in entry.contract["inputs"].items() if spec.get("type") == "asset"
+        ]))
+        self.enterContext(patch.object(video_create._wire, "entry_required",
+                                       side_effect=lambda entry, key: entry.contract["inputs"][key].get("required")))
+        self.enterContext(patch.object(video_create.media_delivery, "current", return_value=None))
+        self.stage = self.enterContext(patch.object(video_create._wire, "stage_uploads", new=AsyncMock(side_effect=self.stage_uploads)))
+        self.lookup = self.enterContext(patch.object(video_create, "reference_input", wraps=reference_input))
+        self.enterContext(self.maps())
+
+    @staticmethod
+    def entry(name, *, reference=False):
+        inputs = {"prompt": {"type": "string", "required": True}, "seed": {"type": "integer"}}
+        if reference:
+            inputs["guide_frame"] = {"type": "asset", "accepts": ["image/png"], "required": True}
+        # Deliberately no entry.intent: the adapter must read the contract.
+        return SimpleNamespace(id=f"fixture.generate.{name}", contract={
+            "intent": "fixture.generate", "capability": "clip", "inputs": inputs, "bindings": {},
+        })
+
+    @staticmethod
+    def manifest(*, variants=None, roles=None, requires=()):
+        return SimpleNamespace(
+            variants=variants or {}, roles=roles or {}, requires=frozenset(requires),
+            chain=None, select_subject=None, grid=SimpleNamespace(fps=24),
+            length=SimpleNamespace(min_seconds=1, max_seconds=8, default_seconds=5), size=object(),
+        )
+
+    @staticmethod
+    def maps():
+        document = {"schema_version": 1, "maps": [
+            {"select": {"intent": "fixture.generate", "mode": "sync"},
+             "inputs": {"guide_frame": {"in": "file", "field": "guide_frame"}},
+             "default": {"in": "extension"}},
+            {"select": {"intent": "fixture.generate", "mode": "async"},
+             "inputs": {"guide_frame": {"in": "body", "field": "input_reference"}},
+             "default": {"in": "extension"}},
+            {"select": {"any": True}, "default": {"in": "extension"}},
+        ]}
+        with patch.object(Path, "read_text", return_value=json.dumps(document)):
+            maps = workflow_request_maps.load(Path("frontend-reference-fixture.yml"))
+        return patch.object(workflow_request_maps, "_MAPS", maps)
+
+    def request(self, body):
+        from starlette.requests import Request
+
+        raw = json.dumps(body).encode()
+
+        async def receive():
+            return {"type": "http.request", "body": raw, "more_body": False}
+
+        request = Request({"type": "http", "method": "POST", "path": "/v1/videos",
+                           "headers": [(b"content-type", b"application/json")]}, receive)
+        request.state.caller = self.caller
+        return request
+
+    async def stage_uploads(self, spool, uploads, mapping):
+        self.assertIs(spool, self.spool)
+        self.assertEqual(mapping, {"guide_frame": "guide_frame"})
+        self.assertEqual(len(uploads), 1)
+        name, upload = uploads[0]
+        self.assertEqual(name, "guide_frame")
+        self.assertEqual(await upload.read(), PNG)
+        self.assertEqual([event[0] for event in self.events], ["check"])
+        self.events.append(("stage", name))
+        return {"guide_frame": (self.sentinel_ref,)}
+
+    async def run_body(self, body):
+        return await self.shape.to_run_request(self.request(body), self.row, self.snapshot, spool=self.spool)
+
+    def assert_handoff(self, result, body):
+        from gateway.frontend_shapes._base import LegacyRoute
+
+        self.assertIsInstance(result, LegacyRoute)
+        self.assertEqual(result, LegacyRoute(self.video_create.LEGACY_CREATE, body))
+        self.check_reference.assert_not_called()
+        self.stage.assert_not_awaited()
+
+    async def test_frontend_video_create_renamed_reference_selects_variant_and_stages_contract_key(self):
+        from gateway.workflow_runtime_types import RunRequest
+
+        result = await self.run_body(self.body)
+        self.assertIsInstance(result, RunRequest)
+        self.assertEqual(result.workflow_id, "fixture.generate.guided")
+        self.assertEqual(result.media, {"guide_frame": (self.sentinel_ref,)})
+        self.assertEqual(result.sources, {"guide_frame": ()})
+        self.assertEqual(result.inputs["prompt"], "move")
+        self.assertEqual(result.inputs["seed"], 7)
+        self.assertNotIn("image", result.media)
+        self.assertNotIn("input_reference", result.media)
+        self.check_reference.assert_called_once_with(self.caller, PNG, self.candidate.contract, "guide_frame")
+        self.assertIs(self.check_reference.call_args.args[2], self.candidate.contract)
+        self.stage.assert_awaited_once()
+        candidate_calls = [call for call in self.lookup.call_args_list if call.args[0].id == self.candidate.id]
+        self.assertTrue(candidate_calls)
+        self.assertTrue(all(call.args[1] == "async" and call.args[0].contract is self.candidate.contract
+                            for call in candidate_calls))
+        self.assertFalse(hasattr(self.candidate, "intent"))
+
+        self.check_reference.reset_mock()
+        self.stage.reset_mock()
+        body = {key: value for key, value in self.body.items() if key != "input_reference"}
+        body["model"] = self.candidate.id
+        result = await self.run_body(body)
+        self.assertEqual(result.status_code, 400)
+        self.assertEqual(json.loads(result.body), {"error": {
+            "message": "Model clip-guided is image-to-video and requires input_reference",
+            "type": "invalid_request_error", "param": "input_reference",
+        }})
+        self.check_reference.assert_not_called()
+        self.stage.assert_not_awaited()
+
+    async def test_frontend_video_create_reference_without_mapping_hands_off_before_effects(self):
+        from gateway.workflow_runtime_types import RunRequest
+
+        self.entries.pop(self.candidate.id)
+        self.manifests[self.base.id].variants = {}
+        record = SimpleNamespace(id=self.base.id, intent=self.base.contract["intent"], contract=self.base.contract)
+        self.assertIsNone(reference_input(record, "async"))
+        picked = self.video_create.select(self.shape, self.body, self.row, self.snapshot, self.hooks)
+        self.assert_handoff(picked, self.body)
+        self.assert_handoff(await self.run_body(self.body), self.body)
+        for reference in ("", None):
+            with self.subTest(reference=reference):
+                body = {**self.body, "input_reference": reference}
+                result = await self.run_body(body)
+                if reference is not None:
+                    self.assert_handoff(result, body)
+                else:
+                    self.assertIsInstance(result, RunRequest)
+        body = {key: value for key, value in self.body.items() if key != "input_reference"}
+        result = await self.run_body(body)
+        self.assertIsInstance(result, RunRequest)
+        self.assertEqual(result.workflow_id, "fixture.generate.base")
+        self.assertEqual(result.media, {})
+        self.assertEqual(result.sources, {})
+        self.check_reference.assert_not_called()
+        self.stage.assert_not_awaited()
+
+    async def test_frontend_video_create_invalid_reference_keeps_decode_handoff(self):
+        body = {**self.body, "input_reference": "https://example.invalid/reference.png"}
+        self.assert_handoff(await self.run_body(body), body)
+        # Empty and null still use the missing-reference branch for a required role.
+        for reference in ("", None):
+            with self.subTest(reference=reference):
+                result = await self.run_body({**self.body, "model": self.candidate.id, "input_reference": reference})
+                self.assertEqual(result.status_code, 400)
+                self.assertEqual(json.loads(result.body)["error"]["param"], "input_reference")
+        self.check_reference.assert_not_called()
+        self.stage.assert_not_awaited()
+
+    async def test_frontend_video_reference_variant_selection_rejects_ambiguity(self):
+        other = self.entry("alternate", reference=True)
+        self.entries[other.id] = other
+        self.manifests[other.id] = self.manifest(roles={"anchor": "guide_frame"}, requires={"anchor"})
+        edges = [("guide", self.candidate.id), ("anchor", other.id)]
+        messages = []
+        for ordered in (edges, list(reversed(edges))):
+            self.manifests[self.base.id].variants = dict(ordered)
+            with self.assertRaises(ValueError) as caught:
+                await self.run_body(self.body)
+            messages.append(str(caught.exception))
+            self.check_reference.assert_not_called()
+            self.stage.assert_not_awaited()
+        self.assertEqual(messages[0], messages[1])
+
+        # A candidate accepting a reference is not enough: this edge names duration.
+        self.manifests[self.base.id].variants = {"duration": self.candidate.id}
+        self.manifests[self.candidate.id].roles["duration"] = "clip_length"
+        self.assert_handoff(await self.run_body(self.body), self.body)
+        # A same-name role/input is the structural fallback, without a special spelling.
+        self.manifests[self.base.id].variants = {"guide_frame": self.candidate.id}
+        self.manifests[self.candidate.id].roles = {}
+        self.manifests[self.candidate.id].requires = frozenset({"guide_frame"})
+        result = await self.run_body(self.body)
+        self.assertEqual(result.workflow_id, self.candidate.id)
+        self.assertEqual(result.media, {"guide_frame": (self.sentinel_ref,)})
+
+
+
+class FrontendReferenceWireTests(unittest.TestCase):
+    def test_frontend_images_multipart_spellings_remain_wire_fields(self):
+        from gateway.frontend_shapes import shapes, video_create
+
+        self.assertEqual(shapes.IMAGE_PARTS, ("image[]", "image", "images"))
+        shape = shapes.OpenAIImagesMultipart()
+        for name in shapes.IMAGE_PARTS:
+            with self.subTest(name=name):
+                self.assertIsNone(shape.precheck({"prompt": "edit"}, [(name, object())]))
+        for uploads in ([], [("guide_frame", object())]):
+            with self.subTest(uploads=uploads):
+                result = shape.precheck({"prompt": "edit"}, uploads)
+                self.assertEqual(result.status_code, 400)
+                self.assertEqual(json.loads(result.body)["error"]["message"], "image is required")
+        self.assertFalse(hasattr(shapes, "REFERENCE_KIND"))
+        self.assertNotIn("REFERENCE_KIND", Path(video_create.__file__).read_text(encoding="utf-8"))
 
 
 class WorkflowResponseKindDeclarationTests(unittest.TestCase):

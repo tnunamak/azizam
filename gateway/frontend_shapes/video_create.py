@@ -12,6 +12,7 @@ import json
 import math
 import time
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from starlette.requests import Request
@@ -22,6 +23,7 @@ from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import LegacyRoute, coerce
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE, detect_unknown_top_level_fields
 from gateway.video_extensions import STANDARD_VIDEO_CREATE_FIELDS
+from gateway.workflow_openapi import reference_input
 from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapshot, RequestSpool, RunRequest, WorkflowEntry
 
 if TYPE_CHECKING:
@@ -55,6 +57,12 @@ def short_name(entry: WorkflowEntry) -> str:
     intent) under its capability, kept as a spelling of its own (not read back from the id) so a caller's text does not move."""
     own = entry.id.removeprefix(f"{entry.contract.get('intent')}.")
     return f"{entry.contract.get('capability')}-{own}"
+
+
+def _reference_input(entry: WorkflowEntry) -> str | None:
+    """The contract input carried by the video-create protocol's async request map."""
+    record = SimpleNamespace(id=entry.id, intent=entry.contract["intent"], contract=entry.contract)
+    return reference_input(record, "async")
 
 
 def _reference_bytes(value: Any) -> tuple[bytes, str, str | None] | None:
@@ -149,19 +157,35 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
                                                                    param="model", code="model_not_found"))
     if isinstance(chosen, Response):
         return chosen
-    from gateway.frontend_shapes import shapes
-    kind = shapes.REFERENCE_KIND
     manifest = video_grid.video_facts(chosen)
     reference = body.get("input_reference")
     if manifest is None or manifest.chain or manifest.length is None:
         return LegacyRoute(LEGACY_CREATE, body)
-    variant = snapshot.get(manifest.variants[kind]) if reference and manifest.variants.get(kind) else None
-    if variant is not None and video_grid.video_facts(variant) is not None:
-        chosen, manifest = variant, video_grid.video_facts(variant)
+    if reference:
+        eligible = []
+        for role, workflow_id in manifest.variants.items():
+            candidate = snapshot.get(workflow_id)
+            if candidate is None:
+                continue
+            candidate_manifest = video_grid.video_facts(candidate)
+            if candidate_manifest is None:
+                continue
+            candidate_input = _reference_input(candidate)
+            if candidate_input is not None and candidate_manifest.roles.get(role, role) == candidate_input:
+                eligible.append((candidate, candidate_manifest))
+        if len(eligible) > 1:
+            raise ValueError(f"{chosen.id}: multiple variants accept the reference: {sorted(entry.id for entry, _ in eligible)!r}")
+        if eligible:
+            chosen, manifest = eligible[0]
     if manifest.length is None or manifest.grid is None or manifest.size is None:
         return LegacyRoute(LEGACY_CREATE, body)
+    target = _reference_input(chosen)
+    reference_roles = {
+        role for role in manifest.requires
+        if target is not None and manifest.roles.get(role, role) == target
+    }
     name = short_name(chosen)
-    if kind in manifest.requires and not reference:
+    if reference_roles and not reference:
         return refuse(400, f"Model {name} is image-to-video and requires input_reference", param="input_reference")
     seconds = body.get("seconds")
     limit = manifest.length.max_seconds
@@ -172,8 +196,9 @@ def select(shape: OpenAIVideoCreate, body: Mapping[str, Any], row: FrontendRow, 
         return refuse(400, f"Model {name} cannot render shots or clips longer than {limit:g} s; use a long-video model",
                       param="shots", code="long_video_not_supported")
     block = _workflow_block(body)
-    if ((manifest.requires - {kind, "extensions"}) or manifest.select_subject or body.get("inputs")
+    if ((manifest.requires - reference_roles - {"extensions"}) or manifest.select_subject or body.get("inputs")
             or ("extensions" in manifest.requires and not block)
+            or (reference is not None and target is None)
             or (reference is not None and _reference_bytes(reference) is None)
             or any(not _wire.declared(chosen, key) or _is_asset(chosen, key) for key in block)):
         return LegacyRoute(LEGACY_CREATE, body)
@@ -296,8 +321,10 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
     if body.get("negative_prompt") and _wire.declared(chosen, "negative_prompt"):
         inputs["negative_prompt"] = body["negative_prompt"]
     if reference is not None:
+        target = _reference_input(chosen)
+        if target is None:
+            return LegacyRoute(LEGACY_CREATE, body)
         decoded = _reference_bytes(reference)
-        target = roles.get(shapes.REFERENCE_KIND, "input_reference")
         refused_reference = hooks.check_reference(caller, decoded[0], chosen.contract, target)
         if refused_reference is not None:
             return refused_reference
