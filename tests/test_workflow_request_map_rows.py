@@ -20,7 +20,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gateway import workflow_request_maps  # noqa: E402
-from gateway.discovery import WorkflowRegistry  # noqa: E402
+from gateway.discovery import WorkflowRecord, WorkflowRegistry  # noqa: E402
+from gateway.manifests import ManifestIdentity  # noqa: E402
 from gateway.workflow_openapi import _route_mapping  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
@@ -124,12 +125,77 @@ def test_registry_loads_clean() -> None:
     assert registry().errors == []
 
 
-def test_job_a_writes_the_four_rows() -> None:
-    selectors = {row.selector for row in maps().rows}
-    assert ("native", "sync") in selectors
-    assert ("intent", "mesh.generate", "sync") in selectors
-    assert ("intent", "video.edit", "sync") in selectors
-    assert ("any",) in selectors
+def test_all_eight_rows_are_present() -> None:
+    selectors = [row.selector for row in maps().rows]
+    assert selectors == [
+        ("native", "sync"),
+        ("intent", "mesh.generate", "sync"),
+        ("intent", "video.edit", "sync"),
+        ("intent", "image.generate", "any"),
+        ("intent", "image.edit", "any"),
+        ("intent", "audio.generate", "any"),
+        ("intent_prefix", "video."),
+        ("any",),
+    ]
+
+
+def test_every_bundled_record_has_a_row_in_both_modes() -> None:
+    missing = [
+        (record.id, mode)
+        for record in registry().records()
+        for mode in MODES
+        if maps().select(record, mode) is None
+    ]
+    assert missing == []
+
+
+def test_video_edit_sync_picks_its_exact_row_and_async_the_prefix_row() -> None:
+    edit = next(record for record in registry().records() if record.intent == "video.edit")
+    sync_row = maps().select(edit, "sync")
+    async_row = maps().select(edit, "async")
+    assert sync_row is not None
+    assert sync_row.selector == ("intent", "video.edit", "sync")
+    assert async_row is not None
+    assert async_row.selector == ("intent_prefix", "video.")
+
+
+def synthetic_record(manifest: dict) -> WorkflowRecord:
+    return WorkflowRecord(
+        manifest=manifest,
+        identity=ManifestIdentity(
+            id=manifest["id"], version=None, manifest_hash="", trusted=True, source="test"
+        ),
+        source_path=Path("synthetic.yml"),
+    )
+
+
+def test_a_second_route_image_keeps_the_repeated_image_part_order() -> None:
+    record = synthetic_record(
+        {
+            "id": "image.edit.two-references",
+            "intent": "image.edit",
+            "inputs": {
+                "source_image": {"type": "asset"},
+                "reference_image": {"type": "asset"},
+                "prompt": {"type": "string"},
+                "steps": {"type": "integer"},
+            },
+            "bindings": {
+                "comfy": {
+                    "route_bound_inputs": ["source_image", "reference_image"],
+                    "map": {"prompt": "prompt"},
+                }
+            },
+        }
+    )
+    row = maps().select(record, "sync")
+    assert row is not None
+    assert row.selector == ("intent", "image.edit", "any")
+    placed = list(maps().place(row, record, "sync").items())
+    assert placed == list(_route_mapping(record, "sync").items())
+    assert [name for name, _ in placed] == ["source_image", "reference_image", "prompt", "steps"]
+    assert placed[0][1] == {"in": "file", "field": "image[]"}
+    assert placed[1][1] == {"in": "file", "field": "image[]"}
 
 
 def test_where_a_row_is_selected_it_matches_the_route_code() -> None:
