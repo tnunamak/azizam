@@ -176,8 +176,9 @@ def wire(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, policy: str = "best
     shipped["servable_check"] = "servable"
     if verify:
         shipped["restore"]["reset"]["verify"] = "clean"
-    if fresh_within_s is not None:
-        shipped["fresh_within_s"] = fresh_within_s
+    # Evidence freshness is checked on the real clock. A test that is not about freshness gets a window a loaded host
+    # cannot outlast (two restarts on a busy gate took past the shipped 2 s); a test about staleness passes its own.
+    shipped["fresh_within_s"] = 3600.0 if fresh_within_s is None else fresh_within_s
     directory = tmp_path / "profiles"
     directory.mkdir()
     (directory / f"{SNAPSHOT_PROFILE}.yml").write_text(yaml.safe_dump(shipped), encoding="utf-8")
