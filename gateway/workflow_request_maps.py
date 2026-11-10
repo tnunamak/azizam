@@ -748,3 +748,13 @@ def validate_execution_records(records: Any) -> None:
 
 def render_alternate(row: ExecutionRow, *, model: str) -> dict[str, Any] | None:
     return _MAPS.execution.render_alternate(row, model=model)
+
+
+def render_sync(record: Any) -> dict[str, Any] | None:
+    """Render the exact intent row's sync route, or None when absent."""
+    return _MAPS.execution.render_sync(record)
+
+
+def render_async(record: Any) -> dict[str, Any] | None:
+    """Render the exact intent row's async route, or None when absent."""
+    return _MAPS.execution.render_async(record)
