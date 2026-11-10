@@ -210,6 +210,20 @@ def test_metadata_contract_refuses_invalid_data(tmp_path, location, value):
         _load_contract(tmp_path, "invalid.yml", document)
 
 
+def test_metadata_contract_reports_tag_type_source_for_schema_valid_implication(tmp_path):
+    document = _document()
+    document["implications"][0]["type"] = "image"
+    rules_path = _write(tmp_path, "capability_intent_metadata.yml", document)
+    schema_path = _write_schema(tmp_path)
+    with pytest.raises(ValueError) as failure:
+        mm.load_metadata_contract(rules_path, schema_path=schema_path)
+    assert str(failure.value) == (
+        f"{rules_path}: implications[0].type: unknown value: 'image'; "
+        f"not allowed by contract.tag_types in {rules_path}"
+    )
+    assert str(schema_path) not in str(failure.value)
+
+
 @pytest.mark.parametrize("duplicate", ["schema_version: 1\n", "derivation:\n  scalar_input: text\n"])
 def test_metadata_contract_refuses_duplicate_yaml_fields(tmp_path, duplicate):
     path = _write(tmp_path, "invalid.yml", _document())

@@ -110,9 +110,11 @@ def load_metadata_contract(
             found.append(item)
         return tuple(found)
 
-    def reference(value: Any, at: str, vocabulary: tuple[str, ...]) -> str:
+    def reference(
+        value: Any, at: str, vocabulary: tuple[str, ...], *, source: str | Path = schema_path,
+    ) -> str:
         if not isinstance(value, str) or value not in vocabulary:
-            raise invalid(at, f"unknown value: {value!r}; not allowed by {schema_path}")
+            raise invalid(at, f"unknown value: {value!r}; not allowed by {source}")
         return value
 
     try:
@@ -167,8 +169,9 @@ def load_metadata_contract(
     for index, row in enumerate(rows):
         at = f"implications[{index}]"
         row = mapping(row, at, {"type", "tag", "input_modality"})
+        type_ = reference(row["type"], f"{at}.type", types)
         implication = TagInputImplication(
-            reference(row["type"], f"{at}.type", tag_types),
+            reference(type_, f"{at}.type", tag_types, source=f"contract.tag_types in {path}"),
             reference(row["tag"], f"{at}.tag", tags),
             reference(row["input_modality"], f"{at}.input_modality", inputs),
         )
