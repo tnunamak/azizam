@@ -254,7 +254,7 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
-from gateway.availability import availability_evidence_snapshot, model_availability, project_capabilities
+from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -15248,7 +15248,18 @@ async def _build_status_snapshot() -> dict[str, Any]:
 
 async def _status_payload_with_availability() -> Mapping[str, Any]:
     """The admin status and Home read the snapshot. Nothing here probes, and no request waits for a build."""
-    return await status_endpoint.get_cached_status(config)
+    payload = await status_endpoint.get_cached_status(config)
+    cached = payload.get("_availability_evidence") if isinstance(payload, Mapping) else None
+    if not isinstance(cached, Mapping):
+        return payload
+    # The snapshot is rebuilt on a timer; requests finished since then are merged in, as the capability list does.
+    try:
+        current = await asyncio.to_thread(
+            evidence_with_current_receipts, cached, receipt_store_path=receipt_store.DB_PATH)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[proxy] status receipt overlay skipped: {type(exc).__name__}", flush=True)
+        return payload
+    return {**payload, "_availability_evidence": current}
 
 
 async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:

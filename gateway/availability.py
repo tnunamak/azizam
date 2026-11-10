@@ -29,6 +29,8 @@ FAILED_RECEIPT_STATUSES = frozenset(
     {"error", "failed", "timed_out", "timeout", "cancelled", "disconnected", "500", "502", "503", "504"}
 )
 RECENT_EVIDENCE_WINDOW_S = 15 * 60
+# Twice the status snapshot interval: receipts newer than the cached map's build are in this window.
+CURRENT_RECEIPT_WINDOW_S = 30
 
 # Evidence time fields (epoch seconds; absent when not known, never invented):
 # - ``observed_at_s``: when the check or request that produced this evidence
@@ -519,6 +521,27 @@ def availability_evidence_snapshot(
     # The probe is the base. A receipt displaces it when the receipt is at least as new: merge_evidence keeps the
     # later source on a tie.
     return merge_evidence(live, health, status_only, receipt_evidence)
+
+
+def evidence_with_current_receipts(
+    snapshot_evidence: Mapping[str, Mapping[str, Any]],
+    *,
+    receipt_store_path: Path,
+    now_s: int | None = None,
+    max_age_s: int = CURRENT_RECEIPT_WINDOW_S,
+) -> dict[str, dict[str, Any]]:
+    """A cached evidence map with the requests made since it was built.
+
+    The status snapshot is rebuilt on a timer, so a request that finished after the last build is not in its map. Home
+    and the capability list would then disagree about a service that just answered. Receipts from the last
+    ``max_age_s`` merge in by time, as in a fresh build; a service the probe found off or not set up keeps that
+    reading, as in a fresh build.
+    """
+
+    current = evidence_from_receipt_store(receipt_store_path, now_s=now_s, max_age_s=max_age_s)
+    current = {service_id: evidence for service_id, evidence in current.items()
+               if not _declares_off(snapshot_evidence.get(service_id))}
+    return merge_evidence(snapshot_evidence, current)
 
 
 def _declares_off(evidence: Mapping[str, Any] | None) -> bool:
