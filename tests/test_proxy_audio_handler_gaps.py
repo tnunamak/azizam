@@ -42,6 +42,7 @@ class TtsStreamOwnershipGaps(unittest.IsolatedAsyncioTestCase):
                     stream_format="audio",
                     response_format="pcm",
                     native_rate=24000,
+                    service_id="tts",
                 )
                 [client] = clients
                 self.assertFalse(client.closed, "ownership ended before body delivery")
@@ -80,6 +81,7 @@ class TtsStreamOwnershipGaps(unittest.IsolatedAsyncioTestCase):
             stream_format="audio",
             response_format="pcm",
             native_rate=24000,
+            service_id="tts",
         )
 
     async def test_rejected_stream_closes_client(self):

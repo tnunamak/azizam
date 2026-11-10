@@ -16,9 +16,15 @@ KEYS = ("TTS_HOST", "STT_HOST", "TTS_ENABLED", "STT_ENABLED", "TTS_TIMEOUT", "ST
 
 
 def _config(**backends: Any) -> dict[str, Any]:
-    cfg = copy.deepcopy(proxy.config)
-    cfg["backends"] = {sid: rec for sid, rec in (cfg.get("backends") or {}).items() if sid not in ("tts", "stt")}
-    cfg["backends"].update(backends)
+    """The test config with only *backends* as speech and transcription services."""
+    cfg = dict(copy.deepcopy(proxy.config))
+    others = dict(cfg.get("backends") or {})
+    for capability in ("audio.speech", "audio.transcriptions"):
+        for service_id in proxy.backends_for_capability(capability, backends=others, include_disabled=True):
+            others.pop(service_id)
+    others.pop("tts", None)
+    others.pop("stt", None)
+    cfg["backends"] = {**others, **backends}
     return cfg
 
 
@@ -60,9 +66,9 @@ def test_the_highest_priority_service_is_selected_and_a_tie_goes_to_the_lower_id
     assert derived["TTS_HOST"] == "http://127.0.0.1:18105"
 
 
-def test_a_disabled_service_is_not_selected():
+def test_a_disabled_selected_service_is_off_and_no_other_takes_its_place():
     derived = _derived(_config(**{"voice-one": _speech(18101, priority=10, enabled=False), "voice-two": _speech(18103)}))
-    assert derived["TTS_HOST"] == "http://127.0.0.1:18103"
+    assert derived["TTS_HOST"] == "http://127.0.0.1:18101" and derived["TTS_ENABLED"] is False
 
 
 def test_a_selected_service_without_an_address_is_not_configured_and_no_other_takes_its_place():

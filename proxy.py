@@ -977,8 +977,12 @@ def backends_for_capability(
     capability: str,
     *,
     backends: Mapping[str, Any] | None = None,
+    include_disabled: bool = False,
 ) -> list[str]:
     """Return ids of enabled backends that declare *capability*, ordered by priority (asc).
+
+    ``include_disabled`` keeps disabled backends in the order too, for a caller that selects a role's service and then
+    treats a disabled selection as off (``_selected_service``).
 
     Mirrors the §2.1 resolution algorithm: scan config["backends"], keep every
     backend that is enabled and whose capabilities list includes the requested
@@ -1010,7 +1014,7 @@ def backends_for_capability(
     for bid, bcfg in backends.items():
         if not isinstance(bcfg, Mapping):
             continue
-        if not bool_from_config(bcfg.get("enabled"), True):
+        if not include_disabled and not bool_from_config(bcfg.get("enabled"), True):
             continue
         caps = {str(c).strip().lower() for c in (bcfg.get("capabilities") or []) if str(c).strip()}
         # Match either the full compound string or all component parts.
@@ -1052,12 +1056,13 @@ _TRANSCRIPTION_CAPABILITY = "audio.transcriptions"
 
 
 def _selected_service(backends: Mapping[str, Any], capability: str) -> tuple[str, Mapping[str, Any]] | None:
-    """The highest-priority enabled record in *backends* that declares *capability* (ties go to the lower id), or None.
+    """The highest-priority record in *backends* that declares *capability* (ties go to the lower id), or None.
 
-    Pure: the boot and a reload select from the candidate config they are deriving. A selected record that names no
-    address is still the selection; it is not configured, and no other service takes its place.
+    Pure: the boot and a reload select from the candidate config they are deriving. A selected record that is disabled
+    or names no address is still the selection: the service is off, and no other service takes its place (as when the
+    role was the record of a fixed id).
     """
-    for service_id in backends_for_capability(capability, backends=backends):
+    for service_id in backends_for_capability(capability, backends=backends, include_disabled=True):
         record = backends.get(service_id)
         if isinstance(record, Mapping):
             return service_id, record
