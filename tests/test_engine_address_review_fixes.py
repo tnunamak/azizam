@@ -299,12 +299,18 @@ def test_join_base_path_endpoint_overrides_decoded_parameter_name(base, endpoint
 
 # --- S8a address review: the remaining sites read the record's one address ---------------------------------------------
 
+from types import SimpleNamespace  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
 from gateway import engine_protocol, model_presentation, service_registry  # noqa: E402
 from gateway.engine_protocol.types import CanonicalRequest, Connection  # noqa: E402
 
 QUERY_BASE = "https://example.com/p?tenant=a"
+
+
+def _query_conn():
+    """A connection whose address holds a query. ``Connection`` refuses one today; the sites must still join correctly if one arrives."""
+    return SimpleNamespace(address=QUERY_BASE, credentials={}, headers={}, timeouts=Connection(address="https://example.com").timeouts)
 
 
 def test_capability_host_keeps_scheme(monkeypatch):
@@ -356,7 +362,7 @@ def test_inline_tts_url_keeps_base_query():
             seen.append(url)
             raise inline_tts.httpx.ConnectError("stop")
 
-    conn = Connection(address=QUERY_BASE)
+    conn = _query_conn()
     with patch.object(inline_tts.engine_egress, "async_client", lambda **_k: _Client()):
         for op in ("speech.synthesize", "speech.voice_check"):
             with pytest.raises(Exception):
@@ -375,14 +381,14 @@ def test_chunked_stt_url_keeps_base_query():
     route = next(iter(chunked_stt.ROUTES))
     with patch.object(chunked_stt.ChunkedSttAdapter, "_post_once", staticmethod(post_once)):
         asyncio.run(chunked_stt.ChunkedSttAdapter().invoke(
-            Connection(address=QUERY_BASE), route, chunked_stt.SttUpload.__new__(chunked_stt.SttUpload)))
+            _query_conn(), route, chunked_stt.SttUpload.__new__(chunked_stt.SttUpload)))
     assert seen == [service_registry.join_base_path(QUERY_BASE, chunked_stt.ROUTES[route])]
     assert seen[0].endswith("?tenant=a") and "?tenant=a/" not in seen[0]
 
 
 def test_node_graph_url_keeps_base_query():
     from gateway.engine_protocol import node_graph
-    session = node_graph.GraphSession(Connection(address=QUERY_BASE), None)
+    session = node_graph.GraphSession(_query_conn(), None)
     assert session._url("/view") == "https://example.com/p/view?tenant=a"
 
 
@@ -390,12 +396,12 @@ def test_executor_url_keeps_base_query():
     from gateway.engine_protocol import description, executor
     from gateway.engine_protocol.assets import MemoryAssetStore
     doc = {"protocol_version": 1, "id": "t", "executor": "http-v1", "operations": {
-        "ping": {"request": {"method": "GET", "path": "/ping", "query": [{"name": "q", "from": "params.q"}]}}}}
+        "ping": {"class": "inventory", "request": {"method": "GET", "path": "/ping", "query": [{"name": "q", "from": "/params/q"}]}, "response": {"framing": "json"}}}}
     desc = description.parse_description(doc, source="t.yml")
     ex = executor.HttpV1Executor(desc, assets=MemoryAssetStore())
     spec = desc.operations["ping"].request
     source = {"body": {}, "params": {"q": "x y"}, "files": {}}
-    wire = asyncio.run(ex._build(Connection(address=QUERY_BASE), spec, desc.operations["ping"], source))
+    wire = asyncio.run(ex._build(_query_conn(), spec, desc.operations["ping"], source))
     assert wire.url == "https://example.com/p/ping?tenant=a&q=x%20y"
 
 
