@@ -482,10 +482,6 @@ def _capability_types_by_io() -> dict[tuple[frozenset[str], frozenset[str]], str
 
 _CAPABILITY_TYPES_BY_IO = _capability_types_by_io()
 
-# Major media type of a manifest output -> output modality.
-_MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio", "text": "text"}
-
-
 def type_of(input_modalities: Iterable[str], output_modalities: Iterable[str]) -> str | None:
     """Use explicit output precedence, then input precedence for the fallback output."""
     inputs, outputs = set(input_modalities), set(output_modalities)
@@ -843,8 +839,10 @@ def _manifest_output_modalities(manifest: Mapping[str, Any]) -> list[str]:
             continue
         media_type = str(spec.get("media_type") or "").strip().lower()
         major = media_type.split("/", 1)[0]
-        if major in _MEDIA_MAJOR_TO_MODALITY:
-            found.append(_MEDIA_MAJOR_TO_MODALITY[major])
+        # The IANA top-level type of a declared output names its modality when the
+        # contract's output vocabulary has that word.
+        if major in OUTPUT_MODALITIES:
+            found.append(major)
         elif media_type == "application/json":
             found.append("text")
     return found

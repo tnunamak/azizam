@@ -590,3 +590,15 @@ def test_io_index_is_derived_from_both_tables_without_ambiguous_pairs(monkeypatc
     assert mm._capability_types_by_io() == {
         (frozenset({"audio"}), frozenset({"embedding"})): "embedding",
     }
+
+
+def test_manifest_output_modality_is_the_media_major_named_by_the_contract(monkeypatch):
+    outputs = {"outputs": {
+        "a": {"media_type": "IMAGE/PNG"}, "b": {"media_type": "video/mp4"},
+        "c": {"media_type": "audio/wav"}, "d": {"media_type": "text/plain"},
+        "e": {"media_type": "application/json"}, "f": {"media_type": "model/gltf-binary"},
+    }}
+    assert mm._manifest_output_modalities(outputs) == ["image", "video", "audio", "text", "text"]
+    # A modality the contract gains in data is read from a declared media type with no code edit.
+    monkeypatch.setattr(mm, "OUTPUT_MODALITIES", (*mm.OUTPUT_MODALITIES, "model"))
+    assert mm._manifest_output_modalities(outputs)[-1] == "model"

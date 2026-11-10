@@ -175,18 +175,3 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the object discriminator the gateway publishes on its signed video content-URL response; changing it is an API change, not configuration.
-  - file: gateway/model_metadata.py
-    literal: audio
-    count: 2
-    category: media_type
-    reason: The key names the IANA top-level media type of a manifest output's declared media type; the value is the same word as the published output_modalities enum value (architecture.output_modalities), an identity mapping that selects no behaviour.
-  - file: gateway/model_metadata.py
-    literal: image
-    count: 2
-    category: media_type
-    reason: The key names the IANA top-level media type of a manifest output's declared media type; the value is the same word as the published output_modalities enum value (architecture.output_modalities), an identity mapping that selects no behaviour.
-  - file: gateway/model_metadata.py
-    literal: video
-    count: 2
-    category: media_type
-    reason: The key names the IANA top-level media type of a manifest output's declared media type; the value is the same word as the published output_modalities enum value (architecture.output_modalities), an identity mapping that selects no behaviour.
