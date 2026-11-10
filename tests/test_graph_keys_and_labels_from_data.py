@@ -162,8 +162,31 @@ def test_legacy_default_handles_and_explicit_selector_absence():
     document = protocol_document()
     del document["result_selectors"]
     unselecting = adapter_for(document)
-    assert finished(job, unselecting).assets == ()
+    assert [json.loads(handle) for handle in finished(job, unselecting).assets] == expected
     with pytest.raises(SelectionRefused) as raised:
         unselecting.collect(job, {"selectors": {"result": {
             "node": "9", "key": "images", "from": "output_dir"}}}, {"result": {}}, limits=limits())
     assert raised.value.code == "selectors_unsupported"
+
+
+def test_missing_history_selector_inherits_shipped_data(monkeypatch):
+    from gateway.engine_protocol import node_graph
+    document = protocol_document()
+    defaults = description.parse_description(document, source="defaults.yml")
+    monkeypatch.setattr(node_graph, "load_shipped_description", lambda protocol: defaults)
+    del document["result_selectors"]
+    adapter = adapter_for(document)
+    status = finished({"outputs": {"1": {"woven": [{"filename": "result.bin"}]}}}, adapter)
+    assert status.state is JobState.succeeded
+    assert [json.loads(handle)["kind"] for handle in status.assets] == ["woven"]
+
+
+def test_poll_refuses_outputs_without_any_declared_handles():
+    with pytest.raises(ProtocolError) as raised:
+        finished({"outputs": {"1": {"unrecognized": [{"filename": "result.bin"}]}}}, adapter_for())
+    assert raised.value.code == "result_missing"
+
+
+def test_poll_keeps_empty_output_completion_compatible():
+    status = finished({"status": {"completed": True}, "outputs": {}}, adapter_for())
+    assert status.state is JobState.succeeded and status.assets == ()
