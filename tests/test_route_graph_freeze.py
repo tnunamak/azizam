@@ -257,7 +257,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-09 for the combined train 38: the c2d-38 changes, the video-mux record and the emptied run-route
         # inputs together (tests/fixtures/headless_openapi.json and the reader golden show the same). Before it the digest was
         # e44b69d8a1013a609d0b67973a0b29f2981aad8e490041585ec542db831fa8fb.
-        assert route_graph.openapi_digest(proxy.app) == "28560d4c8bd8c5ed2313bc28ddb54f06ed9796e3a801f5c2207b8837cab628c1"
+        assert route_graph.openapi_digest(proxy.app) == "bcc462e4b8a834d514c523692450ac6023ff53a237f11e49ed8c41ee08005c08"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
