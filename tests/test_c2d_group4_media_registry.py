@@ -271,6 +271,12 @@ def test_missing_error_mapping_fails_startup(monkeypatch):
             document.pop("wire_error_params", None)
         else:
             document["wire_error_params"] = missing
+        # Drop bindings for absent groups so the missing mapping itself is what fails startup.
+        groups = document.get("wire_error_params") or {}
+        document["wire_error_param_endpoints"] = {
+            domain: endpoint for domain, endpoint in document.get("wire_error_param_endpoints", {}).items()
+            if domain in groups
+        }
 
         def read(path, *args, **kwargs):
             return yaml.safe_dump(document) if path == REGISTRY_PATH else original(path, *args, **kwargs)
