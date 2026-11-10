@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -1928,6 +1929,30 @@ class EngineAddressError(ValueError):
     """A named execution address is invalid; no lower-priority address may replace it."""
 
 
+_HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?")
+
+
+def _require_valid_host_port(config: Mapping[str, Any]) -> None:
+    """Raise EngineAddressError, naming only the field, unless host is a bare host name or IP and port is 1-65535."""
+    host = str(config.get("host") or "").strip()
+    bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    valid_host = bool(_HOSTNAME.fullmatch(bare))
+    if not valid_host and ":" in bare:
+        try:
+            ipaddress.ip_address(bare)
+            valid_host = True
+        except ValueError:
+            pass
+    if not valid_host:
+        raise EngineAddressError("service record host is not a valid host name or IP address")
+    port = config.get("port")
+    number = port if isinstance(port, int) and not isinstance(port, bool) else None
+    if number is None and isinstance(port, str) and port.strip().isascii() and port.strip().isdigit():
+        number = int(port.strip())
+    if number is None or not 1 <= number <= 65535:
+        raise EngineAddressError("service record port is not a number from 1 to 65535")
+
+
 def engine_base_address(config: Mapping[str, Any]) -> str:
     """The full base URL an engine's record names, or ``""`` when it names none or names an invalid one.
 
@@ -1951,6 +1976,7 @@ def checked_engine_base_address(config: Mapping[str, Any]) -> str:
     """
     bare = host_port_origin(config)
     if bare:
+        _require_valid_host_port(config)
         return bare
     connection = config.get("connection")
     candidates = [config.get(key) for key in ("base_url", "api_base", "default_base_url")]
