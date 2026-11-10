@@ -117,8 +117,7 @@ class Core:
         return self.assets.get(asset_id)
 
 
-@pytest.fixture()
-def env():
+def _build_env(catalog):
     core = Core()
 
     def authenticate(request, _path):
@@ -126,13 +125,18 @@ def env():
             return JSONResponse({"error": {"message": "Missing API key."}}, status_code=401)
         return SimpleNamespace(identity="k")
 
-    deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+    deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: catalog, aliases=lambda: ALIASES,
                    store_asset=core.store_asset, read_asset=core.read_asset,
                    read_preview_asset=core.read_asset, public_base_url=lambda r: "https://gw.test", poll_interval=0.0,
                    allowed_origins=lambda r: ["https://gw.test"])
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
     return SimpleNamespace(core=core, client=TestClient(app))
+
+
+@pytest.fixture()
+def env():
+    return _build_env(CATALOG)
 
 
 H = {"authorization": "Bearer good"}
@@ -1305,3 +1309,30 @@ def test_a_host_without_renaming_says_so():
     result = call(_renaming_env(None), "rename_key", {"app": "Laptop", "key": "Editor", "name": "Notes"})
 
     assert result["isError"] is True and "does not offer renaming" in result["structuredContent"]["error"]
+
+
+RUN_ROUTE_ENTRY = _entry(
+    "mux", "video.edit", required=["source_video"], props={"source_video": {"type": "string"}},
+    sync={"method": "POST", "path": "/gateway/v1/workflows/video.edit.mux/run", "content_type": "application/json",
+          "fields": {"source_video": {"in": "body", "field": "source_video"}}},
+)
+
+
+def test_run_waits_when_a_sync_route_answers_with_a_queued_job():
+    env = _build_env([RUN_ROUTE_ENTRY])
+    env.core.routes[("POST", "/gateway/v1/workflows/video.edit.mux/run")] = httpx.Response(
+        202, json={"job_id": "mj_9", "status": "queued", "disposition": "new"})
+    env.core.polls["/gateway/v1/media/jobs/mj_9"] = [{"status": "queued"}, {"status": "succeeded"}]
+    env.core.routes[("GET", "/gateway/v1/media/jobs/mj_9/content")] = httpx.Response(
+        200, json={"data": [{"url": f"https://gw.test/v1/assets/vid_{'e' * 64}/content?sig=1", "asset_id": f"vid_{'e' * 64}", "media_type": "video/mp4"}]})
+    out = call(env, "run", {"target": "mux", "inputs": {"source_video": "x"}, "wait_seconds": 5})["structuredContent"]
+    assert out["status"] == "succeeded" and out["job_id"] == "mj_9" and out["assets"][0]["kind"] == "video"
+
+
+def test_run_reports_a_queued_sync_job_as_not_finished_when_the_wait_ends():
+    env = _build_env([RUN_ROUTE_ENTRY])
+    env.core.routes[("POST", "/gateway/v1/workflows/video.edit.mux/run")] = httpx.Response(
+        202, json={"job_id": "mj_9", "status": "queued", "disposition": "new"})
+    env.core.polls["/gateway/v1/media/jobs/mj_9"] = [{"status": "running", "progress": 5}]
+    out = call(env, "run", {"target": "mux", "inputs": {"source_video": "x"}, "wait_seconds": 0})["structuredContent"]
+    assert out["status"] == "running" and out["job_id"] == "mj_9" and not out.get("assets")

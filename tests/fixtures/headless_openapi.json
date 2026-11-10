@@ -40224,23 +40224,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "rife-interpolate",
       "typical_seconds": 4.0
     },
@@ -40503,23 +40487,7 @@
           "name": "video"
         }
       ],
-      "route_inputs": [
-        {
-          "description": "Clip length in seconds.",
-          "field": "seconds",
-          "in": "body",
-          "minimum": 1,
-          "name": "seconds",
-          "type": "number"
-        },
-        {
-          "description": "WIDTHxHEIGHT, e.g. 960x512.",
-          "field": "size",
-          "in": "body",
-          "name": "size",
-          "type": "string"
-        }
-      ],
+      "route_inputs": [],
       "short_id": "video-mux",
       "typical_seconds": 5.0
     },

@@ -412,6 +412,13 @@ def _native_route_image_inputs(
     return ordered
 
 
+def _carried_by_run_route(record: WorkflowRecord) -> bool:
+    """True when the route a run uses is the generic run route, which takes only its own field mapping."""
+    execution = _execution(record, _typical_seconds(record))
+    route = execution[execution["recommended"]]
+    return bool(route) and route.get("path") == f"/gateway/v1/workflows/{record.id}/run"
+
+
 def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     """Request fields the route owns that the manifest does not list.
 
@@ -422,7 +429,7 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     inputs = settable_inputs(record.contract)
     has_size = "width" in inputs and "height" in inputs
     out: list[dict[str, Any]] = []
-    if gateway_route(record):
+    if gateway_route(record) or _carried_by_run_route(record):
         return out
     if record.intent in ("image.generate", "image.edit"):
         out.append({"name": "n", "type": "integer", "minimum": 1, "maximum": 10,
