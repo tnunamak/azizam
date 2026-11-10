@@ -445,7 +445,9 @@ def concrete_targets(cfg: Mapping[str, Any] | None, operation: str) -> dict[str,
 
 # (operation in model_aliases, config section that holds its legacy ``aliases`` table), in the order of the two proxy
 # constants VIDEO_ALIASES and AUDIO_ALIASES.
-LEGACY_ALIAS_TABLES = (("videos", "videos"), ("audio_generate", "audio"))
+from gateway.compatibility import COMPATIBILITY
+
+LEGACY_ALIAS_TABLES = tuple(COMPATIBILITY.legacy_alias_tables.items())
 
 
 def fold_workflow_aliases(config: dict[str, Any]) -> None:
