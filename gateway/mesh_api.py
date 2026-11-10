@@ -29,7 +29,7 @@ from gateway.multipart_adapter import (
     probe_pool,
 )
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS, Capability, ResourceEstimate
-from gateway.capability_ids import CAPABILITY_LABELS, MODALITY_WORDS
+from gateway.capability_ids import CAPABILITY_LABELS, MODALITY_WORDS, MEDIA_TYPE_MODALITIES
 from gateway.service_registry import service_base_url
 
 # Legacy import aliases only. Route and workflow readers below never use these values.
@@ -219,13 +219,26 @@ def _modalities(metadata: Mapping[str, Any], field: str) -> tuple[str, ...]:
 
 def _workflow_metadata(manifest: MeshWorkflow) -> Mapping[str, Any]:
     """Describe an absent/disabled route from its contract, without inventing route identity."""
+    output_modalities = []
+    for name, spec in manifest.data.get("outputs", {}).items():
+        media_type = spec.get("media_type") if isinstance(spec, Mapping) else None
+        modality = MEDIA_TYPE_MODALITIES.get(media_type) if isinstance(media_type, str) else None
+        if modality is None and isinstance(media_type, str):
+            major, separator, subtype = media_type.partition("/")
+            modality = major if separator and subtype and major in MODALITY_WORDS else None
+        if modality is None:
+            raise MeshManifestError(f"output_modality_missing: output {name!r} has no declared modality for its media type")
+        if modality not in output_modalities:
+            output_modalities.append(modality)
+    if not output_modalities:
+        raise MeshManifestError("output_modality_missing: the workflow has no declared output media types")
     return {
         "input_modalities": list(dict.fromkeys(
             media_type.partition("/")[0]
             for spec in manifest.inputs.values() if spec.get("type") == "asset"
             for media_type in spec.get("accepts", ()) if isinstance(media_type, str)
         )),
-        "output_modalities": list(manifest.data.get("outputs", {})),
+        "output_modalities": output_modalities,
     }
 
 

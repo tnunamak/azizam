@@ -269,6 +269,13 @@ RECIPES: dict[str, Callable[[Mapping[str, Any], Mapping[str, Path]], list[Word]]
     "icsi-words": _icsi_words,
     "earnings21": _earnings21_words,
 }
+# Intrinsic parameter requirements of the fixed algorithms, independent of recipe names
+# and the operator-selected conversion source role.
+_ALGORITHM_REQUIREMENTS = {
+    "ami-words": {"required_source_params": ("annotations",), "required_params": ("word_members",)},
+    "icsi-words": {"required_source_params": ("annotations",), "required_params": ("word_members",)},
+    "earnings21": {"required_source_params": ("transcript", "segments"), "required_params": ()},
+}
 _COMMON_PARAMS = ("cut_seconds",)
 
 
@@ -393,6 +400,10 @@ def _parse_recipe_descriptors(raw: Any) -> dict[str, RecipeDescriptor]:
         role = _require(entry["conversion_source_param"], str, f"{label} conversion_source_param")
         if role not in source_params:
             raise SampleError(f"{label} conversion_source_param must name a required source parameter.")
+        for field, required in _ALGORITHM_REQUIREMENTS[algorithm].items():
+            for parameter in required:
+                if parameter not in entry[field]:
+                    raise SampleError(f"{label} algorithm {algorithm!r} requires {parameter!r} in {field}.")
         descriptors[kind] = RecipeDescriptor(algorithm, source_params, other_params, role)
     return descriptors
 

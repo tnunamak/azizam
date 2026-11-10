@@ -288,3 +288,28 @@ def test_disabled_discovery_refuses_unknown_output_modality(contract):
     changed["outputs"] = {"mesh": {"media_type": "application/x-unknown"}}
     with pytest.raises(MeshManifestError, match="output_modality_missing"):
         mesh_api.discovery_facts(replace(manifest, data=changed), [])
+
+
+def test_output_media_mapping_is_replaceable_data(contract, monkeypatch):
+    manifest = _workflow(contract)
+    monkeypatch.setattr(mesh_api, "MEDIA_TYPE_MODALITIES", {manifest.output_media_type: "surface-model"})
+    monkeypatch.setattr(mesh_api, "MODALITY_WORDS", {*mesh_api.MODALITY_WORDS, "surface-model"})
+    assert mesh_api.discovery_facts(manifest, []).output_modalities == ("surface-model",)
+
+
+@pytest.mark.parametrize("rows", [[], {"invalid": "mesh"}, {"model/gltf-binary": "unregistered"},
+                                  {"model/gltf-binary": []}, {"model/": "mesh"}])
+def test_media_modality_mapping_refuses_invalid_data(tmp_path, rows):
+    from gateway.capability_ids import load_media_type_modalities
+    path = tmp_path / "words.yml"
+    path.write_text(yaml.safe_dump({"modality_words": ["mesh"], "media_type_modalities": rows}))
+    with pytest.raises(ValueError, match="media_type_modalities"):
+        load_media_type_modalities(path)
+
+
+def test_media_modality_mapping_loads_registered_custom_words(tmp_path):
+    from gateway.capability_ids import load_media_type_modalities
+    path = tmp_path / "words.yml"
+    path.write_text(yaml.safe_dump({"modality_words": ["surface-model"],
+                                    "media_type_modalities": {"application/x-surface": "surface-model"}}))
+    assert load_media_type_modalities(path) == {"application/x-surface": "surface-model"}
