@@ -226,3 +226,15 @@ def test_schema_closes_every_graph_roles_object(corpus, level):
     }
     places[level]["unexpected"] = {}
     assert list(validator.iter_errors(section))
+
+
+def test_multiple_batch_targets_are_refused_by_loader_and_schema(corpus):
+    section, registry, root = corpus
+    graph = json.loads((root / EDIT).read_text())
+    first = section["graph_roles"][EDIT]["batch_size"][0]
+    graph["fixture_batch"] = copy.deepcopy(graph[first["node"]])
+    (root / EDIT).write_text(json.dumps(graph))
+    section["graph_roles"][EDIT]["batch_size"].append({"node": "fixture_batch", "input": "batch_size"})
+    _refuses(section, registry, EDIT, "batch_size")
+    schema = json.loads((ROOT / "registry/defaults/images.schema.json").read_text())
+    assert list(Draft202012Validator(schema).iter_errors(section))
