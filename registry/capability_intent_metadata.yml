@@ -42,14 +42,10 @@ families:
   - prefix: audio.
     model_metadata: {type: audio, input_modalities: [text], output_modalities: [audio]}
 
-# Global model metadata vocabulary and derivation rules.
+# Model metadata semantic rules; vocabularies live in defaults/models.schema.json.
 contract:
-  # Ordered rosters control emission order, not semantic roles.
+  # Schema enum order controls emission order, not these semantic roles.
   schema_version: 1
-  types: [language, embedding, reranking, image, video, audio, decision]
-  input_modalities: [text, image, audio, video, file]
-  output_modalities: [text, image, audio, video, embedding]
-  tags: [tool-use, reasoning, vision, file-input]
   tag_types: [language]
   derivation:
     # Scalar manifest inputs and fallback output typing have named roles.

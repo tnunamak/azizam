@@ -11,8 +11,8 @@ of an entry (LLM catalog, current-loaded, decision runtime), and the
 capabilities a service-registry record declares. Operator declarations under
 the `model_metadata` key are DATA and always win over derived values.
 
-The vocabulary contract, operation, service-capability and capability-intent metadata
-are read once from shipped registry rows.
+The vocabulary contract is read from the published models schema; derivation rules,
+operation, service-capability and capability-intent metadata come from registry rows.
 Other lookups are injected; this module reads no owner config and makes no network calls.
 """
 
@@ -27,6 +27,7 @@ from typing import Any, Callable, Iterable, Mapping
 import yaml
 
 from gateway.manifests import asset_input_modalities, asset_leaf_specs
+from gateway.product_contracts import _MODEL_SCHEMA_PATH, load_model_metadata_vocabularies
 from gateway.stable_aliases import OPERATIONS as ALIAS_OPERATIONS
 
 _METADATA_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
@@ -75,9 +76,14 @@ class _MetadataContractLoader(yaml.SafeLoader):
         return found
 
 
-def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> MetadataContract:
-    """Load a closed data-only schema; order and semantic roles are independent."""
+def load_metadata_contract(
+    path: str | Path = _METADATA_CONTRACT_PATH,
+    *,
+    schema_path: str | Path = _MODEL_SCHEMA_PATH,
+) -> MetadataContract:
+    """Read ordered schema vocabularies and validate the separate semantic rules."""
     path = Path(path)
+    vocabularies = load_model_metadata_vocabularies(schema_path)
 
     def invalid(at: str, reason: str) -> ValueError:
         return ValueError(f"{path}: {at}: {reason}")
@@ -98,7 +104,7 @@ def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> Metada
         found: list[str] = []
         for item in value:
             if not isinstance(item, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", item):
-                raise invalid(at, "values must be lowercase data names, not paths")
+                raise invalid(at, f"values must be lowercase data names, not paths: {item!r}")
             if item in found:
                 raise invalid(at, f"duplicate value: {item!r}")
             found.append(item)
@@ -106,7 +112,7 @@ def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> Metada
 
     def reference(value: Any, at: str, vocabulary: tuple[str, ...]) -> str:
         if not isinstance(value, str) or value not in vocabulary:
-            raise invalid(at, f"unknown value: {value!r}")
+            raise invalid(at, f"unknown value: {value!r}; not allowed by {schema_path}")
         return value
 
     try:
@@ -115,15 +121,14 @@ def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> Metada
         raise invalid("document", str(exc)) from exc
     document = mapping(document, "document", {"schema_version", "exact", "families", "contract"})["contract"]
     document = mapping(document, "document", {
-        "schema_version", "types", "input_modalities", "output_modalities",
-        "tags", "tag_types", "derivation", "implications",
+        "schema_version", "tag_types", "derivation", "implications",
     })
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be 1")
-    types = roster(document["types"], "types")
-    inputs = roster(document["input_modalities"], "input_modalities")
-    outputs = roster(document["output_modalities"], "output_modalities")
-    tags = roster(document["tags"], "tags", empty=True)
+    types = vocabularies["types"]
+    inputs = vocabularies["input_modalities"]
+    outputs = vocabularies["output_modalities"]
+    tags = vocabularies["tags"]
     tag_types = roster(document["tag_types"], "tag_types", empty=True)
     for type_ in tag_types:
         reference(type_, "tag_types", types)

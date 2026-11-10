@@ -4,33 +4,60 @@ These describe caller-visible data. They do not import the running gateway or
 its stores; generation and contract validation need no instance credentials.
 """
 import json
+import re
 from pathlib import Path
 from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 _MODEL_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "registry/defaults/models.schema.json"
-with _MODEL_SCHEMA_PATH.open(encoding="utf-8") as _schema_file:
+
+
+def load_model_metadata_vocabularies(
+    path: str | Path = _MODEL_SCHEMA_PATH,
+) -> dict[str, tuple[str, ...]]:
+    """Read the published model enums once, preserving their declared order."""
+    path = Path(path)
     try:
-        _model_schema = json.load(_schema_file)
+        with path.open(encoding="utf-8") as schema_file:
+            model_schema = json.load(schema_file)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"{_MODEL_SCHEMA_PATH}: invalid JSON: {exc}") from exc
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"{path}: cannot read model metadata schema: {exc}") from exc
+
+    def _metadata_enum(*keys: str) -> tuple[str, ...]:
+        location = ("additionalProperties", "properties", "model_metadata", "properties", *keys, "enum")
+        value = model_schema
+        try:
+            for key in location:
+                value = value[key]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"{path}: Missing model metadata schema enum: {'.'.join(location)}") from exc
+        if not isinstance(value, list) or not value or any(
+            not isinstance(item, str) or not item for item in value
+        ):
+            raise ValueError(
+                f"{path}: Model metadata schema enum {'.'.join(location)} "
+                "must be a non-empty array of non-empty strings"
+            )
+        found: list[str] = []
+        for item in value:
+            if not re.fullmatch(r"[a-z][a-z0-9_-]*", item):
+                raise ValueError(f"{path}: {'.'.join(location)}: invalid vocabulary word: {item!r}")
+            if item in found:
+                raise ValueError(f"{path}: {'.'.join(location)}: duplicate vocabulary word: {item!r}")
+            found.append(item)
+        return tuple(found)
+
+    return {
+        "types": _metadata_enum("type"),
+        "input_modalities": _metadata_enum("input_modalities", "items"),
+        "output_modalities": _metadata_enum("output_modalities", "items"),
+        "tags": _metadata_enum("tags", "items"),
+    }
 
 
-def _metadata_enum(*keys: str) -> list[str]:
-    path = ("additionalProperties", "properties", "model_metadata", "properties", *keys, "enum")
-    value = _model_schema
-    try:
-        for key in path:
-            value = value[key]
-    except (KeyError, TypeError) as exc:
-        raise ValueError(f"Missing model metadata schema enum: {'.'.join(path)}") from exc
-    if not isinstance(value, list) or not value or any(
-        not isinstance(item, str) or not item for item in value
-    ):
-        raise ValueError(
-            f"Model metadata schema enum {'.'.join(path)} must be a non-empty array of non-empty strings"
-        )
-    return value
+_MODEL_METADATA_VOCABULARIES = load_model_metadata_vocabularies()
 
 
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "unknown", "unavailable"]
@@ -38,10 +65,10 @@ AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "u
 CapabilityIconKey = str
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
 # The same metadata vocabulary operators validate in registry/defaults/models.schema.json.
-ModelType = Literal[tuple(_metadata_enum("type"))]
-InputModality = Literal[tuple(_metadata_enum("input_modalities", "items"))]
-OutputModality = Literal[tuple(_metadata_enum("output_modalities", "items"))]
-ModelTag = Literal[tuple(_metadata_enum("tags", "items"))]
+ModelType = Literal[_MODEL_METADATA_VOCABULARIES["types"]]
+InputModality = Literal[_MODEL_METADATA_VOCABULARIES["input_modalities"]]
+OutputModality = Literal[_MODEL_METADATA_VOCABULARIES["output_modalities"]]
+ModelTag = Literal[_MODEL_METADATA_VOCABULARIES["tags"]]
 
 
 class AvailabilityEvidence(TypedDict, total=False):
