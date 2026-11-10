@@ -75,8 +75,6 @@ def capture(monkeypatch):
     return found
 
 
-def test_shipped_outputs(monkeypatch, record_property):
+def test_shipped_outputs(monkeypatch):
     actual = capture(monkeypatch)
-    record_property("golden", json.dumps(actual, sort_keys=True, default=str))
-    if GOLDEN.exists():
-        assert json.loads(json.dumps(actual, default=str)) == json.loads(GOLDEN.read_text())
+    assert json.loads(json.dumps(actual, default=str)) == json.loads(GOLDEN.read_text())
