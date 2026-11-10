@@ -15,17 +15,7 @@
 # audio_route_managed, video_route_managed, video_reference. Per-record words:
 # unbound (inputs no service binding maps) and route_images (the pictures the
 # native edit route reads, in submission order).
-#
-# pending lists selectors a dedicated branch of gateway/workflow_openapi.py
-# still serves. The default row must not claim them: jobs B and C add the image,
-# audio and video rows and delete an entry as they do. A stale entry is
-# harmless once a specific row selects the intent.
 schema_version: 1
-pending:
-  - intent: image.generate
-  - intent: image.edit
-  - intent: audio.generate
-  - intent_prefix: video.
 
 maps:
   # A native route (the record sets gateway_route): plain multipart. Each asset
@@ -63,6 +53,120 @@ maps:
       in: file
     default:
       in: form
+
+  # The image-generations route (POST /v1/images/generations): the prompt and the
+  # combined size at the top level, the route-managed image inputs unset, the
+  # rest as extension keys.
+  - select:
+      intent: image.generate
+      mode: any
+    inputs:
+      prompt:
+        in: body
+        field: prompt
+      width:
+        in: body
+        field: size
+        combine: [width, height]
+      height:
+        in: body
+        field: size
+        combine: [width, height]
+    sets:
+      - word: image_generate_managed
+        placement:
+          in: none
+    default:
+      in: extension
+
+  # The image-edits route (POST /v1/images/edits): each route picture is one
+  # repeated image[] part, source first, then the route's form fields; a later
+  # asset is a file part plus its extension value.
+  - select:
+      intent: image.edit
+      mode: any
+    first: route_images
+    inputs:
+      prompt:
+        in: form
+        field: prompt
+      source_image:
+        in: file
+        field: image[]
+      mask:
+        in: file
+        field: mask
+      width:
+        in: form
+        field: size
+        combine: [width, height]
+      height:
+        in: form
+        field: size
+        combine: [width, height]
+    sets:
+      - word: route_images
+        placement:
+          in: file
+          field: image[]
+      - word: image_edit_managed
+        placement:
+          in: none
+    asset:
+      in: file+extension
+    default:
+      in: extension
+
+  # The audio-generate route (POST /v1/audio/generate): route-managed audio
+  # fields at the top level, the rest as extension keys.
+  - select:
+      intent: audio.generate
+      mode: any
+    sets:
+      - word: audio_route_managed
+        placement:
+          in: body
+    default:
+      in: extension
+
+  # Every video intent (POST /v1/videos; sync video.edit is the run route above):
+  # the prompt, size, seconds and input reference at the top level, the
+  # route-managed video inputs unset, the rest as extension keys.
+  - select:
+      intent_prefix: video.
+    inputs:
+      prompt:
+        in: body
+        field: prompt
+      negative_prompt:
+        in: body
+        field: negative_prompt
+      seed:
+        in: body
+        field: seed
+      image_strength:
+        in: body
+        field: image_strength
+      width:
+        in: body
+        field: size
+        combine: [width, height]
+      height:
+        in: body
+        field: size
+        combine: [width, height]
+      length:
+        in: body
+        field: seconds
+      image:
+        in: body
+        field: input_reference
+    sets:
+      - word: video_route_managed
+        placement:
+          in: none
+    default:
+      in: extension
 
   # Any other intent and mode: a key under extensions["com.azizam.workflow"].
   - select:

@@ -9,9 +9,8 @@ then places every settable input with the first part that matches: ``first``
 
 Route-managed sets stay in Python. A row names one by word and this module
 resolves it with the existing constant or helper, so no member list is copied
-into the file. A selector a dedicated code branch still serves is listed under
-``pending``: the default row does not claim it, so ``select`` returns ``None``
-until a row names it.
+into the file. ``select`` returns ``None`` only when no row matches an intent and
+mode; the bundled rows cover every route branch, so the bundled file never does.
 
 The file loads once at import into read-only structures. ``request_mapping``
 keeps the media-bearing container post-step in Python; this module does not
@@ -47,7 +46,7 @@ SET_WORDS = STATIC_SET_WORDS + RECORD_SET_WORDS
 
 _ROW_MODES = ("sync", "async", "any")
 _NATIVE_MODES = ("sync", "async")
-_TOP_KEYS = frozenset({"schema_version", "pending", "maps"})
+_TOP_KEYS = frozenset({"schema_version", "maps"})
 _ROW_KEYS = frozenset({"select", "rename", "first", "inputs", "sets", "asset", "default"})
 _SELECTOR_KEYS = frozenset({"native", "intent", "intent_prefix", "any", "mode"})
 _PLACEMENT_KEYS = frozenset({"in", "field", "combine"})
@@ -79,15 +78,13 @@ class Row:
 
 @dataclass(frozen=True)
 class RequestMaps:
-    """The file's rows and pending selectors, read-only and loaded once."""
+    """The file's rows, read-only and loaded once."""
 
     path: Path
     rows: tuple[Row, ...]
-    pending_intents: frozenset[str]
-    pending_prefixes: tuple[str, ...]
 
     def select(self, record: Any, mode: str) -> Row | None:
-        """The row that claims ``record`` in ``mode``, or ``None`` when none does yet."""
+        """The row that claims ``record`` in ``mode``, or ``None`` when none does."""
         return _select(self, record, mode)
 
     def place(self, row: Row, record: Any, mode: str) -> dict[str, dict[str, Any]]:
@@ -239,25 +236,6 @@ def _row(path: Path, index: int, raw: Any) -> Row:
     )
 
 
-def _pending(path: Path, raw: Any) -> tuple[frozenset[str], tuple[str, ...]]:
-    if raw is None:
-        return frozenset(), ()
-    if not isinstance(raw, list):
-        raise ValueError(f"{path}: pending must be a list")
-    intents: list[str] = []
-    prefixes: list[str] = []
-    for number, entry in enumerate(raw, 1):
-        if not isinstance(entry, Mapping) or len(entry) != 1:
-            raise ValueError(f"{path}: pending row {number}: needs exactly one of intent or intent_prefix")
-        kind, value = next(iter(entry.items()))
-        if kind not in ("intent", "intent_prefix"):
-            raise ValueError(f"{path}: pending row {number}: unknown key {kind!r}")
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"{path}: pending row {number}: {kind} must be a non-empty string")
-        (intents if kind == "intent" else prefixes).append(value)
-    return frozenset(intents), tuple(prefixes)
-
-
 def load(path: str | Path = DEFAULT_PATH) -> RequestMaps:
     """Read the file once and return its read-only rows, or refuse a malformed row."""
     path = Path(path)
@@ -272,7 +250,6 @@ def load(path: str | Path = DEFAULT_PATH) -> RequestMaps:
         raise ValueError(f"{path}: unknown key {sorted(unknown)[0]!r}")
     if document.get("schema_version") != 1:
         raise ValueError(f"{path}: schema_version must be 1")
-    pending_intents, pending_prefixes = _pending(path, document.get("pending"))
     raw_rows = document.get("maps")
     if not isinstance(raw_rows, list):
         raise ValueError(f"{path}: maps must be a list")
@@ -284,12 +261,7 @@ def load(path: str | Path = DEFAULT_PATH) -> RequestMaps:
             raise _refusal(path, index, f"same selector as row {seen[row.selector]}")
         seen[row.selector] = index
         rows.append(row)
-    return RequestMaps(
-        path=path,
-        rows=tuple(rows),
-        pending_intents=pending_intents,
-        pending_prefixes=pending_prefixes,
-    )
+    return RequestMaps(path=path, rows=tuple(rows))
 
 
 # --------------------------------------------------------------- request map
@@ -333,12 +305,6 @@ def _members(
     return tuple(name for name in inputs if name in members)
 
 
-def _pending_selectors(maps: RequestMaps, intent: str) -> bool:
-    return intent in maps.pending_intents or any(
-        intent.startswith(prefix) for prefix in maps.pending_prefixes
-    )
-
-
 def _select(maps: RequestMaps, record: Any, mode: str) -> Row | None:
     native = _workflow_openapi().gateway_route(record)
     intent = record.intent
@@ -356,8 +322,6 @@ def _select(maps: RequestMaps, record: Any, mode: str) -> Row | None:
     ]
     if prefixes:
         return max(prefixes, key=lambda row: len(row.selector[1]))
-    if _pending_selectors(maps, intent):
-        return None
     for row in maps.rows:
         if row.selector[0] == "any":
             return row
