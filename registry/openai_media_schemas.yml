@@ -3,6 +3,10 @@
 # DELETE matches the published video.deleted discriminator.
 {
   "schema_version": 1,
+  "wire_error_params": {
+    "identity_scene": {"reference_photos": "image"},
+    "segment_chain": {"source_clip": "video"}
+  },
   "endpoints": {
     "POST /v1/images/edits": {
       "requestBody": {

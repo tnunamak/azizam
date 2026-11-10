@@ -33,6 +33,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 from PIL import Image, ImageOps
 
 from gateway import likeness
+from gateway import openai_media_schemas
 from gateway.likeness import FaceRecord, Person
 
 MAX_ATTEMPTS = 8
@@ -56,11 +57,19 @@ class IdentityError(ValueError):
         message: str,
         *,
         param: str | None = None,
+        domain: str | None = None,
+        logical_param: str | None = None,
         code: str = "invalid_request",
         faces: list[dict[str, Any]] | None = None,
     ) -> None:
+        if param is not None and logical_param is not None:
+            raise TypeError("param and logical_param are mutually exclusive")
+        if logical_param is not None and domain is None:
+            raise TypeError("domain is required with logical_param")
         super().__init__(message)
-        self.param = param
+        self.domain = domain
+        self.logical_param = logical_param
+        self.param = openai_media_schemas.wire_error_param(domain, logical_param) if logical_param is not None else param
         self.code = code
         self.faces = faces  # detected faces to choose from, for ambiguous_faces errors
 
@@ -530,7 +539,7 @@ async def resolve_people(
     warnings: list[dict[str, str]] | None = None,
 ) -> list[ResolvedPerson]:
     if not req.photos:
-        raise IdentityError("at least one reference photo is required", param="image")
+        raise IdentityError("at least one reference photo is required", domain="identity_scene", logical_param="reference_photos")
     detected: dict[int, list[FaceRecord]] = {}
 
     async def faces_of(index: int) -> list[FaceRecord]:
@@ -544,14 +553,14 @@ async def resolve_people(
     if not specs and len(req.photos) == 1:  # auto: every usable face in the photo, left to right
         faces = [f for f in await faces_of(0) if f.width >= MIN_REF_FACE_PX]
         if not faces:
-            raise IdentityError("no face was found in the reference photo", param="image", code="no_face")
+            raise IdentityError("no face was found in the reference photo", domain="identity_scene", logical_param="reference_photos", code="no_face")
         specs = [PersonSpec(label=f"person {i + 1}", image=0, box=tuple(f.bbox), auto=True) for i, f in enumerate(faces)]
     elif not specs:  # auto with several photos: the largest face of each photo is one person
         specs = []
         for i in range(len(req.photos)):
             faces = [f for f in await faces_of(i) if f.width >= MIN_REF_FACE_PX]
             if not faces:
-                raise IdentityError(f"no face was found in photo {i}", param="image", code="no_face")
+                raise IdentityError(f"no face was found in photo {i}", domain="identity_scene", logical_param="reference_photos", code="no_face")
             largest = max(faces, key=lambda f: f.width)
             specs.append(PersonSpec(label=f"person {i + 1}", image=i, box=tuple(largest.bbox), auto=True))
     if len(specs) > MAX_PEOPLE:

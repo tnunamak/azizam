@@ -19,14 +19,22 @@ giving SDK generators and clients the right top-level entry points.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 import math
 from pathlib import Path
 import re
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 import yaml
 
 JsonObjectSchema = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MediaSchemaRegistry:
+    endpoints: Mapping[str, JsonObjectSchema]
+    wire_error_params: Mapping[str, Mapping[str, str]]
 
 
 class _FragmentLoader(yaml.SafeLoader):
@@ -36,9 +44,11 @@ class _FragmentLoader(yaml.SafeLoader):
 def _unique_fragment_mapping(loader: _FragmentLoader, node: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key_node, value_node in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            raise ValueError("schema fragments do not allow merge keys")
         key = loader.construct_object(key_node, deep=True)
-        if not isinstance(key, str) or key in result:
-            raise ValueError("schema fragments require unique string mapping keys")
+        if not isinstance(key, str) or key == "<<" or key in result:
+            raise ValueError(f"schema fragments require unique string mapping keys: {key!r}")
         result[key] = loader.construct_object(value_node, deep=True)
     return result
 
@@ -55,7 +65,8 @@ def _fragment_mapping(
     if not isinstance(value, dict) or any(not isinstance(key, str) or not key for key in value):
         raise ValueError(f"{label}: expected a mapping with nonempty string keys")
     if (allowed is not None and set(value) - allowed) or required - set(value):
-        raise ValueError(f"{label}: unknown or missing fields")
+        unknown = set(value) - allowed if allowed is not None else set()
+        raise ValueError(f"{label}: unknown fields {sorted(unknown)}; missing fields {sorted(required - set(value))}")
     return value
 
 
@@ -116,13 +127,16 @@ def _validate_fragment_content(value: Any, label: str) -> None:
         _validate_fragment_schema(entry["schema"], f"{label}.{media_type}.schema")
 
 
-def _load_schema_fragments(path: Path) -> dict[str, JsonObjectSchema]:
+def load_media_schema_registry(path: Path) -> MediaSchemaRegistry:
     """Load a closed data-only format; it cannot resolve imports or references."""
     try:
         document = yaml.load(path.read_text(encoding="utf-8"), Loader=_FragmentLoader)
     except (yaml.YAMLError, ValueError, RecursionError) as exc:
-        raise ValueError(f"{path}: invalid schema fragment YAML") from exc
-    document = _fragment_mapping(document, str(path), {"schema_version", "endpoints"}, {"schema_version", "endpoints"})
+        raise ValueError(f"{path}: invalid schema fragment YAML: {exc}") from exc
+    document = _fragment_mapping(
+        document, str(path), {"schema_version", "endpoints", "wire_error_params"},
+        {"schema_version", "endpoints"},
+    )
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise ValueError(f"{path}: unsupported schema_version")
     endpoints = _fragment_mapping(document["endpoints"], f"{path}: endpoints")
@@ -131,26 +145,63 @@ def _load_schema_fragments(path: Path) -> dict[str, JsonObjectSchema]:
     for key, fragment in endpoints.items():
         if not re.fullmatch(r"(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) /[^\s?#]*", key):
             raise ValueError(f"{path}: invalid HTTP method/path key")
-        fragment = _fragment_mapping(fragment, key, {"requestBody", "responses"})
+        label = f"{path}: endpoints.{key}"
+        fragment = _fragment_mapping(fragment, label, {"requestBody", "responses"})
         if not fragment:
-            raise ValueError(f"{key}: empty endpoint fragment")
+            raise ValueError(f"{label}: empty endpoint fragment")
         if "requestBody" in fragment:
-            body = _fragment_mapping(fragment["requestBody"], f"{key}.requestBody", {"required", "content"}, {"required", "content"})
+            body = _fragment_mapping(fragment["requestBody"], f"{label}.requestBody", {"required", "content"}, {"required", "content"})
             if type(body["required"]) is not bool:
-                raise ValueError(f"{key}: requestBody.required must be boolean")
-            _validate_fragment_content(body["content"], f"{key}.requestBody.content")
+                raise ValueError(f"{label}: requestBody.required must be boolean")
+            _validate_fragment_content(body["content"], f"{label}.requestBody.content")
         if "responses" in fragment:
-            responses = _fragment_mapping(fragment["responses"], f"{key}.responses")
+            responses = _fragment_mapping(fragment["responses"], f"{label}.responses")
             if not responses:
-                raise ValueError(f"{key}: empty responses")
+                raise ValueError(f"{label}: empty responses")
             for status, response in responses.items():
                 if not re.fullmatch(r"[1-5][0-9]{2}|default", status):
-                    raise ValueError(f"{key}: invalid response status")
-                response = _fragment_mapping(response, f"{key}.{status}", {"description", "content"}, {"description", "content"})
+                    raise ValueError(f"{label}: invalid response status")
+                response = _fragment_mapping(response, f"{label}.{status}", {"description", "content"}, {"description", "content"})
                 if not isinstance(response["description"], str):
-                    raise ValueError(f"{key}.{status}: description must be text")
-                _validate_fragment_content(response["content"], f"{key}.{status}.content")
-    return endpoints
+                    raise ValueError(f"{label}.{status}: description must be text")
+                _validate_fragment_content(response["content"], f"{label}.{status}.content")
+    error_params: dict[str, Mapping[str, str]] = {}
+    if "wire_error_params" in document:
+        label = f"{path}: wire_error_params"
+        domains = _fragment_mapping(document["wire_error_params"], label)
+        if not domains:
+            raise ValueError(f"{label}: expected at least one domain")
+        for domain, value in domains.items():
+            group_label = f"{label}.{domain}"
+            group = _fragment_mapping(value, group_label)
+            if not group:
+                raise ValueError(f"{group_label}: expected at least one parameter")
+            for logical, public in group.items():
+                if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", logical):
+                    raise ValueError(f"{group_label}.{logical}: invalid logical parameter")
+                if not isinstance(public, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.\[\]-]{0,127}", public):
+                    raise ValueError(f"{group_label}.{logical}: invalid public parameter")
+            error_params[domain] = MappingProxyType(dict(group))
+    return MediaSchemaRegistry(
+        endpoints=MappingProxyType(deepcopy(endpoints)),
+        wire_error_params=MappingProxyType(error_params),
+    )
+
+
+def _load_schema_fragments(path: Path) -> dict[str, JsonObjectSchema]:
+    """Compatibility facade: return independently owned endpoint fragments."""
+    return deepcopy(dict(load_media_schema_registry(path).endpoints))
+
+
+def wire_error_param(
+    domain: str, logical_param: str, *, registry: MediaSchemaRegistry | None = None,
+) -> str:
+    """Resolve one exact algorithm error key; missing configuration never falls back."""
+    source = _MEDIA_SCHEMA_REGISTRY if registry is None else registry
+    try:
+        return source.wire_error_params[domain][logical_param]
+    except KeyError as exc:
+        raise KeyError(f"wire_error_params[{domain!r}][{logical_param!r}]") from exc
 
 
 def _endpoint_fragment(
@@ -160,9 +211,14 @@ def _endpoint_fragment(
     return deepcopy(source[f"{method} {path}"])
 
 
-_SCHEMA_FRAGMENTS = _load_schema_fragments(
+_MEDIA_SCHEMA_REGISTRY = load_media_schema_registry(
     Path(__file__).resolve().parent.parent / "registry" / Path(__file__).with_suffix(".yml").name,
 )
+_SCHEMA_FRAGMENTS = deepcopy(dict(_MEDIA_SCHEMA_REGISTRY.endpoints))
+
+# Validate the shipped exception adapters before accepting any requests.
+wire_error_param("identity_scene", "reference_photos")
+wire_error_param("segment_chain", "source_clip")
 
 
 _ERROR_SCHEMA: JsonObjectSchema = {
