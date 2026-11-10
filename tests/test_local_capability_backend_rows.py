@@ -118,7 +118,7 @@ def test_new_trigger_and_family_need_only_a_test_row(tmp_path, monkeypatch):
     ("set", "triggers", [], "triggers"),
     ("duplicate", None, None, "duplicate trigger"),
     ("set", "group", "unknown", "group"),
-    ("set", "flag", "unknown", "flag"),
+    ("set", "flag", "", "flag"),  # any named flag is valid row data; an empty one is not
     ("set", "execution", "stream", "execution"),
     ("set", "streaming", "yes", "streaming"),
     ("set", "gpu_required", "yes", "gpu_required"),
