@@ -430,7 +430,7 @@ def test_a_restore_with_unknown_outcome_stays_closed_and_runs_no_reset(rig) -> N
 def test_a_no_change_the_profile_does_not_attest_takes_the_reset_path(rig) -> None:
     seed(rig)
     rig.engine.script("restore", "no_change")
-    result = go(rig, "wake", rig.policy(restore={"failure_semantics": "unknown"}))
+    result = go(rig, "wake", rig.policy(restore={"failure_semantics": "unknown"}), target="model-a")
     assert "reset" in rig.engine.calls and result.verdict == "continue"
 
 
