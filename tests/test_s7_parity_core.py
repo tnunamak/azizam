@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from gateway import media_jobs, result_bundle
+from gateway import asset_types, media_jobs, result_bundle
+from gateway.engine_protocol.errors import BudgetExceeded
 from gateway.engine_protocol.media import GatewayAssetStore
 from gateway.registry_snapshot import frontend_row
 from gateway.result_bundle import ResultLimits
@@ -592,13 +593,14 @@ class FakeStore:
         return "asset-1"
 
 
-def _save(store, content_type, **kw):
-    async def chunks():
-        yield b"bytes"
+def _save(store, content_type, *, chunks=(b"bytes",), max_bytes=100, **kw):
+    async def iter_chunks():
+        for chunk in chunks:
+            yield chunk
 
     async def go():
         return await GatewayAssetStore(store=store, path_for=lambda _: None, owner="owner-1", **kw).save(
-            chunks(), content_type=content_type, max_bytes=100)
+            iter_chunks(), content_type=content_type, max_bytes=max_bytes)
 
     return asyncio.run(go())
 
@@ -610,8 +612,56 @@ def _save(store, content_type, **kw):
 def test_a_saved_file_gets_its_kind_prefix_and_its_extension_from_the_media_type(media_type, kind, suffix):
     """images-36, audio-31, audio-75, video-73, writers-36: never `.bin` when the type is known."""
     store = FakeStore()
+    _save(store, media_type, chunks=(b"by", b"tes"))
+    assert store.calls == [(b"bytes", {"kind": kind, "suffix": suffix, "owner_key_hash": "owner-1"})]
+
+
+@pytest.mark.parametrize("media_type,suffix", [
+    ("model/gltf-binary", ".glb"),
+    ("x-unfamiliar/binary", ".bin"),
+    ("application/octet-stream", ".bin")])
+def test_a_saved_file_accepts_other_media_families_without_registry_rows(monkeypatch, media_type, suffix):
+    monkeypatch.setattr(asset_types.mimetypes, "guess_extension", lambda _: None)
+    store = FakeStore()
+    _save(store, media_type, chunks=(b"by", b"tes"))
+    assert asset_types.suffix_for_media_type(media_type) == suffix
+    assert store.calls == [(b"bytes", {"kind": "ast", "suffix": suffix, "owner_key_hash": "owner-1"})]
+
+
+@pytest.mark.parametrize("media_type,kind,suffix", [
+    ("IMAGE/png", "img", ".png"),
+    (" image/png", "img", ".png"),
+    ("image", "ast", ".bin"),
+    ("image/", "ast", ".bin"),
+    (None, "ast", ".bin")])
+def test_a_saved_file_uses_shared_normalization_without_validating_mime(monkeypatch, media_type, kind, suffix):
+    """Classification follows the shared helper, including malformed input; it is not MIME validation."""
+    monkeypatch.setattr(asset_types.mimetypes, "guess_extension", lambda _: None)
+    store = FakeStore()
     _save(store, media_type)
-    assert (store.calls[0][1]["kind"], store.calls[0][1]["suffix"]) == (kind, suffix)
+    assert asset_types.asset_prefix_for_media_type(media_type) == kind
+    assert asset_types.suffix_for_media_type(media_type) == suffix
+    assert store.calls == [(b"bytes", {"kind": kind, "suffix": suffix, "owner_key_hash": "owner-1"})]
+
+
+@pytest.mark.parametrize("chunks,max_bytes", [
+    ((b"by", b"tes"), 4),
+    ((b"bytes",), 4),
+    ((b"x",), 0)])
+def test_an_oversize_asset_never_calls_the_store(chunks, max_bytes):
+    store = FakeStore()
+    with pytest.raises(BudgetExceeded, match="asset size limit"):
+        _save(store, "model/gltf-binary", chunks=chunks, max_bytes=max_bytes)
+    assert store.calls == []
+
+
+@pytest.mark.parametrize("chunks,max_bytes", [
+    ((b"by", b"tes"), 5),
+    ((b"",), 0)])
+def test_an_asset_at_the_exact_limit_is_saved_without_an_origin(chunks, max_bytes):
+    store = FakeStore()
+    _save(store, "model/gltf-binary", chunks=chunks, max_bytes=max_bytes)
+    assert store.calls == [(b"".join(chunks), {"kind": "ast", "suffix": ".glb", "owner_key_hash": "owner-1"})]
 
 
 def test_a_saved_file_carries_the_origin_the_old_route_wrote():
