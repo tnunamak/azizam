@@ -87,7 +87,16 @@ def test_all_eighteen_shipped_entries_load(corpus):
     assert {path for path, roles in result.items() if "batch_size" in roles} == {
         EDIT, "workflows/images/flux2-klein-4b-edit.json",
     }
-    assert {path for path, roles in result.items() if "reference_order" in roles} == {MULTI}
+    assert {path for path, roles in result.items() if "reference_order" in roles} == {
+        'workflows/images/fibo-2-edit-turbo.json',
+        'workflows/images/flux2-klein-4b-edit.json',
+        'workflows/images/flux2-klein-4b-inpaint.json',
+        'workflows/images/flux2-klein-edit.json',
+        'workflows/images/qwen-image-2.1-edit-multiref.json',
+        'workflows/images/qwen-image-2.1-edit.json',
+        'workflows/images/qwen-image-2.1-inpaint.json',
+        'workflows/images/seedvr2-upscale.json',
+    }
 
 
 def test_temporary_parity_with_each_graph_meta(corpus):
@@ -111,6 +120,8 @@ def test_temporary_parity_with_each_graph_meta(corpus):
                          if any(target.get("node") == node and target.get("input") == "image"
                                 for target in targets)]
                 expected["reference_order"].append(name)
+        elif "image_node" in meta:
+            expected["reference_order"] = ["source_image"]
         assert _plain(actual) == expected, path
 
 

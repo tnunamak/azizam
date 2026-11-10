@@ -178,12 +178,12 @@ def _backend_errors(label: str) -> Iterator[None]:
 class _RunWire:
     """The requests of one run, over the run's one client."""
 
-    def __init__(self, label: str, client: httpx.AsyncClient, url: str, run: SttRun, filenames: Mapping[str, str]) -> None:
+    def __init__(self, label: str, client: httpx.AsyncClient, url: str, run: SttRun, filenames: Mapping[str, str] | None = None) -> None:
         self._label = label
         self._client = client
         self._url = url
         self._run = run
-        self._filenames = filenames
+        self._filenames = filenames if filenames is not None else load_shipped_description(ADAPTER_ID).multipart_filenames
 
     async def send_files(self, files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
         run, client = self._run, self._client
