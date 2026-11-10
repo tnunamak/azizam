@@ -66,7 +66,8 @@ def test_declared_modalities_still_refine_defaults_without_changing_type():
     assert _view(mm.from_capability("image.edit", ["unknown"], [])) == (
         "image", ("text", "image"), ("image",),
     )
-    assert mm.from_capability("unknown.other", ["text"], ["text"]) is None
+    # dot-2289's declared-I/O typing: a capability that declares text in and text out is typed language, even for an unknown intent.
+    assert _view(mm.from_capability("unknown.other", ["text"], ["text"])) == ("language", ("text",), ("text",))
     assert mm.from_capability(None) is None
 
 
