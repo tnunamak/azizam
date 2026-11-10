@@ -351,6 +351,10 @@ def parse_description(doc: Any, *, source: str, budgets: Budgets = DEFAULT_BUDGE
     errors = sorted(validator.iter_errors(shadow), key=lambda e: [str(p) for p in e.absolute_path])
     for error in errors:
         problems.append(f"{_place(error.absolute_path)}: {error.message}")
+    if isinstance(doc.get("implementation"), str):
+        from gateway.engine_protocol.reviewed import is_reviewed_implementation
+        if not is_reviewed_implementation(doc["implementation"]):
+            problems.append(f"implementation: unknown reviewed implementation '{doc['implementation']}'")
     if problems:
         raise DescriptionError(source, problems)
     parsed = _Compiler(doc, source, budgets).compile()
