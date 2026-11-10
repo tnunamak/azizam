@@ -20,7 +20,10 @@ from gateway.video_grid import (
 from gateway.workflow_contract import check_contract
 
 ROOT = Path(__file__).resolve().parent.parent
-MANIFESTS = sorted((ROOT / "manifests" / "workflows").glob("video-*.yml"))
+# Only the generate manifests: an edit manifest (video-mux puts a sound on a video) has no frame grid, no size and no
+# videos.yml entry, so it holds no ``video`` section.
+MANIFESTS = sorted(path for path in (ROOT / "manifests" / "workflows").glob("video-*.yml")
+                   if yaml.safe_load(path.read_text(encoding="utf-8"))["intent"] == "video.generate")
 OLD = yaml.safe_load((ROOT / "registry" / "defaults" / "videos.yml").read_text(encoding="utf-8"))["workflows"]
 T2V = ROOT / "manifests" / "workflows" / "video-ltx-2.5-t2v.yml"
 

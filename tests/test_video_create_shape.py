@@ -481,16 +481,17 @@ def test_two_creates_without_a_seed_are_one_request_for_the_idempotency_key() ->
     assert run_identity("scope", "maker", seeded) != run_identity("scope", "maker", first)       # an explicit seed is an input
 
 
-def test_the_facts_wait_for_the_wire_id_and_the_drawn_seed_by_named_refs_that_never_enter_identity() -> None:
+def test_the_facts_wait_for_the_drawn_seed_by_named_refs_that_never_enter_identity() -> None:
     from gateway.workflow_kernel import run_identity
     from gateway.workflow_run import resolve_fact_refs
     run_request = read({"prompt": "x", "model": "ltx-2.5-t2v"})
-    assert run_request.facts["provenance"]["request_id"] == "{wire_id}"                  # the stamp stage fills the real id
+    # The record names the request's stored receipt (from the delivery context), not the public job id; with no context here it names none.
+    assert "request_id" not in run_request.facts["provenance"]
     assert run_request.facts["provenance"].get("seed") is None
     assert {(ref.path, ref.source) for ref in run_request.fact_refs} == {
         (("seed",), "generated:seed"), (("provenance", "seed"), "generated:seed")}
     resolved = resolve_fact_refs(run_request.facts, run_request.fact_refs, job_id="mj_a", generated={"seed": 11})
-    assert resolved["seed"] == 11 and resolved["provenance"]["seed"] == 11 and resolved["provenance"]["request_id"] == "{wire_id}"
+    assert resolved["seed"] == 11 and resolved["provenance"]["seed"] == 11 and "request_id" not in resolved["provenance"]
     assert run_request.facts["provenance"].get("seed") is None                          # the request itself is not changed
     import dataclasses
     assert run_identity("s", "m", dataclasses.replace(run_request, fact_refs=())) == run_identity("s", "m", run_request)

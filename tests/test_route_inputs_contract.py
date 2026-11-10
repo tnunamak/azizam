@@ -40,5 +40,10 @@ def test_the_mux_advertises_exactly_its_two_inputs() -> None:
 
 def test_text_to_video_keeps_seconds_and_size_on_the_videos_route() -> None:
     (entry,) = [e for e in ENTRIES if e["id"] == "video.generate.ltx-2.5-t2v"]
-    assert _path(_chosen_route(entry)) == "/v1/videos"
-    assert {"seconds", "size"} <= set(effective_schema(entry)["properties"])
+    route = _chosen_route(entry)
+    assert _path(route) == "/v1/videos"
+    # The manifest lists width, height and length as inputs, so the route does not advertise its own `size` and `seconds`
+    # beside them; the route's mapping still sends them as the wire's `size` and `seconds`.
+    advertised = set(effective_schema(entry)["properties"])
+    assert {"width", "height", "length"} <= advertised and advertised <= set(route["fields"])
+    assert {route["fields"][name]["field"] for name in ("width", "height", "length")} == {"size", "seconds"}

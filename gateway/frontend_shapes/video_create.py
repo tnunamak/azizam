@@ -21,7 +21,6 @@ from gateway import provenance, video_controls, video_grid, video_form, media_de
 from gateway.frontend_shapes import _wire
 from gateway.frontend_shapes._base import LegacyRoute, coerce
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE, detect_unknown_top_level_fields
-from gateway.workflow_run import WIRE_ID_PLACEHOLDER
 from gateway.video_extensions import STANDARD_VIDEO_CREATE_FIELDS
 from gateway.workflow_runtime_types import FactRef, FrontendRow, RegistrySnapshot, RequestSpool, RunRequest, WorkflowEntry
 
@@ -327,9 +326,10 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         "model": public_model, "resolved_model": name, "size": size, "seconds": seconds_text, "actual_seconds": actual_seconds,
         "length_frames": length, "frame_rate": frame_rate,
         "provenance": provenance.build_provenance_record(
+            receipt=context.receipt if context else None,
             kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=f"{chosen.contract.get('intent')}.{name}",
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
-            seed=seed, parameters=parameters, request_id=WIRE_ID_PLACEHOLDER, created_at=now)}
+            seed=seed, parameters=parameters, created_at=now)}
     if seed is not None:
         facts["seed"] = seed
     refs: list[FactRef] = []

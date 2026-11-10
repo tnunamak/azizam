@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gateway.manifests import ContractError, Provenance
 from gateway.result_bundle import ResultLimits
+from gateway.video_controls import AUDIO_CONTROL
 from gateway.workflow_contract import Report
 
 if TYPE_CHECKING:  # the HTTP types are only named, never constructed here
@@ -451,7 +452,7 @@ class RunRequest:
 
 # The keys a job's request facts may hold (video move design 1.2). A key outside this set is refused at write; a key with
 # no value is absent. The prompt and the person id are never stored here (see ``RequestFacts``).
-AUDIO_FACT = "audio"     # the one fact key a request option of the same name also uses (silent result: false)
+AUDIO_FACT = AUDIO_CONTROL     # the one fact key a request option of the same name also uses (silent result: false)
 REQUEST_FACT_KEYS = frozenset({
     "model", "resolved_model", "size", "seconds", "actual_seconds", "length_frames", "frame_rate", "seed", AUDIO_FACT,
     "metadata_mode", "provenance", "remixed_from_video_id", "extended_from_video_id", "source_asset_id", "total_seconds",
