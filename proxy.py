@@ -1473,9 +1473,10 @@ def _stored_registry_for_boot() -> dict[str, Any] | None:
         return None
 
 
-def _record_default(service_id: str, record: Mapping[str, Any], key: str) -> Any:
-    """The record's own value for *key*, else the release default (registry/engine_record_defaults.yml)."""
-    return engine_record_defaults.record_value(service_id, record, key)
+def _record_default(capability: str, record: Mapping[str, Any], key: str) -> Any:
+    """The record's own value for *key*, else the release default of the capability being derived
+    (registry/engine_record_defaults.yml), whatever the record's id."""
+    return engine_record_defaults.record_value(capability, record, key)
 
 
 def _workflows_directory(configured: Any) -> Path:
@@ -1487,7 +1488,7 @@ def _workflows_directory(configured: Any) -> Path:
 def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
     """The model id the selected embeddings service's record names (the role's default when it names none)."""
     record = (_selected_service(backends or {}, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
-    return engine_record_defaults.record_value("embeddings", record, "model_id")
+    return engine_record_defaults.record_value(_EMBEDDINGS_CAPABILITY, record, "model_id")
 
 
 def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
@@ -1514,21 +1515,21 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "COMFY_HOST": service_registry.engine_base_address(cfy_c),
         "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
         "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
-        "STT_TIMEOUT": int(_record_default("stt", stt_c, "timeout")),
+        "STT_TIMEOUT": int(_record_default(_TRANSCRIPTION_CAPABILITY, stt_c, "timeout")),
         "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
         "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_base_address(cfy_c)),
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
-        "TTS_TIMEOUT": int(_record_default("tts", tts_c, "timeout")),
-        "EMBEDDINGS_HEALTH_ENDPOINT": _record_default("embeddings", emb_c, "health_endpoint"),
-        "EMBEDDINGS_TIMEOUT": int(_record_default("embeddings", emb_c, "timeout")),
+        "TTS_TIMEOUT": int(_record_default(_SPEECH_CAPABILITY, tts_c, "timeout")),
+        "EMBEDDINGS_HEALTH_ENDPOINT": _record_default(_EMBEDDINGS_CAPABILITY, emb_c, "health_endpoint"),
+        "EMBEDDINGS_TIMEOUT": int(_record_default(_EMBEDDINGS_CAPABILITY, emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "timeout")),
-        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_BACKEND_ID, cfy_c, "default_model"),
-        "COMFY_VIDEO_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_timeout")),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "workflows_dir")),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_workflows_dir")),
+        "COMFY_TIMEOUT": int(_record_default(_GRAPH_CAPABILITY, cfy_c, "timeout")),
+        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, cfy_c, "default_model"),
+        "COMFY_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, cfy_c, "video_timeout")),
+        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, cfy_c, "workflows_dir")),
+        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, cfy_c, "video_workflows_dir")),
         "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(cfy_c, "images").binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,

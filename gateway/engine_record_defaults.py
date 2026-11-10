@@ -23,17 +23,17 @@ SCHEMA_PATH = _REGISTRY_DIR / "engine_record_defaults.schema.json"
 def _read(path: Path, schema_path: Path, modified_ns: int) -> dict[str, dict[str, Any]]:
     document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     jsonschema.Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8"))).validate(document)
-    return {service_id: dict(values) for service_id, values in document["defaults"].items()}
+    return {capability: dict(values) for capability, values in document["defaults"].items()}
 
 
 def release_defaults(path: Path = BUNDLED_PATH) -> dict[str, dict[str, Any]]:
-    """Every service id's defaults, checked against the schema."""
+    """Every capability's defaults, checked against the schema."""
     return _read(path, SCHEMA_PATH, path.stat().st_mtime_ns)
 
 
-def record_value(service_id: str, record: Mapping[str, Any] | None, key: str) -> Any:
-    """The record's own value for *key*, else the release default of *service_id*; ``KeyError`` when neither names one."""
+def record_value(capability: str, record: Mapping[str, Any] | None, key: str) -> Any:
+    """The record's own value for *key*, else the release default of *capability*; ``KeyError`` when neither names one."""
     record = record or {}
     if record.get(key) is not None:
         return record[key]
-    return release_defaults()[service_id][key]
+    return release_defaults()[capability][key]

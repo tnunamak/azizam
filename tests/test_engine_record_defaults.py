@@ -47,11 +47,20 @@ def test_the_defaults_file_is_checked_by_its_schema_and_holds_no_address():
     document = yaml.safe_load(engine_record_defaults.BUNDLED_PATH.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(document)
     for address_key in ("host", "port", "base_url", "address"):
-        broken = {"defaults": {"tts": {address_key: "x" if address_key != "port" else 8880}}}
+        broken = {"defaults": {"audio.speech": {address_key: "x" if address_key != "port" else 8880}}}
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.Draft202012Validator(schema).validate(broken)
 
 
 def test_a_missing_default_is_an_error_not_a_guess():
     with pytest.raises(KeyError):
-        engine_record_defaults.record_value("tts", {}, "default_model")
+        engine_record_defaults.record_value("audio.speech", {}, "default_model")
+
+
+def test_a_record_that_serves_two_roles_takes_each_roles_default(monkeypatch):
+    defaults = {capability: dict(values) for capability, values in engine_record_defaults.release_defaults().items()}
+    defaults["audio.speech"]["timeout"], defaults["audio.transcriptions"]["timeout"] = 11, 22
+    monkeypatch.setattr(engine_record_defaults, "release_defaults", lambda: defaults)
+    both = {"host": "127.0.0.1", "port": 18101, "capabilities": ["audio.speech", "audio.transcriptions"]}
+    derived = proxy._derive_backend_constants({"backends": {"voice-and-ears": both}})
+    assert (derived["TTS_TIMEOUT"], derived["STT_TIMEOUT"]) == (11, 22)
