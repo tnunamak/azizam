@@ -102,3 +102,110 @@ def test_published_video_create_extension_contract_is_json_only():
     assert "extensions" not in multipart["properties"]
     assert multipart["required"] == request["required"]
     assert multipart["properties"]["input_reference"]["format"] == "binary"
+
+
+# These expectations are deliberately independent of execution.intents. A missing
+# row must not silently remove its own coverage, and shared table reads must not
+# let an incorrect prefix or native alternate pass the shadow comparison.
+_SHIPPED_TEMPLATED_INTENTS = frozenset({
+    "image.generate", "image.edit", "audio.generate",
+    "mesh.generate", "video.generate", "video.edit",
+})
+_FROZEN_EXECUTION_METADATA = {
+    "image.generate": ("", None),
+    "image.edit": ("", {
+        "method": "POST",
+        "path": "/v1/images/edits",
+        "model": {"from": "model"},
+        "note": "options go in extensions['com.azizam.workflow']",
+    }),
+    "audio.generate": ("", None),
+    "mesh.generate": ("", None),
+    "video.generate": ("video-", None),
+    "video.edit": ("video-", None),
+    "image.analyze": ("", None),
+}
+
+
+@pytest.fixture
+def shipped_execution_publication(monkeypatch):
+    """Observe real capture inputs and output without replacing the publisher."""
+    from gateway import workflow_openapi
+
+    publications = []
+    publish = workflow_openapi.workflow_catalog
+
+    def observe(records, *args, **kwargs):
+        records = tuple(records)
+        catalog = publish(records, *args, **kwargs)
+        publications.append((records, catalog))
+        return catalog
+
+    monkeypatch.setattr(workflow_openapi, "workflow_catalog", observe)
+    capture_openapi()
+    assert publications, "capture_openapi did not publish shipped workflow records"
+    for records, catalog in publications:
+        assert records, "shipped workflow registry is empty"
+        assert {record.id for record in records} == {entry["id"] for entry in catalog}
+    return publications
+
+
+def test_shipped_templated_intents_have_execution_rows(shipped_execution_publication):
+    from gateway import workflow_openapi, workflow_request_maps
+
+    seen = set()
+    for records, catalog in shipped_execution_publication:
+        published = {entry["id"]: entry for entry in catalog}
+        for record in records:
+            seen.add(record.intent)
+            execution = published[record.id]["execution"]
+            # Also discover unexpected templated intents from publication, not
+            # from table keys. Native-only routes need no templated primary row.
+            native = workflow_openapi.gateway_route(record)
+            templated = (
+                not native and (execution["sync"] or execution["async"])
+            ) or (execution["sync"] or {}).get("alternate")
+            if templated:
+                assert record.intent in _SHIPPED_TEMPLATED_INTENTS, record.id
+            if record.intent in _SHIPPED_TEMPLATED_INTENTS or templated:
+                assert workflow_request_maps.execution_row(record.intent) is not None, (
+                    f"{record.id}: missing execution row for {record.intent}"
+                )
+    assert _SHIPPED_TEMPLATED_INTENTS <= seen, (
+        f"shipped intents missing from capture: {_SHIPPED_TEMPLATED_INTENTS - seen}"
+    )
+
+
+def test_execution_row_metadata_matches_frozen_values():
+    from gateway import workflow_request_maps
+
+    execution = workflow_request_maps.load(workflow_request_maps.DEFAULT_PATH).execution
+    assert set(execution.intents) == set(_FROZEN_EXECUTION_METADATA)
+    for intent, (prefix, alternate) in _FROZEN_EXECUTION_METADATA.items():
+        row = execution.row(intent)
+        assert row is not None, f"{intent}: missing execution row"
+        assert row.model_prefix == prefix, f"{intent}: model_prefix"
+        assert row.native_alternate == alternate, f"{intent}: native_alternate"
+
+
+def test_shipped_execution_rows_render_published_blocks(shipped_execution_publication):
+    from gateway import workflow_openapi, workflow_request_maps
+
+    execution = workflow_request_maps.load(workflow_request_maps.DEFAULT_PATH).execution
+    for records, catalog in shipped_execution_publication:
+        published = {entry["id"]: entry for entry in catalog}
+        for record in records:
+            entry = published[record.id]
+            native = bool(workflow_openapi.gateway_route(record))
+            sync = execution.render_sync(record, native=native)
+            async_ = None if native else execution.render_async(record)
+            typical = entry["typical_seconds"]
+            if typical is not None and typical <= 30 and sync:
+                recommended = "sync"
+            elif async_:
+                recommended = "async"
+            else:
+                recommended = "sync"
+            assert {
+                "recommended": recommended, "sync": sync, "async": async_,
+            } == entry["execution"], f"{record.id}: rendered execution differs"
