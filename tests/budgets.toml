@@ -958,7 +958,8 @@ ad_hoc_upstream_fake_files = 46
 # Two gateway-published video response discriminators reviewed as wire_enum (-2): 388.
 # STT measurement staging file named once, neutrally (-2): 386.
 # Alias sections name their workflow intents and target prefixes in registry/compatibility.yml (-5): 381.
-domain_literals = 315
+# OpenAI model families read from registry/openai_model_families.yml (-2): 313.
+domain_literals = 313
 
 # XC task 1: model vocabularies and implication roles moved to capability_intent_metadata.yml.
 # XC task 2: binding names, managed input words and legacy role paths moved to frontend data.
