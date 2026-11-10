@@ -1182,7 +1182,8 @@ class JobRunExampleTests(unittest.TestCase):
 
 # Frozen from 8333cbd7a2c24ca9d51492e94089dc15855476b8. This oracle has its own
 # route selection and response rendering, so a change to the live generator
-# cannot silently redefine byte-for-byte parity. Request helpers are unchanged.
+# cannot silently redefine byte-for-byte parity. The request body helper below
+# is also frozen now that live examples take placement and models from routes.
 _BASE_RESPONSE_RENDERERS = r'''def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
     """Sync and async routes for one workflow, and which to prefer."""
     intent = record.intent
@@ -1355,6 +1356,45 @@ def _example_request(
         ),
     }
 
+def _example_body(
+    record: WorkflowRecord,
+    inputs: list[Mapping[str, Any]],
+    *,
+    mode: str,
+    model: str | None = None,
+) -> dict[str, Any]:
+    mapping = request_mapping(record, mode)
+    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    body: dict[str, Any] = {}
+    if model or not str(record.intent).startswith("video.edit"):
+        body["model"] = model or short_id(record)
+    extension: dict[str, Any] = {}
+    combined: dict[str, list[str]] = {}
+    for name, placement in mapping.items():
+        if name not in values or placement.get("in") == "none":
+            continue
+        location = str(placement.get("in") or "")
+        field = str(placement.get("field") or name)
+        if location == "body":
+            if placement.get("combine"):
+                combined[field] = [str(part) for part in placement["combine"]]
+            else:
+                body[field] = values[name]
+        elif location == "extension":
+            extension[field] = values[name]
+    for field, parts in combined.items():
+        if field == "size" and all(part in values for part in parts):
+            body[field] = f"{values[parts[0]]}x{values[parts[1]]}"
+    for item in route_inputs(record):
+        name = str(item.get("name") or "")
+        field = str(item.get("field") or name)
+        if name and field not in body:
+            body[field] = _example_value(item)
+    if extension:
+        body.setdefault("extensions", {})["com.azizam.workflow"] = extension
+    return body
+
+
 def _curl_example(
     url: str,
     *,
@@ -1505,6 +1545,77 @@ def _javascript_example(
         f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
     )
 '''
+
+
+class RouteFieldExampleTests(unittest.TestCase):
+    @staticmethod
+    def example(fields: dict, *, kind: str = "quartz_job", model: str | None = None) -> dict:
+        from types import SimpleNamespace
+        from gateway.workflows_catalog import _example_request
+
+        record = SimpleNamespace(
+            id="quartz.render.fixture", intent="quartz.render",
+            contract={"inputs": {}, "bindings": {}},
+        )
+        inputs = [
+            {"name": "prompt", "accepted": True, "default": "A crystal lattice."},
+            {"name": "texture", "accepted": True, "default": "rough"},
+        ]
+        route = {
+            "kind": kind,
+            "submit": {"method": "POST", "path": "/quartz/jobs", "content_type": "application/json"},
+            "fields": fields,
+        }
+        if model is not None:
+            route["submit"]["model"] = model
+        if kind == "respond_async":
+            route["submit"]["headers"] = {"Prefer": "respond-async"}
+        # Placement is already chosen by the route builder. Re-selecting a mode
+        # here would hide a spelling-based dispatch in the example generator.
+        with patch("gateway.workflows_catalog.request_mapping",
+                   side_effect=AssertionError("use the route's fields")), \
+             patch("gateway.workflows_catalog.route_inputs", return_value=[]):
+            return _example_request(record, inputs, route, "https://gateway.test")
+
+    def test_unfamiliar_job_kind_uses_its_async_placement(self) -> None:
+        async_fields = {
+            "prompt": {"in": "body", "field": "async_prompt"},
+            "texture": {"in": "extension", "field": "finish"},
+        }
+        example = self.example(async_fields, model="crystal-v1")
+        self.assertEqual(example["path"], "/quartz/jobs")
+        self.assertEqual(example["body"], {
+            "model": "crystal-v1",
+            "async_prompt": "A crystal lattice.",
+            "extensions": {"com.azizam.workflow": {"finish": "rough"}},
+        })
+        for language in ("curl", "python", "javascript"):
+            self.assertIn("async_prompt", example[language])
+
+    def test_respond_async_route_keeps_its_sync_placement(self) -> None:
+        sync_fields = {
+            "prompt": {"in": "extension", "field": "sync_prompt"},
+            "texture": {"in": "body", "field": "surface"},
+        }
+        example = self.example(sync_fields, kind="respond_async", model="crystal-v1")
+        self.assertEqual(example["body"], {
+            "model": "crystal-v1",
+            "surface": "rough",
+            "extensions": {"com.azizam.workflow": {"sync_prompt": "A crystal lattice."}},
+        })
+        for language in ("curl", "python", "javascript"):
+            self.assertIn("respond-async", example[language])
+            self.assertIn("sync_prompt", example[language])
+            self.assertNotIn("async_prompt", example[language])
+
+    def test_route_without_a_model_does_not_invent_one_from_the_intent(self) -> None:
+        example = self.example({"prompt": {"in": "body", "field": "prompt"}})
+        self.assertEqual(example["body"], {"prompt": "A crystal lattice."})
+        for language in ("curl", "python", "javascript"):
+            self.assertNotIn('"model"', example[language])
+
+    def test_explicit_empty_route_fields_do_not_fall_back_to_a_mapping(self) -> None:
+        self.assertEqual(self.example({}, model="crystal-v1")["body"], {"model": "crystal-v1"})
 
 
 class DeclaredResponseKindExampleTests(unittest.TestCase):

@@ -327,9 +327,12 @@ def _example_request(
     method = str(wire.get("method") or "POST")
     content_type = str(wire.get("content_type") or "application/json")
     url = _join_url(base_url, path)
-    mode = "async" if (route or {}).get("kind") == "video" else "sync"
+    # The route owns placement; an async response does not imply async inputs.
+    mapping = (route or {}).get("fields")
+    if mapping is None:
+        mapping = request_mapping(record, "sync")
     selected_model = _route_model(route)
-    body = _example_body(record, inputs, mode=mode, model=selected_model)
+    body = _example_body(record, inputs, mapping=mapping, model=selected_model)
     form: dict[str, Any] = {}
     files: dict[str, dict[str, Any]] = {}
     if (route or {}).get("kind") == "media_job":
@@ -337,7 +340,9 @@ def _example_request(
         wrapped_intent = _nested(submit or {}, "body", "intent") or record.intent
         body = {
             "intent": wrapped_intent,
-            "request": _example_body(record, inputs, mode="sync", model=_route_model(submit)),
+            "request": _example_body(
+                record, inputs, mapping=request_mapping(record, "sync"), model=_route_model(submit),
+            ),
         }
         content_type = "application/json"
     elif content_type == "multipart/form-data":
@@ -390,14 +395,13 @@ def _example_body(
     record: WorkflowRecord,
     inputs: list[Mapping[str, Any]],
     *,
-    mode: str,
+    mapping: Mapping[str, Mapping[str, Any]],
     model: str | None = None,
 ) -> dict[str, Any]:
-    mapping = request_mapping(record, mode)
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
     body: dict[str, Any] = {}
-    if model or not str(record.intent).startswith("video.edit"):
-        body["model"] = model or short_id(record)
+    if model:
+        body["model"] = model
     extension: dict[str, Any] = {}
     combined: dict[str, list[str]] = {}
     for name, placement in mapping.items():
