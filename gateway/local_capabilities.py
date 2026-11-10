@@ -347,6 +347,16 @@ def load_local_capability_image_rows(
 ) = _load_local_capability_rows()
 
 
+def transcription_triggers() -> frozenset[str]:
+    """Return configured recognition triggers without reloading package data."""
+    return frozenset(
+        trigger.lower()
+        for row in _BACKEND_ROWS
+        if row["group"] == "recognition" and row["intent"] == INTENT_TRANSCRIPTIONS
+        for trigger in row["triggers"]
+    )
+
+
 def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]:
     """One capability per stable alias, tagged with what it resolves to.
 

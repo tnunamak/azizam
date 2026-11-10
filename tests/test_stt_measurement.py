@@ -45,6 +45,52 @@ def setup(gateway, monkeypatch):
     return gateway, owner, admin, runner, ctx
 
 
+def _measurement_record_runner(tmp_path, capabilities):
+    record = {"capabilities": capabilities}
+    store = SimpleNamespace(
+        path=tmp_path / "store.db",
+        get_service_registry_snapshot=lambda: ({"services": {"demo": record}}, 7),
+    )
+    return sm.Measurements(store, None), record
+
+
+def test_measurement_accepts_trigger_added_to_rows(tmp_path, monkeypatch):
+    from gateway import local_capabilities as local
+    from tests.test_local_capability_backend_rows import document, write_rows
+
+    data = document()
+    row = next(row for row in data["backend_rows"]
+               if row["group"] == "recognition" and row["intent"] == local.INTENT_TRANSCRIPTIONS)
+    row["triggers"].append("Novel-Recognition")
+    monkeypatch.setattr(local, "_BACKEND_ROWS",
+                        local.load_backend_capability_rows(write_rows(tmp_path, data)))
+    runner, record = _measurement_record_runner(tmp_path, ["NOVEL-RECOGNITION"])
+    (cap,) = local.build_local_capabilities({"backends": {"demo": record}})
+    assert cap.intent == local.INTENT_TRANSCRIPTIONS
+    assert runner.record("demo") == (record, 7)
+
+
+@pytest.mark.parametrize("trigger", [
+    "transcriptions", "audio.transcriptions", "stt",
+    "TRANSCRIPTIONS", "AUDIO.TRANSCRIPTIONS", "STT",
+])
+def test_measurement_keeps_current_triggers_case_insensitively(tmp_path, trigger):
+    runner, record = _measurement_record_runner(tmp_path, [trigger])
+    assert runner.record("demo") == (record, 7)
+
+
+def test_measurement_refuses_unrelated_capability_with_unchanged_error(tmp_path):
+    runner, _ = _measurement_record_runner(tmp_path, ["translation"])
+    with pytest.raises(sm.EngineRouteError) as caught:
+        runner.record("demo")
+    expected = sm.EngineRouteError(
+        400, "not_transcription_engine", "Choose an engine that offers transcription.")
+    assert caught.value.status_code == 400
+    assert caught.value.code == "not_transcription_engine"
+    assert vars(caught.value) == vars(expected)
+    assert str(caught.value) == str(expected)
+
+
 def test_owner_settings_route_uses_real_store_cas_and_keeps_unnamed_config(setup):
     gw, owner, admin, runner, _ = setup
     before, generation = gw.proxy.ADMIN_STORE.get_service_registry_snapshot()

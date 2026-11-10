@@ -105,7 +105,7 @@ backend_rows:
       - response_format:flac
       - response_format:pcm
   - group: recognition
-    triggers: [transcriptions, stt]
+    triggers: [transcriptions, stt, audio.transcriptions]
     flag: stt
     intent: speech.transcription
     inputs: [audio]
