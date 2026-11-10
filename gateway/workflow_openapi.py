@@ -267,6 +267,8 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     * ``{"in": "form", "field": name}``: a plain multipart form field (run route);
     * ``{"in": "none"}``: accepted by the manifest, not settable on this route.
     """
+    if mode not in ("sync", "async"):
+        raise ValueError(f"{record.id} ({mode}): unsupported request mode")
     # Where each input goes is data: the rows in registry/workflow_request_maps.yml (gateway/workflow_request_maps.py).
     row = workflow_request_maps.select(record, mode)
     if row is None:
@@ -275,7 +277,45 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     for name, spec in settable_inputs(record.contract).items():
         if media_bearing(spec) and spec.get("type") != "asset":
             out[name] = {"in": "none"}
+    _reference_input_from_mapping(record, mode, out)
     return out
+
+
+def reference_input(record: WorkflowRecord, mode: str) -> str | None:
+    """The scalar-asset contract key placed at top-level input_reference."""
+    fields = request_mapping(record, mode)
+    return _reference_input_from_mapping(record, mode, fields)
+
+
+def _reference_input_from_mapping(
+    record: WorkflowRecord,
+    mode: str,
+    fields: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    """Invert the completed placement map without selecting or resolving a row."""
+    if mode not in ("sync", "async"):
+        raise ValueError(f"{record.id} ({mode}): unsupported request mode")
+    candidates = sorted(
+        name for name, where in fields.items()
+        if where.get("in") == "body" and where.get("field") == "input_reference"
+    )
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        raise ValueError(
+            f"{record.id} ({mode}): multiple inputs map to body.input_reference: {candidates!r}"
+        )
+    name = candidates[0]
+    if "combine" in fields[name]:
+        raise ValueError(f"{record.id} ({mode}): input {name!r} at body.input_reference cannot combine inputs")
+    inputs = record.contract.get("inputs")
+    spec = inputs.get(name) if isinstance(inputs, Mapping) else None
+    if (not isinstance(spec, Mapping) or spec.get("type") != "asset"
+            or name not in settable_inputs(record.contract)):
+        raise ValueError(
+            f"{record.id} ({mode}): input {name!r} at body.input_reference must be a settable scalar asset"
+        )
+    return name
 
 
 def gateway_route(record: WorkflowRecord) -> str | None:

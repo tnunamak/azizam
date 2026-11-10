@@ -3,9 +3,12 @@ with /gateway/v1/workflows, /gateway/v1/capabilities, /llms.txt and the skill.""
 
 from __future__ import annotations
 
+import copy
+import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -17,14 +20,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import proxy  # noqa: E402
 from tests.support.access import authenticated  # noqa: E402
+from gateway import workflow_request_maps  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.workflow_openapi import (  # noqa: E402
     ROOT_EXTENSION,
+    _reference_input_from_mapping,
     augment_openapi,
+    extension_inputs_schema,
     extension_schema_name,
     match_alias_target,
+    reference_input,
+    request_mapping,
     schema_name,
     short_id,
+    workflow_inputs_schema,
 )
 from openapi_lint import validate_openapi  # noqa: E402
 from gateway.workflows_catalog import _workflow_row  # noqa: E402
@@ -418,6 +427,194 @@ class RequestMappingTypeTests(unittest.TestCase):
                 self.assertEqual(request_mapping(record, "sync"), {"photo": {"in": "form", "field": "photo"}})
 
 
+
+
+class ReferenceInputTests(unittest.TestCase):
+    @staticmethod
+    def record(inputs, *, intent="unfamiliar.render"):
+        return SimpleNamespace(
+            id=f"{intent}.fixture_7q", intent=intent,
+            contract={"inputs": copy.deepcopy(inputs), "bindings": {}},
+        )
+
+    @staticmethod
+    def asset():
+        return {"type": "asset", "accepts": ["image/png"]}
+
+    @staticmethod
+    def maps(record, placements, *, mode="async"):
+        # Exercise the real grammar and projection; only the loaded data changes.
+        document = {"schema_version": 1, "maps": [
+            {"select": {"intent": record.intent, "mode": mode},
+             "inputs": placements, "default": {"in": "extension"}},
+            {"select": {"any": True}, "default": {"in": "extension"}},
+        ]}
+        with patch.object(Path, "read_text", return_value=json.dumps(document)):
+            maps = workflow_request_maps.load(Path("reference-input-fixture.yml"))
+        return patch.object(workflow_request_maps, "_MAPS", maps)
+
+    def test_reference_input_renamed_contract_key_matches_projection(self) -> None:
+        record = self.record({"image": self.asset()})
+        placements = {"image": {"in": "body", "field": "input_reference"}}
+        with self.maps(record, placements):
+            self.assertEqual(reference_input(record, "async"), "image")
+        record.contract["inputs"]["anchor_7q"] = record.contract["inputs"].pop("image")
+        placements["anchor_7q"] = placements.pop("image")
+        snapshot = copy.deepcopy(record.contract)
+        with self.maps(record, placements):
+            fields = request_mapping(record, "async")
+            self.assertEqual(reference_input(record, "async"), "anchor_7q")
+            self.assertEqual(fields, {"anchor_7q": {"in": "body", "field": "input_reference"}})
+            self.assertNotIn("image", fields)
+            schema = workflow_inputs_schema(record)
+            self.assertIn("anchor_7q", schema["properties"])
+            self.assertNotIn("image", schema["properties"])
+            self.assertNotIn("anchor_7q", extension_inputs_schema(record)["properties"])
+            self.assertEqual(record.contract, snapshot)
+            self.assertEqual(request_mapping(record, "async"), fields)
+            self.assertEqual(fields, placements)
+
+    def test_reference_input_two_assets_uses_placement_not_mime_or_order(self) -> None:
+        for decoy in ("decoy_2z", "image"):
+            for reverse in (False, True):
+                for extension_field in (decoy, "input_reference"):
+                    with self.subTest(decoy=decoy, reverse=reverse, field=extension_field):
+                        names = [decoy, "anchor_7q"]
+                        if reverse:
+                            names.reverse()
+                        record = self.record({name: self.asset() for name in names})
+                        placements = {
+                            decoy: {"in": "extension", "field": extension_field},
+                            "anchor_7q": {"in": "body", "field": "input_reference"},
+                        }
+                        with self.maps(record, placements):
+                            self.assertEqual(reference_input(record, "async"), "anchor_7q")
+                            fields = request_mapping(record, "async")
+                            self.assertEqual(list(fields), names)
+                            self.assertEqual(fields, placements)
+
+    def test_reference_input_without_mapping_returns_none_even_with_image_asset(self) -> None:
+        record = self.record({"image": self.asset(), "anchor_7q": self.asset()})
+        placements = {
+            "image": {"in": "extension", "field": "image"},
+            "anchor_7q": {"in": "extension", "field": "input_reference"},
+        }
+        with self.maps(record, placements):
+            self.assertIsNone(reference_input(record, "async"))
+            self.assertEqual(request_mapping(record, "async"), placements)
+        run = self.record(
+            {"image": self.asset(), "anchor_7q": self.asset(), "prompt": {"type": "string"}},
+            intent="video.edit",
+        )
+        # The shipped sync row carries files and form fields, not a reference.
+        before = request_mapping(run, "sync")
+        self.assertIsNone(reference_input(run, "sync"))
+        self.assertEqual(before["image"], {"in": "file", "field": "image"})
+        self.assertEqual(before["prompt"], {"in": "form", "field": "prompt"})
+        self.assertEqual(request_mapping(run, "sync"), before)
+        with self.maps(run, placements):
+            self.assertIsNone(reference_input(run, "async"))
+            self.assertEqual(request_mapping(run, "async"), {
+                **placements, "prompt": {"in": "extension", "field": "prompt"},
+            })
+
+    def test_reference_input_duplicate_body_mappings_are_rejected(self) -> None:
+        messages = []
+        for names in (("anchor_7q", "decoy_2z"), ("decoy_2z", "anchor_7q")):
+            record = self.record({name: self.asset() for name in names})
+            placements = {name: {"in": "body", "field": "input_reference"} for name in names}
+            with self.maps(record, placements):
+                for lookup in (request_mapping, reference_input):
+                    with self.subTest(names=names, lookup=lookup.__name__):
+                        with self.assertRaises(ValueError) as caught:
+                            lookup(record, "async")
+                        messages.append(str(caught.exception))
+        self.assertEqual(len(set(messages)), 1)
+        self.assertEqual(messages[0],
+                         f"{record.id} (async): multiple inputs map to body.input_reference: "
+                         "['anchor_7q', 'decoy_2z']")
+
+    def test_reference_input_requires_a_settable_scalar_without_combine(self) -> None:
+        placement = {"in": "body", "field": "input_reference"}
+        for spec in ({"type": "string"}, {"type": ["asset"]}, {"type": "object"},
+                     {"type": "array", "items": {"type": "string"}}):
+            record = self.record({"anchor_7q": spec})
+            with self.maps(record, {"anchor_7q": placement}):
+                for lookup in (request_mapping, reference_input):
+                    with self.subTest(spec=spec, lookup=lookup.__name__):
+                        with self.assertRaisesRegex(ValueError, "settable scalar asset"):
+                            lookup(record, "async")
+        record = self.record({"anchor_7q": self.asset(), "decoy_2z": self.asset()})
+        combined = {**placement, "combine": ["anchor_7q", "decoy_2z"]}
+        with self.maps(record, {"anchor_7q": combined}):
+            for lookup in (request_mapping, reference_input):
+                with self.subTest(lookup=lookup.__name__):
+                    with self.assertRaisesRegex(ValueError, "cannot combine"):
+                        lookup(record, "async")
+        # Directly test invalid effective maps too: no row or member-set lookup is needed.
+        for inputs in ({}, {"anchor_7q": None}, {"anchor_7q": "asset"},
+                       {"anchor_7q": {**self.asset(), "settable": False}}):
+            with self.subTest(inputs=inputs):
+                record = self.record(inputs)
+                with self.assertRaisesRegex(ValueError, "settable scalar asset"):
+                    _reference_input_from_mapping(record, "async", {"anchor_7q": placement})
+        # Duplicate detection precedes validation/resolution of either candidate.
+        record = self.record({"anchor_7q": {"type": "string"}, "decoy_2z": self.asset()})
+        with self.assertRaisesRegex(ValueError, "multiple inputs"):
+            _reference_input_from_mapping(record, "async", {
+                "decoy_2z": placement, "anchor_7q": combined,
+            })
+        # Container suppression happens before the completed map is validated.
+        record = self.record({"anchor_7q": {"type": "array", "items": self.asset()}})
+        with self.maps(record, {"anchor_7q": placement}):
+            self.assertEqual(request_mapping(record, "async"), {"anchor_7q": {"in": "none"}})
+            self.assertIsNone(reference_input(record, "async"))
+
+    def test_reference_input_uses_current_contract_mode_and_map_without_mutation(self) -> None:
+        record = self.record({"anchor_7q": {"type": "asset", "accepts": []},
+                              "decoy_2z": self.asset()})
+        # A legacy view must not override the canonical contract.
+        record.manifest = {"inputs": {"image": self.asset()}}
+        placements = {
+            "anchor_7q": {"in": "body", "field": "input_reference"},
+            "decoy_2z": {"in": "extension", "field": "decoy_2z"},
+        }
+        contract_before = copy.deepcopy(record.contract)
+        placements_before = copy.deepcopy(placements)
+        with self.maps(record, placements):
+            fields = request_mapping(record, "async")
+            fields_before = copy.deepcopy(fields)
+            self.assertEqual(reference_input(record, "async"), "anchor_7q")
+            self.assertIsNone(reference_input(record, "sync"))
+            # Prove the primitive itself never projects or resolves membership.
+            with patch.object(workflow_request_maps, "select", side_effect=AssertionError("selected a row")), \
+                    patch.object(workflow_request_maps, "_members", side_effect=AssertionError("resolved a set")):
+                self.assertEqual(_reference_input_from_mapping(record, "async", fields), "anchor_7q")
+            self.assertEqual(fields, fields_before)
+        swapped = {
+            "anchor_7q": {"in": "extension", "field": "anchor_7q"},
+            "decoy_2z": {"in": "body", "field": "input_reference"},
+        }
+        with self.maps(record, swapped):
+            self.assertEqual(reference_input(record, "async"), "decoy_2z")
+        other = self.record({"fresh_9v": self.asset()})
+        self.assertEqual(other.id, record.id)
+        with self.maps(other, {"fresh_9v": {"in": "body", "field": "input_reference"}}):
+            self.assertEqual(reference_input(other, "async"), "fresh_9v")
+        self.assertEqual(record.contract, contract_before)
+        self.assertEqual(placements, placements_before)
+
+    def test_reference_input_rejects_unsupported_modes(self) -> None:
+        record = self.record({"anchor_7q": self.asset()})
+        placements = {"anchor_7q": {"in": "body", "field": "input_reference"}}
+        with self.maps(record, placements):
+            for mode in ("any", "", "ASYNC", "future"):
+                for lookup in (request_mapping, reference_input):
+                    with self.subTest(mode=mode, lookup=lookup.__name__):
+                        with self.assertRaisesRegex(ValueError, "unsupported request mode"):
+                            lookup(record, mode)
+                with self.assertRaisesRegex(ValueError, "unsupported request mode"):
+                    _reference_input_from_mapping(record, mode, {})
 
 
 class WorkflowResponseKindDeclarationTests(unittest.TestCase):
