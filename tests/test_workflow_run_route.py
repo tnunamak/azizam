@@ -472,3 +472,18 @@ def test_a_run_recovery_cannot_start_closes_its_receipt_even_though_the_job_is_n
     job = media_jobs.get(job_id, audience="internal", path=queued.media)
     assert (job["status"], job["error_code"]) == ("failed", "pin_not_recorded"), job
     assert receipt_store.get(request_id)["status"] == "failed"
+
+
+def test_the_run_core_follows_the_jobs_database_it_was_built_for(served, monkeypatch, tmp_path):
+    """A core built while another jobs database was current is not served: an earlier test's deleted directory once
+    reached a later test through the cached core (gate 38b)."""
+    first = proxy._workflow_run_core()
+    assert first is not None and first._path == served.media
+    other = tmp_path / "other" / "media_jobs.db"
+    other.parent.mkdir()
+    media_jobs.init_db(other)
+    monkeypatch.setattr(media_jobs, "DB_PATH", other)
+    second = proxy._workflow_run_core()
+    assert second is not first
+    assert second._path == other
+    assert proxy._workflow_run_core() is second
