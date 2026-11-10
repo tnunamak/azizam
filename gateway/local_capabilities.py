@@ -24,7 +24,7 @@ Vision modality inference is conservative:
 
 * A role with a ``mmproj`` path is treated as supporting ``image`` input.
   A role's name never adds a modality.
-* A catalog entry with ``mmproj`` not ``None`` is treated likewise.
+* A catalog entry with a nonempty ``mmproj`` path is treated likewise.
 * The ``vision`` capability listed on a backend in ``backends.*.capabilities``
   also flags vision on roles/models bound to that backend.
 

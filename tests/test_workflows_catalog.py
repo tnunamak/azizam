@@ -1983,6 +1983,23 @@ class DeclaredResponseKindExampleTests(unittest.TestCase):
                     self.assertIn("requests.request('PUT',", example["python"])
                     self.assertIn('method: "PUT",', example["javascript"])
 
+    def test_empty_multipart_post_names_its_method(self) -> None:
+        from gateway.workflows_catalog import _curl_example
+
+        # Without -F parts curl would send GET, so the method must be explicit.
+        for job_urls in (None, ("https://example.test/jobs/{job_id}", "https://example.test/jobs/{job_id}/content")):
+            with self.subTest(job=job_urls is not None):
+                curl = _curl_example(
+                    "https://example.test", method="POST", content_type="multipart/form-data",
+                    body={}, form={}, files=[], binary_response=False, job_urls=job_urls,
+                )
+                self.assertEqual(curl.count("--request 'POST'"), 1)
+        with_part = _curl_example(
+            "https://example.test", method="POST", content_type="multipart/form-data",
+            body={}, form={"prompt": "x"}, files=[], binary_response=False,
+        )
+        self.assertNotIn("--request", with_part)
+
     def test_every_shipped_example_keeps_legacy_post_bytes(self) -> None:
         import gateway.workflow_openapi as route_module
         import gateway.workflows_catalog as catalog_module

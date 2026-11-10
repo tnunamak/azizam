@@ -517,7 +517,9 @@ def _curl_example(
         return _curl_job_example(submit, *job_urls)
     lines = [
         f"curl {_shell_single_quote(url)} \\",
-        *([f"  --request {_shell_single_quote(method)} \\"] if method != "POST" else []),
+        *([f"  --request {_shell_single_quote(method)} \\"] if method != "POST" or (
+            content_type == "multipart/form-data" and not form and not files
+        ) else []),
         "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\",
         *[f"  -H {_shell_single_quote(f'{name}: {value}')} \\" for name, value in (headers or {}).items()],
     ]
