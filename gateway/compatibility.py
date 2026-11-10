@@ -29,12 +29,40 @@ class MigrationSelector(Contract):
         return self
 
 
+Operation = Annotated[str, StringConstraints(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")]
+
+
+class AliasRelation(Contract):
+    """One workflow intent an alias section may name, and the prefix older alias targets carry for it."""
+    intent: Word
+    target_prefix: Word
+
+
 class CompatibilityContract(Contract):
     schema_version: Annotated[int, Field(strict=True, ge=1, le=1)]
     migration: MigrationSelector
     legacy_alias_tables: dict[Word, Word]
     limit_key_aliases: dict[Word, Word]
     legacy_audio_result_keys: Annotated[tuple[Word, ...], Field(min_length=1)]
+    alias_operation_intents: dict[Operation, Annotated[tuple[AliasRelation, ...], Field(min_length=1)]]
+
+    @field_validator("alias_operation_intents", mode="before")
+    @classmethod
+    def owned_relations(cls, value):
+        if not isinstance(value, dict):
+            return value
+        return {key: tuple(rows) if isinstance(rows, list) else rows for key, rows in value.items()}
+
+    @model_validator(mode="after")
+    def consistent_alias_relations(self):
+        prefixes: dict[str, str] = {}
+        for operation, rows in self.alias_operation_intents.items():
+            if len({row.intent for row in rows}) != len(rows):
+                raise ValueError(f"alias_operation_intents.{operation}: an intent appears twice")
+            for row in rows:
+                if prefixes.setdefault(row.intent, row.target_prefix) != row.target_prefix:
+                    raise ValueError(f"alias_operation_intents: intent {row.intent} has two target prefixes")
+        return self
 
     @field_validator("legacy_audio_result_keys", mode="before")
     @classmethod

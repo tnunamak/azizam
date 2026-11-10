@@ -7,6 +7,13 @@ migration:
   include_capabilities: [transcriptions, translations, translation, stt, audio.transcriptions, audio.translations]
   exclude_capabilities: [chat, completions]
   config_mapping: chunking
+# Which workflow intents each alias section of /gateway/v1/aliases may name, and the prefix
+# older alias targets carry before the workflow's short id (image-flux2-klein -> flux2-klein).
+alias_operation_intents:
+  images: [{intent: image.generate, target_prefix: image-}]
+  image_edits: [{intent: image.edit, target_prefix: image-}]
+  videos: [{intent: video.generate, target_prefix: video-}, {intent: video.edit, target_prefix: video-}]
+  audio_generate: [{intent: audio.generate, target_prefix: audio-}]
 legacy_alias_tables:
   videos: videos
   audio_generate: audio

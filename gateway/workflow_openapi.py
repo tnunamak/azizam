@@ -39,7 +39,7 @@ from typing import Any, Iterable, Mapping
 from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
-from gateway import workflow_request_maps
+from gateway import compatibility, workflow_request_maps
 from gateway.manifests import media_bearing
 from gateway.video_limits import limits_for_workflow
 
@@ -462,12 +462,9 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
 
 # --------------------------------------------------------------------- aliases
 
-_ALIAS_OPERATION_INTENTS = {
-    "images": ("image.generate",),
-    "image_edits": ("image.edit",),
-    "videos": ("video.generate", "video.edit"),
-    "audio_generate": ("audio.generate",),
-}
+def _target_prefixes(intent: str) -> set[str]:
+    relations = compatibility.COMPATIBILITY.alias_operation_intents
+    return {row.target_prefix for rows in relations.values() for row in rows if row.intent == intent}
 
 
 def match_alias_target(
@@ -476,9 +473,9 @@ def match_alias_target(
     """Map an alias target like ``video-ltx-2.5-t2v`` to a workflow short id."""
     shorts = set(shorts)
     candidates = [resolves_to]
-    kind = intent.split(".")[0]
-    if resolves_to.startswith(f"{kind}-"):
-        candidates.append(resolves_to[len(kind) + 1:])
+    for prefix in sorted(_target_prefixes(intent)):
+        if resolves_to.startswith(prefix):
+            candidates.append(resolves_to[len(prefix):])
     for cand in list(candidates):
         if cand.endswith("-edit"):
             candidates.append(cand[: -len("-edit")])
@@ -491,22 +488,34 @@ def match_alias_target(
 def aliases_by_workflow(
     records: Iterable[WorkflowRecord], aliases: Mapping[str, Any] | None
 ) -> dict[str, list[str]]:
-    """``{workflow id: [stable alias, ...]}`` from ``/gateway/v1/aliases`` data."""
+    """``{workflow id: [stable alias, ...]}`` from ``/gateway/v1/aliases`` data.
+
+    Which intents each alias section may name comes from registry/compatibility.yml. A target
+    that is a canonical workflow id names that workflow only; other targets are short names."""
     records = list(records)
+    by_id = {record.id: record for record in records}
     out: dict[str, list[str]] = {}
-    for operation, intents in _ALIAS_OPERATION_INTENTS.items():
+    for operation, rows in compatibility.COMPATIBILITY.alias_operation_intents.items():
+        intents = [row.intent for row in rows]
         section = (aliases or {}).get(operation) or {}
         for entry in section.get("stable") or []:
             target, alias = entry.get("resolves_to"), entry.get("alias")
             if not target or not alias:
                 continue
-            for intent in intents:
-                by_short = {short_id(r): r for r in records if r.intent == intent}
-                hit = match_alias_target(str(target), intent, by_short)
-                if hit:
-                    names = out.setdefault(by_short[hit].id, [])
-                    if alias not in names:
-                        names.append(str(alias))
+            target = str(target)
+            if target in by_id:
+                hits = [by_id[target]] if by_id[target].intent in intents else []
+            else:
+                hits = []
+                for intent in intents:
+                    by_short = {short_id(r): r for r in records if r.intent == intent}
+                    hit = match_alias_target(target, intent, by_short)
+                    if hit:
+                        hits.append(by_short[hit])
+            for record in hits:
+                names = out.setdefault(record.id, [])
+                if alias not in names:
+                    names.append(str(alias))
     return out
 
 
