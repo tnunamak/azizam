@@ -184,7 +184,8 @@ _VIDEO_TABLE = Section(refs=(
 SECTIONS: dict[str, Section] = {
     "audio": _AUDIO_TABLE,
     "videos": _VIDEO_TABLE,
-    "images": Section(refs=(Ref("workflow", ("variations", "default_workflow")), Ref("workflow", ("edits", "multiref_default_workflow")))),
+    "images": Section(refs=(Ref("workflow", ("variations", "default_workflow")), Ref("workflow", ("edits", "default_workflow")),
+                             Ref("workflow", ("edits", "multiref_default_workflow")))),
     "voices": Section(refs=(Ref("service", ("quality_engine",)), Ref("service", ("design_engine",)))),
     "models": Section(refs=(Ref("model", (), keys=True), Ref("service", ("*", "backend")))),
     "roles": Section(refs=(Ref("service", ("*", "backend")), Ref("model", ("*", "model")))),
