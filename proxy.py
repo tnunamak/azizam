@@ -343,7 +343,7 @@ from gateway.transforms import (
     run_request_pipeline as _run_request_pipeline,
     run_response_pipeline as _run_response_pipeline,
     TransformRequestError as _TransformRequestError,
-    QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
+    ENABLE_THINKING_KEY as _ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
 )
 from gateway.toolcall_detection import (
@@ -7591,7 +7591,7 @@ async def decide_image_background_removal(
         "temperature": 0,
         "max_tokens": 160,
         "response_format": {"type": "json_object"},
-        "chat_template_kwargs": {_QWEN3_ENABLE_THINKING_KEY: False},
+        "chat_template_kwargs": {_ENABLE_THINKING_KEY: False},
     }
     lease = None
     if _transition_policy(service).enabled:

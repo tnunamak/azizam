@@ -10,11 +10,11 @@
     "gateway/protocols/ollama.py": 1,
     "gateway/service_registry.py": 1,
     "gateway/toolcall_detection.py": 6,
-    "gateway/transforms.py": 5,
+    "gateway/transforms.py": 2,
     "gateway/video_media_jobs.py": 1,
     "gateway/video_subject.py": 1,
     "metrics_sampler.py": 8,
-    "proxy.py": 214,
+    "proxy.py": 213,
     "status_endpoint.py": 132
   }
 }

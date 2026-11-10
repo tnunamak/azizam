@@ -70,7 +70,7 @@ def test_thinking_suppression_sets_enable_thinking_false_without_overriding_the_
     chosen = {"chat_template_kwargs": {"enable_thinking": True}}
     apply_thinking_suppression(chosen)
     assert chosen == {"chat_template_kwargs": {"enable_thinking": True}}
-    assert t.QWEN3_NO_THINK_HINT == "/no_think" and t.QWEN3_ENABLE_THINKING_KEY == "enable_thinking"
+    assert t.ENABLE_THINKING_KEY == "enable_thinking"
 
 
 @pytest.mark.parametrize("effort,budget", [("none", 0), ("minimal", 2048), ("low", 4096), ("medium", 6144), ("high", 8192), ("xhigh", -1)])
