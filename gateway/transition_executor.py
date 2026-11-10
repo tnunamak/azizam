@@ -208,7 +208,7 @@ class _EffectStep:
         else:
             try:
                 result = call.result()
-            except Exception as exc:  # noqa: BLE001 - an adapter error says nothing about what the engine did
+            except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 - a cancelled child is unknown, too
                 result = EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
         if result.outcome == "unknown":
             result = await query_effect(ctx, intent, result)
@@ -464,6 +464,7 @@ class Executor:
         self._gate_parked = gate_parked or (gates.parked if gates is not None else (lambda domain: None))
         self._submit_locks: dict[str, asyncio.Lock] = {}
         self._tasks: dict[str, "asyncio.Task[None]"] = {}
+        self._resolve_units: dict["asyncio.Task[Operation]", str] = {}
         self._ready = False
         self._recovery_pending = False  # a durable hold failed: the next admission reconciles again
         self._reconcile_lock: Optional[asyncio.Lock] = None
@@ -581,7 +582,8 @@ class Executor:
         try:
             await self._drive(operation, trigger, after)
         except asyncio.CancelledError:
-            # Shutdown: the durable record says closed; the next start reconciles it.
+            # Shutdown: the next admission in this process must reconcile the still-running durable row, too.
+            self._recovery_pending = True
             self._gate_hold(operation.domain, "reconciling")
             raise
         except Exception as exc:  # noqa: BLE001
@@ -699,7 +701,7 @@ class Executor:
             leftover = await asyncio.to_thread(self.store.unfinished)
             self._recovery_pending = False  # a hold that cannot be written sets it again
             for operation in leftover:
-                if operation.op_id in self._tasks:
+                if operation.op_id in self._tasks or operation.op_id in self._resolve_units.values():
                     continue  # a task of this process drives it; only an operation nothing drives is recovered
                 try:
                     await self._recover(operation)
@@ -927,35 +929,77 @@ class Executor:
         """The owner settles a held step (decision G3). Only a reconciling operation, at that step, takes it.
 
         ``success`` lets the operation go on with its next step; ``unknown`` changes nothing; ``no_change``
-        follows the servable rule (see the module notes) when the profile attests it for the step, and holds
-        ``failed_closed`` otherwise; any other outcome holds ``failed_closed``. A stale call raises ``StaleOutcome`` and changes nothing.
+        follows the step's settlement rule. Restore and reset use the stored effect identity, the corresponding
+        profile attestation and clean verification; other steps follow the servable rule. Continuing restores
+        recheck readiness at the open boundary. A stale call raises ``StaleOutcome`` and changes nothing.
         """
         operation = await asyncio.to_thread(self.store.get, op_id)
         if operation is None:
             raise KeyError(op_id)
         if operation.state != "reconciling" or operation.step != step or operation.step_intent is None:
             raise StaleOutcome(f"operation {op_id} is {operation.state} at step {operation.step!r}; nothing to resolve at {step!r}")
-        result = EffectResult(outcome=outcome, evidence_ref=evidence_ref)  # type: ignore[arg-type]
-        ctx = StepContext(operation=operation, store=self.store, adapter=self._adapter_for(operation.domain),
-                          snapshots=self._snapshots, policy=self._policy_of(operation.domain))
-        verdict = verdict_for(outcome)
-        if outcome == "no_change":
-            # The owner says the step changed nothing: believe it as a profile-attested no_change is believed. A check
-            # that cannot be read changes nothing, as an "unknown" resolve does.
-            verdict = await no_change_verdict(ctx, step)
+        # A caller can go away after any store commit. Settlement and task hand-off belong to the executor,
+        # just like begin: cancellation of the caller must not abandon an unfinished operation.
+        unit = asyncio.get_running_loop().create_task(
+            self._resolve_and_hand_off(operation, step, outcome, evidence_ref))
+        self._resolve_units[unit] = op_id
+
+        def finished(task: "asyncio.Task[Operation]") -> None:
+            self._resolve_units.pop(task, None)
+            _retrieve(task)
+
+        unit.add_done_callback(finished)
+        return await asyncio.shield(unit)
+
+    async def _resolve_and_hand_off(self, operation: Operation, step: StepName, outcome: str,
+                                    evidence_ref: Optional[str]) -> Operation:
+        """Settle the owner answer and hand off any resumed row without a caller-owned cancellation gap."""
+        op_id = operation.op_id
+        try:
+            result = EffectResult(outcome=outcome, evidence_ref=evidence_ref)  # type: ignore[arg-type]
+            ctx = StepContext(operation=operation, store=self.store, adapter=self._adapter_for(operation.domain),
+                              snapshots=self._snapshots, policy=self._policy_of(operation.domain))
+            if step == "restore" and outcome != "unknown":
+                # Restore settlement may write a reset intent, which requires a running operation. Keep the held
+                # intent: a reset lives under "restore" but must use the reset's attestation and clean verification.
+                # A restore's own success needs no new intent: its outcome commits while the row still holds, and
+                # the hand-off resumes it (a crash between the two recovers on the next start).
+                resumed = operation
+                if operation.step_intent.effect == "reset" or outcome != "success":
+                    resumed = await asyncio.to_thread(self.store.resume, op_id)
+                settled = await self._settle(self._steps.get(step), resumed, ctx.adapter, ctx.policy,
+                                             operation.step_intent, result)
+                if settled in ("continue", "skip"):
+                    await self._resume_from(op_id, ctx.adapter, ctx.policy, step)
+                else:
+                    await self._finish_for(resumed, settled)
+                return (await asyncio.to_thread(self.store.get, op_id))  # type: ignore[return-value]
+            verdict = verdict_for(outcome)
+            if outcome == "no_change":
+                # The owner says the step changed nothing: believe it as a profile-attested no_change is believed. A check
+                # that cannot be read changes nothing, as an "unknown" resolve does.
+                verdict = await no_change_verdict(ctx, step)
+                if verdict == "reconcile":
+                    return operation
+            written = await asyncio.to_thread(self.store.write_outcome, op_id, step, result)
+            if written.step_outcome != outcome:
+                raise StaleOutcome(f"operation {op_id}: the outcome was refused as stale")
             if verdict == "reconcile":
-                return operation
-        written = await asyncio.to_thread(self.store.write_outcome, op_id, step, result)
-        if written.step_outcome != outcome:
-            raise StaleOutcome(f"operation {op_id}: the outcome was refused as stale")
-        if verdict == "reconcile":
-            return written
-        if verdict != "continue":
-            await self._apply_verdict(written, verdict)
-            return (await asyncio.to_thread(self.store.get, op_id))  # type: ignore[return-value]
-        resumed = await asyncio.to_thread(self.store.resume, op_id)
-        self._launch_resume(resumed, step)
-        return resumed
+                return written
+            if verdict != "continue":
+                await self._apply_verdict(written, verdict)
+                return (await asyncio.to_thread(self.store.get, op_id))  # type: ignore[return-value]
+            resumed = await asyncio.to_thread(self.store.resume, op_id)
+            self._launch_resume(resumed, step)
+            return resumed
+        except StaleOutcome:
+            raise
+        except BaseException:
+            # A store call may have committed before raising, or task creation may have failed. The next
+            # admission must recover any row left without a driver, even if this process was already ready.
+            self._recovery_pending = True
+            self._gate_hold(operation.domain, "reconciling")
+            raise
 
     # -- a parked domain ----------------------------------------------------
 

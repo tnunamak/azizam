@@ -40,17 +40,20 @@ class Cell:
     verifier: bool = True
     mode: str = "live"
     mark: str = ""
+    # What the owner-resolved reset meets once the engine is healthy again.
+    late: str = "clean"
 
     @property
     def id(self):
-        return ":".join(map(str, (self.mode, self.stage, self.fault, self.policy,
+        base = ":".join(map(str, (self.mode, self.stage, self.fault, self.policy,
                                   self.value, self.reset, self.verifier)))
+        return base if self.late == "clean" else f"{base}:late-{self.late}"
 
 
 def cells():
     rows = []
-    for stage in ("close", "drain", "open", "trigger"):
-        rows.append(Cell(stage, "E", "S", mark="design_silent"))
+    for stage, oracle in (("close", "S"), ("drain", "R"), ("open", "F"), ("trigger", "R")):
+        rows.append(Cell(stage, "E", oracle, mark="design_silent"))
     for stage in ("close", "open", "trigger"):
         rows.append(Cell(stage, "D", "S", mark="design_silent_no_seam"))
     rows += [Cell("drain", fault, "A") for fault in ("D", "Q")]
@@ -73,6 +76,11 @@ def cells():
     rows += [Cell("restore", "U", oracle, value=value)
              for value, oracle in ((True, "O"), (False, "F"), (None, "R"))]
     rows.append(Cell("restore", "U", "F", reset=False))
+    # A held restore the owner resolves partial: no declared reset, a reset that fails, or a target
+    # that verifies not clean all stay failed_closed; only a clean, ready target serves cold.
+    rows += [Cell("restore", "E", "R", reset=False),
+             Cell("restore", "E", "R", late="reset_fails"),
+             Cell("restore", "E", "R", late="dirty")]
     rows += [Cell("reset", fault, oracle) for fault, oracle in
              (("E", "R"), ("D", "R"), ("U", "F"), ("Q", "R"))]
     rows += [Cell("reset", "N", oracle, value=value)
@@ -108,7 +116,40 @@ def parameter(cell):
 
 
 # Exits the matrix names but cannot reach without a seam the executor does not have yet.
-NOT_COVERED = tuple(cell.id for cell in cells() if "no_seam" in cell.mark)
+NOT_COVERED = {cell.id for cell in cells() if "no_seam" in cell.mark}
+
+# Independent collection contract: changing a row's mark cannot silently drop it.
+EXPECTED_NOT_COVERED = {
+    "live:close:D:best_effort:True:True:True",
+    "live:open:D:best_effort:True:True:True",
+    "live:trigger:D:best_effort:True:True:True",
+    "store_write:begin:D:best_effort:True:True:True",
+    "store_write:drain_intent:D:best_effort:True:True:True",
+    "store_write:drain_outcome:D:best_effort:True:True:True",
+    "store_write:checkpoint_intent:D:best_effort:True:True:True",
+    "store_write:snapshot_handle:D:best_effort:True:True:True",
+    "store_write:checkpoint_outcome:D:best_effort:True:True:True",
+    "store_write:release_intent:D:best_effort:True:True:True",
+    "store_write:release_outcome:D:best_effort:True:True:True",
+    "store_write:load_intent:D:best_effort:True:True:True",
+    "store_write:load_outcome:D:best_effort:True:True:True",
+    "store_write:restore_intent:D:best_effort:True:True:True",
+    "store_write:restore_outcome:D:best_effort:True:True:True",
+    "store_write:reset_intent:D:best_effort:True:True:True",
+    "store_write:reset_outcome:D:best_effort:True:True:True",
+    "store_write:open_intent:D:best_effort:True:True:True",
+    "store_write:finish:D:best_effort:True:True:True",
+    "subprocess:process:crash:best_effort:True:True:True",
+}
+
+
+def test_every_exit_matrix_contract():
+    assert NOT_COVERED == EXPECTED_NOT_COVERED
+    assert {
+        cell.stage: cell.oracle for cell in cells()
+        if cell.mode == "live" and cell.fault == "E"
+        and cell.stage in ("drain", "open", "trigger")
+    } == {"drain": "R", "open": "F", "trigger": "R"}
 
 
 class InjectedFailure(OSError):
@@ -181,6 +222,8 @@ class Engine:
             wants_reset = cell.stage in ("reset", "verify_reset")
             if self.enabled and wants_reset and name == "restore":
                 return SimpleNamespace(status=200, selected={"outcome": "failed"})
+            if not self.enabled and name == "reset" and cell.late == "reset_fails":
+                return SimpleNamespace(status=200, selected={"outcome": "failed"})
             if live and cell.stage == name:
                 if cell.fault == "E":
                     raise InjectedFailure(name)
@@ -228,7 +271,7 @@ class Engine:
                 "offering": self.offering, "ready": True, "incarnation": "inc-1"})
         if name == "idle":
             return SimpleNamespace(status=200, selected={"idle": True, "incarnation": "inc-1"})
-        value = cell.value if self.enabled else True
+        value = cell.value if self.enabled else cell.late != "dirty"
         if verification and cell.fault == "false":
             value = False
         return SimpleNamespace(status=200, selected={"value": value, "incarnation": "inc-1"})
@@ -290,12 +333,14 @@ class StoreFaults:
         self.store, self.cell = store, cell
         self.enabled = True
         self.finish_failures = 0
+        self.open_failures = 0
 
     def __getattr__(self, name):
         return getattr(self.store, name)
 
     def write_intent(self, op_id, intent, held=None):
         if self.enabled and self.cell.stage == "open" and intent.step == "open":
+            self.open_failures += 1
             raise InjectedFailure("open intent")
         return self.store.write_intent(op_id, intent, held)
 
@@ -310,9 +355,11 @@ class DrainFaults:
     def __init__(self, drain, cell):
         self.drain, self.cell = drain, cell
         self.enabled = True
+        self.failures = 0
 
     async def clear_for_swap(self, domain, settings):
         if self.enabled and self.cell.stage == "drain" and self.cell.fault == "E":
+            self.failures += 1
             raise InjectedFailure("drain")
         return await self.drain.clear_for_swap(domain, settings)
 
@@ -324,6 +371,7 @@ class Rig:
         self.gates.load()
         self.close_armed = cell.stage == "close" and cell.fault == "E"
         self.serial = 0
+        self.trigger_failures = 0
 
         def new_id():
             if self.close_armed:
@@ -356,6 +404,7 @@ class Rig:
 
         def trigger():
             if not healthy and self.cell.stage == "trigger":
+                self.trigger_failures += 1
                 raise InjectedFailure("trigger")
 
         begun = await self.executor.submit(domain="dom", kind=kind, idempotency_key=key,
@@ -496,7 +545,7 @@ async def restart_at_prefix(rig, cell):
     return done
 
 
-@pytest.mark.parametrize("cell", [parameter(cell) for cell in cells() if "no_seam" not in cell.mark])
+@pytest.mark.parametrize("cell", [parameter(cell) for cell in cells() if cell.id not in EXPECTED_NOT_COVERED])
 def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: Cell):
     async def scenario():
         rig = Rig(tmp_path, cell)
@@ -512,6 +561,10 @@ def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: C
 
             # The order matters: lock release/reacquisition before state or row checks.
             await unlocked(rig.lock)
+            if cell.mode == "live" and cell.fault == "E" and cell.stage in ("drain", "open", "trigger"):
+                reached = {"drain": rig.drain_faults.failures, "open": rig.store.open_failures,
+                           "trigger": rig.trigger_failures}
+                assert reached[cell.stage] == 1, f"{cell.id}: injected fault was not reached exactly once"
             if cell.stage == "double_finish":
                 assert rig.store.finish_failures == 2
                 assert (rig.gates.state("dom"), done.state, done.step_outcome) == ("reconciling", "running", "unknown")
@@ -543,7 +596,15 @@ def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: C
                 else:
                     # A known partial outcome is owner resolution, not a production rollback.
                     resolved = await rig.executor.resolve(done.op_id, step=done.step, outcome="partial", evidence_ref="owner:known")
-                    assert (rig.gates.state("dom"), resolved.state) == PAIRS["F"]
+                    # A recorded partial restore runs its declared reset (SERVICE_TRANSITION_GATE.md, restore
+                    # partial); only a verified clean, ready target serves cold. Without a reset, or without a
+                    # clean verification, the gate stays failed_closed.
+                    # A reset that already ran and could not be read (restore:U with no answer) is not run again.
+                    resets_clean = (cell.stage == "restore" and cell.reset and cell.late == "clean"
+                                    and done.evidence_ref != "reset:target_not_verified_clean")
+                    if resets_clean:
+                        resolved = await rig.executor.wait(done.op_id)
+                    assert (rig.gates.state("dom"), resolved.state) == PAIRS["O" if resets_clean else "F"]
             await unlocked(rig.lock)
             follow_up = await rig.submit("healthy", healthy=True)
             await unlocked(rig.lock)
