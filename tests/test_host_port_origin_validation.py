@@ -62,3 +62,33 @@ def test_a_probe_base_for_an_invalid_host_port_record_is_empty():
 
     record = {"config": {"base_url": "http://198.51.100.7:9000/v1", "host": "user@evil.example.com", "port": 8080}}
     assert url_binding.base_of(record, "observations.health.path") == ""
+
+
+@pytest.mark.parametrize("record", [
+    {"host": "user@evil.example.com", "port": 8080},
+    {"host": "user@evil.example.com", "port": ""},
+    {"host": "user@evil.example.com", "port": " "},
+    {"host": "::1%x@evil.example.com", "port": 80},
+    {"host": "fe80::1%eth0", "port": 80},
+], ids=["userinfo", "empty-port", "blank-port", "scoped-ipv6-tail", "scoped-ipv6"])
+def test_no_url_builder_turns_an_invalid_host_into_an_address(record):
+    """``service_base_url`` and the native lane build from the same host and port, so they refuse the same values."""
+    assert service_registry.host_port_origin(record) == ""
+    assert service_registry.service_base_url(record) == ""
+    assert service_registry.native_host_url(record) == ""
+    assert service_registry.lifecycle_dial_url(record) == ""
+    assert service_registry.engine_origin(record) == ""
+
+
+def test_a_probe_with_the_inference_connection_never_dials_an_invalid_host():
+    from gateway import lifecycle_drivers
+
+    config = {"host": "user@evil.example.com", "port": 8080, "probe_with_inference_connection": True}
+    request = lifecycle_drivers.engine_read_request({"config": config}, "/health")
+    assert request is None or "evil.example.com" not in request[0]
+
+
+def test_the_scheme_is_read_without_regard_to_case():
+    record = {"host": "engine.example.com", "port": 8443, "scheme": "HTTPS"}
+    assert service_registry.host_port_origin(record) == "https://engine.example.com:8443"
+    assert service_registry.service_base_url(record) == "https://engine.example.com:8443/v1"
