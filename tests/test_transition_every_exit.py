@@ -49,8 +49,8 @@ class Cell:
 
 def cells():
     rows = []
-    for stage in ("close", "drain", "open", "trigger"):
-        rows.append(Cell(stage, "E", "S", mark="design_silent"))
+    for stage, oracle in (("close", "S"), ("drain", "R"), ("open", "F"), ("trigger", "R")):
+        rows.append(Cell(stage, "E", oracle, mark="design_silent"))
     for stage in ("close", "open", "trigger"):
         rows.append(Cell(stage, "D", "S", mark="design_silent_no_seam"))
     rows += [Cell("drain", fault, "A") for fault in ("D", "Q")]
@@ -108,7 +108,40 @@ def parameter(cell):
 
 
 # Exits the matrix names but cannot reach without a seam the executor does not have yet.
-NOT_COVERED = tuple(cell.id for cell in cells() if "no_seam" in cell.mark)
+NOT_COVERED = {cell.id for cell in cells() if "no_seam" in cell.mark}
+
+# Independent collection contract: changing a row's mark cannot silently drop it.
+EXPECTED_NOT_COVERED = {
+    "live:close:D:best_effort:True:True:True",
+    "live:open:D:best_effort:True:True:True",
+    "live:trigger:D:best_effort:True:True:True",
+    "store_write:begin:D:best_effort:True:True:True",
+    "store_write:drain_intent:D:best_effort:True:True:True",
+    "store_write:drain_outcome:D:best_effort:True:True:True",
+    "store_write:checkpoint_intent:D:best_effort:True:True:True",
+    "store_write:snapshot_handle:D:best_effort:True:True:True",
+    "store_write:checkpoint_outcome:D:best_effort:True:True:True",
+    "store_write:release_intent:D:best_effort:True:True:True",
+    "store_write:release_outcome:D:best_effort:True:True:True",
+    "store_write:load_intent:D:best_effort:True:True:True",
+    "store_write:load_outcome:D:best_effort:True:True:True",
+    "store_write:restore_intent:D:best_effort:True:True:True",
+    "store_write:restore_outcome:D:best_effort:True:True:True",
+    "store_write:reset_intent:D:best_effort:True:True:True",
+    "store_write:reset_outcome:D:best_effort:True:True:True",
+    "store_write:open_intent:D:best_effort:True:True:True",
+    "store_write:finish:D:best_effort:True:True:True",
+    "subprocess:process:crash:best_effort:True:True:True",
+}
+
+
+def test_every_exit_matrix_contract():
+    assert NOT_COVERED == EXPECTED_NOT_COVERED
+    assert {
+        cell.stage: cell.oracle for cell in cells()
+        if cell.mode == "live" and cell.fault == "E"
+        and cell.stage in ("drain", "open", "trigger")
+    } == {"drain": "R", "open": "F", "trigger": "R"}
 
 
 class InjectedFailure(OSError):
@@ -290,12 +323,14 @@ class StoreFaults:
         self.store, self.cell = store, cell
         self.enabled = True
         self.finish_failures = 0
+        self.open_failures = 0
 
     def __getattr__(self, name):
         return getattr(self.store, name)
 
     def write_intent(self, op_id, intent, held=None):
         if self.enabled and self.cell.stage == "open" and intent.step == "open":
+            self.open_failures += 1
             raise InjectedFailure("open intent")
         return self.store.write_intent(op_id, intent, held)
 
@@ -310,9 +345,11 @@ class DrainFaults:
     def __init__(self, drain, cell):
         self.drain, self.cell = drain, cell
         self.enabled = True
+        self.failures = 0
 
     async def clear_for_swap(self, domain, settings):
         if self.enabled and self.cell.stage == "drain" and self.cell.fault == "E":
+            self.failures += 1
             raise InjectedFailure("drain")
         return await self.drain.clear_for_swap(domain, settings)
 
@@ -324,6 +361,7 @@ class Rig:
         self.gates.load()
         self.close_armed = cell.stage == "close" and cell.fault == "E"
         self.serial = 0
+        self.trigger_failures = 0
 
         def new_id():
             if self.close_armed:
@@ -356,6 +394,7 @@ class Rig:
 
         def trigger():
             if not healthy and self.cell.stage == "trigger":
+                self.trigger_failures += 1
                 raise InjectedFailure("trigger")
 
         begun = await self.executor.submit(domain="dom", kind=kind, idempotency_key=key,
@@ -496,7 +535,7 @@ async def restart_at_prefix(rig, cell):
     return done
 
 
-@pytest.mark.parametrize("cell", [parameter(cell) for cell in cells() if "no_seam" not in cell.mark])
+@pytest.mark.parametrize("cell", [parameter(cell) for cell in cells() if cell.id not in EXPECTED_NOT_COVERED])
 def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: Cell):
     async def scenario():
         rig = Rig(tmp_path, cell)
@@ -512,6 +551,10 @@ def test_every_exit_releases_lock_and_remains_finishable(tmp_path: Path, cell: C
 
             # The order matters: lock release/reacquisition before state or row checks.
             await unlocked(rig.lock)
+            if cell.mode == "live" and cell.fault == "E" and cell.stage in ("drain", "open", "trigger"):
+                reached = {"drain": rig.drain_faults.failures, "open": rig.store.open_failures,
+                           "trigger": rig.trigger_failures}
+                assert reached[cell.stage] == 1, f"{cell.id}: injected fault was not reached exactly once"
             if cell.stage == "double_finish":
                 assert rig.store.finish_failures == 2
                 assert (rig.gates.state("dom"), done.state, done.step_outcome) == ("reconciling", "running", "unknown")
