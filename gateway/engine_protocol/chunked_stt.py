@@ -58,7 +58,8 @@ from gateway.engine_protocol.types import (
 from gateway import engine_egress
 from gateway.service_registry import join_base_path
 
-ADAPTER_ID = shipped_for_implementation("chunked_transcription").adapter_identity
+_DEFAULT_PROTOCOL = shipped_for_implementation("chunked_transcription")
+ADAPTER_ID = _DEFAULT_PROTOCOL.adapter_identity
 ROUTES = {"stt.transcribe": "/v1/audio/transcriptions", "stt.translate": "/v1/audio/translations"}
 OPERATIONS = tuple(ROUTES)
 _DEFAULT_LABEL = "STT backend"
@@ -183,7 +184,7 @@ class _RunWire:
         self._client = client
         self._url = url
         self._run = run
-        self._filenames = filenames if filenames is not None else load_shipped_description(ADAPTER_ID).multipart_filenames
+        self._filenames = filenames if filenames is not None else load_shipped_description(_DEFAULT_PROTOCOL.id).multipart_filenames
 
     async def send_files(self, files: list[tuple[str, tuple[str, Any, str]]]) -> stt_chunking.UpstreamResponse:
         run, client = self._run, self._client
@@ -308,7 +309,7 @@ class ChunkedSttAdapter:
     interface_version = ADAPTER_INTERFACE_VERSION
 
     def __init__(self, description: ProtocolDescription | None = None) -> None:
-        description = description if description is not None else load_shipped_description(ADAPTER_ID)
+        description = description if description is not None else load_shipped_description(_DEFAULT_PROTOCOL.id)
         from gateway.engine_protocol.adapter import AdapterOrigin
         self.adapter_id = description.adapter_identity
         self.built_from = AdapterOrigin.of(description)

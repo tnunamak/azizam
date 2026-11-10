@@ -59,7 +59,8 @@ from gateway.manifests import bind_backend_request, validate_inputs
 from gateway import binding_registry, engine_egress, output_selectors
 from gateway.service_registry import join_base_path
 
-ADAPTER_ID = shipped_for_implementation("graph_submission").adapter_identity
+_DEFAULT_PROTOCOL = shipped_for_implementation("graph_submission")
+ADAPTER_ID = _DEFAULT_PROTOCOL.adapter_identity
 OPERATIONS = (
     "graph.submit", "graph.history", "graph.history_page", "graph.queue", "graph.view", "graph.upload", "graph.cancel",
     "graph.delete_history", "graph.stats", "graph.free",
@@ -77,7 +78,7 @@ def _output_keys(description: ProtocolDescription) -> tuple[str, ...]:
 
 
 # Compatibility for direct callers of the module constant and static helper.
-OUTPUT_KEYS = _output_keys(load_shipped_description(ADAPTER_ID))
+OUTPUT_KEYS = _output_keys(load_shipped_description(_DEFAULT_PROTOCOL.id))
 _DEFAULT_LABEL = "the engine"
 
 
@@ -457,7 +458,7 @@ class NodeGraphAdapter:
         self.result_selectors = description.result_selectors if description is not None else None
         self._output_keys = _output_keys(
             description if description is not None and description.result_selectors is not None
-            else load_shipped_description(ADAPTER_ID)
+            else load_shipped_description(_DEFAULT_PROTOCOL.id)
         )
         # The run operations' poll cadence, as the description declares it (empty: built without a description).
         self._operations = description.operations if description is not None else {}

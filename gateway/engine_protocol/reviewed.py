@@ -131,8 +131,14 @@ def _with_assets(factory: AdapterFactory, assets: Any) -> AdapterFactory:
 
 def _factories_for(doc: description.ProtocolDescription) -> dict[str, AdapterFactory]:
     factories = dict(_FACTORIES)
-    if doc.implementation in _BUILTIN_FACTORIES:
-        factories[doc.adapter_identity] = _BUILTIN_FACTORIES[doc.implementation]
+    implementation = doc.implementation
+    if not implementation:
+        # Existing operator descriptions may predate this field. Their identity can inherit a shipped registration.
+        defaults = [row for row in description.load_registry(description.REGISTRY_DIR).values()
+                    if row.adapter_id == doc.adapter_id and row.implementation]
+        implementation = defaults[0].implementation if len(defaults) == 1 else ""
+    if implementation in _BUILTIN_FACTORIES:
+        factories[doc.adapter_identity] = _BUILTIN_FACTORIES[implementation]
     return factories
 
 
