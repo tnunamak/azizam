@@ -294,4 +294,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # 0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4.
     # Re-captured 2026-11-09 for the run-route video edits: ``seconds`` and ``size`` left their ``route_inputs`` (see the
     # note above). Before it the frozen digest was 0c3cad84708da8df515c4bf6fcdfd621382f8ee7dfe9925d06922ec4cd2448d4.
+    # Re-captured 2026-11-09 for the combined train 38: the c2d-38 sync response kinds, the mux description and the
+    # emptied run-route inputs together (tests/fixtures/headless_openapi.json shows the same). Before it the frozen digest was
+    # 30f9e05266fff448eb90a25b494ab5181e4001237b87a96ac0c65ca62d379232.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
