@@ -235,6 +235,14 @@ class WorkflowOpenApiTests(unittest.TestCase):
             }
             self.assertEqual({o["$ref"].rsplit("/", 1)[1] for o in options}, wanted)
 
+    def test_video_route_keeps_descriptor_controls_beside_workflow_inputs(self) -> None:
+        # The workflow pass must add its namespace, not replace the descriptor-owned video controls.
+        for path in ("/v1/videos", "/openai/v1/videos"):
+            schema = self.spec["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]
+            namespaces = schema["properties"]["extensions"]["properties"]
+            self.assertIn("com.azizam.workflow", namespaces, path)
+            self.assertEqual(namespaces["com.azizam.video"]["properties"]["audio"], {"type": "boolean", "default": True}, path)
+
     def test_sample_requests_validate(self) -> None:
         """A request built from the catalog's field map validates against the schema."""
         for record in self.registry.records():

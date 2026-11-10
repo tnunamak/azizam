@@ -670,7 +670,12 @@ def _patch_extensions(op: dict[str, Any], records: list[WorkflowRecord]) -> None
     content = ((op.get("requestBody") or {}).get("content") or {}).get(_JSON)
     schema = (content or {}).get("schema")
     if isinstance(schema, dict):
-        schema.setdefault("properties", {})["extensions"] = _extension_property(records)
+        properties = schema.setdefault("properties", {})
+        patched = _extension_property(records)
+        # Keep the namespaces the route schema already declares (descriptor-owned controls); add the workflow one.
+        declared = (properties.get("extensions") or {}).get("properties") or {}
+        patched["properties"] = {**declared, **patched["properties"]}
+        properties["extensions"] = patched
 
 
 def _async_extension(op: dict[str, Any], mode: str, **fields: Any) -> None:
