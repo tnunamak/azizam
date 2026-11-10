@@ -1599,17 +1599,16 @@ def _render_voices(v: Optional[dict]) -> str:
         ("Languages", v.get("languages")),
         ("Genders", v.get("genders")),
         ("Source breakdown",
-            f"{sources.get('openai_alias', 0)} OpenAI alias / "
-            f"{sources.get('voxtral_native', 0)} Voxtral native"
+            " / ".join(f"{count} {source}" for source, count in sources.items())
             if sources else None),
         ("List endpoint", v.get("list_endpoint")),
     ]))
     if openai_map:
         rows = [
             '<details><summary class="muted small">'
-            f'OpenAI alias → Voxtral mapping ({len(openai_map)})'
+            f'OpenAI alias mapping ({len(openai_map)})'
             '</summary>'
-            '<table><thead><tr><th>OpenAI alias</th><th>→</th><th>Voxtral voice</th>'
+            '<table><thead><tr><th>OpenAI alias</th><th>→</th><th>Native voice</th>'
             '</tr></thead><tbody>'
         ]
         for alias, mapped in list(openai_map.items())[:20]:
@@ -1623,7 +1622,7 @@ def _render_voices(v: Optional[dict]) -> str:
     if native:
         parts.append(
             '<details><summary class="muted small">'
-            f'Native Voxtral voices ({len(native)})</summary>'
+            f'Native voices ({len(native)})</summary>'
             f'<pre class="small">{_esc(", ".join(native))}</pre>'
             '</details>'
         )
@@ -1966,7 +1965,7 @@ def _render_disk(disk: dict) -> str:
             f'</tr>'
         )
     parts.append('</tbody></table>')
-    parts.append('<h3>Hot-spot directories <span class="muted small">(comfy_output_root contains comfy_output_video; sizes overlap)</span></h3>')
+    parts.append('<h3>Hot-spot directories <span class="muted small">(Directory sizes may overlap)</span></h3>')
     parts.append('<table><thead><tr><th>Name</th><th>Path</th><th>Files</th><th>Total size</th><th>Oldest</th><th>Newest</th><th>Biggest file</th></tr></thead><tbody>')
     for h in disk.get("hotspots") or []:
         parts.append(

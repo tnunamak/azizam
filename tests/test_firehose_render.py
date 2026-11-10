@@ -231,3 +231,53 @@ def test_recent_events_renderer_drops_prompt_shaped_extras() -> None:
     assert len(cells) == 4
     assert "prompt_preview" not in html
     assert secret not in html
+
+
+def test_voice_sources_preserve_payload_order_and_neutral_headings() -> None:
+    html = firehose_render._render_voices({
+        "sources": {"zeta_catalog": 7, "alpha_catalog": 3},
+        "openai_alias_map": {"second": "voice-b", "first": "voice-a"},
+        "native_voices": ["voice-b", "voice-a"],
+    })
+
+    document = _Document(html)
+    cells = [_text(node) for node in document.find("td")]
+    assert "7 zeta_catalog / 3 alpha_catalog" in cells
+    assert [_text(node) for node in document.find("summary")] == [
+        "OpenAI alias mapping (2)", "Native voices (2)",
+    ]
+    assert [_text(node) for node in document.find("th")][-3:] == [
+        "OpenAI alias", "→", "Native voice",
+    ]
+    assert cells[-6:] == ["second", "→", "voice-b", "first", "→", "voice-a"]
+    assert "voxtral" not in html.lower()
+
+
+def test_voice_keys_and_values_are_escaped_and_aliases_capped() -> None:
+    aliases = {f"<alias-{index}>": f"<voice-{index}>" for index in range(21)}
+    html = firehose_render._render_voices({
+        "sources": {"<source>&": "<count>&"},
+        "openai_alias_map": aliases,
+        "native_voices": ["<native>&"],
+    })
+
+    assert "&lt;count&gt;&amp; &lt;source&gt;&amp;" in html
+    assert "&lt;native&gt;&amp;" in html
+    document = _Document(html)
+    alias_cells = [_text(node) for node in document.find("td")][5:]
+    assert alias_cells == [
+        value for index in range(20)
+        for value in (f"<alias-{index}>", "→", f"<voice-{index}>")
+    ]
+    assert "&lt;alias-19&gt;" in html and "&lt;voice-19&gt;" in html
+    assert "alias-20" not in html and "voice-20" not in html
+    assert not any(node["tag"].startswith(("source", "count", "alias-", "voice-", "native"))
+                   for node in document.nodes)
+
+
+def test_disk_hotspot_heading_does_not_assume_directory_containment() -> None:
+    html = firehose_render._render_disk({})
+    headings = [_text(node) for node in _Document(html).find("h3")]
+    assert headings == ["Partitions", "Hot-spot directories (Directory sizes may overlap)"]
+    assert "comfy_output_root" not in html
+    assert "comfy_output_video" not in html
