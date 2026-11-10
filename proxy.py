@@ -5068,26 +5068,42 @@ async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | N
     return accepting, notes, accepting[0][0] if accepting[0][0] != alias.engine else None
 
 
+def _speech_alias_service_with_address(body: bytes, model_override: str | None) -> str | None:
+    """The speech service the request's model alias names, when it is not "tts" and its record names an address."""
+    try:
+        requested = model_override or json.loads(body).get("model", "tts-1")
+        resolution = resolve_model_for_operation("speech", requested)
+    except (ValueError, AttributeError, ModelCompatibilityError):
+        return None
+    alias = resolution.alias
+    service = (alias.service or "") if alias is not None and alias.engine_spec is not None else ""
+    return service if service and service != "tts" and _speech_service_base(service) else None
+
+
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
-    if not DERIVED.TTS_ENABLED:
-        return openai_error_response(
-            "TTS not enabled",
-            status_code=503,
-            error_type="service_unavailable",
+    body = await request.body()
+    # A model whose alias names another speech service with an address does not need the "tts" record: that
+    # service is checked below, where the alias resolves. Only a request for "tts" itself needs "tts" configured.
+    alias_service = _speech_alias_service_with_address(body, model_override)
+    if alias_service is None:
+        if not DERIVED.TTS_ENABLED:
+            return openai_error_response(
+                "TTS not enabled",
+                status_code=503,
+                error_type="service_unavailable",
+            )
+        admission = _dispatch_admission_response(
+            "speech.synthesis", auth_context=auth_context, service_id="tts",
+            service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
         )
-    admission = _dispatch_admission_response(
-        "speech.synthesis", auth_context=auth_context, service_id="tts",
-        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
-    )
-    if admission is not None:
-        return admission
-    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
-    if service_response is not None:
-        return service_response
+        if admission is not None:
+            return admission
+        service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
+        if service_response is not None:
+            return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
-    body = await request.body()
     headers = prepare_downstream_headers(request.headers, auth_context, "tts")
     tts_service_id = "tts"
 
@@ -5197,7 +5213,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED, resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class='audio', receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5218,7 +5234,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
