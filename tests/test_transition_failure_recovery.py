@@ -4,6 +4,7 @@ reopens. Crash states are built on the real operation store; a restart is the re
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -410,11 +411,9 @@ def _resolve(runtime: Any, op_id: str, step: str) -> Any:
     async def go() -> Any:
         executor = runtime.executor()
         await executor.resolve(op_id, step=step, outcome="success", evidence_ref="owner")
-        for _ in range(200):
-            done = await asyncio.to_thread(executor.store.get, op_id)
-            if done.state != "running":
-                return done
-            await asyncio.sleep(0.05)
+        # A settled row can precede task finalization. wait() joins that task and then re-reads the row.
+        done = await asyncio.wait_for(executor.wait(op_id), timeout=10.0)
+        assert done.state != "running", "the executor stopped without settling or holding the operation"
         return done
 
     return run(go())
@@ -624,6 +623,72 @@ def test_a_hold_written_in_the_previous_format_re_reads_the_clean_check(tmp_path
     assert engine.resets == 0, "the reset already ran; it is not run again"
     cleans = [call for call in engine.calls if call[0] == "transition.clean"]
     assert len(cleans) == 1, "the clean check was read once, not skipped"
+
+
+def test_cancelling_after_a_successful_finish_reholds_only_the_gate_cache(tmp_path, monkeypatch) -> None:
+    """Pin the current shutdown defect after both the successful commit and its cache publication."""
+    gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.clean, engine.resident = True, "alpha"
+    executor = runtime.executor()
+    begun = executor.store.begin(domain="dom", kind="wake", idempotency_key="finish-cancellation", target="alpha",
+                                 incarnation="inc-1", config_revision=1)
+    op_id = begun.operation.op_id
+    executor.store.write_intent(op_id, StepIntent(step="restore", effect_key=f"{op_id}:restore:revalidate",
+                                                  expected_incarnation="inc-1"),
+                                EffectResult(outcome="unknown",
+                                             evidence_ref="revalidate:restore:failed:state_not_known_clean"))
+    executor.store.finish(op_id, "reconciling", "reconciling")
+
+    async def go() -> None:
+        loop = asyncio.get_running_loop()
+        published = asyncio.Event()
+        worker_returned = asyncio.Event()
+        release_worker = threading.Event()
+        real_finish = executor.store.finish
+        task = None
+
+        def finish(op: str, state: str, gate: str) -> Any:
+            done = real_finish(op, state, gate)
+            if (op, state, gate) == (op_id, "succeeded", "open"):
+                # Signal after the real commit AND note_write, while the executor still awaits this worker.
+                loop.call_soon_threadsafe(published.set)
+                try:
+                    assert release_worker.wait(timeout=10.0), "the finish worker was not released"
+                finally:
+                    loop.call_soon_threadsafe(worker_returned.set)
+            return done
+
+        monkeypatch.setattr(executor.store, "finish", finish)
+        try:
+            await asyncio.wait_for(executor.reconcile_startup(), timeout=10.0)
+            task = executor._tasks[op_id]
+            await asyncio.wait_for(published.wait(), timeout=10.0)
+            before = await asyncio.to_thread(executor.store.get, op_id)
+            assert before is not None
+            assert (before.state, gates.state("dom")) == ("succeeded", "open")
+            assert not task.done(), "the finish worker must still be blocked"
+            assert task.cancel(), "cancel the captured executor task, not the observer"
+            release_worker.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+            await asyncio.wait_for(worker_returned.wait(), timeout=10.0)
+            after = await asyncio.to_thread(executor.store.get, op_id)
+            assert after is not None
+            # Current behavior: _run's cancellation handler forces an in-memory hold over a finished row.
+            assert (after.state, gates.state("dom")) == ("succeeded", "reconciling")
+            assert executor._recovery_pending
+            assert not executor._lock_for("dom").locked()
+        finally:
+            # A failed assertion/watchdog must not strand a worker or let loop shutdown do the cancellation.
+            release_worker.set()
+            if task is None:
+                task = executor._tasks.get(op_id)
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=10.0)
+
+    run(go())
 
 
 # -- a failed durable finalization marks recovery pending (dot review of 51faf1338) -------------------------------------

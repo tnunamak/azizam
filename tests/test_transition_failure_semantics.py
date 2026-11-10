@@ -407,11 +407,9 @@ def _restart(runtime: Any, op_id: str) -> Any:
     async def go() -> Any:
         executor = runtime.executor()
         await executor.reconcile_startup()
-        for _ in range(200):
-            done = await asyncio.to_thread(executor.store.get, op_id)
-            if done.state != "running":
-                return done
-            await asyncio.sleep(0.05)
+        # A settled row can precede task finalization. wait() joins that task and then re-reads the row.
+        done = await asyncio.wait_for(executor.wait(op_id), timeout=10.0)
+        assert done.state != "running", "the executor stopped without settling or holding the operation"
         return done
 
     return run(go())
