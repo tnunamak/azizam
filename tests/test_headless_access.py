@@ -529,7 +529,9 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     workflows (S3.5a) removed the `prompt` input of ace-step-1.5-xl-turbo (the route sends the prompt to `tags`), so
     WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo was re-captured. The generic run route (S6) takes full workflow
     ids and answers a media job, so the rife-interpolate and scail-2-replace run paths are keyed by their full ids and were
-    re-captured.
+    re-captured. S7 (V5a) gave the video workflows width, height,
+    length and, for H3, frame_rate inputs, so WorkflowInputs_video_generate_{ltx_2_5,minimax_h3}_{t2v,i2v} were re-captured.
+    S7 (V5c) made the two video create paths rows, so their operation id and summary moved and the description went; nothing else did.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())

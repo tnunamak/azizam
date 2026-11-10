@@ -27,7 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
-from gateway import media_input_leases, request_connections, request_source
+from gateway import job_wake, media_input_leases, request_connections, request_source
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -168,6 +168,15 @@ _FORBIDDEN_KEYS = _SHARED_FORBIDDEN_KEYS  # noqa: F841 — re-exported for backw
 
 def new_job_id() -> str:
     return f"mj_{uuid4().hex}"
+
+
+_JOB_ID_FORM = re.compile(r"^mj_[0-9a-f]{32}$")
+
+
+def is_job_id(raw: str) -> bool:
+    """True when ``raw`` has the form ``new_job_id`` makes. Whether such a job exists, was deleted or was reaped does not
+    change what an id of this form names: the job store."""
+    return isinstance(raw, str) and _JOB_ID_FORM.match(raw) is not None
 
 
 def _now() -> int:
@@ -1210,6 +1219,22 @@ def delete_succeeded_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> int
     return deleted
 
 
+def discard_failed(job_id: str, *, path: Path = DB_PATH) -> bool:
+    """Delete one failed job, its events, envelope, results and idempotency claim. A job that did not fail stays. For a job
+    whose engine never took it (the caller was told 502): nothing of it may be kept or replayed."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        found = conn.execute("SELECT 1 FROM media_jobs WHERE job_id=? AND status=?", (job_id, STATUS_FAILED)).fetchone()
+        if found is None:
+            conn.commit()
+            return False
+        conn.execute("DELETE FROM media_job_events WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM media_jobs WHERE job_id=?", (job_id,))
+        _release_envelopes_in(conn, [job_id])
+        conn.commit()
+    return True
+
+
 def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> None:
     """Release each deleted job's envelope, references and results, in the transaction that deleted the job row.
 
@@ -1763,6 +1788,8 @@ def update_status(
         if before_commit is not None:
             before_commit(conn, updated.to_dict("internal"))
         conn.commit()
+    if is_terminal(status):
+        job_wake.wake(job_id)
     return updated.to_dict("internal")
 
 

@@ -77,7 +77,15 @@ def frozen_release_records() -> dict[str, dict[str, Any]]:
 @lru_cache(maxsize=1)
 def _frozen_fixes() -> dict[str, list[list[str]]]:
     document = json.loads(FROZEN_FIXES_PATH.read_text(encoding="utf-8"))["fixes"]
-    return {record_id: [list(path) for path in fix["remove"]] for record_id, fix in document.items()}
+    return {record_id: [list(path) for path in fix.get("remove", ())] for record_id, fix in document.items()}
+
+
+@lru_cache(maxsize=1)
+def _frozen_additions() -> dict[str, list[tuple[list[str], Any, Any]]]:
+    """Per workflow id: the ``(path, value, was)`` triples a fix set. ``was`` is what the release held there, or ``_OMIT``
+    where it held nothing."""
+    document = json.loads(FROZEN_FIXES_PATH.read_text(encoding="utf-8"))["fixes"]
+    return {record_id: [(list(item["path"]), item["value"], item.get("was", _OMIT)) for item in fix.get("set", ())] for record_id, fix in document.items()}
 
 
 def _at(document: Any, path: list[str]) -> Any:
@@ -97,17 +105,27 @@ def _json_equal(left: Any, right: Any) -> bool:
 
 
 def apply_release_fixes(record_id: str, manifest: dict[str, Any]) -> None:
-    """Remove from a schema 1 ``manifest`` what S3.5a's defect fixes removed from the release document of ``record_id``.
+    """Make in a schema 1 ``manifest`` what the defect fixes made in the release document of ``record_id``: remove the paths
+    a fix removed, and set the values it added.
 
-    The paths are data (``workflow_schema_1_release_fixes.json``). The paths go only if the record still holds the frozen
-    release value at every one: an owner who changed one keeps all, and the record then fails the checks as it would have."""
+    The paths and values are data (``workflow_schema_1_release_fixes.json``). A fix is made only if the record still holds
+    the frozen release value at every removed path and the release's value (or nothing) at any set path: an owner who changed one keeps all, and the
+    record then fails the checks as it would have."""
     frozen = _frozen_documents().get(record_id)
-    paths = _frozen_fixes().get(record_id, ()) if frozen is not None else ()
+    paths = _frozen_fixes().get(record_id, []) if frozen is not None else []
+    additions = _frozen_additions().get(record_id, []) if frozen is not None else []
     # The fix is one change: if the owner edited any part of it, none is made, and the record fails the checks as it was.
-    if not paths or any(_at(frozen, path) is _OMIT or not _json_equal(_at(manifest, path), _at(frozen, path)) for path in paths):
+    if not (paths or additions) or any(
+            _at(frozen, path) is _OMIT or not _json_equal(_at(manifest, path), _at(frozen, path)) for path in paths) or any(
+            not _json_equal(_at(manifest, path), was) for path, _value, was in additions):
         return
     for path in paths:
         del _at(manifest, path[:-1])[path[-1]]
+    for path, value, _was in additions:
+        holder = manifest
+        for key in path[:-1]:
+            holder = holder.setdefault(key, {})
+        holder[path[-1]] = copy.deepcopy(value)
 
 
 # -- one record --------------------------------------------------------------------------------------------------------

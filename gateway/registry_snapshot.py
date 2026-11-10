@@ -138,6 +138,14 @@ def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> str:
     return value
 
 
+def _refusal_receipt(row_id: str, raw: Mapping[str, Any]) -> str:
+    value = raw.get("refusal_receipt", "failed")
+    if value not in ("failed", "rejected"):
+        raise SnapshotBuildError([_problem(("frontends", row_id, "refusal_receipt"), "refusal_receipt",
+                                           "refusal_receipt is failed or rejected")])
+    return value
+
+
 def frontend_row(raw: Mapping[str, Any]) -> FrontendRow:
     """One ``FrontendRow`` from a file record. ``selects`` is kept as the row wrote it and checked with the kernel's
     ``selector_problems`` when it is present."""
@@ -160,7 +168,8 @@ def frontend_row(raw: Mapping[str, Any]) -> FrontendRow:
         mode=mode, receipt_protocol=str(receipt),
         strictness="lenient" if raw.get("strictness") == "lenient" else "exact",
         lists_as_model=bool(raw.get("lists_as_model", False)),
-        receipt_opens=_receipt_opens(row_id, raw),
+        receipt_opens=_receipt_opens(row_id, raw), refusal_receipt=_refusal_receipt(row_id, raw),
+        run_receipt_path=str(raw.get("run_receipt_path") or ""),
     )
 
 
@@ -345,6 +354,10 @@ def _row_value(row: FrontendRow) -> dict[str, Any]:
                          "runtime_policy": r.runtime_policy} for r in row.routes]}
     if row.receipt_opens != "after_policy":      # the default adds nothing, so existing digests stay as they were
         value["receipt_opens"] = row.receipt_opens
+    if row.refusal_receipt != "failed":
+        value["refusal_receipt"] = row.refusal_receipt
+    if row.run_receipt_path:
+        value["run_receipt_path"] = row.run_receipt_path
     return value
 
 

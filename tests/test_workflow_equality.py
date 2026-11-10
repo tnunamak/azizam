@@ -104,6 +104,21 @@ def test_a_named_edit_removes_one_key_and_a_schema_two_before_side_has_had_it_al
     assert [(d.path, d.after) for d in eq.binding_content_differences(before, after, named)] == [("/a/map/y", 2)]
 
 
+def test_a_named_add_needs_an_absent_target_and_keeps_a_value_that_is_already_there():
+    add = ({"workflow": "w", "path": ["a", "result_processing"], "operation": "add", "value": ["post_composite_mask"]},)
+    assert eq.apply_binding_edits("w", {"a": {}}, add) == {"a": {"result_processing": ["post_composite_mask"]}}
+    # Control: the stage was there before the edit; the add leaves it and reports nothing.
+    had = {"w": {"schema_version": 1, "bindings": {"a": {"result_processing": ["post_composite_mask"]}}}}
+    named = eq.Allowed(rules=(), binding_edits=add)
+    assert eq.apply_binding_edits("w", had["w"]["bindings"], add) == had["w"]["bindings"]
+    assert eq.binding_content_differences(had, copy.deepcopy(had), named) == []
+    # A different stage list in the old binding is a replaced stage, not an add: the gate refuses it.
+    replaced = {"w": {"schema_version": 1, "bindings": {"a": {"result_processing": ["other"]}}}}
+    after = {"w": {"schema_version": 2, "bindings": {"a": {"result_processing": ["post_composite_mask"]}}}}
+    with pytest.raises(ValueError, match="needs an absent target"):
+        eq.binding_content_differences(replaced, after, named)
+
+
 def test_a_workflow_that_is_missing_on_one_side_is_a_difference():
     found = eq.binding_content_differences({"w": {"bindings": {}}}, {}, eq.Allowed(rules=(), binding_edits=()))
     assert [(d.workflow, d.after) for d in found] == [("w", "<absent>")]

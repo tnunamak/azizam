@@ -190,8 +190,11 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_route_inputs_cover_what_manifests_omit(self) -> None:
         by_name = {n: {r["name"] for r in e["route_inputs"]} for n, e in self.catalog.items()}
-        self.assertIn("seconds", by_name["video.generate.ltx-2.5-t2v"])
-        self.assertIn("size", by_name["video.generate.ltx-2.5-t2v"])
+        # A video manifest that declares width, height and length takes size and seconds from them (CODE_TO_DATA S7, V5a);
+        # the chain workflow has no length input, so the route still owns its seconds.
+        self.assertNotIn("seconds", by_name["video.generate.ltx-2.5-t2v"])
+        self.assertNotIn("size", by_name["video.generate.ltx-2.5-t2v"])
+        self.assertIn("seconds", by_name["video.generate.ltx-2.5-long"])
         self.assertNotIn("size", by_name["image.generate.krea2-turbo"])  # has width/height
         self.assertIn("n", by_name["image.generate.krea2-turbo"])
         self.assertEqual(by_name["audio.generate.sa3-small-sfx"], set())

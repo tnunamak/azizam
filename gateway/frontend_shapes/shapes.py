@@ -16,12 +16,14 @@ from starlette.responses import JSONResponse, Response
 
 import json
 
-from gateway import client_errors, image_extensions, image_output
+from gateway import client_errors, image_extensions, image_output, provenance
 from gateway.frontend_shapes import _wire
-from gateway.frontend_shapes._base import TERMINAL, Shape, coerce, job_object
+from gateway.frontend_shapes._base import TERMINAL, LegacyRoute, Shape, coerce, job_object
+from gateway.frontend_shapes.video_views import VideoViews
 from gateway.workflow_runtime_types import (
     CallerContext,
     JobService,
+    RunRefused,
     MediaRef,
     ResultRef,
     RunJobView,
@@ -98,7 +100,8 @@ class OpenAIImagesJson(Shape):
         extensions = wire.get("extensions")
         block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
         if isinstance(block, Mapping):
-            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()})
+            inputs.update({str(name): coerce(entry, str(name), value) for name, value in block.items()
+                           if name not in provenance.RESERVED_GATEWAY_CONTROLS})
         dimensions = self.dimensions(wire.get("size"))
         if dimensions is not None and _wire.declared(entry, "width") and _wire.declared(entry, "height"):
             inputs["width"], inputs["height"] = dimensions
@@ -111,7 +114,10 @@ class OpenAIImagesJson(Shape):
     # The top-level wire fields this route accepts; any other is refused (a workflow's own inputs go under ``extensions``).
     standard_fields: ClassVar[frozenset[str]] = image_extensions.STANDARD_IMAGE_GENERATE_FIELDS
 
-    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()
+    # A field the wire does not know is refused when the request is read (False), or taken and refused by the run (True).
+    refuses_unknown_at_run: ClassVar[bool] = False
+
+    def read_wire(self, request: Request, fields: dict[str, Any], upload_names: Sequence[str] = ()
                   ) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """The options that change the picture or its encoding (they reach the adapter and the run's identity), and the
         answer form (how this request wants the pictures shown). Each is checked as the wire always checked it."""
@@ -122,7 +128,13 @@ class OpenAIImagesJson(Shape):
             return fields.get(name) not in (None, "")
 
         unknown = image_extensions.detect_unknown_top_level_fields({**fields, **dict.fromkeys(upload_names)}, self.standard_fields)
-        if unknown:
+        if unknown and self.refuses_unknown_at_run:
+            # The job route took the field at submit and its run refused it: the run fails the job with this refusal.
+            name, message = next(iter(unknown.items()))
+            request.state.run_refusal = {"status": 400, "code": "unknown_parameter", "category": "invalid_input", "message": message}
+            for field_name in unknown:
+                fields.pop(field_name, None)
+        elif unknown:
             for name, reason in unknown.items():
                 _wire.note(name, rejected=reason)
             name, message = next(iter(unknown.items()))
@@ -136,6 +148,13 @@ class OpenAIImagesJson(Shape):
             if not isinstance(extensions, Mapping):
                 return refuse("extensions must be a JSON object string", "extensions", "invalid_json")
             fields["extensions"] = extensions
+        block = extensions.get(image_extensions.WORKFLOW_EXTENSION_NAMESPACE) if isinstance(extensions, Mapping) else None
+        for control in (provenance.RESERVED_GATEWAY_CONTROLS if isinstance(block, Mapping) else ()):
+            if control in block:                             # a gateway control belongs to no workflow: it is checked here
+                try:
+                    provenance.parse_metadata_mode(block[control])
+                except provenance.MetadataModeError as error:
+                    return refuse(str(error), f"extensions.{image_extensions.WORKFLOW_EXTENSION_NAMESPACE}.{control}", "invalid_value")
 
         refused = self.front(fields)
         if refused is not None:
@@ -239,7 +258,19 @@ class OpenAIImagesJson(Shape):
 ECHOED = ("output_format", "background", "quality", "size")
 
 
-MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response
+MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response; "post_composite": (picture, mask) -> mode | Response
+
+
+PICTURE_SIZE: dict[str, Callable[[bytes], tuple[int, int] | None]] = {}    # the deployment's picture reading: "picture": bytes -> (width, height) | None
+
+
+async def _peek(upload: Any) -> bytes:
+    """A file part's content, left readable."""
+    if isinstance(upload, _Bytes):
+        return upload.content
+    data = await upload.read()
+    await upload.seek(0)
+    return data
 
 
 class _Bytes:
@@ -249,6 +280,7 @@ class _Bytes:
 
     def __init__(self, filename: str | None, content: bytes) -> None:
         self.filename, self._content = filename, content
+        self.content = content
 
     async def read(self, size: int = -1) -> bytes:
         block, self._content = (self._content, b"") if size < 0 else (self._content[:size], self._content[size:])
@@ -257,6 +289,7 @@ class _Bytes:
 
 IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
 MASK_PART = "mask"
+REFERENCE_KIND = IMAGE_PARTS[1]                  # what a video manifest calls the picture a request supplies
 SECOND_CHOICE = ".multi_image"                   # DEFAULT_WORKFLOWS key suffix: the default when several pictures arrive
 _DIMENSIONS = re.compile(r"[0-9]+x[0-9]+")
 
@@ -293,6 +326,7 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     files = "any"                  # an edit may take several pictures (a workflow with more than one required asset)
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
     not_object_text = "The request body must be a JSON object"
+    size_from_picture: ClassVar[bool] = True   # a request that asks for no size runs, and answers with, the picture's own
 
     def dimensions(self, text: Any) -> tuple[int, int] | None:
         size = read_size(text)
@@ -322,27 +356,72 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     def check_count(self, count: int) -> Response | None:
         return None
 
-    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request, fields: dict[str, Any]
                               ) -> list[tuple[str, Any]] | Response:
+        prepared = await self._fold_mask(entry, uploads, request)
+        if isinstance(prepared, Response) or not self.size_from_picture or self.dimensions(fields.get("size")) is not None:
+            return prepared
+        first = next((upload for name, upload in prepared if name in IMAGE_PARTS), None)
+        read = PICTURE_SIZE.get("picture")
+        found = read(await _peek(first)) if first is not None and read is not None else None
+        if found is not None:                   # no size asked for: the run, and the answer, use the picture's own
+            fields["size"] = f"{found[0]}x{found[1]}"
+            answer = getattr(request.state, "answer_form", None)
+            if isinstance(answer, dict):
+                answer["size"] = fields["size"]
+        return prepared
+
+    async def _fold_mask(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+                         ) -> list[tuple[str, Any]] | Response:
         """A workflow whose binding asks for the mask in the source picture's alpha gets one picture and no mask part."""
         masks = [upload for name, upload in uploads if name == MASK_PART]
+        if masks:       # a request with a mask is not asked to make a cutout of the picture
+            request.state.run_options = {"masked": True}
         compose = MASKING.get("source_alpha")
+        if masks and not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
+            return await self._check_composite(entry, uploads, masks[0], request)
         if not masks or compose is None or not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
             return uploads
         first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
         if first is None:
             return uploads
-        made = compose(await first.read(), await masks[0].read())
+        original = await first.read()
+        made = compose(original, await masks[0].read())
         if isinstance(made, Response):
             _wire.note(MASK_PART, rejected="invalid_mask")
             return made
         content, mode = made
+        # The folded picture is the run's own input; the Library keeps the picture the caller sent as the result's source.
+        kept = _Bytes(first.filename, original)
+        kept.content_type = getattr(first, "content_type", None) or kept.content_type
+        request.state.source_uploads = [(name, kept) for name, upload in uploads if upload is first]
         answer = getattr(request.state, "answer_form", None)
         if isinstance(answer, dict):
             answer["image_mask"] = "workflow"
             answer["image_mask_source"] = mode
         return [(name, _Bytes(first.filename, content) if upload is first else upload)
                 for name, upload in uploads if name != MASK_PART]
+
+    async def _check_composite(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], mask: Any, request: Request
+                               ) -> list[tuple[str, Any]] | Response:
+        """A workflow whose binding lists the ``post_composite_mask`` stage keeps the mask as a file of the run; the mask is
+        read here so a bad one is refused before any work, and the answer names how it will be applied."""
+        check = MASKING.get("post_composite")
+        if check is None or not any("post_composite_mask" in (b.binding.get("result_processing") or ()) for b in entry.bindings.values()):
+            return uploads
+        first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
+        if first is None:
+            return uploads
+        mode = check(await _peek(first), await _peek(mask))
+        if isinstance(mode, Response):
+            _wire.note(MASK_PART, rejected="invalid_mask")
+            return mode
+        _wire.fact("", mode, "mask_mode:post_composite")
+        answer = getattr(request.state, "answer_form", None)
+        if isinstance(answer, dict):
+            answer["image_mask"] = "post-composite"
+            answer["image_mask_source"] = mode
+        return uploads
 
     def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
                       exists: Callable[[str], bool]) -> str | None:
@@ -410,6 +489,7 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
     shape_id = "openai.images.variations"
     files = "one"
+    size_from_picture = False
     standard_fields = image_extensions.STANDARD_IMAGE_VARIATIONS_FIELDS
 
     def check_count(self, count: int) -> Response | None:
@@ -432,7 +512,10 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
 
 class ImageJobs(OpenAIImagesJson):
     """The image jobs route: the request of the JSON images shape, answered as a job object (202, or 200 when the job
-    is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes."""
+    is already over) with a ``Location`` header. Poll and content URLs are the media-jobs routes. A field the wire does not
+    know is taken at submit and refused by the run, which fails the job (as the old job route did)."""
+
+    refuses_unknown_at_run = True
 
     shape_id = "openai.images.jobs"
     not_object_text = "JSON body must be an object"
@@ -472,11 +555,42 @@ class AudioGenerate(Shape):
         return Response(content=self.read(view, refs[0], jobs, caller), media_type=refs[0].media_type)
 
 
-_VIDEO_STATUS = {"queued": "queued", "running": "in_progress", "succeeded": "completed", "failed": "failed",
-                 "canceled": "failed"}
+class VideoHooks:
+    """What a deployment adds to a video create: the model name it serves, the delivery rules it applies to the body and the
+    prompt it remembers. The defaults do nothing; the main module installs a subclass in ``VIDEO_HOOKS`` at start."""
+
+    def resolve_model(self, name: str) -> str | Response:
+        """The workflow name a public model name stands for (or the refusal the deployment gives for it)."""
+        return name
+
+    def begin_delivery(self, caller: Any, body: Mapping[str, Any]) -> Response | None:
+        """Read the delivery controls of the body (metadata mode, prompt keeping); a Response refuses the request."""
+        return None
+
+    def prompt_retention(self, caller: Any, body: Mapping[str, Any]) -> str:
+        """The keep or forget decision on the prompt, part of the run's identity ("" when the deployment keeps none)."""
+        return ""
+
+    def keep_prompt(self, caller: Any, key: str, prompt: str) -> bool:
+        """Remember the prompt of a new job under ``key``; True when it was kept."""
+        return False
+
+    def check_reference(self, caller: Any, data: bytes, contract: Mapping[str, Any], input_name: str) -> Response | None:
+        """Refuse a reference picture before any effect: the deployment's disclosure rule for where it would go, and the
+        types the contract's input accepts. No file is stored and nothing is leased; a Response refuses the request."""
+        return None
+
+    async def source(self, job_id: str, wire_id: str, caller: Any) -> Any:
+        """The stored clip a wire id names, read from its file (a ``VideoSource``), or the refusal to give (a ``SourceRefused``).
+        None: this deployment cannot read a source, and the request is refused as an unreadable one."""
+        return None
 
 
-class OpenAIVideoCreate(Shape):
+VIDEO_HOOKS: VideoHooks | None = None
+EXPIRY_S = 86400                    # how long the answer to a create says a video stays: the old route's day
+
+
+class OpenAIVideoCreate(VideoViews, Shape):
     """``POST /v1/videos``: a JSON body with a prompt; the answer is a video object that is queued at once."""
 
     shape_id = "openai.video.create"
@@ -490,12 +604,46 @@ class OpenAIVideoCreate(Shape):
         second part of the shape id. Read from the id so the word is data of the shape, not a literal in the code."""
         return self.shape_id.split(".")[1]
 
-    def render_job(self, view: RunJobView) -> Response:
-        status = _VIDEO_STATUS.get(view.status, "queued")
-        body = {"id": view.job_id, "object": self.wire_name, "status": status, "progress": 100 if status == "completed" else 0,
-                "created_at": view.created_at_s, "completed_at": view.updated_at_s if status == "completed" else None,
-                "error": None if view.failure is None else {"code": view.failure.code, "message": view.failure.message}}
-        return JSONResponse(body, headers={"Location": f"/gateway/v1/media/jobs/{view.job_id}"})
+    def default_target(self) -> str | None:
+        resolver = DEFAULT_WORKFLOWS.get(self.shape_id)
+        return resolver() if resolver is not None else None
+
+    async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
+        from gateway.frontend_shapes import video_create
+        return await video_create.to_run_request(self, request, row, snapshot, spool=spool)
+
+    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
+        from gateway.frontend_shapes import video_create
+        return await video_create.legacy_route(self, request, row, snapshot)
+
+    async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
+        if isinstance(outcome, RunRefused):
+            return await super().to_response(outcome, row, jobs=jobs, caller=caller, request=request)
+        facts = dict(getattr(getattr(request, "state", None), "video_facts", None) or {})
+        recorded = getattr(jobs, "request_facts", lambda *_: None)(outcome.job_id, caller)
+        facts = {**facts, **(recorded or {})}
+        now = outcome.created_at_s
+        body = {
+            "id": self.wire_id(outcome.job_id), "object": self.wire_name, "model": facts.get("model"),
+            "azizam_resolved_model": facts.get("resolved_model"), "status": "queued", "progress": 0, "created_at": now,
+            "completed_at": None, "expires_at": now + EXPIRY_S, "prompt": None, "remixed_from_video_id": None, "error": None,
+            "size": facts.get("size"), "seconds": facts.get("seconds"), "actual_seconds": facts.get("actual_seconds")}
+        requested, actual = facts.get("seconds"), facts.get("actual_seconds")
+        adjusted = None
+        try:
+            if requested is not None and actual is not None and abs(float(actual) - float(requested)) > 0.05:
+                adjusted = f"requested={float(requested):g} actual={float(actual):.4f} reason=frame_count_stride"
+        except (TypeError, ValueError):
+            adjusted = None
+        headers = _wire.result_headers(row.result_headers, {"duration_adjusted": adjusted})
+        return JSONResponse(body, headers=headers)
+
+    async def after_submit(self, request, view: RunJobView, caller) -> None:
+        """A new job's prompt goes to the deployment's prompt memory; a replay of an old job keeps nothing again."""
+        prompt = getattr(getattr(request, "state", None), "video_prompt", None)
+        hooks = VIDEO_HOOKS
+        if hooks is not None and prompt and view.disposition == "new":
+            hooks.keep_prompt(caller, self.wire_id(view.job_id), prompt)
 
 
 class OpenAIVideoEdit(OpenAIVideoCreate):
@@ -508,8 +656,17 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
     def file_inputs(self, entry: WorkflowEntry, part_names: list[str]) -> Mapping[str, str]:
         return {}
 
+    async def to_response(self, outcome, row, *, jobs, caller, request=None):  # type: ignore[override]
+        return await Shape.to_response(self, outcome, row, jobs=jobs, caller=caller, request=request)
+
+    async def after_submit(self, request, view, caller) -> None:
+        return None
+
+    async def legacy_route(self, request, row, snapshot):  # type: ignore[override]
+        return None
+
     async def to_run_request(self, request, row, snapshot, *, spool):  # type: ignore[override]
-        run = await super().to_run_request(request, row, snapshot, spool=spool)
+        run = await Shape.to_run_request(self, request, row, snapshot, spool=spool)
         if isinstance(run, Response):
             return run
         video = run.inputs.get(self.wire_name)
@@ -520,7 +677,29 @@ class OpenAIVideoEdit(OpenAIVideoCreate):
         targets = _wire.asset_input_names(entry) if entry is not None else []
         if not targets:
             return _wire.error_response(400, "This workflow edits no video", param=self.wire_name)
+        job_id = self.job_id_of(source)
+        if job_id is None:
+            return _wire.error_response(400, f"invalid {self.wire_name}_id", param=self.wire_name)
+        found = await (VIDEO_HOOKS or VideoHooks()).source(job_id, source, getattr(request.state, "caller", None))
+        if found is None:
+            return _wire.error_response(404, f"{self.wire_name}_id not found", param=self.wire_name)
+        if hasattr(found, "http_status"):
+            return _wire.error_response(found.http_status, found.message, param=self.wire_name, code=found.code)
         inputs = {name: value for name, value in run.inputs.items() if name != self.wire_name}
-        ref = MediaRef(digest="", media_type="application/octet-stream", size=0, asset_id=source)
+        # The clip is what its file shows: the run keeps the source's own frame rate, and cannot ask for more seconds than it holds.
+        if found.fps and _wire.declared(entry, "frame_rate"):
+            inputs["frame_rate"] = int(found.fps) if float(found.fps).is_integer() else found.fps
+        wanted = inputs.get("seconds")
+        if isinstance(wanted, (int, float)) and found.seconds is not None and wanted > found.seconds + 0.05:
+            return _wire.error_response(400, f"seconds ({wanted:g}) is longer than the source video ({found.seconds:.2f} s)",
+                                        param="seconds")
+        ref = MediaRef(digest="", media_type="application/octet-stream", size=0, asset_id=found.asset_id)
         from dataclasses import replace
         return replace(run, inputs=inputs, media={targets[0]: (ref,)})
+
+
+class OpenAIVideoRemix(OpenAIVideoCreate):
+    """``POST /v1/videos/{video_id}/remix``: a prompt and the id of the video to change. The id is read from the path; the
+    run is the edit shape's, with that id as the source."""
+
+    shape_id = "openai.video.remix"

@@ -316,7 +316,6 @@ class H3RouteBase(RemixReplaceBase):
         super().setUp()
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.stack.enter_context(patch.object(media_jobs, "DB_PATH", Path(self._tmp.name) / "m.db"))
         proxy._video_job_records[SOURCE_PROMPT_ID].update(
             {"model": "minimax-h3", "resolved_model": "video-minimax-h3-t2v", "size": "960x544"})
         # The source was made by that workflow, so its history holds the file on the node the workflow's selector names.

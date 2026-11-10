@@ -790,3 +790,28 @@ def test_rollback_allows_queued_jobs_with_no_recorded_pin(rollback_db):
     reasons = {row["job_id"]: row["reason"] for row in workflow_run.rollback_job_inventory(rollback_db)}
     assert reasons == {"queued-unpinned": workflow_run.PIN_NOT_RECORDED, "queued-v1": "v1_compatible"}
     assert workflow_run.assert_rollback_ready(rollback_db) is None
+
+
+def test_a_run_core_video_job_is_read_and_deleted_through_the_video_routes_by_its_wire_id(world):  # S7 M7
+    manifest = manifest_of(VIDEO_ID)
+    engine = serve_engine(world, FakeGraphEngine(manifest, mp4_bytes(), "video/mp4", "out.mp4"))
+    made = call("post", f"/gateway/v1/workflows/{VIDEO_ID}/run", json={"inputs": {"prompt": "waves at dusk"}},
+                headers={"Prefer": "wait=20"})
+    assert made.status_code == 200 and made.json()["status"] == "succeeded", (made.text, engine.calls)
+    wire_id = f"video_{made.json()['job_id']}"
+    status = call("get", f"/v1/videos/{wire_id}")
+    assert status.status_code == 200, status.text
+    assert (status.json()["id"], status.json()["status"], status.json()["azizam_status"]) == (wire_id, "completed", "succeeded")
+    content = call("get", f"/v1/videos/{wire_id}/content")
+    assert (content.status_code, content.headers["content-type"]) == (200, "video/mp4")
+    assert content.content[4:8] == b"ftyp"          # the stored file, which the core's writer may have re-muxed
+    # This world publishes no workflows of its own, so the derived per-kind policy delete enforces has no entry for the
+    # video kind: give it the policy the GET route of the same path has.
+    world.monkeypatch.setattr(proxy, "_video_route_policy", lambda: {
+        "protocol": "openai.video", "intent": "video.generate", "backend": "comfyui", "capability_exposure": "default",
+        "capability_trust_tier": "stable", "capability_resource_tier": "expensive"})
+    gone = call("delete", f"/v1/videos/{wire_id}")
+    assert (gone.status_code, gone.json()) == (200, {"id": wire_id, "object": "video", "deleted": True})
+    for path in (f"/v1/videos/{wire_id}", f"/v1/videos/{wire_id}/content"):
+        assert call("get", path).status_code in (400, 404)
+    assert call("delete", f"/v1/videos/{wire_id}").status_code in (400, 404)

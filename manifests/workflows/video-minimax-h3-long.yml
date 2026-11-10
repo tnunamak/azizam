@@ -12,6 +12,14 @@ display_name: MiniMax H3 Long
 purpose: Long videos with sound
 prompt_hint: Describe the clip you want
 description: Make a longer video with sound from a description.
+video:
+  roles:
+    width: width
+    height: height
+  size: {default: 960x544, max: 1344x768, multiple: 32}
+  length: {min_seconds: 2, max_seconds: 40}
+  grid: {fps: 24, step: 8, offset: 1}
+  chain: true
 inputs:
   prompt:
     label: What to make

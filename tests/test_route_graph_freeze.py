@@ -233,6 +233,16 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # POST /v1/3d/generations/glb arrived (see REMOVED_PATHS and ADDED_PATHS); the mesh workflow's documented sync and
         # async paths moved to /v1/3d/generations/glb (tests/fixtures/headless_openapi.json shows the same changes).
         # Before it the digest was 501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8.
+        # Re-captured 2026-11-08 for S7 (V5a): the video workflows declare their width, height and length (and, for H3, its
+        # frame rate) as inputs, so their input schemas and the route inputs the catalog lists for them moved; nothing else
+        # did (tests/fixtures/headless_openapi.json shows the same changes). Before it the digest was
+        # 8fd6d76f183f45e3b1271eeaddc284266e473ec598f25f4a8c4cc8c3d1f699f5. Re-captured again for S7 (V5c): POST /v1/videos and
+        # POST /openai/v1/videos are rows now, so their operation id and summary moved; nothing else did. Before it the digest
+        # was 33821a54e784de1c8076b989415d3670e85a0acbe8246a4c9d3569da5932d97f.
+        # Re-captured 2026-11-09 for the merge of the image rows (I2) with the video rows (V5a to V5c): each side's document
+        # change is in tests/fixtures/headless_openapi.json, which merged without a conflict. Before it the digests were
+        # 14ce7dfb5ffa910de2b633e42712afc201dbafde2da2a7f7517e9805932f1aae (video side) and
+        # c4a9451c273b6939ab712658a9aec1dca0778dd9d27a579b67a813c5c604640d (image side).
         # Re-captured 2026-11-08 for the generic run route (S6): each video-edit workflow's concrete run path names its
         # full id, and the run route documents the media job it answers (202, ``Location``) instead of video bytes;
         # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the digest was
@@ -286,6 +296,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # POST /v1/3d/generations/glb arrived with the same App key security; the mesh workflow's documented paths moved.
     # tests/fixtures/headless_openapi.json shows the same changes and nothing else. Before it the frozen digest was
     # b62d42d37489df105cda9f0d730000d9ea8dba85e958df91ecfa7b21d629e6ad.
+    # Re-captured 2026-11-08 for S7 (V5a): the same video workflow input changes (its own digest note is above).
     # Re-captured 2026-11-08 for the generic run route (S6): the video-edit run paths name full ids and the run route
     # documents the media job it answers. Before it the frozen digest was
     # 31f6c2466d9a16b8ea6ea4142276243d3266d057c5293e1b051a0278de3f0ae1.

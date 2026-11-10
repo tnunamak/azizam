@@ -24,6 +24,7 @@ from gateway.frontend_shapes.shapes import (
     OpenAIImagesVariations,
     OpenAIVideoCreate,
     OpenAIVideoEdit,
+    OpenAIVideoRemix,
 )
 from gateway.workflow_kernel import selector_matches, selector_problems
 from gateway.workflow_runtime_types import FrontendRow, RouteSpec
@@ -32,7 +33,7 @@ ROWS_PATH = Path(__file__).resolve().parents[2] / "registry" / "protocol_fronten
 ROWS_KEY = "frontends"
 
 SHAPE_CLASSES: Mapping[str, Callable[..., Shape]] = {cls.shape_id: cls for cls in (
-    OpenAIImagesJson, OpenAIImagesMultipart, OpenAIImagesVariations, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, LocalAI3D, RawGlb)}
+    OpenAIImagesJson, OpenAIImagesMultipart, OpenAIImagesVariations, ImageJobs, AudioGenerate, OpenAIVideoCreate, OpenAIVideoEdit, OpenAIVideoRemix, LocalAI3D, RawGlb)}
 
 
 class RowError(ValueError):
@@ -43,6 +44,58 @@ def _receipt_opens(row_id: str, raw: Mapping[str, Any]) -> Any:
     value = raw.get("receipt_opens", "after_policy")
     if value not in ("before_policy", "after_policy"):
         raise RowError(f"{row_id}: receipt_opens must be before_policy or after_policy")
+    return value
+
+
+def _receipt_closes(row_id: str, raw: Mapping[str, Any]) -> Any:
+    value = raw.get("receipt_closes", "terminal")
+    if value not in ("terminal", "submit"):
+        raise RowError(f"{row_id}: receipt_closes must be terminal or submit")
+    return value
+
+
+def _backend_at_run(row_id: str, raw: Mapping[str, Any]) -> bool:
+    value = raw.get("backend_at_run", False)
+    if not isinstance(value, bool):
+        raise RowError(f"{row_id}: backend_at_run must be true or false")
+    return value
+
+
+def _history_facts(row_id: str, raw: Mapping[str, Any]) -> bool:
+    value = raw.get("history_facts", True)
+    if not isinstance(value, bool):
+        raise RowError(f"{row_id}: history_facts must be true or false")
+    return value
+
+
+def _unconfigured(row_id: str, raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    found = raw.get("unconfigured")
+    if found is None:
+        return None
+    if (not isinstance(found, Mapping) or set(found) != {"status", "code", "message"} or not isinstance(found["status"], int)
+            or not all(isinstance(found[k], str) and found[k] for k in ("code", "message"))):
+        raise RowError(f"{row_id}: unconfigured must be a mapping of status, code and message")
+    return dict(found)
+
+
+def _receipt_allowed(row_id: str, raw: Mapping[str, Any]) -> bool:
+    value = raw.get("receipt_allowed", False)
+    if not isinstance(value, bool):
+        raise RowError(f"{row_id}: receipt_allowed must be true or false")
+    return value
+
+
+def _cancel_wait_s(row_id: str, raw: Mapping[str, Any]) -> float:
+    value = raw.get("cancel_wait_s", 0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise RowError(f"{row_id}: cancel_wait_s must be a number of seconds, 0 or more")
+    return float(value)
+
+
+def _refusal_receipt(row_id: str, raw: Mapping[str, Any]) -> Any:
+    value = raw.get("refusal_receipt", "failed")
+    if value not in ("failed", "rejected"):
+        raise RowError(f"{row_id}: refusal_receipt must be failed or rejected")
     return value
 
 
@@ -84,7 +137,10 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                        job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_names=next(iter(names)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
-                       receipt_opens=_receipt_opens(row_id, raw))
+                       receipt_opens=_receipt_opens(row_id, raw), receipt_closes=_receipt_closes(row_id, raw),
+                       history_facts=_history_facts(row_id, raw), backend_at_run=_backend_at_run(row_id, raw), unconfigured=_unconfigured(row_id, raw),
+                       cancel_wait_s=_cancel_wait_s(row_id, raw), receipt_allowed=_receipt_allowed(row_id, raw),
+                       refusal_receipt=_refusal_receipt(row_id, raw), run_receipt_path=str(raw.get("run_receipt_path") or ""))
 
 
 def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:
@@ -95,12 +151,17 @@ def _names(row_id: str, raw: Mapping[str, Any], key: str) -> dict[str, str]:
     return dict(found)
 
 
-def _refusal_bodies(row_id: str, raw: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+def _refusal_bodies(row_id: str, raw: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """``{code: {message, type?, code?, retry_after_s?}}``: the words a row has for a refusal code of the core."""
     found = raw.get("refusal_bodies") or {}
-    if not isinstance(found, Mapping) or not all(
-            isinstance(code, str) and isinstance(body, Mapping) and set(body) == {"message", "type"}
-            and all(isinstance(text, str) and text for text in body.values()) for code, body in found.items()):
-        raise RowError(f"{row_id}: refusal_bodies must map a code to its message and type")
+
+    def usable(body: Any) -> bool:
+        return (isinstance(body, Mapping) and "message" in body and set(body) <= {"message", "type", "code", "retry_after_s"}
+                and all(isinstance(body[k], str) and body[k] for k in body if k != "retry_after_s")
+                and (not isinstance(body.get("retry_after_s"), bool)) and isinstance(body.get("retry_after_s", 1), int))
+
+    if not isinstance(found, Mapping) or not all(isinstance(code, str) and usable(body) for code, body in found.items()):
+        raise RowError(f"{row_id}: refusal_bodies must map a code to its message, and optionally its type, code and retry_after_s")
     return {code: dict(body) for code, body in found.items()}
 
 

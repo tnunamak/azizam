@@ -8,6 +8,7 @@ no model and no engine; the input names it sets come from the chosen workflow's 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from starlette.requests import Request
@@ -37,6 +38,16 @@ IDEMPOTENCY_HEADER = "Idempotency-Key"
 TERMINAL = ("succeeded", "failed", "canceled")
 # How a job store failure category is spelled on the wire.
 _STATUS_BY_CATEGORY = {"client": 400, "policy": 403, "capacity": 503, "upstream": 502, "timeout": 504}
+
+
+@dataclass(frozen=True)
+class LegacyRoute:
+    """What ``Shape.to_run_request`` returns for a request the data path does not serve yet: the name of the registered
+    legacy handler and the body the shape already read (the request stream is spent). The row server answers it by calling
+    that handler. Every site that returns one is counted by ``tests/test_legacy_video_ratchet.py``, which may only fall."""
+
+    name: str
+    body: Mapping[str, Any]
 
 
 def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
@@ -163,7 +174,7 @@ class Shape:
             if isinstance(read, Response):
                 return read
             fields = read
-        read_wire = self.read_wire(fields, [name for name, _ in uploads])
+        read_wire = self.read_wire(request, fields, [name for name, _ in uploads])
         if isinstance(read_wire, Response):
             return read_wire
         options, answer = read_wire
@@ -189,7 +200,7 @@ class Shape:
         refused = self.postcheck(chosen, fields, uploads)
         if refused is not None:
             return refused
-        prepared = await self.prepare_uploads(chosen, uploads, request)
+        prepared = await self.prepare_uploads(chosen, uploads, request, fields)
         if isinstance(prepared, Response):
             return prepared
         uploads = prepared
@@ -199,13 +210,18 @@ class Shape:
         media = await _wire.stage_uploads(spool, uploads, mapping)
         if isinstance(media, Response):
             return media
+        sources = await _wire.stage_uploads(spool, getattr(request.state, "source_uploads", None) or [], mapping)
+        if isinstance(sources, Response):
+            return sources
         inputs = {name: coerce(chosen, name, value) for name, value in fields.items() if name not in self.transport_fields}
         inputs = self.fill_inputs(chosen, inputs, fields)
         key = request.headers.get(IDEMPOTENCY_HEADER) if self.honours_idempotency_key else None
-        return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, options=options, idempotency_key=key or None,
+        options = {**options, **(getattr(request.state, "run_options", None) or {})}
+        return RunRequest(workflow_id=chosen.id, inputs=inputs, media=media, sources=sources, options=options, idempotency_key=key or None,
+                          run_refusal=getattr(request.state, "run_refusal", None) or {},
                           frontend_id=row.id, failure_text=row.job_failure_text, retries=row.job_retries)
 
-    def read_wire(self, fields: dict[str, Any], upload_names: Sequence[str] = ()) -> tuple[dict[str, Any], dict[str, Any]] | Response:
+    def read_wire(self, request: Request, fields: dict[str, Any], upload_names: Sequence[str] = ()) -> tuple[dict[str, Any], dict[str, Any]] | Response:
         """Hook: the options this request asks of the run (they are part of its identity and reach the adapter) and the
         answer form it asks for (how this request wants the result shown; it never enters the job). A bad value is a
         shaped refusal. The fields are read, not removed: ``transport_fields`` keeps them out of the inputs."""
@@ -232,7 +248,7 @@ class Shape:
         """Hook: refusals the wire made once the workflow is known."""
         return None
 
-    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request, fields: dict[str, Any]
                               ) -> list[tuple[str, Any]] | Response:
         """Hook: the file parts the run is given, once the workflow is known (a wire may fold one part into another)."""
         return uploads
@@ -240,6 +256,15 @@ class Shape:
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""
         return inputs
+
+    async def legacy_route(self, request: Any, row: FrontendRow, snapshot: RegistrySnapshot) -> "LegacyRoute | None":
+        """Hook: a request the old pipeline serves, asked before the row enforces the route policy or opens a receipt (the old
+        handler owns both). None: the data path serves it."""
+        return None
+
+    async def after_submit(self, request: Any, view: RunJobView, caller: CallerContext) -> None:
+        """Hook: what the wire does once a job was submitted (``view.disposition`` tells a new job from a replay)."""
+        return None
 
     def default_target(self) -> str | None:
         """The workflow a request that names no model runs: the deployment's default for this wire, or None."""

@@ -199,3 +199,133 @@ binding_edits:
     path: [comfyui, map, prompt]
     operation: remove
     reason: "Named defect fix: prompt and tags both wrote node 5 input tags."
+  - workflow: image.edit.flux2-klein-4b
+    path: [comfyui, result_processing]
+    operation: add
+    value: [post_composite_mask]
+    reason: "The binding keeps the mask off the engine (edge_only_inputs) and now lists the stage that applies it to the result, as the route did."
+  - workflow: image.edit.flux2-klein
+    path: [comfyui, result_processing]
+    operation: add
+    value: [post_composite_mask]
+    reason: "The binding keeps the mask off the engine (edge_only_inputs) and now lists the stage that applies it to the result, as the route did."
+  - workflow: video.generate.ltx-2.5-i2v
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "21", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-i2v
+    path: [comfyui, map, length]
+    operation: add
+    value: [{"node": "22", "input": "value"}]
+    reason: "The video move (V5a) declares length as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-i2v
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "20", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-keyframes
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "21", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-keyframes
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "20", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-keyframes-mid
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "21", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-keyframes-mid
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "20", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-t2v
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "21", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-t2v
+    path: [comfyui, map, length]
+    operation: add
+    value: [{"node": "22", "input": "value"}]
+    reason: "The video move (V5a) declares length as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.ltx-2.5-t2v
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "20", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-i2v
+    path: [comfyui, map, frame_rate]
+    operation: add
+    value: [{"node": "17", "input": "fps"}]
+    reason: "The video move (V5a) declares frame_rate as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-i2v
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "7", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-i2v
+    path: [comfyui, map, length]
+    operation: add
+    value: [{"node": "8", "input": "value"}]
+    reason: "The video move (V5a) declares length as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-i2v
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "6", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-keyframes
+    path: [comfyui, map, frame_rate]
+    operation: add
+    value: [{"node": "17", "input": "fps"}]
+    reason: "The video move (V5a) declares frame_rate as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-keyframes
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "7", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-keyframes
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "6", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-keyframes-mid
+    path: [comfyui, map, frame_rate]
+    operation: add
+    value: [{"node": "17", "input": "fps"}]
+    reason: "The video move (V5a) declares frame_rate as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-keyframes-mid
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "7", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-keyframes-mid
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "6", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-t2v
+    path: [comfyui, map, frame_rate]
+    operation: add
+    value: [{"node": "17", "input": "fps"}]
+    reason: "The video move (V5a) declares frame_rate as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-t2v
+    path: [comfyui, map, height]
+    operation: add
+    value: [{"node": "7", "input": "value"}]
+    reason: "The video move (V5a) declares height as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-t2v
+    path: [comfyui, map, length]
+    operation: add
+    value: [{"node": "8", "input": "value"}]
+    reason: "The video move (V5a) declares length as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."
+  - workflow: video.generate.minimax-h3-t2v
+    path: [comfyui, map, width]
+    operation: add
+    value: [{"node": "6", "input": "value"}]
+    reason: "The video move (V5a) declares width as a manifest input and maps it to the node the old route's code wrote; the old binding had no entry."

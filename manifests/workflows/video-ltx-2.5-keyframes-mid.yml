@@ -13,6 +13,19 @@ purpose: Animate through three pictures, with sound
 prompt_hint: Describe the clip you want
 description: Make a video with sound that starts on one picture, passes through a second picture at its mid-frame index and ends on a third, following a description.
 typical_seconds: 45
+video:
+  roles:
+    width: width
+    height: height
+    length: frames
+    frame_rate: frame_rate
+    image: image
+    image_strength: image_strength
+    last_image: last_frame
+  size: {default: 960x512, max: 1280x704, multiple: 64}
+  length: {min_seconds: 1, max_seconds: 10}
+  grid: {fps: 24, step: 8, offset: 1}
+  requires: [image, extensions]
 inputs:
   prompt:
     label: What to make
@@ -102,6 +115,18 @@ inputs:
     minimum: 0
     maximum: 100
     default: 18
+  width:
+    label: Width
+    help: Video width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 1280
+  height:
+    label: Height
+    help: Video height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 704
 outputs:
   video:
     media_type: video/mp4
@@ -166,6 +191,12 @@ bindings:
           input: img_compression
         - node: '124'
           input: img_compression
+      width:
+        - node: '20'
+          input: value
+      height:
+        - node: '21'
+          input: value
     requires:
       models:
         - role: diffusion_model

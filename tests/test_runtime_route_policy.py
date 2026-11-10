@@ -754,7 +754,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
                 ("/v1/audio/speech", {"input": "hello", "voice": "alloy"}, "proxy_tts_request", {"receipt"}),
                 ("/v1/audio/transcriptions", None, "proxy_stt_request", {"operation": "transcriptions"}),
                 ("/v1/audio/translations", None, "proxy_stt_request", {"operation": "translations"}),
-                ("/v1/videos", {"prompt": "waves"}, "proxy_graph_video_create", {}),
+                # A create the wire shape cannot run (a workflow-block name the manifest does not declare) goes back to the old
+                # pipeline, which the row route reaches after it has enforced the route's policy.
+                ("/v1/videos", {"prompt": "waves", "extensions": {"com.azizam.workflow": {"undeclared": 1}}}, "proxy_graph_video_create", {}),
                 ("/v1/audio/generate", {"prompt": "piano"}, "proxy_audio_generate", {"receipt"}),
             ]
             for path, payload, target, keywords in cases:

@@ -73,6 +73,7 @@ bindings:
       image: {node: '9', key: images, from: output_dir, decode: none, take: all}
     # applied by the route as a post-composite preservation mask (gateway/image route), not by a graph node.
     edge_only_inputs: [mask]
+    result_processing: [post_composite_mask]
     map:
       prompt:
         - node: "6"

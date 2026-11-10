@@ -89,11 +89,11 @@ def test_a_remove_deletes_a_list_item_the_golden_holds():
 
 
 def test_a_remove_deletes_a_key_and_checks_its_old_value():
-    golden = {"caller": [{"response": {"status": 200, "extra": "x"}}]}
-    out = listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.extra", "x", None, "not on the new wire")])
-    assert out["caller"][0]["response"] == {"status": 200}
+    golden = {"caller": [{"response": {"status": 200, "body": {"extra": "x"}}}]}
+    out = listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.body.extra", "x", None, "not on the new wire")])
+    assert out["caller"][0]["response"] == {"status": 200, "body": {}}
     with pytest.raises(DeltaError, match="unmatched"):
-        listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.extra", "y", None, "not on the new wire")])
+        listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.body.extra", "y", None, "not on the new wire")])
 
 
 def test_a_remove_with_a_new_value_is_malformed():
@@ -109,5 +109,98 @@ def test_a_path_cannot_name_the_whole_trace_or_a_free_form():
 
 def test_the_committed_manifest_is_well_formed_and_holds_against_its_goldens():
     for name, deltas in listed.MANIFEST.items():
+        if name.startswith("s7_parity_images/"):       # applied by that file's cases to the trace they observe, not to a golden
+            assert deltas and not [problem for delta in deltas for problem in delta.problems()], name
+            continue
         golden = json.loads((ad.FIXTURE_DIR / f"{name}.json").read_text(encoding="utf-8"))
         assert deltas and listed.apply_deltas(golden, deltas)
+
+
+def test_a_delta_with_a_missing_old_value_adds_a_key_and_only_where_the_golden_has_none():
+    added = listed.apply_deltas(GOLDEN, [delta("$.caller[0].response.body.text#$.client_id", listed.MISSING, "c1")])
+    assert json.loads(added["caller"][0]["response"]["body"]["text"])["client_id"] == "c1"
+    with pytest.raises(DeltaError, match="the delta says it is missing"):
+        listed.apply_deltas(GOLDEN, [delta("$.caller[0].response.body.text#$.n", listed.MISSING, 2)])
+    with pytest.raises(DeltaError, match="unknown path"):
+        listed.apply_deltas(GOLDEN, [delta("$.caller[0].response.nothing.key", listed.MISSING, 2)])
+
+
+def test_an_object_value_needs_the_subtree_mark_and_the_old_value_must_still_match():
+    plain = delta("$.scenario", "x", {"a": 1})
+    assert any("not a subtree" in problem for problem in plain.problems())
+    marked = Delta("envelope_v2", "$.scenario", "x", {"a": 1}, "r", subtree=True)
+    assert listed.apply_deltas(GOLDEN, [marked])["scenario"] == {"a": 1}
+    with pytest.raises(DeltaError, match="unmatched"):
+        listed.apply_deltas(GOLDEN, [Delta("envelope_v2", "$.scenario", "y", {"a": 1}, "r", subtree=True)])
+
+
+def test_an_engine_request_delta_names_the_prompt_session_id_and_nothing_else():
+    ok = Delta("engine_session_id", "$.engine_requests[0].body.text#$.client_id", listed.MISSING, "c", "r")
+    assert ok.problems() == []
+    for path in ("$.engine_requests[0].body.text#$.prompt", "$.engine_requests[0].path", "$.engine_requests[0].body.text#$.client_id.x"):
+        assert Delta("engine_session_id", path, listed.MISSING, "c", "r").problems(), path
+    assert Delta("engine_session_id", ok.path, "a", "c", "r").problems()          # it adds a key; it never changes one
+    other = Delta("envelope_v2", "$.engine_requests[0].body.text#$.client_id", listed.MISSING, "c", "r")
+    assert any("kept identical" in problem for problem in other.problems())       # no other kind may reach an engine request
+
+
+def test_the_image_case_entries_name_only_the_approved_kinds():
+    approved = {"engine_session_id", "job_row_metadata", "idempotency_key_reuse_conflict", "job_create_failure_text", "executor_crash_text"}
+    seen = {delta.kind for name, entries in listed.MANIFEST.items() if name.startswith("s7_parity_images/") for delta in entries}
+    assert seen == approved
+    assert not {"job_submit_refuses_unknown_field", "receipt_closes_with_job_outcome", "job_one_receipt", "masked_edit_source"} & listed.KINDS
+
+
+def test_every_rerecorded_golden_exists_and_is_listed_with_a_reason():
+    for name, reason in listed.RERECORDED.items():
+        assert (ad.FIXTURE_DIR / f"{name}.json").is_file(), name
+        assert len(reason) > 20, name
+    assert listed.ENGINE_FACING_CHANGES <= set(listed.RERECORDED)
+    assert not set(listed.RERECORDED) & set(listed.MANIFEST)
+
+
+def test_no_golden_origin_block_holds_prompt_text():
+    for path in sorted(ad.FIXTURE_DIR.glob("*.json")):
+        for asset in json.loads(path.read_text(encoding="utf-8")).get("assets") or []:
+            origin = (asset.get("json") or {}).get("origin")
+            if origin is not None:
+                assert set(origin) <= listed.ORIGIN_KEYS, (path.name, sorted(origin))
+
+
+def test_the_named_exception_allows_exactly_the_key_reuse_conflict_and_the_two_failure_texts():
+    ok = [
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 202, 409, "a used key with another body answers 409"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.body.text#$.error", None, {"code": "idempotency_conflict"},
+              "the conflict error", subtree=True),
+        Delta("job_create_failure_text", "$.caller[0].response.body.text#$.error.message", "a: RuntimeError", "the job could not be created",
+              "no exception class in client text"),
+        Delta("executor_crash_text", "$.media_jobs.media_jobs[0].error", "a: RuntimeError", "The job failed.", "fixed sentence"),
+    ]
+    assert [problem for entry in ok for problem in entry.problems()] == []
+    for name in ("J10", "J11", "R06"):
+        assert listed.MANIFEST[f"s7_parity_images/{name}"], name
+
+
+def test_the_guard_still_refuses_every_other_status_or_error_delta():
+    refused = [
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 202, 500, "a different status"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.status", 200, 409, "a different old status"),
+        Delta("idempotency_key_reuse_conflict", "$.caller[1].response.body.text#$.error.message", "a", "b", "a path it may not touch"),
+        Delta("job_create_failure_text", "$.caller[0].response.status", 500, 200, "a status change under a text kind"),
+        Delta("envelope_v2", "$.caller[0].response.status", 202, 409, "another kind with the same status change"),
+        Delta("envelope_v2", "$.caller[0].response.body.text#$.error", None, {"code": "x"}, "another kind, an error body", subtree=True),
+        Delta("executor_crash_text", "$.caller[0].response.status", 200, 500, "a refusal status"),
+    ]
+    for entry in refused:
+        assert entry.problems(), entry
+
+
+def test_a_listed_exception_kind_exists():
+    assert set(listed.ERROR_ALLOWED) <= listed.KINDS and "idempotency_conflict" not in listed.KINDS
+
+
+def test_the_engine_facing_reruns_state_why_the_order_changed():
+    for name in ("video_lifecycle", "video_extend"):
+        assert name in listed.ENGINE_FACING_CHANGES
+        assert "the prompt names the uploaded file, so upload-first is the causal order" in listed.RERECORDED[name]
+    assert "create_answers_before_the_engine" in listed.RERECORDED["video_create_unreachable"]

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import dataclasses
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +20,7 @@ import pytest
 import proxy
 from gateway import media_fetch
 from tests.support.access import access_context
+from tests.support.video_row_engine import edited_workflows
 from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
 from tests.test_media_inputs_image_route import (  # noqa: F401  (rig is a fixture)
     NS, OWNER_APP, image_bytes, lease_rows, live_rows, rig, stored,
@@ -206,14 +208,13 @@ def test_a_picture_field_declared_as_something_else_is_refused(spec):
 
 
 def declaring_reference(*accepts: str):
-    """``_find_video_manifest`` with the picture input declared as the contract of the test says."""
-    real = proxy._find_video_manifest
-
-    def find(workflow_name, workflow_cfg):
-        doc = copy.deepcopy(real(workflow_name, workflow_cfg))
-        doc["inputs"][proxy.VIDEO_REFERENCE_INPUT] = {"type": "asset", "accepts": list(accepts)}
-        return doc
-    return patch.object(proxy, "_find_video_manifest", find)
+    """The video workflows served with the picture input declared as the contract of the test says."""
+    def edit(entry):
+        if "image" not in (entry.contract.get("inputs") or {}):
+            return entry
+        inputs = {**entry.contract["inputs"], "image": {**entry.contract["inputs"]["image"], "accepts": list(accepts)}}
+        return dataclasses.replace(entry, contract={**entry.contract, "inputs": inputs})
+    return edited_workflows(edit)
 
 
 def test_video_create_route_holds_input_reference_to_the_contracts_list(video_rig):

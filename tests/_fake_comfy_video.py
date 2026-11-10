@@ -51,6 +51,7 @@ class FakeComfy:
         self.uploads: list[tuple[str, bytes, str]] = []
         self.submitted: list[dict] = []
         self.gets: list[str] = []
+        self.upload_status = 200        # the status the engine answers an upload with
 
     def client_class(self) -> type:
         outer = self
@@ -75,8 +76,12 @@ class FakeComfy:
                     if name in outer.view_bytes:
                         return FakeResponse(200, content=outer.view_bytes[name])
                     return FakeResponse(404)
+                if url.endswith("/system_stats"):
+                    return FakeResponse(200, {"system": {}, "devices": []})
                 if url.endswith("/queue"):
-                    return FakeResponse(200, {"queue_running": [], "queue_pending": []})
+                    # A prompt the engine accepted and has not finished waits in its queue, as a real engine lists it.
+                    waiting = bool(outer.submitted) and NEW_PROMPT_ID not in outer.history
+                    return FakeResponse(200, {"queue_running": [], "queue_pending": [[1, NEW_PROMPT_ID, {}]] if waiting else []})
                 raise AssertionError(f"unexpected GET {url}")
 
             @asynccontextmanager
@@ -88,6 +93,8 @@ class FakeComfy:
                 if url.endswith("/upload/image"):
                     filename, data, mime = kwargs["files"]["image"]
                     outer.uploads.append((filename, data, mime))
+                    if outer.upload_status != 200:
+                        return FakeResponse(outer.upload_status, {})
                     return FakeResponse(200, {"name": f"up{len(outer.uploads)}_{filename}"})
                 if url.endswith("/prompt"):
                     outer.submitted.append(kwargs["json"]["prompt"])

@@ -396,7 +396,7 @@
             "contract": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
             "protocol": {
               "id": "node-graph",
-              "revision": "sha256:098f1399ff170d1599e1de1ad80be9cbbab883233627c7d94583ecdf57dad79f"
+              "revision": "sha256:e390b04a5ab58e9e5eb27d44119bc90f3f73c6af4c95d2fec48e9f5dbc9a6fa5"
             },
             "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
           },
