@@ -8707,6 +8707,17 @@ def _image_graph_roles(
     if path in _IMAGE_GRAPH_ROLES and all(slots):
         roles["image_nodes"] = [pairs[0][0] for pairs in slots]
         roles.pop("image_node", None)
+    # Background cut-out: the table names the processor and its output slot; the graph's own save node supplies the plain path.
+    cut = (_IMAGE_GRAPH_ROLES.get(path) or {}).get("background")
+    selector = (binding.get("selectors") or {}).get(cut["output"]) if cut else None
+    save_node = str(selector.get("node")) if isinstance(selector, Mapping) and selector.get("node") is not None else ""
+    plain = ((graph.get(save_node) or {}).get("inputs") or {}).get("images") if save_node else None
+    if cut and isinstance(plain, list):
+        roles["background_removal"] = {
+            "save_node": save_node,
+            "plain_image": list(plain),
+            "transparent_image": [str(cut["processor"]), cut["slot"]],
+        }
     return roles
 
 
