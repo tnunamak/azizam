@@ -46,6 +46,7 @@ def test_media_openapi_exports_do_not_publish_error_maps():
         name: value for name, value in vars(schemas).items() if name.endswith("_OPENAPI")
     }}
     assert "wire_error_params" not in json.dumps(actual)
+    assert "wire_error_param_endpoints" not in json.dumps(actual)
 
 
 def test_media_registry_has_one_runtime_read(monkeypatch, tmp_path):
@@ -85,10 +86,83 @@ def test_wire_error_param_lookup_is_exact_and_closed(tmp_path):
         assert domain in str(failure.value) and key in str(failure.value)
     document = _document()
     document["wire_error_params"] = {"unfamiliar-domain": {"payload": "Envelope.parts[0]-id"}}
+    document["wire_error_param_endpoints"] = {"unfamiliar-domain": "POST /v1/probe"}
+    document["endpoints"]["POST /v1/probe"] = {"requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": {
+                "type": "object",
+                "properties": {"Envelope.parts[0]-id": {"type": "string"}},
+            }},
+            "multipart/form-data": {"schema": {
+                "type": "object",
+                "properties": {"other": {"type": "string"}},
+            }},
+        },
+    }}
     registry = schemas.load_media_schema_registry(_write(tmp_path, document))
     assert schemas.wire_error_param("unfamiliar-domain", "payload", registry=registry) == "Envelope.parts[0]-id"
     with pytest.raises(KeyError):
         schemas.wire_error_param("identity_scene", "reference_photos", registry=registry)
+
+
+def test_shipped_error_params_match_declared_request_properties():
+    registry = schemas.load_media_schema_registry(REGISTRY_PATH)
+    assert dict(registry.wire_error_params) == MAPS
+    assert schemas.wire_error_param("segment_chain", "source_clip", registry=registry) == "video"
+
+
+@pytest.mark.parametrize("public", ["vedio", "source_video", "id"])
+def test_error_param_must_be_a_top_level_request_property(tmp_path, public):
+    document = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
+    document["wire_error_params"]["segment_chain"]["source_clip"] = public
+    path = _write(tmp_path, document)
+    with pytest.raises(ValueError) as failure:
+        schemas.load_media_schema_registry(path)
+    message = str(failure.value)
+    for expected in (str(path), "segment_chain", "source_clip", repr(public), "POST /v1/videos/extensions"):
+        assert expected in message
+    assert "not a request property" in message
+
+
+def test_error_param_does_not_use_response_properties(tmp_path):
+    document = _document()
+    document["wire_error_params"] = {"probe": {"payload": "ok"}}
+    document["wire_error_param_endpoints"] = {"probe": "GET /v1/probe"}
+    with pytest.raises(ValueError, match="not a request property"):
+        schemas.load_media_schema_registry(_write(tmp_path, document))
+
+
+def test_error_params_without_registry_endpoint_keep_syntax_validation(tmp_path):
+    document = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
+    document["wire_error_params"]["identity_scene"]["reference_photos"] = "reference_image"
+    registry = schemas.load_media_schema_registry(_write(tmp_path, document))
+    assert schemas.wire_error_param("identity_scene", "reference_photos", registry=registry) == "reference_image"
+
+    # A binding to an endpoint the registry lacks is a typo, not an opt-out of the check.
+    document["wire_error_param_endpoints"]["identity_scene"] = "POST /v1/unregistered"
+    with pytest.raises(ValueError, match="is not in endpoints"):
+        schemas.load_media_schema_registry(_write(tmp_path, document))
+    del document["wire_error_param_endpoints"]["identity_scene"]
+
+    document["wire_error_param_endpoints"]["unknown_domain"] = "POST /v1/videos/extensions"
+    with pytest.raises(ValueError, match="no wire_error_params group"):
+        schemas.load_media_schema_registry(_write(tmp_path, document))
+    del document["wire_error_param_endpoints"]["unknown_domain"]
+
+    document["wire_error_params"]["identity_scene"]["reference_photos"] = "bad field"
+    with pytest.raises(ValueError, match="invalid public parameter"):
+        schemas.load_media_schema_registry(_write(tmp_path, document))
+
+
+def test_media_registry_rejects_malformed_error_endpoint_bindings(tmp_path):
+    for bindings in (None, [], True, {"": "POST /v1/probe"}, {"probe": None},
+                     {"probe": 7}, {"probe": "POST"}, {"probe": "post /v1/probe"},
+                     {"probe": "POST /v1/probe?query"}, {"probe": "POST /v1/probe\n"}):
+        document = _document()
+        document["wire_error_param_endpoints"] = bindings
+        with pytest.raises(ValueError, match="wire_error_param_endpoints"):
+            schemas.load_media_schema_registry(_write(tmp_path, document))
 
 
 def test_media_registry_rejects_malformed_error_maps(tmp_path):
@@ -197,6 +271,12 @@ def test_missing_error_mapping_fails_startup(monkeypatch):
             document.pop("wire_error_params", None)
         else:
             document["wire_error_params"] = missing
+        # Drop bindings for absent groups so the missing mapping itself is what fails startup.
+        groups = document.get("wire_error_params") or {}
+        document["wire_error_param_endpoints"] = {
+            domain: endpoint for domain, endpoint in document.get("wire_error_param_endpoints", {}).items()
+            if domain in groups
+        }
 
         def read(path, *args, **kwargs):
             return yaml.safe_dump(document) if path == REGISTRY_PATH else original(path, *args, **kwargs)
@@ -205,3 +285,39 @@ def test_missing_error_mapping_fails_startup(monkeypatch):
             with pytest.raises(KeyError) as failure:
                 _fresh_module(monkeypatch)
         assert "identity_scene" in str(failure.value) or "segment_chain" in str(failure.value)
+
+
+def test_sentinel_binding_rejects_misspelled_request_property(tmp_path):
+    document = _document()
+    domain, logical = "sentinel-domain", "payload"
+    public, misspelled = "sentinel_payload", "sentinel_paylaod"
+    endpoint = "POST /v1/probe"
+    document["endpoints"][endpoint] = {"requestBody": {
+        "required": True,
+        "content": {"application/json": {"schema": {
+            "type": "object",
+            "properties": {public: {"type": "string"}},
+        }}},
+    }}
+    document["wire_error_params"] = {domain: {logical: public}}
+    document["wire_error_param_endpoints"] = {domain: endpoint}
+    path = _write(tmp_path, document)
+
+    # A valid unfamiliar binding loads, so rejection cannot be a name allow-list.
+    registry = schemas.load_media_schema_registry(path)
+    assert schemas.wire_error_param(domain, logical, registry=registry) == public
+
+    # Change only the target spelling, not its syntax or the declared schema.
+    document["wire_error_params"][domain][logical] = misspelled
+    _write(tmp_path, document)
+    with pytest.raises(ValueError) as failure:
+        schemas.load_media_schema_registry(path)
+    message = str(failure.value)
+    for expected in (str(path), domain, logical, repr(misspelled), repr(endpoint)):
+        assert expected in message
+    assert "not a request property" in message
+
+    # Without the binding, that spelling is legal: the cross-reference must bite.
+    del document["wire_error_param_endpoints"]
+    registry = schemas.load_media_schema_registry(_write(tmp_path, document))
+    assert schemas.wire_error_param(domain, logical, registry=registry) == misspelled

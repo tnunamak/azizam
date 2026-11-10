@@ -882,6 +882,16 @@
             "additionalProperties": true,
             "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
             "properties": {
+              "com.azizam.video": {
+                "additionalProperties": false,
+                "properties": {
+                  "audio": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
               "com.azizam.workflow": {
                 "anyOf": [
                   {
@@ -26794,6 +26804,16 @@
                     "additionalProperties": true,
                     "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
                     "properties": {
+                      "com.azizam.video": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audio": {
+                            "default": true,
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
@@ -34357,6 +34377,16 @@
                     "additionalProperties": true,
                     "description": "Gateway-owned controls. Send only inputs the selected workflow lists; see `x-azizam-workflows` for which inputs belong here.",
                     "properties": {
+                      "com.azizam.video": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "audio": {
+                            "default": true,
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "com.azizam.workflow": {
                         "anyOf": [
                           {

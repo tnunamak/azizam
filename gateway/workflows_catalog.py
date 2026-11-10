@@ -217,9 +217,7 @@ def _workflow_row(
 
 
 def _workflow_description(value: Any, capability: str) -> str:
-    raw = _first_sentence(value)
-    if raw and len(raw.split()) <= 8 and not _is_technical_workflow_note(raw):
-        return _sentence(raw)
+    # Free-form descriptions are technical notes; public copy is summary/purpose.
     return CAPABILITY_DESCRIPTIONS.get(capability, "Run this configured workflow.")
 
 
@@ -228,34 +226,6 @@ def _workflow_technical_notes(value: Any, public_description: str) -> str | None
     if not raw:
         return None
     return raw if raw != public_description else None
-
-
-def _first_sentence(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
-
-
-def _sentence(value: str) -> str:
-    text = value.strip()
-    if not text:
-        return ""
-    return text if text.endswith((".", "!", "?")) else f"{text}."
-
-
-def _is_technical_workflow_note(value: str) -> bool:
-    patterns = (
-        r"\b(?:contract|protocol|gateway-composed|engine|binding|bound|backend|schema|adapter|passthrough|checkpoint|workflow)\b",
-        r"\b(?:comfyui|localhost|port|khz|flac|gguf|safetensors|ckpt)\b",
-        r"[/:]",
-        r"\b\w+\.\w+\b",
-        r"[_`]",
-        r"\b[\w-]+\.(?:png|jpe?g|webp|mp4|mov|wav|mp3|safetensors|ckpt|gguf)\b",
-        r"\([^)]*\b(?:v?\d+(?:\.\d+)+|license|apache|mit|gpl|bsd|iclr)\b",
-    )
-    lowered = value.casefold()
-    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -327,9 +297,12 @@ def _example_request(
     method = str(wire.get("method") or "POST")
     content_type = str(wire.get("content_type") or "application/json")
     url = _join_url(base_url, path)
-    mode = "async" if (route or {}).get("kind") == "video" else "sync"
+    # The route owns placement; an async response does not imply async inputs.
+    mapping = (route or {}).get("fields")
+    if mapping is None:
+        mapping = request_mapping(record, "sync")
     selected_model = _route_model(route)
-    body = _example_body(record, inputs, mode=mode, model=selected_model)
+    body = _example_body(record, inputs, mapping=mapping, model=selected_model)
     form: dict[str, Any] = {}
     files: dict[str, dict[str, Any]] = {}
     if (route or {}).get("kind") == "media_job":
@@ -337,11 +310,13 @@ def _example_request(
         wrapped_intent = _nested(submit or {}, "body", "intent") or record.intent
         body = {
             "intent": wrapped_intent,
-            "request": _example_body(record, inputs, mode="sync", model=_route_model(submit)),
+            "request": _example_body(
+                record, inputs, mapping=request_mapping(record, "sync"), model=_route_model(submit),
+            ),
         }
         content_type = "application/json"
     elif content_type == "multipart/form-data":
-        form, files = _example_multipart_parts(record, inputs, model=selected_model)
+        form, files = _example_multipart_parts(record, inputs, mapping=mapping, model=selected_model)
         body = {}
     # Response semantics are independent of the upload format. In particular,
     # the generic video-edit run remains multipart even though it returns a job.
@@ -363,7 +338,7 @@ def _example_request(
     ]
     extra_headers = wire.get("headers")
     curl = _curl_example(
-        url, content_type=content_type, body=body, form=form, files=paths,
+        url, method=method, content_type=content_type, body=body, form=form, files=paths,
         binary_response=binary_response, headers=extra_headers, job_urls=job_urls,
     )
     return {
@@ -390,14 +365,13 @@ def _example_body(
     record: WorkflowRecord,
     inputs: list[Mapping[str, Any]],
     *,
-    mode: str,
+    mapping: Mapping[str, Mapping[str, Any]],
     model: str | None = None,
 ) -> dict[str, Any]:
-    mapping = request_mapping(record, mode)
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
     body: dict[str, Any] = {}
-    if model or not str(record.intent).startswith("video.edit"):
-        body["model"] = model or short_id(record)
+    if model:
+        body["model"] = model
     extension: dict[str, Any] = {}
     combined: dict[str, list[str]] = {}
     for name, placement in mapping.items():
@@ -429,6 +403,7 @@ def _example_multipart_parts(
     record: WorkflowRecord,
     inputs: list[Mapping[str, Any]],
     *,
+    mapping: Mapping[str, Mapping[str, Any]],
     model: str | None,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """The form fields and file parts the example request carries.
@@ -438,11 +413,10 @@ def _example_multipart_parts(
     ``image[]`` part), so the ordering is the manifest's and the key is the
     input, never the wire field.
     """
-    mapping = request_mapping(record, "sync")
     rows = {str(item.get("name")): item for item in inputs}
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
     form: dict[str, Any] = {}
-    if model and record.intent == "image.edit":
+    if model:
         form["model"] = model
     files: dict[str, dict[str, Any]] = {}
     extension: dict[str, Any] = {}
@@ -526,6 +500,7 @@ def _shell_single_quote(value: str) -> str:
 def _curl_example(
     url: str,
     *,
+    method: str = "POST",
     content_type: str,
     body: Mapping[str, Any],
     form: Mapping[str, Any],
@@ -536,12 +511,15 @@ def _curl_example(
 ) -> str:
     if job_urls is not None:
         submit = _curl_example(
-            url, content_type=content_type, body=body, form=form, files=files,
+            url, method=method, content_type=content_type, body=body, form=form, files=files,
             binary_response=False, headers=headers,
         )
         return _curl_job_example(submit, *job_urls)
     lines = [
         f"curl {_shell_single_quote(url)} \\",
+        *([f"  --request {_shell_single_quote(method)} \\"] if method != "POST" or (
+            content_type == "multipart/form-data" and not form and not files
+        ) else []),
         "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\",
         *[f"  -H {_shell_single_quote(f'{name}: {value}')} \\" for name, value in (headers or {}).items()],
     ]
@@ -599,10 +577,12 @@ def _python_example(
                 "print(response.json() if response.headers.get('content-type', '').startswith('application/json') else response.content[:80])"
             )
         )
+    extra = "".join(f", {name!r}: {value!r}" for name, value in (headers or {}).items())
     return (
         "import os\nimport requests\n\n"
         f"response = requests.request({method!r}, {url!r},\n"
-        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n"
+        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\""
+        + extra + "},\n"
         f"    json={dict(body)!r}, timeout=300)\n"
         "response.raise_for_status()\n"
         + (
@@ -669,10 +649,12 @@ def _javascript_example(
         "console.log(await response.json());"
     )
     import_line = "import { writeFile } from 'node:fs/promises';\n" if binary_response else ""
+    extra = "".join(f", {json.dumps(name)}: {json.dumps(value)}" for name, value in (headers or {}).items())
     return (
         f"{import_line}const response = await fetch({json.dumps(url)}, {{\n"
         f"  method: {json.dumps(method)},\n"
-        "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n"
+        "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json'"
+        + extra + " },\n"
         f"  body: JSON.stringify({json.dumps(dict(body), indent=2)}),\n"
         f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
     )

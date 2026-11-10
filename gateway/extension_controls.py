@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 import yaml
 
+from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
 
 @dataclass(frozen=True)
 class ControlDescriptor:
@@ -100,7 +101,7 @@ def _template(value: Any, token: str, label: str) -> str:
 
 
 def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
-    """Read and validate the whole document, failing closed without fallback."""
+    """Load the descriptor-owned public contract without importing its consumers."""
     try:
         document = yaml.load(path.read_text(encoding="utf-8"), Loader=_ControlLoader)
     except (yaml.YAMLError, ValueError, RecursionError) as exc:
@@ -108,14 +109,28 @@ def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
     document = _mapping(document, str(path), {"schema_version", "groups"})
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise ValueError(f"{path}: unsupported schema_version")
+    try:
+        return _load_groups(document["groups"])
+    except ValueError as exc:  # name the file: an owner editing it needs to know which one
+        raise ValueError(f"{path}: {exc}") from exc
+
+
+def _load_groups(raw_groups: Any) -> Mapping[str, ControlGroup]:
     groups: dict[str, ControlGroup] = {}
-    for name, raw in _logical_mapping(document["groups"], "groups").items():
+    namespaces: set[str] = set()
+    for name, raw in _logical_mapping(raw_groups, "groups").items():
         raw = _mapping(raw, name, {"namespace", "controls", "errors"})
         namespace = _text(raw["namespace"], f"{name}.namespace")
+        if namespace == WORKFLOW_EXTENSION_NAMESPACE:  # workflow inputs own it; a merge would hide one owner
+            raise ValueError(f"{name}: namespace {namespace} is reserved for workflow inputs")
+        if namespace in namespaces:
+            raise ValueError(f"{name}: duplicate namespace {namespace}")
+        namespaces.add(namespace)
         descriptors: dict[str, ControlDescriptor] = {}
         public_fields: set[str] = set()
-        for logical_id, definition in _logical_mapping(raw["controls"], f"{name}.controls").items():
-            label = f"{name}.controls.{logical_id}"
+        group_label = f"{name} ({namespace})"
+        for logical_id, definition in _logical_mapping(raw["controls"], f"{group_label}.controls").items():
+            label = f"{group_label}.controls.{logical_id}"
             definition = _mapping(definition, label, {"field", "type", "default"})
             public_field = _text(definition["field"], f"{label}.field")
             if public_field in public_fields:
@@ -132,8 +147,32 @@ def load_extension_controls(path: Path) -> Mapping[str, ControlGroup]:
             key: _template(raw_errors[key], token, f"{name}.errors.{key}")
             for key, token in tokens.items()
         }
-        groups[name] = ControlGroup(namespace, descriptors, errors)
+        group = ControlGroup(namespace, descriptors, errors)
+        groups[name] = group
     return MappingProxyType(groups)
+
+
+def extension_controls_schema(
+    groups: Mapping[str, ControlGroup] | None = None,
+) -> dict[str, Any]:
+    """Build a fresh public schema from loaded descriptors, closing each namespace."""
+    if groups is None:
+        groups = _CONTROL_GROUPS
+    return {
+        "type": "object",
+        "properties": {
+            group.namespace: {
+                "type": "object",
+                "properties": {
+                    descriptor.field: {"type": descriptor.type, "default": descriptor.default}
+                    for descriptor in group.controls.values()
+                },
+                "additionalProperties": False,
+            }
+            for group in groups.values()
+        },
+        "additionalProperties": True,
+    }
 
 
 def control_group(name: str) -> ControlGroup:

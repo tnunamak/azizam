@@ -82,7 +82,8 @@ def test_the_release_files_hold_no_host_path_and_no_address():
 def test_the_release_names_no_id_it_does_not_ship():
     images = yaml.safe_load((DEFAULTS / "images.yml").read_text(encoding="utf-8"))
     shipped = {path.stem for path in (ROOT / "manifests" / "workflows").glob("*.yml")}
-    for workflow in (images["variations"]["default_workflow"], images["edits"]["multiref_default_workflow"]):
+    for workflow in (images["variations"]["default_workflow"], images["edits"]["default_workflow"],
+                     images["edits"]["multiref_default_workflow"]):
         assert workflow in shipped, workflow
     voices = yaml.safe_load((DEFAULTS / "voices.yml").read_text(encoding="utf-8"))
     assert "design_engine" not in voices and "quality_engine" not in voices, "an engine id is the install's, not the release's"
@@ -224,6 +225,23 @@ def test_the_image_readers_follow_the_snapshot():
         assert proxy._SESSION_MAKE_RUNTIME.limits == limits
 
 
+def test_the_edit_default_is_the_images_release_value_unless_the_model_defaults_name_one(monkeypatch):
+    """No model id in code: the images section names the edit default, and model_compatibility overrides it."""
+    monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {})
+    from gateway.frontend_shapes import shapes
+    with section_published("images", _images(edits={"default_workflow": "unfamiliar-editor"})):
+        assert proxy.image_edit_default_model() == "unfamiliar-editor"
+        # The OpenAI edit route's no-model default is this reader, so the release value reaches requests.
+        assert shapes.DEFAULT_WORKFLOWS[shapes.OpenAIImagesMultipart.shape_id]() == "unfamiliar-editor"
+    missing = _images()
+    del missing["edits"]["default_workflow"]
+    with section_published("images", missing), pytest.raises(proxy.SettingMissing, match="images.edits.default_workflow"):
+        proxy.image_edit_default_model()
+    monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {"image_edits": "owner-editor"})
+    with section_published("images", _images(edits={"default_workflow": "unfamiliar-editor"})):
+        assert proxy.image_edit_default_model() == "owner-editor"
+
+
 def test_the_media_job_resume_follows_the_snapshot_and_the_environment_does_not_move_it(monkeypatch):
     # A restart entry is held by a publish (the snapshot keeps the running value), so the test swaps the holder itself.
     running = proxy.runtime()
@@ -312,3 +330,21 @@ def test_the_first_snapshot_takes_every_stored_value_including_a_restart_entry()
 
 def test_the_semaphores_are_sized_from_the_concurrency_at_start():
     assert proxy.IMAGE_MEDIA_JOB_CONCURRENCY == max(1, int(proxy.runtime().config["images"]["media_jobs"]["concurrency"]))
+
+
+def test_the_image_workflow_defaults_have_no_fallback_name():
+    """The release defaults name both workflows; a snapshot without one refuses, naming the setting."""
+    for group, key, reader in (
+        ("variations", "default_workflow", proxy._image_variations_default_workflow),
+        ("edits", "multiref_default_workflow", proxy._image_multiref_edit_default_workflow),
+    ):
+        dotted = f"images.{group}.{key}"
+        for broken in ({}, {group: {}}, {group: {key: None}}, {group: {key: ""}}, {group: {key: 7}}):
+            with section_published("images", broken), pytest.raises(proxy.SettingMissing, match=re.escape(dotted)):
+                reader()
+        with section_published("images", {group: {key: "unfamiliar-workflow"}}):
+            assert reader() == "unfamiliar-workflow"
+    # Each setting is its own: changing variations leaves the multireference default alone.
+    with section_published("images", _images(variations={"default_workflow": "a"},
+                                             edits={"multiref_default_workflow": "b"})):
+        assert (proxy._image_variations_default_workflow(), proxy._image_multiref_edit_default_workflow()) == ("a", "b")

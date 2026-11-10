@@ -1,24 +1,131 @@
 """Keep generated browser contracts in sync with observable Python payloads."""
 import importlib.util
+import json
 from pathlib import Path
+import sys
+from typing import get_args
 
 import pytest
 
 from pydantic import TypeAdapter
 
+from gateway import product_contracts
 from gateway.availability import project_service
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.models_catalog import build_models_catalog
 from gateway.product_contracts import Availability, CapabilitiesResponse, ModelsCatalog
 
 
-def test_generated_browser_types_are_current():
-    root = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[1]
+_MODEL_SCHEMA_PATH = _ROOT / "registry/defaults/models.schema.json"
+_MODEL_ENUMS = [
+    ("ModelType", ("type",)),
+    ("InputModality", ("input_modalities", "items")),
+    ("OutputModality", ("output_modalities", "items")),
+    ("ModelTag", ("tags", "items")),
+]
+
+
+def _load_generator():
     spec = importlib.util.spec_from_file_location(
-        "generate_product_types", root / "scripts/generate-product-api-types.py")
+        "generate_product_types", _ROOT / "scripts/generate-product-api-types.py")
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
-    assert generator.OUTPUT.read_text() == generator.render()
+    return generator
+
+
+def _enum_definition(schema, path):
+    definition = schema["additionalProperties"]["properties"]["model_metadata"]["properties"]
+    for key in path:
+        definition = definition[key]
+    return definition
+
+
+def _load_contracts_from_schema(schema, tmp_path, monkeypatch):
+    schema_path = tmp_path / "models.schema.json"
+    schema_path.write_text(schema if isinstance(schema, str) else json.dumps(schema), encoding="utf-8")
+    original_open = Path.open
+
+    def open_schema(path, *args, **kwargs):
+        return original_open(schema_path if path == _MODEL_SCHEMA_PATH else path, *args, **kwargs)
+
+    # Import a separate module so existing contracts and their consumers are not mutated.
+    spec = importlib.util.spec_from_file_location(
+        "product_contracts_schema_test", _ROOT / "gateway/product_contracts.py")
+    contracts = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, contracts)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "open", open_schema)
+        spec.loader.exec_module(contracts)
+    return contracts
+
+
+def test_malformed_model_schema_names_the_schema_file(tmp_path, monkeypatch):
+    with pytest.raises(ValueError) as failure:
+        _load_contracts_from_schema("{", tmp_path, monkeypatch)
+    assert str(_MODEL_SCHEMA_PATH) in str(failure.value) and "invalid JSON" in str(failure.value)
+    assert isinstance(failure.value.__cause__, json.JSONDecodeError)
+
+
+def test_missing_model_schema_names_the_schema_file(tmp_path):
+    path = tmp_path / "missing-models.schema.json"
+    with pytest.raises(ValueError) as failure:
+        product_contracts.load_model_metadata_vocabularies(path)
+    assert str(failure.value).startswith(f"{path}: cannot read model metadata schema:")
+    assert isinstance(failure.value.__cause__, FileNotFoundError)
+
+
+def test_invalid_utf8_model_schema_names_the_schema_file(tmp_path):
+    path = tmp_path / "invalid-utf8-models.schema.json"
+    path.write_bytes(b"\xff")
+    with pytest.raises(ValueError) as failure:
+        product_contracts.load_model_metadata_vocabularies(path)
+    assert str(failure.value).startswith(f"{path}: cannot read model metadata schema:")
+    assert isinstance(failure.value.__cause__, UnicodeDecodeError)
+
+
+def test_generated_browser_types_are_current():
+    generator = _load_generator()
+    assert generator.OUTPUT.read_bytes() == generator.render().encode("utf-8")
+
+
+@pytest.mark.parametrize("alias,path", _MODEL_ENUMS)
+def test_model_contract_enum_matches_schema_in_order(alias, path):
+    schema = json.loads(_MODEL_SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert get_args(getattr(product_contracts, alias)) == tuple(_enum_definition(schema, path)["enum"])
+
+
+def test_schema_extensions_reach_generated_browser_types(tmp_path, monkeypatch):
+    schema = json.loads(_MODEL_SCHEMA_PATH.read_text(encoding="utf-8"))
+    additions = ("unfamiliar-model-kind", "unfamiliar-input", "unfamiliar-output", "unfamiliar-tag")
+    for (_alias, path), value in zip(_MODEL_ENUMS, additions):
+        _enum_definition(schema, path)["enum"].append(value)
+
+    contracts = _load_contracts_from_schema(schema, tmp_path, monkeypatch)
+    generator = _load_generator()
+    generator.contracts = contracts
+    rendered = generator.render()
+    for alias, path in _MODEL_ENUMS:
+        values = _enum_definition(schema, path)["enum"]
+        assert get_args(getattr(contracts, alias)) == tuple(values)
+        union = " | ".join(json.dumps(value) for value in values)
+        assert f"export type {alias} = {union};" in rendered
+
+
+@pytest.mark.parametrize("alias,path", _MODEL_ENUMS)
+@pytest.mark.parametrize("invalid", ["missing", "empty"])
+def test_invalid_schema_enum_fails_at_import(alias, path, invalid, tmp_path, monkeypatch):
+    schema = json.loads(_MODEL_SCHEMA_PATH.read_text(encoding="utf-8"))
+    definition = _enum_definition(schema, path)
+    if invalid == "missing":
+        del definition["enum"]
+    else:
+        definition["enum"] = []
+    with pytest.raises(ValueError) as exc:
+        _load_contracts_from_schema(schema, tmp_path, monkeypatch)
+    assert ".".join((*path, "enum")) in str(exc.value), alias
+    expected_message = "Missing" if invalid == "missing" else "non-empty"
+    assert expected_message in str(exc.value)
 
 
 def test_availability_contract_preserves_public_receipt_evidence():

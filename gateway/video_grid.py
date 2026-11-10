@@ -13,9 +13,9 @@ rules.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 DEFAULT_SIZE_WHEN_UNPARSED = (1024, 1024)
@@ -83,6 +83,54 @@ def video_facts(entry: Any) -> VideoManifest | None:
         select_subject=bool(raw.get("select_subject", False)),
         chain=bool(raw.get("chain", False)),
     )
+
+
+def reference_variants(
+    manifest: VideoManifest,
+    get_workflow: Callable[[str], Any | None],
+    reference_input: Callable[[Any], str | None],
+) -> list[tuple[Any, VideoManifest]]:
+    """Variants whose declared role is the input carried by the create protocol's reference field.
+
+    Share this relation between registry validation and request selection so a checked registry cannot select two
+    variants. Missing workflows or sections retain the selector's existing fallback behavior.
+    """
+    eligible = []
+    for role, workflow_id in manifest.variants.items():
+        candidate = get_workflow(workflow_id)
+        if candidate is None:
+            continue
+        candidate_manifest = video_facts(candidate)
+        if candidate_manifest is None:
+            continue
+        candidate_input = reference_input(candidate)
+        if candidate_input is not None and candidate_manifest.roles.get(role, role) == candidate_input \
+                and all(candidate is not chosen for chosen, _ in eligible):   # two roles may name one workflow
+            eligible.append((candidate, candidate_manifest))
+    return eligible
+
+
+def check_video_variants(records: Iterable[Any]) -> None:
+    """Reject ambiguous reference variants after all registry records have loaded, before publishing the registry.
+
+    Pass the complete registry's records (not a filtered public catalog). The check reads contracts and the current
+    async request maps, just like create selection; it neither changes manifests nor depends on workflow spellings.
+    """
+    from gateway.workflow_openapi import reference_input
+
+    by_id = {record.id: record for record in records}
+
+    def reference_target(entry: Any) -> str | None:
+        record = SimpleNamespace(id=entry.id, intent=entry.contract["intent"], contract=entry.contract)
+        return reference_input(record, "async")
+
+    for entry in by_id.values():
+        manifest = video_facts(entry)
+        if manifest is None:
+            continue
+        eligible = reference_variants(manifest, by_id.get, reference_target)
+        if len(eligible) > 1:
+            raise ValueError(f"{entry.id}: multiple variants accept the reference: {sorted(item.id for item, _ in eligible)!r}")
 
 
 def seconds_to_length(seconds: float, frame_rate: float, *, step: int = 8, offset: int = 1) -> int:

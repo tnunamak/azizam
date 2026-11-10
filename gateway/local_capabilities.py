@@ -22,9 +22,9 @@ for a specific audience and profile. We only emit raw capability records.
 
 Vision modality inference is conservative:
 
-* A role with a ``mmproj`` path or whose name is ``vision`` is treated as
-  supporting ``image`` input.
-* A catalog entry with ``mmproj`` not ``None`` is treated likewise.
+* A role with a ``mmproj`` path is treated as supporting ``image`` input.
+  A role's name never adds a modality.
+* A catalog entry with a nonempty ``mmproj`` path is treated likewise.
 * The ``vision`` capability listed on a backend in ``backends.*.capabilities``
   also flags vision on roles/models bound to that backend.
 
@@ -53,8 +53,6 @@ INTENT_EMBEDDINGS = "text.embeddings"
 INTENT_SPEECH = "speech.synthesis"
 INTENT_TRANSCRIPTIONS = "speech.transcription"
 INTENT_TRANSLATIONS = "speech.translation"
-INTENT_IMAGE_GENERATE = "image.generate"
-INTENT_IMAGE_EDIT = "image.edit"
 INTENT_VIDEO_GENERATE = "video.generate"
 INTENT_AUDIO_GENERATE = "audio.generate"
 
@@ -272,8 +270,6 @@ def _load_local_capability_rows(
         if group not in {"endpoints", "speech", "recognition"}:
             fail(where, "unknown group")
         flag = text(row, "flag", where)
-        if flag not in {"llm", "embeddings", "tts", "stt", "images", "videos", "audio"}:
-            fail(where, "unknown flag")
         triggers = tuple(value.lower() for value in modalities(row, "triggers", where))
         for trigger in triggers:
             if trigger in triggers_seen:
@@ -349,6 +345,16 @@ def load_local_capability_image_rows(
 ) = _load_local_capability_rows()
 
 
+def transcription_triggers() -> frozenset[str]:
+    """Return configured recognition triggers without reloading package data."""
+    return frozenset(
+        trigger.lower()
+        for row in _BACKEND_ROWS
+        if row["group"] == "recognition" and row["intent"] == INTENT_TRANSCRIPTIONS
+        for trigger in row["triggers"]
+    )
+
+
 def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]:
     """One capability per stable alias, tagged with what it resolves to.
 
@@ -402,12 +408,7 @@ def _build_llm_capabilities(
         backend = spec.get("backend")
         if not isinstance(backend, str) or not backend:
             continue
-        modalities = _llm_input_modalities(
-            role_name=str(role_name),
-            spec=spec,
-            backend=backend,
-            backends=backends,
-        )
+        modalities = _llm_input_modalities(spec=spec, backend=backend, backends=backends)
         caveats: list[str] = []
         if backend not in backends:
             caveats.append(f"backend {backend!r} not declared under backends")
@@ -446,13 +447,7 @@ def _build_llm_capabilities(
                 continue
             if not model_id or not backend:
                 continue
-            modalities = _llm_input_modalities(
-                role_name=model_id,
-                spec=spec,
-                backend=backend,
-                backends=backends,
-                consider_role_name=False,
-            )
+            modalities = _llm_input_modalities(spec=spec, backend=backend, backends=backends)
             caveats: list[str] = []
             if backend not in backends:
                 caveats.append(f"backend {backend!r} not declared under backends")
@@ -688,12 +683,11 @@ def _workflow_family_capabilities(
 
 def _llm_input_modalities(
     *,
-    role_name: str,
     spec: Mapping[str, Any],
     backend: str,
     backends: Mapping[str, Any],
-    consider_role_name: bool = True,
 ) -> tuple[str, ...]:
+    """Image input comes from a capability fact (a projector file or the backend's words), never from a name."""
     has_mmproj = bool(spec.get("mmproj"))
     backend_spec = _as_mapping(backends.get(backend))
     backend_caps_raw = backend_spec.get("capabilities")
@@ -702,8 +696,7 @@ def _llm_input_modalities(
         backend_caps = {
             str(c).lower() for c in backend_caps_raw if isinstance(c, str)
         }
-    name_implies_vision = consider_role_name and role_name.lower() == "vision"
-    if has_mmproj or name_implies_vision or "vision" in backend_caps:
+    if has_mmproj or "vision" in backend_caps:
         return ("text", "image")
     return ("text",)
 
@@ -758,8 +751,6 @@ __all__ = [
     "INTENT_EMBEDDINGS",
     "INTENT_SPEECH",
     "INTENT_TRANSCRIPTIONS",
-    "INTENT_IMAGE_GENERATE",
-    "INTENT_IMAGE_EDIT",
     "INTENT_VIDEO_GENERATE",
     "INTENT_AUDIO_GENERATE",
     "build_local_capabilities",

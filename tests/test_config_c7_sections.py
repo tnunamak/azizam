@@ -78,11 +78,9 @@ def test_the_legacy_import_gives_each_section_its_startup_block(tmp_path):
     assert effective["reasoning"] == startup["reasoning"]
 
 
-def test_model_routing_gives_its_startup_block_without_the_directory_it_does_not_own(tmp_path):
+def test_model_routing_gives_its_startup_block(tmp_path):
     effective = effective_config(proxy, "tracked", tmp_path / "admin.db")
-    startup = raw_config("tracked")["model_routing"]
-    assert "gguf_dir" in startup
-    assert effective["model_routing"] == {key: value for key, value in startup.items() if key != "gguf_dir"}
+    assert effective["model_routing"] == raw_config("tracked")["model_routing"]
 
 
 def test_a_first_run_has_the_release_values_and_no_roles(tmp_path):
@@ -114,9 +112,9 @@ def test_a_block_the_section_does_not_take_is_not_imported_and_leaves_no_step(tm
 
 
 def test_the_startup_keys_a_section_does_not_own_are_left_out_of_the_import():
-    routing = proxy.CONFIG_HOME.sections["model_routing"]
-    assert layers.owned_part(routing, {"gguf_dir": "/x", "switch_timeout": 5}) == {"switch_timeout": 5}
-    assert layers.owned_part(proxy.CONFIG_HOME.sections["roles"], {"gguf_dir": "/x"}) == {"gguf_dir": "/x"}
+    audio = proxy.CONFIG_HOME.sections["audio"]
+    assert layers.owned_part(audio, {"workflows_dir": "/x", "default_workflow": "a"}) == {"default_workflow": "a"}
+    assert layers.owned_part(proxy.CONFIG_HOME.sections["roles"], {"workflows_dir": "/x"}) == {"workflows_dir": "/x"}
 
 
 def test_the_startup_only_annotation_is_checked():
@@ -139,8 +137,9 @@ def test_every_startup_only_name_is_a_key_of_the_tracked_startup_block():
         assert all(name in block for name in names), (section_id, names)
 
 
-def test_gguf_dir_is_still_read_from_the_startup_file():
-    assert proxy.GGUF_DIR == raw_config("tracked")["model_routing"]["gguf_dir"]
+def test_nothing_reads_gguf_dir_at_import():
+    """The constant had no reader and fell back to one household's host path; the setting is still accepted."""
+    assert not hasattr(proxy, "GGUF_DIR")
 
 
 # -- the readers read the snapshot, and an owner edit is live --------------------------------------------------------

@@ -18,22 +18,15 @@ from unittest.mock import patch
 import proxy
 from tests.support.access import auth_identity  # noqa: E402
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
-from gateway.transforms import (
-    QWEN3_ENABLE_THINKING_KEY,
-    QWEN3_NO_THINK_HINT,
-)
+from gateway.transforms import ENABLE_THINKING_KEY
 
 
 class TestBackgroundRemovalSuppressionConstants:
     """Verify the constants from gateway/transforms.py have the expected values."""
 
-    def test_no_think_hint_constant(self) -> None:
-        """QWEN3_NO_THINK_HINT constant is still defined (for backward compat)."""
-        assert QWEN3_NO_THINK_HINT == "/no_think"
-
     def test_enable_thinking_key_constant(self) -> None:
         """The enable_thinking key must be exactly 'enable_thinking'."""
-        assert QWEN3_ENABLE_THINKING_KEY == "enable_thinking"
+        assert ENABLE_THINKING_KEY == "enable_thinking"
 
 
 class TestBackgroundRemovalOutboundPayload:
@@ -69,7 +62,7 @@ class TestBackgroundRemovalOutboundPayload:
         # Dict equality alone accepts 0 == False; the JSON value must be a real boolean.
         assert payload["chat_template_kwargs"]["enable_thinking"] is False
         for message in payload["messages"]:
-            assert QWEN3_NO_THINK_HINT not in message["content"], message
+            assert "/no_think" not in message["content"], message
         system, user = payload["messages"]
         assert system["role"] == "system"
         assert system["content"] == (

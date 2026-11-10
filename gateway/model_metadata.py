@@ -11,8 +11,8 @@ of an entry (LLM catalog, current-loaded, decision runtime), and the
 capabilities a service-registry record declares. Operator declarations under
 the `model_metadata` key are DATA and always win over derived values.
 
-The vocabulary contract, operation, service-capability and capability-intent metadata
-are read once from shipped registry rows.
+The vocabulary contract is read from the published models schema; derivation rules,
+operation, service-capability and capability-intent metadata come from registry rows.
 Other lookups are injected; this module reads no owner config and makes no network calls.
 """
 
@@ -26,7 +26,9 @@ from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
+from gateway.intent_families import resolve_intent
 from gateway.manifests import asset_input_modalities, asset_leaf_specs
+from gateway.product_contracts import _MODEL_SCHEMA_PATH, load_model_metadata_vocabularies
 from gateway.stable_aliases import OPERATIONS as ALIAS_OPERATIONS
 
 _METADATA_CONTRACT_PATH = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
@@ -75,9 +77,14 @@ class _MetadataContractLoader(yaml.SafeLoader):
         return found
 
 
-def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> MetadataContract:
-    """Load a closed data-only schema; order and semantic roles are independent."""
+def load_metadata_contract(
+    path: str | Path = _METADATA_CONTRACT_PATH,
+    *,
+    schema_path: str | Path = _MODEL_SCHEMA_PATH,
+) -> MetadataContract:
+    """Read ordered schema vocabularies and validate the separate semantic rules."""
     path = Path(path)
+    vocabularies = load_model_metadata_vocabularies(schema_path)
 
     def invalid(at: str, reason: str) -> ValueError:
         return ValueError(f"{path}: {at}: {reason}")
@@ -98,15 +105,17 @@ def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> Metada
         found: list[str] = []
         for item in value:
             if not isinstance(item, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", item):
-                raise invalid(at, "values must be lowercase data names, not paths")
+                raise invalid(at, f"values must be lowercase data names, not paths: {item!r}")
             if item in found:
                 raise invalid(at, f"duplicate value: {item!r}")
             found.append(item)
         return tuple(found)
 
-    def reference(value: Any, at: str, vocabulary: tuple[str, ...]) -> str:
+    def reference(
+        value: Any, at: str, vocabulary: tuple[str, ...], *, source: str | Path = schema_path,
+    ) -> str:
         if not isinstance(value, str) or value not in vocabulary:
-            raise invalid(at, f"unknown value: {value!r}")
+            raise invalid(at, f"unknown value: {value!r}; not allowed by {source}")
         return value
 
     try:
@@ -115,15 +124,14 @@ def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> Metada
         raise invalid("document", str(exc)) from exc
     document = mapping(document, "document", {"schema_version", "exact", "families", "contract"})["contract"]
     document = mapping(document, "document", {
-        "schema_version", "types", "input_modalities", "output_modalities",
-        "tags", "tag_types", "derivation", "implications",
+        "schema_version", "tag_types", "derivation", "implications",
     })
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         raise invalid("schema_version", "must be 1")
-    types = roster(document["types"], "types")
-    inputs = roster(document["input_modalities"], "input_modalities")
-    outputs = roster(document["output_modalities"], "output_modalities")
-    tags = roster(document["tags"], "tags", empty=True)
+    types = vocabularies["types"]
+    inputs = vocabularies["input_modalities"]
+    outputs = vocabularies["output_modalities"]
+    tags = vocabularies["tags"]
     tag_types = roster(document["tag_types"], "tag_types", empty=True)
     for type_ in tag_types:
         reference(type_, "tag_types", types)
@@ -162,8 +170,9 @@ def load_metadata_contract(path: str | Path = _METADATA_CONTRACT_PATH) -> Metada
     for index, row in enumerate(rows):
         at = f"implications[{index}]"
         row = mapping(row, at, {"type", "tag", "input_modality"})
+        type_ = reference(row["type"], f"{at}.type", types)
         implication = TagInputImplication(
-            reference(row["type"], f"{at}.type", tag_types),
+            reference(type_, f"{at}.type", tag_types, source=f"contract.tag_types in {path}"),
             reference(row["tag"], f"{at}.tag", tags),
             reference(row["input_modality"], f"{at}.input_modality", inputs),
         )
@@ -189,6 +198,44 @@ DECLARATION_KEY = "model_metadata"
 DECLARABLE_FIELDS: tuple[str, ...] = (
     "type", "input_modalities", "output_modalities", "max_tokens", "tags",
 )
+
+
+def read_declared_input_modalities(
+    record: Mapping[str, Any], row_label: str,
+) -> tuple[str, ...] | None:
+    """Read one complete input declaration without inference or normalization.
+
+    Return None only when the parent or field is absent. The caller supplies a
+    safe record identity as row_label, never a filesystem path or record dump.
+    Errors identify that row and field but never include declaration values.
+    This reader is deliberately independent of the derived metadata overlay.
+    """
+    if DECLARATION_KEY not in record:
+        return None
+    declaration = record[DECLARATION_KEY]
+    if not isinstance(declaration, Mapping):
+        raise ValueError(f"{row_label}.{DECLARATION_KEY}: must be a mapping")
+    if "input_modalities" not in declaration:
+        return None
+
+    values = declaration["input_modalities"]
+    at = f"{row_label}.{DECLARATION_KEY}.input_modalities"
+    if not isinstance(values, list) or not values:
+        raise ValueError(f"{at}: must be a nonempty list")
+    present: set[str] = set()
+    for value in values:
+        if (
+            not isinstance(value, str) or not value
+            or value != value.strip() or value != value.lower()
+        ):
+            raise ValueError(f"{at}: values must be nonempty canonical strings")
+        if value not in METADATA_CONTRACT.input_modalities:
+            raise ValueError(f"{at}: contains a value outside the input vocabulary")
+        if value in present:
+            raise ValueError(f"{at}: must not contain duplicates")
+        present.add(value)
+    return tuple(value for value in METADATA_CONTRACT.input_modalities if value in present)
+
 
 # Top-level response fields this module writes.
 OUTPUT_FIELDS: tuple[str, ...] = ("type", "architecture", "max_tokens", "tags")
@@ -382,7 +429,7 @@ def load_service_capability_metadata(
 # Loaded once, like OPERATION_METADATA; owner configuration cannot replace release data.
 SERVICE_CAPABILITY_METADATA = load_service_capability_metadata()
 
-# Capability intents and ordered prefix families are immutable release data.
+# Capability intents and segment families are immutable release data.
 _CAPABILITY_INTENT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "capability_intent_metadata.yml"
 
 
@@ -395,7 +442,7 @@ class CapabilityIntentIndex:
 def load_capability_intent_metadata(
     path: str | Path = _CAPABILITY_INTENT_ROWS_PATH,
 ) -> CapabilityIntentIndex:
-    """Load exact matches and first-match families once, without intent-specific code."""
+    """Load exact matches and segment families once, without intent-specific code."""
     path = Path(path)
 
     def invalid(at: str, reason: str) -> ValueError:
@@ -453,15 +500,17 @@ def load_capability_intent_metadata(
             name = row.get(name_key)
             if not isinstance(name, str) or not name.strip():
                 raise invalid(f"{at}.{name_key}", "must be a nonempty string")
+            if name_key == "family" and ("." in name or any(char.isspace() for char in name)):
+                raise invalid(f"{at}.{name_key}", "family must be one segment without dots or whitespace")
             if name in found:
                 raise invalid(f"{at}.{name_key}", f"duplicate {name_key}: {name!r}")
             found[name] = metadata(row, at)
         return MappingProxyType(found)
 
-    return CapabilityIntentIndex(rows("exact", "intent"), rows("families", "prefix"))
+    return CapabilityIntentIndex(rows("exact", "intent"), rows("families", "family"))
 
 
-# Loaded once; mapping insertion order preserves first-match family precedence.
+# Loaded once; exact and family rows are immutable snapshots.
 _CAPABILITY_INTENT_INDEX = load_capability_intent_metadata()
 _CAPABILITY_INTENTS = _CAPABILITY_INTENT_INDEX.exact
 _CAPABILITY_INTENT_FAMILIES = _CAPABILITY_INTENT_INDEX.families
@@ -481,10 +530,6 @@ def _capability_types_by_io() -> dict[tuple[frozenset[str], frozenset[str]], str
 
 
 _CAPABILITY_TYPES_BY_IO = _capability_types_by_io()
-
-# Major media type of a manifest output -> output modality.
-_MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio", "text": "text"}
-
 
 def type_of(input_modalities: Iterable[str], output_modalities: Iterable[str]) -> str | None:
     """Use explicit output precedence, then input precedence for the fallback output."""
@@ -531,9 +576,7 @@ def from_capability(
     if type_ is not None:
         return ModelMetadata(type_, inputs, outputs)
     intent = str(intent or "")
-    base = _CAPABILITY_INTENTS.get(intent) or next(
-        (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES.items() if intent.startswith(prefix)), None
-    )
+    base = resolve_intent(intent, exact=_CAPABILITY_INTENTS, families=_CAPABILITY_INTENT_FAMILIES)
     if base is None:
         type_ = type_of(inputs, outputs)
         return None if type_ is None else ModelMetadata(type_, inputs, outputs)
@@ -843,8 +886,10 @@ def _manifest_output_modalities(manifest: Mapping[str, Any]) -> list[str]:
             continue
         media_type = str(spec.get("media_type") or "").strip().lower()
         major = media_type.split("/", 1)[0]
-        if major in _MEDIA_MAJOR_TO_MODALITY:
-            found.append(_MEDIA_MAJOR_TO_MODALITY[major])
+        # The IANA top-level type of a declared output names its modality when the
+        # contract's output vocabulary has that word.
+        if major in OUTPUT_MODALITIES:
+            found.append(major)
         elif media_type == "application/json":
             found.append("text")
     return found

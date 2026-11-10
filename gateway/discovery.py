@@ -42,6 +42,7 @@ from gateway.manifests import (
     manifest_identity,
 )
 from gateway.workflow_policy import PolicyFacts, release_policy
+from gateway import video_grid
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 MANIFEST_GLOBS = ("*.yml", "*.yaml")
@@ -134,14 +135,35 @@ class WorkflowRegistry:
         if not root.is_dir():
             raise ManifestError(f"manifest directory not found: {root}")
 
+        added: list[tuple[Path, dict[str, Any], WorkflowRecord]] = []
         for path in sorted(_iter_manifest_files(root)):
             try:
                 manifest = load_workflow_manifest(path)
-                self.add_manifest(manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])))
+                record = self.add_manifest(
+                    manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])),
+                    _check_variants=False,  # checked once below; a per-file check would copy the registry each time
+                )
+                added.append((path, manifest, record))
             except (ManifestError, OSError, ValueError) as exc:
                 self._errors.append(
                     RegistryLoadError(source_path=path, message=str(exc))
                 )
+        try:
+            video_grid.check_video_variants(self.records())
+        except ValueError:
+            # Two variants claim one reference. Add this directory's records again one at a time, each checked, so the
+            # file that brings the conflict is refused and absent, as a single add would refuse it.
+            for _path, _manifest, record in added:
+                del self._records[record.identity.id]
+            for path, manifest, record in added:
+                try:
+                    self.add_manifest(manifest, source_path=path, provenance=provenance, facts=record.facts)
+                except ValueError as exc:   # a registry error, not a request error
+                    self._errors.append(RegistryLoadError(source_path=path, message=str(exc)))
+            try:   # a conflict among records this load did not add stays a load error of the directory
+                video_grid.check_video_variants(self.records())
+            except ValueError as exc:
+                self._errors.append(RegistryLoadError(source_path=root, message=str(exc)))
 
     def add_manifest(
         self,
@@ -151,6 +173,7 @@ class WorkflowRegistry:
         replace: bool = False,
         provenance: Provenance = UNKNOWN_PROVENANCE,
         facts: PolicyFacts | None = None,
+        _check_variants: bool = True,
     ) -> WorkflowRecord:
         """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first.
         The provenance and the facts are the record's, set by whoever knows where it came from; none means not reviewed and
@@ -166,6 +189,10 @@ class WorkflowRegistry:
             source_path=Path(source_path) if source_path else Path(""),
             facts=facts,
         )
+        if _check_variants:
+            candidate = dict(self._records)
+            candidate[identity.id] = record
+            video_grid.check_video_variants(candidate.values())
         self._records[identity.id] = record
         return record
 
@@ -189,7 +216,9 @@ class WorkflowRegistry:
 
         A reload builds the next registry whole and swaps it in here, so a reader sees the old records or the new ones.
         """
-        self.restore(other.contents())
+        contents = other.contents()
+        video_grid.check_video_variants(contents[0].values())
+        self.restore(contents)
 
     def restore(self, contents: tuple[dict[str, WorkflowRecord], list[RegistryLoadError]]) -> None:
         self._records, self._errors = contents

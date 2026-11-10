@@ -12,7 +12,7 @@ sites:
     reason: Names the IANA media type family of a file in suffix and MIME tables and media_kind comparisons.
   - file: gateway/video_subject.py
     literal: image
-    count: 11
+    count: 1
     category: engine_node_input
     reason: Names the ComfyUI node input receiving image data when graph nodes are added or rewired.
   - file: gateway/prompt_memory.py
@@ -40,36 +40,6 @@ sites:
     count: 1
     category: media_type
     reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/capabilities.py
-    literal: image
-    count: 1
-    category: media_type
-    reason: Names the IANA family returned by an explicit MIME-prefix classification.
-  - file: gateway/capabilities.py
-    literal: audio
-    count: 1
-    category: media_type
-    reason: Names the IANA family returned by an explicit MIME-prefix classification.
-  - file: gateway/capabilities.py
-    literal: video
-    count: 1
-    category: media_type
-    reason: Names the IANA family returned by an explicit MIME-prefix classification.
-  - file: gateway/engine_protocol/media.py
-    literal: audio
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
-  - file: gateway/engine_protocol/media.py
-    literal: image
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
-  - file: gateway/engine_protocol/media.py
-    literal: video
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level Content-Type family in the media-kind lookup used to store a binary protocol result.
   - file: gateway/media_delivery.py
     literal: audio
     count: 1
@@ -137,9 +107,9 @@ sites:
     reason: Names the IANA video media type family in the MIME-family-to-example-filename-suffix table.
   - file: gateway/video_media_jobs.py
     literal: video
-    count: 1
+    count: 2
     category: wire_enum
-    reason: Names the video discriminator defined by the OpenAI Videos API in the Video object's object field.
+    reason: Names the video discriminators in the gateway-published video response contract, both the OpenAI Video object's object field and the gateway assets[].kind extension; neither occurrence selects a workflow, model, engine or intent.
   - file: gateway/workflow_call.py
     literal: audio
     count: 1
@@ -175,18 +145,78 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the object discriminator the gateway publishes on its signed video content-URL response; changing it is an API change, not configuration.
-  - file: gateway/model_metadata.py
+  - file: gateway/manifests.py
     literal: audio
-    count: 2
+    count: 1
     category: media_type
-    reason: Names the IANA top-level media type family in the media-major-to-modality table used to classify a manifest output's declared media type.
-  - file: gateway/model_metadata.py
+    reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
+  - file: gateway/manifests.py
     literal: image
-    count: 2
+    count: 1
     category: media_type
-    reason: Names the IANA top-level media type family in the media-major-to-modality table used to classify a manifest output's declared media type.
-  - file: gateway/model_metadata.py
+    reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
+  - file: gateway/manifests.py
     literal: video
-    count: 2
+    count: 1
     category: media_type
-    reason: Names the IANA top-level media type family in the media-major-to-modality table used to classify a manifest output's declared media type.
+    reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
+  - file: gateway/local_capabilities.py
+    literal: image
+    count: 1
+    category: wire_enum
+    reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
+  - file: gateway/openai_media_schemas.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: Names the audio stream_format value defined by the OpenAI Audio speech request; a published OpenAPI schema value.
+  - file: gateway/workflow_request_maps.py
+    literal: video
+    count: 1
+    category: wire_enum
+    reason: Names the video async transport kind that the gateway publishes in each workflow's execution block of the workflow catalog; the reader checks the kind's declared shape and never selects a workflow, model, engine or intent by it.
+  - file: gateway/workflow_openapi.py
+    literal: "video"
+    count: 1
+    category: wire_enum
+    reason: Names the published async transport kind that separates top-level body fields from workflow extension inputs, not a workflow, model, engine or intent identity.
+  - file: gateway/workflow_openapi.py
+    literal: "OpenAI-compatible gateway plus native workflow routes. Discover with `GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this document: each workflow names its sync route, its async route, and where every input goes. Slow work (video, long music) goes through an async route: submit, poll, then fetch the content."
+    count: 1
+    category: wire_enum
+    reason: The OpenAPI document's info.description (published at /openapi.json); documents workflow discovery and the asynchronous route contract and does not select workflow behavior.
+  - file: gateway/workflow_openapi.py
+    literal: "image.generate"
+    count: 1
+    category: wire_enum
+    reason: Names a published media-job submit request intent enum value; this schema documents the wire contract and does not dispatch execution.
+  - file: gateway/workflow_openapi.py
+    literal: "audio.generate"
+    count: 1
+    category: wire_enum
+    reason: Names a published media-job submit request intent enum value; this schema documents the wire contract and does not dispatch execution.
+  - file: gateway/workflow_openapi.py
+    literal: "video.generate"
+    count: 1
+    category: wire_enum
+    reason: Names a published media-job submit request intent enum value; this schema documents the wire contract and does not dispatch execution.
+  - file: gateway/workflow_openapi.py
+    literal: "The body you would send to the matching sync route: `/v1/images/generations` (image.generate), `/v1/audio/generate` (audio.generate, music.generate, sfx.generate) or `/v1/videos` (video.generate)."
+    count: 1
+    category: wire_enum
+    reason: Documents the published media-job request body routes and intent aliases; this prose does not select workflow behavior.
+  - file: proxy.py
+    literal: X-ComfyUI-Models-Freed
+    count: 1
+    category: wire_enum
+    reason: Names the response header reporting that ComfyUI models were freed; the header name does not select backend behavior.
+  - file: proxy.py
+    literal: video.generation
+    count: 2
+    category: wire_enum
+    reason: Names the video.generation object discriminator the gateway publishes on its video responses (azizam_object and object fields); it does not select workflow behavior.
+  - file: proxy.py
+    literal: OpenAI-compatible response proxied from the active local backend.
+    count: 1
+    category: wire_enum
+    reason: The 200 response description in _OPENAI_COMPAT_JSON_BODY_OPENAPI, published in /openapi.json for the OpenAI-compatible JSON routes; it selects no workflow, model, engine or intent.

@@ -3,18 +3,72 @@
 These describe caller-visible data. They do not import the running gateway or
 its stores; generation and contract validation need no instance credentials.
 """
+import json
+import re
+from pathlib import Path
 from typing import Literal
 from typing_extensions import NotRequired, TypedDict
+
+_MODEL_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "registry/defaults/models.schema.json"
+
+
+def load_model_metadata_vocabularies(
+    path: str | Path = _MODEL_SCHEMA_PATH,
+) -> dict[str, tuple[str, ...]]:
+    """Read the published model enums once, preserving their declared order."""
+    path = Path(path)
+    try:
+        with path.open(encoding="utf-8") as schema_file:
+            model_schema = json.load(schema_file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f"{path}: cannot read model metadata schema: {exc}") from exc
+
+    def _metadata_enum(*keys: str) -> tuple[str, ...]:
+        location = ("additionalProperties", "properties", "model_metadata", "properties", *keys, "enum")
+        value = model_schema
+        try:
+            for key in location:
+                value = value[key]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"{path}: Missing model metadata schema enum: {'.'.join(location)}") from exc
+        if not isinstance(value, list) or not value or any(
+            not isinstance(item, str) or not item for item in value
+        ):
+            raise ValueError(
+                f"{path}: Model metadata schema enum {'.'.join(location)} "
+                "must be a non-empty array of non-empty strings"
+            )
+        found: list[str] = []
+        for item in value:
+            if not re.fullmatch(r"[a-z][a-z0-9_-]*", item):
+                raise ValueError(f"{path}: {'.'.join(location)}: invalid vocabulary word: {item!r}")
+            if item in found:
+                raise ValueError(f"{path}: {'.'.join(location)}: duplicate vocabulary word: {item!r}")
+            found.append(item)
+        return tuple(found)
+
+    return {
+        "types": _metadata_enum("type"),
+        "input_modalities": _metadata_enum("input_modalities", "items"),
+        "output_modalities": _metadata_enum("output_modalities", "items"),
+        "tags": _metadata_enum("tags", "items"),
+    }
+
+
+_MODEL_METADATA_VOCABULARIES = load_model_metadata_vocabularies()
+
 
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "unknown", "unavailable"]
 # An icon key names a capability id from registry/capability_words.yml; the set grows with the rows.
 CapabilityIconKey = str
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
-# The `/v1/models` metadata vocabulary (gateway/model_metadata.py, docs/api/MODEL_METADATA.md).
-ModelType = Literal["language", "embedding", "reranking", "image", "video", "audio", "decision"]
-InputModality = Literal["text", "image", "audio", "video", "file"]
-OutputModality = Literal["text", "image", "audio", "video", "embedding"]
-ModelTag = Literal["tool-use", "reasoning", "vision", "file-input"]
+# The same metadata vocabulary operators validate in registry/defaults/models.schema.json.
+ModelType = Literal[_MODEL_METADATA_VOCABULARIES["types"]]
+InputModality = Literal[_MODEL_METADATA_VOCABULARIES["input_modalities"]]
+OutputModality = Literal[_MODEL_METADATA_VOCABULARIES["output_modalities"]]
+ModelTag = Literal[_MODEL_METADATA_VOCABULARIES["tags"]]
 
 
 class AvailabilityEvidence(TypedDict, total=False):

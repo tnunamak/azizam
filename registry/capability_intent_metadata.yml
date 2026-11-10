@@ -27,29 +27,25 @@ exact:
   - intent: speech.translation
     operation: transcriptions
 families:
-  - prefix: chat.
+  - family: chat
     operation: chat
-  - prefix: responses.
+  - family: responses
     operation: chat
-  - prefix: decision.
+  - family: decision
     operation: decisions
-  - prefix: image.
+  - family: image
     model_metadata: {type: image, input_modalities: [text], output_modalities: [image]}
-  - prefix: video.
+  - family: video
     model_metadata: {type: video, input_modalities: [text], output_modalities: [video]}
-  - prefix: speech.
+  - family: speech
     operation: speech
-  - prefix: audio.
+  - family: audio
     model_metadata: {type: audio, input_modalities: [text], output_modalities: [audio]}
 
-# Global model metadata vocabulary and derivation rules.
+# Model metadata semantic rules; vocabularies live in defaults/models.schema.json.
 contract:
-  # Ordered rosters control emission order, not semantic roles.
+  # Schema enum order controls emission order, not these semantic roles.
   schema_version: 1
-  types: [language, embedding, reranking, image, video, audio, decision]
-  input_modalities: [text, image, audio, video, file]
-  output_modalities: [text, image, audio, video, embedding]
-  tags: [tool-use, reasoning, vision, file-input]
   tag_types: [language]
   derivation:
     # Scalar manifest inputs and fallback output typing have named roles.

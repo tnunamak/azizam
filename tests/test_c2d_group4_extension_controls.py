@@ -263,7 +263,7 @@ def test_extension_control_registry_is_closed_and_loaded_once(tmp_path, monkeypa
                 fresh.control_group("missing_group")
 
 
-def test_control_public_name_is_descriptor_owned(tmp_path):
+def test_control_public_name_is_descriptor_owned(tmp_path, monkeypatch):
     from gateway import extension_controls as controls
 
     document = _document()
@@ -281,7 +281,26 @@ def test_control_public_name_is_descriptor_owned(tmp_path):
     }
     path = tmp_path / "unfamiliar.yml"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-    group = controls.load_extension_controls(path)["general_delivery"]
+    groups = controls.load_extension_controls(path)
+    group = groups["general_delivery"]
+    from gateway import openai_media_schemas as schemas
+
+    # Exercise the production schema builder with the ordinary loader's result.
+    monkeypatch.setattr(controls, "_CONTROL_GROUPS", groups)
+    published = schemas._video_create_request_schema()["properties"]["extensions"]
+    assert published == {
+        "type": "object",
+        "properties": {"org.example.options": {
+            "type": "object",
+            "properties": {
+                "keep_copy": {"type": "boolean", "default": False},
+                "show_receipt": {"type": "boolean", "default": True},
+            },
+            "additionalProperties": False,
+        }},
+        "additionalProperties": True,
+    }
+    assert "extensions" not in schemas._video_create_multipart_request_schema()["properties"]
     assert group.public_fields == frozenset({"keep_copy", "show_receipt"})
     assert controls.parse_control_group({}, group) == {}
     assert controls.parse_control_group({"extensions": {group.namespace: {}}}, group) == {
@@ -329,3 +348,201 @@ def test_video_control_legacy_exports_are_unchanged():
     assert error.param == "extensions.com.azizam.video.audio"
     assert video_controls.parse_video_controls({"extensions": {"com.azizam.video": {}}}) == {"audio": True}
     assert video_controls.parse_video_controls({"extensions": {"com.azizam.video": {"audio": False}}}) == {"audio": False}
+
+
+@pytest.mark.parametrize(("path", "value", "expected"), [
+    (("controls",), {}, "com.azizam.video"),
+    (("controls", "retain_sound", "type"), "string", "com.azizam.video"),
+], ids=["empty-controls", "unsupported-type"])
+def test_production_controls_reject_invalid_descriptors(tmp_path, path, value, expected):
+    from gateway import extension_controls as controls
+
+    document = _replaced(("groups", "clip_delivery", *path), value)
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError) as failure:
+        controls.load_extension_controls(registry)
+    assert expected in str(failure.value)
+
+
+@pytest.mark.parametrize(("path", "value", "expected_namespace", "expected_properties"), [
+    (("namespace",), "com.azizam.vidoe", "com.azizam.vidoe",
+     {"audio": {"type": "boolean", "default": True}}),
+    (("namespace",), "org.example.options", "org.example.options",
+     {"audio": {"type": "boolean", "default": True}}),
+    (("controls", "retain_sound", "field"), "aduio", "com.azizam.video",
+     {"aduio": {"type": "boolean", "default": True}}),
+    (("controls",), {
+        "retain_sound": {"field": "audio", "type": "boolean", "default": True},
+        "extra_option": {"field": "extra", "type": "boolean", "default": False},
+    }, "com.azizam.video", {
+        "audio": {"type": "boolean", "default": True},
+        "extra": {"type": "boolean", "default": False},
+    }),
+    (("controls", "retain_sound", "default"), False, "com.azizam.video",
+     {"audio": {"type": "boolean", "default": False}}),
+], ids=["namespace-is-data", "unfamiliar-namespace", "field-is-data",
+        "additional-field", "default-is-data"])
+def test_descriptor_changes_define_published_contract(
+    tmp_path, monkeypatch, path, value, expected_namespace, expected_properties,
+):
+    from gateway import extension_controls as controls
+    from gateway import openai_media_schemas as schemas
+
+    document = _replaced(("groups", "clip_delivery", *path), value)
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    groups = controls.load_extension_controls(registry)
+    monkeypatch.setattr(controls, "_CONTROL_GROUPS", groups)
+    published = schemas._video_create_request_schema()["properties"]["extensions"]
+    assert published == {
+        "type": "object",
+        "properties": {
+            expected_namespace: {
+                "type": "object",
+                "properties": expected_properties,
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": True,
+    }
+
+
+def test_extension_control_namespaces_are_unique(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    document["groups"]["duplicate"] = deepcopy(document["groups"]["clip_delivery"])
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate namespace") as caught:
+        controls.load_extension_controls(registry)
+    assert str(registry) in str(caught.value)
+
+
+def test_unsupported_control_type_names_the_descriptor_file(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    control = next(iter(document["groups"]["clip_delivery"]["controls"].values()))
+    control["type"] = "string"
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported control type") as caught:
+        controls.load_extension_controls(registry)
+    assert str(registry) in str(caught.value)
+
+
+def test_descriptor_cannot_claim_the_workflow_input_namespace(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    document["groups"]["clip_delivery"]["namespace"] = "com.azizam.workflow"
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="reserved for workflow inputs") as caught:
+        controls.load_extension_controls(registry)
+    assert str(registry) in str(caught.value) and "clip_delivery" in str(caught.value)
+
+
+def test_shipped_extension_schema_preserves_literal_bytes():
+    from gateway import extension_controls as controls
+    from gateway import openai_media_schemas as schemas
+
+    # Frozen pre-change literal, deliberately independent of the descriptors.
+    expected = {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+            "prompt": {"type": "string"},
+            "model": {"type": "string"},
+            "size": {"type": "string", "description": "e.g. '1280x720'."},
+            "seconds": {"type": ["number", "string"]},
+            "seed": {"type": "integer"},
+            "input_reference": {
+                "type": "string",
+                "description": "Reference image/video as URL, path, data URI, or base64 string.",
+            },
+            "extensions": {
+                "type": "object",
+                "properties": {
+                    "com.azizam.video": {
+                        "type": "object",
+                        "properties": {
+                            "audio": {"type": "boolean", "default": True},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": True,
+            },
+        },
+        "additionalProperties": True,
+    }
+    published = schemas.VIDEOS_CREATE_OPENAPI
+    actual = published["requestBody"]["content"]["application/json"]["schema"]
+    assert actual == expected
+    assert json.dumps(actual).encode() == json.dumps(expected).encode()
+    assert json.dumps(schemas._video_create_request_schema()).encode() == json.dumps(expected).encode()
+    frozen_operation = deepcopy(published)
+    frozen_operation["requestBody"]["content"]["application/json"]["schema"] = expected
+    assert json.dumps(published).encode() == json.dumps(frozen_operation).encode()
+    # Returned schema mutation cannot change descriptors or another generated schema.
+    changed = controls.extension_controls_schema()
+    changed["properties"]["com.azizam.video"]["properties"]["audio"]["default"] = False
+    assert controls.extension_controls_schema() == expected["properties"]["extensions"]
+
+
+def test_shipped_extension_controls_match_published_contract():
+    from gateway import extension_controls as controls
+
+    registry = Path(controls.__file__).resolve().parent.parent / "registry" / "extension_controls.yml"
+    groups = controls.load_extension_controls(registry)
+    assert groups["clip_delivery"] == controls.control_group("clip_delivery")
+    group = groups["clip_delivery"]
+    # Omission and null/non-object envelopes remain absent, not default-filled.
+    for body in ({}, {"extensions": None}, {"extensions": []}, {"extensions": "ignored"},
+                 {"extensions": 1}, {"extensions": False}, {"extensions": {}},
+                 {"extensions": {group.namespace: None}}):
+        assert controls.parse_control_group(body, group) == {}
+    assert controls.parse_control_group({"extensions": {group.namespace: {}}}, group) == {"audio": True}
+
+
+def test_extension_schema_accepts_two_explicit_groups(tmp_path):
+    from gateway import extension_controls as controls
+
+    document = _document()
+    other = deepcopy(document["groups"]["clip_delivery"])
+    other["namespace"] = "org.example.options"
+    other["controls"] = {
+        "keep_option": {"field": "keep_copy", "type": "boolean", "default": False},
+    }
+    document["groups"]["general_delivery"] = other
+    registry = tmp_path / "controls.yml"
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    assert controls.extension_controls_schema(groups=controls.load_extension_controls(registry)) == {
+        "type": "object",
+        "properties": {
+            "com.azizam.video": {
+                "type": "object",
+                "properties": {"audio": {"type": "boolean", "default": True}},
+                "additionalProperties": False,
+            },
+            "org.example.options": {
+                "type": "object",
+                "properties": {"keep_copy": {"type": "boolean", "default": False}},
+                "additionalProperties": False,
+            },
+        },
+        "additionalProperties": True,
+    }
+
+
+def test_extension_schema_accepts_empty_explicit_groups():
+    from gateway import extension_controls as controls
+
+    assert controls.extension_controls_schema(groups={}) == {
+        "type": "object", "properties": {}, "additionalProperties": True,
+    }
+

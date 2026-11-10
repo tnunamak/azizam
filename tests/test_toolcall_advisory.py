@@ -566,3 +566,73 @@ def test_oversized_unterminated_line_is_not_retained():
     detector = ToolcallStreamDetector(had_tools=True, backend_hint="fixture")
     detector._process_chunk(b": " + b"x" * ((1 << 20) + 1))
     assert detector._line_carry == b""
+
+# Registry validation uses an independent oracle, not the loaded rows themselves.
+def test_marker_registry_preserves_order():
+    assert TOOLCALL_MARKERS == (
+        ("<tool_call>", "hermes_or_qwen"),
+        ("[TOOL_CALLS]", "mistral"),
+        ("<|python_tag|>", "llama3"),
+        ("```tool_code", "gemma"),
+        ("Action:\n```json", "command_r"),
+        ("Action: ```json", "command_r"),
+    )
+    assert isinstance(TOOLCALL_MARKERS, tuple)
+
+
+def test_marker_registry_extension_uses_loader(tmp_path, monkeypatch):
+    import gateway.toolcall_detection as detection
+    import yaml
+
+    path = tmp_path / "custom-markers.yml"
+    rows = [{"marker": marker, "family": family} for marker, family in TOOLCALL_MARKERS]
+    rows.append({"marker": "<novel-call>", "family": "operator-family"})
+    path.write_text(yaml.safe_dump({"schema_version": 1, "markers": rows}), encoding="utf-8")
+    loaded = detection.load_toolcall_markers(path)
+    assert loaded[:-1] == TOOLCALL_MARKERS
+    assert loaded[-1] == ("<novel-call>", "operator-family")
+    monkeypatch.setattr(detection, "TOOLCALL_MARKERS", loaded)
+    payload = _payload(_message_choice(content="prefix <novel-call> suffix"))
+    assert detection.detect_unlifted_toolcalls(payload, request_had_tools=True) == "operator-family"
+
+
+@pytest.mark.parametrize(("document", "row", "reason"), [
+    (None, 0, "expected a mapping"),
+    ([], 0, "expected a mapping"),
+    ({}, 0, "missing keys"),
+    ({"schema_version": 1}, 0, "missing keys"),
+    ({"markers": []}, 0, "missing keys"),
+    ({"schema_version": True, "markers": []}, 0, "schema_version"),
+    ({"schema_version": 2, "markers": []}, 0, "schema_version"),
+    ({"schema_version": "1", "markers": []}, 0, "schema_version"),
+    ({"schema_version": 1, "markers": [], "extra": 0}, 0, "unknown keys"),
+    ({"schema_version": 1, "markers": None}, 0, "non-empty list"),
+    ({"schema_version": 1, "markers": {}}, 0, "non-empty list"),
+    ({"schema_version": 1, "markers": "text"}, 0, "non-empty list"),
+    ({"schema_version": 1, "markers": []}, 0, "non-empty list"),
+    ({"schema_version": 1, "markers": [None]}, 1, "expected a mapping"),
+    ({"schema_version": 1, "markers": [{}]}, 1, "marker"),
+    ({"schema_version": 1, "markers": [{"family": "f"}]}, 1, "marker"),
+    ({"schema_version": 1, "markers": [{"marker": "", "family": "f"}]}, 1, "marker"),
+    ({"schema_version": 1, "markers": [{"marker": "  ", "family": "f"}]}, 1, "marker"),
+    ({"schema_version": 1, "markers": [{"marker": 4, "family": "f"}]}, 1, "marker"),
+    ({"schema_version": 1, "markers": [{"marker": "m"}]}, 1, "family"),
+    ({"schema_version": 1, "markers": [{"marker": "m", "family": ""}]}, 1, "family"),
+    ({"schema_version": 1, "markers": [{"marker": "m", "family": "  "}]}, 1, "family"),
+    ({"schema_version": 1, "markers": [{"marker": "m", "family": None}]}, 1, "family"),
+    ({"schema_version": 1, "markers": [{"marker": "m", "family": "f", "extra": 0}]}, 1, "unknown keys"),
+    ({"schema_version": 1, "markers": [
+        {"marker": "m", "family": "f"}, {"marker": "m", "family": "g"},
+    ]}, 2, "duplicate marker"),
+])
+def test_marker_registry_rejections_name_file_and_row(tmp_path, document, row, reason):
+    import gateway.toolcall_detection as detection
+    import yaml
+
+    path = tmp_path / "invalid-markers.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        detection.load_toolcall_markers(path)
+    assert f"{path}: row {row}:" in str(caught.value)
+    assert reason in str(caught.value)
+

@@ -30,6 +30,7 @@ import yaml
 from gateway.resource_claims import AdmissionRequest, CapacitySnapshot, QueueClass, ResourceClaim, evaluate_admission
 from gateway import off_loop_spawn, private_io, private_tmp, stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
+from gateway.local_capabilities import transcription_triggers
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
 SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_seconds",
@@ -236,7 +237,9 @@ class Measurements:
         record = registry.get("services", {}).get(service_id)
         if record is None:
             raise EngineRouteError(404, "service_not_found", "No engine has that id.")
-        if not {"transcriptions", "audio.transcriptions"}.intersection(record.get("capabilities", [])):
+        capabilities = record.get("capabilities", [])
+        declared = {value.lower() for value in capabilities if isinstance(value, str)} if isinstance(capabilities, list) else set()
+        if not transcription_triggers().intersection(declared):
             raise EngineRouteError(400, "not_transcription_engine", "Choose an engine that offers transcription.")
         return record, generation
 

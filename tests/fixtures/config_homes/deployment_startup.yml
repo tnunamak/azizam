@@ -1,7 +1,7 @@
 # The startup file the suite runs against: the startup keys (registry/startup.schema.json) of deployment_config.yml, so
 # the run boots with the listener, login boot rules and storage roots of a deployment, and nothing else. The hermetic runner
 # copies this file to the run's state directory as AZIZAM_CONFIG_PATH. tests/test_config_c10_startup.py holds the two
-# fixtures together. model_routing.gguf_dir is left out on purpose: the code's fallback is the same path.
+# fixtures together.
 proxy:
   host: 0.0.0.0
   port: 5000

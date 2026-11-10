@@ -20,7 +20,7 @@ argues it honestly.
 
 Public surface
 --------------
-- TOOLCALL_MARKERS        list[(marker_substr, family_name)]
+- TOOLCALL_MARKERS        tuple[(marker_substr, family_name)]
 - detect_unlifted_toolcalls(payload, request_had_tools) -> family | None
 - advisory_for_backend(backend_hint, family) -> str
 - ToolcallDetectorStreamWrapper(had_tools, backend_hint) — async generator wrapper
@@ -93,27 +93,57 @@ GATEWAY_MESSAGES = load_gateway_messages()
 # ---------------------------------------------------------------------------
 # §5.2 — Detection: marker table
 # ---------------------------------------------------------------------------
-# Each entry is (marker_substring, family_name).
-# Family names match vLLM's --tool-call-parser argument values so they can be
-# embedded verbatim in the remediation string.
-#
-# NOTE: this is a MEMBERSHIP TEST, not a parser.  It answers "does this look
-# like an unlifted tool call?" — it does NOT extract structure.  §3.3.
-#
-# The table is intentionally small (~5 entries).  A new family = one new string.
-# No JSON-shape knowledge, no key-name maps, no separator conventions.
+# Each entry is (marker substring, advisory family); order defines precedence.
+# This is a membership test, not a parser. Operators extend the registry data.
+_TOOLCALL_MARKERS_PATH = Path(__file__).resolve().parents[1] / "registry" / "toolcall_markers.yml"
 
-TOOLCALL_MARKERS: list[tuple[str, str]] = [
-    # marker substring            family name (for advisory)
-    ("<tool_call>",               "hermes_or_qwen"),
-    ("[TOOL_CALLS]",              "mistral"),
-    ("<|python_tag|>",            "llama3"),
-    ("```tool_code",              "gemma"),
-    # Command-R: "Action:" is too generic alone; require the json fence too.
-    # We match on "Action:" here — callers confirm "```json" is also present.
-    ("Action:\n```json",          "command_r"),
-    ("Action: ```json",           "command_r"),
-]
+
+def load_toolcall_markers(
+    path: str | Path = _TOOLCALL_MARKERS_PATH,
+) -> tuple[tuple[str, str], ...]:
+    """Load immutable marker rows; row 0 denotes the document/list container."""
+    path = Path(path)
+    label = f"{path}: row 0"
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{label}: cannot read marker registry: {error}") from error
+    if not isinstance(document, Mapping):
+        raise ValueError(f"{label}: expected a mapping")
+    required = {"schema_version", "markers"}
+    unknown = set(document) - required
+    if unknown:
+        raise ValueError(f"{label}: unknown keys {sorted(map(str, unknown))}")
+    missing = required - set(document)
+    if missing:
+        raise ValueError(f"{label}: missing keys {sorted(missing)}")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError(f"{label}: schema_version must be 1")
+    rows = document["markers"]
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{label}: markers must be a non-empty list")
+    markers: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows, start=1):
+        label = f"{path}: row {index}"
+        if not isinstance(row, Mapping):
+            raise ValueError(f"{label}: expected a mapping")
+        unknown = set(row) - {"marker", "family"}
+        if unknown:
+            raise ValueError(f"{label}: unknown keys {sorted(map(str, unknown))}")
+        for field in ("marker", "family"):
+            if not isinstance(row.get(field), str) or not row[field].strip():
+                raise ValueError(f"{label}: {field} must be non-empty text")
+        marker, family = row["marker"], row["family"]
+        if marker in seen:
+            raise ValueError(f"{label}: duplicate marker {marker!r}")
+        seen.add(marker)
+        markers.append((marker, family))
+    return tuple(markers)
+
+
+# Load once; malformed registry data fails at startup.
+TOOLCALL_MARKERS: tuple[tuple[str, str], ...] = load_toolcall_markers()
 
 # Maximum marker length — used to bound the streaming rolling tail.
 _MAX_MARKER_LEN: int = max(len(m) for m, _ in TOOLCALL_MARKERS)

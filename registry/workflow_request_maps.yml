@@ -173,3 +173,216 @@ maps:
       any: true
     default:
       in: extension
+
+
+execution:
+  field_rows:
+    count:
+      unless_all_inputs: []
+      value:
+        name: n
+        type: integer
+        minimum: 1
+        maximum: 10
+        label: number of results
+        description: Number of images.
+        in: body
+        field: n
+    duration:
+      unless_all_inputs: [length]
+      value:
+        name: seconds
+        type: number
+        minimum: 1
+        description: Clip length in seconds.
+        in: body
+        field: seconds
+    size_body:
+      unless_all_inputs: [width, height]
+      value:
+        name: size
+        type: string
+        description: WIDTHxHEIGHT, e.g. 960x512.
+        in: body
+        field: size
+    size_form:
+      unless_all_inputs: [width, height]
+      value:
+        name: size
+        type: string
+        description: WIDTHxHEIGHT, e.g. 960x512.
+        in: form
+        field: size
+
+  native_sync:
+    method: POST
+    path: {from: native_path}
+    content_type: multipart/form-data
+    fields: {from: fields, mode: sync}
+    output: JSON (see the route's response schema)
+    response: {kind: json}
+
+  sync_templates:
+    generated_image:
+      method: POST
+      path: /v1/images/generations
+      content_type: application/json
+      model: {from: model}
+      fields: {from: fields, mode: sync}
+      output: data[].b64_json or data[].url
+      response: {kind: json}
+    edited_image:
+      method: POST
+      path: /v1/images/edits
+      content_type: multipart/form-data
+      model: {from: model}
+      fields: {from: fields, mode: sync}
+      extensions_field: extensions (JSON string)
+      output: data[].b64_json or data[].url
+      response: {kind: json}
+    generated_audio:
+      method: POST
+      path: /v1/audio/generate
+      content_type: application/json
+      model: {from: model}
+      fields: {from: fields, mode: sync}
+      output: audio bytes (see Content-Type)
+      response: {kind: binary}
+    binary_model:
+      method: POST
+      path: /v1/3d/generations/glb
+      content_type: multipart/form-data
+      fields: {from: fields, mode: sync}
+      output: model/gltf-binary (GLB bytes)
+      response: {kind: binary, media_type: model/gltf-binary}
+    workflow_job:
+      method: POST
+      path: {from: workflow_run_path}
+      content_type: multipart/form-data
+      fields: {from: fields, mode: sync}
+      output: a media job; its content is the video
+      response:
+        kind: media_job
+        poll: /gateway/v1/media/jobs/{job_id}
+        content: /gateway/v1/media/jobs/{job_id}/content
+
+  async_templates:
+    generated_image_job:
+      kind: media_job
+      submit:
+        method: POST
+        path: /gateway/v1/media/jobs
+        content_type: application/json
+        body: {intent: image.generate, request: "<the sync request body>"}
+        model: {from: model}
+      poll: {method: GET, path: "/gateway/v1/media/jobs/{job_id}"}
+      content: {method: GET, path: "/gateway/v1/media/jobs/{job_id}/content"}
+      cancel: {method: POST, path: "/gateway/v1/media/jobs/{job_id}/cancel"}
+      statuses: [queued, running, succeeded, failed, canceled]
+      terminal: [succeeded, failed, canceled]
+      fields: {from: fields, mode: async}
+    generated_audio_job:
+      kind: media_job
+      submit:
+        method: POST
+        path: /gateway/v1/media/jobs
+        content_type: application/json
+        body: {intent: audio.generate, request: "<the sync request body>"}
+        model: {from: model}
+      poll: {method: GET, path: "/gateway/v1/media/jobs/{job_id}"}
+      content: {method: GET, path: "/gateway/v1/media/jobs/{job_id}/content"}
+      cancel: {method: POST, path: "/gateway/v1/media/jobs/{job_id}/cancel"}
+      statuses: [queued, running, succeeded, failed, canceled]
+      terminal: [succeeded, failed, canceled]
+      fields: {from: fields, mode: async}
+    prefer_binary_model_job:
+      kind: respond_async
+      submit:
+        method: POST
+        path: /v1/3d/generations/glb
+        content_type: multipart/form-data
+        headers: {Prefer: respond-async}
+      poll: {method: GET, path: "/gateway/v1/media/jobs/{job_id}"}
+      content:
+        method: GET
+        path: /gateway/v1/media/jobs/{job_id}/content
+        output: model/gltf-binary (GLB bytes)
+      cancel:
+        method: POST
+        path: /gateway/v1/media/jobs/{job_id}/cancel
+        note: "the engine cannot stop mid-run: the job ends as canceled when the run returns"
+      statuses: [queued, running, succeeded, failed, canceled]
+      terminal: [succeeded, failed, canceled]
+      fields: {from: fields, mode: sync}
+      output: "202 with a media job (Location, Preference-Applied: respond-async)"
+    video_resource:
+      kind: video
+      submit:
+        method: POST
+        path: /v1/videos
+        content_type: application/json
+        model: {from: model}
+      poll: {method: GET, path: "/v1/videos/{video_id}"}
+      content: {method: GET, path: "/v1/videos/{video_id}/content"}
+      cancel: {method: DELETE, path: "/v1/videos/{video_id}"}
+      statuses: [queued, in_progress, completed, failed]
+      terminal: [completed, failed]
+      fields: {from: fields, mode: async}
+
+  # Exact intent rows override these family defaults.
+  families:
+    video:
+      model_prefix: video-
+      route_inputs: [duration, size_body]
+      sync: null
+      async: video_resource
+      native_alternate: null
+
+  intents:
+    image.generate:
+      model_prefix: ""
+      route_inputs: [count, size_body]
+      sync: generated_image
+      async: generated_image_job
+      native_alternate: null
+    image.edit:
+      model_prefix: ""
+      route_inputs: [count, size_form]
+      sync: edited_image
+      async: null
+      native_alternate:
+        method: POST
+        path: /v1/images/edits
+        model: {from: model}
+        note: "options go in extensions['com.azizam.workflow']"
+    audio.generate:
+      model_prefix: ""
+      route_inputs: []
+      sync: generated_audio
+      async: generated_audio_job
+      native_alternate: null
+    mesh.generate:
+      model_prefix: ""
+      route_inputs: [size_body]
+      sync: binary_model
+      async: prefer_binary_model_job
+      native_alternate: null
+    video.generate:
+      model_prefix: video-
+      route_inputs: [duration, size_body]
+      sync: null
+      async: video_resource
+      native_alternate: null
+    video.edit:
+      model_prefix: video-
+      route_inputs: [duration, size_body]
+      sync: workflow_job
+      async: video_resource
+      native_alternate: null
+    # Native-only intent evidenced by the shipped face-likeness catalog tests.
+    image.analyze:
+      model_prefix: ""
+      route_inputs: []
+      sync: null
+      async: null
+      native_alternate: null

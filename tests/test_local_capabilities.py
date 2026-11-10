@@ -7,21 +7,22 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway.capabilities import summarize_capabilities  # noqa: E402
+from gateway import local_capabilities, model_metadata as mm  # noqa: E402
+from gateway.capabilities import Capability, ResourceEstimate, summarize_capabilities  # noqa: E402
 from tests.support import c2d_parity  # noqa: E402
 from gateway.local_capabilities import (  # noqa: E402
     INTENT_AUDIO_GENERATE,
     INTENT_CHAT,
     INTENT_COMPLETIONS,
     INTENT_EMBEDDINGS,
-    INTENT_IMAGE_EDIT,
-    INTENT_IMAGE_GENERATE,
     INTENT_SPEECH,
     INTENT_TRANSCRIPTIONS,
     INTENT_TRANSLATIONS,
@@ -65,12 +66,15 @@ REPRESENTATIVE_CONFIG: dict = {
             "backend": "kobold",
             "model": "/secret/path/Qwen3.6-27B.gguf",
             "mmproj": "/secret/path/mmproj.gguf",
+            "model_metadata": {"input_modalities": ["text", "image"]},
         },
         "vision": {
             "backend": "tabby",
+            "model_metadata": {"input_modalities": ["text", "image"]},
         },
         "text-only-role": {
             "backend": "kobold",
+            "model_metadata": {"input_modalities": ["text"]},
         },
     },
     "models": [
@@ -79,12 +83,14 @@ REPRESENTATIVE_CONFIG: dict = {
             "backend": "kobold",
             "path": "/secret/path/heretic.gguf",
             "mmproj": "/secret/path/mmproj.gguf",
+            "model_metadata": {"input_modalities": ["text", "image"]},
         },
         {
             "id": "cydonia-24b",
             "backend": "kobold",
             "path": "/secret/path/cydonia.gguf",
             "mmproj": None,
+            "model_metadata": {"input_modalities": ["text"]},
         },
     ],
     "videos": {
@@ -132,7 +138,181 @@ def _by_intent(caps, intent):
     return [c for c in caps if c.intent == intent]
 
 
+class ReadDeclaredInputModalitiesTest(unittest.TestCase):
+    def test_absent_parent_or_field_is_undeclared(self):
+        for record in ({}, {"model_metadata": {}}, {"model_metadata": {"tags": ["vision"]}}):
+            with self.subTest(record=record):
+                self.assertIsNone(mm.read_declared_input_modalities(record, "role:sample"))
+
+    def test_explicit_null_input_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "role:sample.model_metadata.input_modalities"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": None}}, "role:sample"
+            )
+
+    def test_malformed_parent_is_invalid(self):
+        for declaration in (None, False, 1, "text", [], ["text"]):
+            with self.subTest(declaration=declaration), self.assertRaisesRegex(
+                ValueError, "role:sample.model_metadata: must be a mapping"
+            ):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": declaration}, "role:sample"
+                )
+
+    def test_non_list_input_is_invalid(self):
+        for values in (False, 1, "text", {"text": True}, ("text",), {"text"}):
+            with self.subTest(values=values), self.assertRaisesRegex(ValueError, "nonempty list"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": values}}, "model:sample"
+                )
+
+    def test_empty_input_list_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "nonempty list"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": []}}, "model:sample"
+            )
+
+    def test_unknown_input_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "outside the input vocabulary"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": ["unregistered-input"]}}, "model:sample"
+            )
+
+    def test_duplicate_input_is_invalid(self):
+        with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": ["text", "text"]}}, "model:sample"
+            )
+
+    def test_noncanonical_strings_are_invalid(self):
+        for value in ("", "Text", "TEXT", " text", "text ", "\ttext"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "canonical strings"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": [value]}}, "model:sample"
+                )
+
+    def test_non_string_elements_are_invalid(self):
+        for value in (None, False, 1, [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "canonical strings"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": ["text", value]}}, "model:sample"
+                )
+
+    def test_result_follows_contract_order(self):
+        values = list(reversed(mm.METADATA_CONTRACT.input_modalities))
+        self.assertEqual(
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": values}}, "model:sample"
+            ),
+            mm.METADATA_CONTRACT.input_modalities,
+        )
+
+    def test_known_audio_and_file_inputs_are_accepted(self):
+        self.assertEqual(
+            mm.read_declared_input_modalities(
+                {"model_metadata": {"input_modalities": ["file", "audio"]}}, "model:sample"
+            ),
+            ("audio", "file"),
+        )
+
+    def test_reader_does_not_mutate_valid_or_invalid_records(self):
+        for values in (["image", "text"], ["text", "text"], ["text", {}]):
+            record = {"model_metadata": {"input_modalities": values, "tags": ["vision"]}}
+            before = json.loads(json.dumps(record))
+            with self.subTest(values=values):
+                if values == ["image", "text"]:
+                    self.assertEqual(mm.read_declared_input_modalities(record, "row:1"), ("text", "image"))
+                else:
+                    with self.assertRaises(ValueError):
+                        mm.read_declared_input_modalities(record, "row:1")
+                self.assertEqual(record, before)
+
+    def test_errors_use_safe_row_identity_without_record_contents(self):
+        private_path = "/private/operator/model.gguf"
+        for declaration, field in (
+            (private_path, "model_metadata"),
+            ({"input_modalities": [private_path]}, "model_metadata.input_modalities"),
+            ({"input_modalities": {"path": private_path}}, "model_metadata.input_modalities"),
+        ):
+            record = {
+                "path": private_path,
+                "description": "private operator note",
+                "model_metadata": declaration,
+            }
+            with self.subTest(field=field), self.assertRaises(ValueError) as error:
+                mm.read_declared_input_modalities(record, "models[3]")
+            message = str(error.exception)
+            self.assertTrue(message.startswith(f"models[3].{field}: "))
+            self.assertNotIn(private_path, message)
+            self.assertNotIn("private operator note", message)
+
+    def test_text_only_declaration_is_complete_despite_other_signals(self):
+        record = {
+            "id": "vision",
+            "backend": "vision",
+            "capabilities": ["vision"],
+            "mmproj": "/not-installed/projector.gguf",
+            "model_metadata": {"input_modalities": ["text"], "tags": ["vision"]},
+        }
+        self.assertEqual(mm.read_declared_input_modalities(record, "role:vision"), ("text",))
+
+    def test_alternate_contract_controls_membership_and_order(self):
+        contract = dataclasses.replace(
+            mm.METADATA_CONTRACT,
+            input_modalities=("control", "sample", "blob"),
+            scalar_input="control",
+            input_priority=(),
+            implications=(),
+        )
+        with patch.object(mm, "METADATA_CONTRACT", contract):
+            self.assertEqual(
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": ["blob", "sample"]}}, "row:1"
+                ),
+                ("sample", "blob"),
+            )
+            with self.assertRaisesRegex(ValueError, "outside the input vocabulary"):
+                mm.read_declared_input_modalities(
+                    {"model_metadata": {"input_modalities": ["text"]}}, "row:1"
+                )
+
+
 class BuildLocalCapabilitiesTest(unittest.TestCase):
+    def test_representative_declarations_and_emitted_inputs_are_exact(self):
+        expected = [
+            ("role:default", ("text", "image")),
+            ("role:vision", ("text", "image")),
+            ("role:text-only-role", ("text",)),
+            ("heretic-v2", ("text", "image")),
+            ("cydonia-24b", ("text",)),
+        ]
+        records = [
+            (f"role:{name}", spec) for name, spec in REPRESENTATIVE_CONFIG["roles"].items()
+        ] + [(spec["id"], spec) for spec in REPRESENTATIVE_CONFIG["models"]]
+        self.assertEqual(
+            [(identity, mm.read_declared_input_modalities(spec, identity)) for identity, spec in records],
+            expected,
+        )
+        self.assertEqual(
+            [(cap.model, cap.input_modalities) for cap in build_local_capabilities(REPRESENTATIVE_CONFIG)
+             if cap.intent == INTENT_CHAT and cap.model is not None],
+            expected,
+        )
+
+    def test_fixture_declarations_do_not_change_any_emitted_modalities(self):
+        undeclared = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+        for spec in [*undeclared["roles"].values(), *undeclared["models"]]:
+            del spec["model_metadata"]
+
+        def modalities(config):
+            return [
+                (cap.intent, cap.backend, cap.model, cap.workflow,
+                 cap.input_modalities, cap.output_modalities)
+                for cap in build_local_capabilities(config)
+            ]
+
+        self.assertEqual(modalities(REPRESENTATIVE_CONFIG), modalities(undeclared))
+
     def test_llm_roles_emit_chat_capabilities(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
         chat = _by_intent(caps, INTENT_CHAT)
@@ -149,7 +329,7 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         )
         self.assertIn("image", default_role.input_modalities)
 
-    def test_vision_role_name_implies_vision(self):
+    def test_vision_role_gets_image_input_from_its_backend(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
         vision_role = next(
             c for c in caps if c.intent == INTENT_CHAT and c.model == "role:vision"
@@ -225,8 +405,8 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
 
     def test_image_generate_and_edit(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
-        gen = _by_intent(caps, INTENT_IMAGE_GENERATE)
-        edit = _by_intent(caps, INTENT_IMAGE_EDIT)
+        gen = _by_intent(caps, "image.generate")
+        edit = _by_intent(caps, "image.edit")
         self.assertEqual(len(gen), 1)
         self.assertEqual(gen[0].model, "flux2-klein-4b")
         self.assertEqual(gen[0].execution, "job")
@@ -573,6 +753,211 @@ def test_image_family_uses_effective_backend_override():
     ]
     assert build_local_capabilities(config, backends={}) == []
     assert config["backends"] == {"other": {"default_model": "frozen-model"}}
+
+
+def _load_backend_rows_with_flag(tmp_path, flag):
+    document = yaml.safe_load(
+        (ROOT / "registry" / "local_capability_rows.yml").read_text(encoding="utf-8")
+    )
+    # Only required fields: no optional metadata or shipped backend row is needed.
+    document["backend_rows"] = [{
+        "group": "endpoints",
+        "triggers": ["unfamiliar-trigger"],
+        "flag": flag,
+        "intent": "unfamiliar.intent",
+        "inputs": ["unfamiliar-input"],
+        "outputs": ["unfamiliar-output"],
+        "streaming": False,
+        "execution": "sync",
+        "gpu_required": False,
+    }]
+    path = tmp_path / "local_capability_rows.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return local_capabilities.load_backend_capability_rows(path)
+
+
+@pytest.mark.parametrize("flag", ["spectral_gate", "Particle-Override"])
+def test_backend_row_uses_its_unfamiliar_flag(tmp_path, monkeypatch, flag):
+    rows = _load_backend_rows_with_flag(tmp_path, flag)
+    assert len(rows) == 1
+    assert rows[0]["flag"] == flag
+    monkeypatch.setattr(local_capabilities, "_BACKEND_ROWS", rows)
+    config = {"backends": {"future-backend": {"capabilities": ["unfamiliar-trigger"]}}}
+
+    assert build_local_capabilities(config, enabled_flags={flag: False}) == []
+    enabled = build_local_capabilities(config, enabled_flags={flag: True})
+    assert [
+        (cap.intent, cap.input_modalities, cap.output_modalities) for cap in enabled
+    ] == [("unfamiliar.intent", ("unfamiliar-input",), ("unfamiliar-output",))]
+    assert build_local_capabilities(
+        config, enabled_flags={flag: True, "audio": False}
+    ) == enabled
+    assert build_local_capabilities(config, enabled_flags={"audio": False}) == enabled
+    assert build_local_capabilities(
+        config, enabled_flags={flag: False, "audio": True}
+    ) == []
+
+
+@pytest.mark.parametrize("flag", ["spectral_gate", "Particle-Override"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_backend_row_flag_rename_preserves_output(tmp_path, monkeypatch, flag, enabled):
+    config = {"backends": {"future-backend": {"capabilities": ["unfamiliar-trigger"]}}}
+    monkeypatch.setattr(
+        local_capabilities, "_BACKEND_ROWS", _load_backend_rows_with_flag(tmp_path, flag)
+    )
+    original = build_local_capabilities(config, enabled_flags={flag: enabled})
+
+    renamed = f"renamed::{flag}"
+    monkeypatch.setattr(
+        local_capabilities, "_BACKEND_ROWS", _load_backend_rows_with_flag(tmp_path, renamed)
+    )
+    actual = build_local_capabilities(
+        config, enabled_flags={renamed: enabled, flag: not enabled}
+    )
+    assert actual == original
+    assert len(actual) == int(enabled)
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["", " \t\n", None, False, 7, ["spectral_gate"], {"spectral_gate": True}],
+    ids=["empty", "whitespace", "null", "boolean", "integer", "list", "mapping"],
+)
+def test_backend_row_flag_rejects_invalid_values(tmp_path, flag):
+    with pytest.raises(ValueError) as error:
+        _load_backend_rows_with_flag(tmp_path, flag)
+
+    assert str(error.value) == (
+        f"{tmp_path / 'local_capability_rows.yml'}: "
+        "backend_rows row 1: flag must be a non-empty string"
+    )
+
+
+# Independent complete-record expectations for the catalog's empty-config projection.
+# Keep this fixture shared with test_models_catalog; do not read expectations from
+# the production backend-row table.
+CATALOG_OLD_FLAGS = {
+    "llm": True, "embeddings": True, "tts": True, "stt": True,
+    "images": False, "videos": False, "audio": False,
+}
+CATALOG_BACKEND_TEMPLATES = (
+    (("chat",), Capability(
+        intent="chat.completions", backend="declared-service",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True, resources=ResourceEstimate(gpu_required=True),
+    )),
+    (("completions",), Capability(
+        intent="text.completions", backend="declared-service",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True, resources=ResourceEstimate(gpu_required=True),
+    )),
+    (("embeddings",), Capability(
+        intent="text.embeddings", backend="declared-service",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=False, resources=ResourceEstimate(gpu_required=False),
+    )),
+    (("speech", "tts"), Capability(
+        intent="speech.synthesis", backend="declared-service",
+        input_modalities=("text",), output_modalities=("audio",),
+        execution="sync", streaming=True, resources=ResourceEstimate(gpu_required=True),
+        capability="speech",
+        tags=tuple(f"response_format:{value}" for value in ("wav", "mp3", "opus", "aac", "flac", "pcm")),
+    )),
+    (("transcriptions", "stt"), Capability(
+        intent="speech.transcription", backend="declared-service",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False, resources=ResourceEstimate(gpu_required=True),
+        action_label="Transcribe", recordable_inputs=("audio",),
+    )),
+    (("translations", "translation"), Capability(
+        intent="speech.translation", backend="declared-service",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False, resources=ResourceEstimate(gpu_required=True),
+        action_label="Translate", recordable_inputs=("audio",),
+        caveats=("Only advertised when the local STT backend declares translation support.",),
+    )),
+)
+CATALOG_TRIGGER_CASES = tuple(
+    (trigger, expected)
+    for triggers, expected in CATALOG_BACKEND_TEMPLATES
+    for trigger in triggers
+)
+CATALOG_EMPTY_DECLARATIONS = (
+    {}, {"capabilities": None}, {"capabilities": "chat"},
+    {"capabilities": ("chat",)}, {"capabilities": {"chat": True}},
+    {"capabilities": 7}, {"capabilities": []},
+    {"capabilities": ["unknown-trigger"]}, {"capabilities": [None, 7, {}, []]},
+)
+
+
+@pytest.mark.parametrize(("trigger", "expected"), CATALOG_TRIGGER_CASES)
+@pytest.mark.parametrize("normalized", [False, True])
+def test_empty_config_backend_rows_match_complete_records(trigger, expected, normalized):
+    tokens = [trigger.upper(), trigger, trigger.upper(), None, 7, "unknown-trigger"] if normalized else [trigger]
+    backends = {"declared-service": {"capabilities": tokens}}
+    default = build_local_capabilities({}, backends=backends)
+    masked = build_local_capabilities({}, backends=backends, enabled_flags=CATALOG_OLD_FLAGS)
+
+    assert [dataclasses.asdict(cap) for cap in default] == [dataclasses.asdict(expected)]
+    assert [dataclasses.asdict(cap) for cap in masked] == [dataclasses.asdict(expected)]
+
+
+@pytest.mark.parametrize("backend", CATALOG_EMPTY_DECLARATIONS)
+def test_empty_config_backend_rows_require_a_declared_list(backend):
+    assert build_local_capabilities({}, backends={"declared-service": backend}) == []
+
+
+def test_empty_config_backend_rows_preserve_vision_and_resource_fields():
+    backends = {"declared-service": {
+        "capabilities": ["CHAT", "VISION", "embeddings"],
+        "resources": {"gpu_required": False, "vram_gb_estimate": 2.5,
+                      "duration_class": "short", "max_parallel": 3},
+    }}
+    expected = [
+        dataclasses.replace(CATALOG_BACKEND_TEMPLATES[0][1], input_modalities=("text", "image")),
+        dataclasses.replace(CATALOG_BACKEND_TEMPLATES[2][1], resources=ResourceEstimate(
+            gpu_required=False, vram_gb_estimate=2.5, duration_class="short", max_parallel=3,
+        )),
+    ]
+    assert [dataclasses.asdict(cap) for cap in build_local_capabilities({}, backends=backends)] == [
+        dataclasses.asdict(cap) for cap in expected
+    ]
+
+
+@pytest.mark.parametrize("backend_id", ["comfyui", "unrelated-engine"])
+@pytest.mark.parametrize("default_model", [None, "concrete-image-model"])
+def test_empty_config_preserves_generic_rows_and_only_adds_bound_image(backend_id, default_model):
+    backend = {
+        "capabilities": [trigger for trigger, _expected in CATALOG_TRIGGER_CASES]
+                        + ["images", "generations", "videos", "audio"],
+        "workflows_dir": "./unused-workflows",
+    }
+    if default_model is not None:
+        backend["default_model"] = default_model
+    backends = {backend_id: backend}
+    masked = build_local_capabilities({}, backends=backends, enabled_flags=CATALOG_OLD_FLAGS)
+    default = build_local_capabilities({}, backends=backends)
+    expected_generic = [
+        dataclasses.replace(template, backend=backend_id)
+        for _triggers, template in CATALOG_BACKEND_TEMPLATES
+    ]
+    assert [dataclasses.asdict(cap) for cap in masked] == [
+        dataclasses.asdict(cap) for cap in expected_generic
+    ]
+    assert [dataclasses.asdict(cap) for cap in default if cap.model is None] == [
+        dataclasses.asdict(cap) for cap in expected_generic
+    ]
+    expected_bound = []
+    if backend_id == "comfyui" and default_model is not None:
+        expected_bound = [Capability(
+            intent="image.generate", backend=backend_id, model=default_model,
+            input_modalities=("text",), output_modalities=("image",),
+            execution="job", streaming=False, resource_tier="batch",
+            resources=ResourceEstimate(gpu_required=True),
+        )]
+    assert [dataclasses.asdict(cap) for cap in default] == [
+        dataclasses.asdict(cap) for cap in expected_generic + expected_bound
+    ]
 
 
 if __name__ == "__main__":

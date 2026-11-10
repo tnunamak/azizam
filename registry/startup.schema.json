@@ -123,13 +123,6 @@
         "media_bytes": {"type": "integer", "minimum": 1, "x-azizam-env": "AZIZAM_REQUEST_BODY_MEDIA_BYTES"}
       }
     },
-    "model_routing": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "gguf_dir": {"description": "Directory the gateway scans for GGUF model files. A storage root.", "type": "string", "minLength": 1}
-      }
-    },
     "images": {
       "description": "Storage roots and the URL signing secret of the image routes.",
       "type": "object",

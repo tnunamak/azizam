@@ -68,6 +68,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "default_workflow": {
+          "description": "The workflow id for an image edit that names no model, unless model_compatibility.defaults.image_edits overrides it.",
+          "type": "string",
+          "minLength": 1
+        },
         "multiref_default_workflow": {
           "description": "The workflow id for a multi-image edit that otherwise resolves to the default edit workflow.",
           "type": "string",

@@ -617,11 +617,8 @@ def run_response_pipeline(
 # Named built-ins  (reviewed composed classes, not arbitrary-code plugins)
 # ---------------------------------------------------------------------------
 
-# Constant for the enable_thinking kwarg key — single source of truth.
-# QWEN3_NO_THINK_HINT is kept for backward-compat (tests/test_step3 imports it);
-# the /no_think prompt-string injection is removed — only the kwarg is load-bearing.
-QWEN3_NO_THINK_HINT: str = "/no_think"
-QWEN3_ENABLE_THINKING_KEY: str = "enable_thinking"
+# The chat-template keyword that turns reasoning off — single source of truth.
+ENABLE_THINKING_KEY: str = "enable_thinking"
 
 
 def apply_thinking_suppression(body: dict[str, Any]) -> None:
@@ -640,7 +637,7 @@ def apply_thinking_suppression(body: dict[str, Any]) -> None:
     """
     kwargs = body.setdefault("chat_template_kwargs", {})
     if isinstance(kwargs, dict):
-        kwargs.setdefault(QWEN3_ENABLE_THINKING_KEY, False)
+        kwargs.setdefault(ENABLE_THINKING_KEY, False)
 
 
 class ReasoningEffortTransform:
@@ -1174,7 +1171,7 @@ REGISTRY.register(
 # ---- mistral-penalty-clamp ------------------------------------------------
 # Mistral's API accepts frequency_penalty and presence_penalty in [-2.0, 2.0].
 # Clamp both so out-of-range client values don't trigger a 400.
-# Source: ENGINE_QUIRK_FINDINGS.md §2.6 (Mistral penalty ranges differ).
+# Source: docs/design/ENGINE_QUIRK_FINDINGS.md, thesis verdict (Mistral and TabbyAPI penalty ranges differ).
 REGISTRY.register(
     "mistral-penalty-clamp",
     [

@@ -21,11 +21,11 @@ def isolated_video_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shapes, "VIDEO_HOOKS", None)
 
 
-def image_contract(target: str | None = "input_reference") -> dict:
+def image_contract(target: str | None = "image") -> dict:
     contract = video_contract("roles-i2v", image=True, requires=["image"])
-    image = contract["inputs"].pop("input_reference")
+    image = contract["inputs"].pop("image")
     image["required"] = True
-    contract["inputs"][target or "input_reference"] = image
+    contract["inputs"][target or "image"] = image
     if target is None:
         contract["video"]["roles"].pop("image")
     else:
@@ -38,16 +38,23 @@ def create_body(contract: dict) -> dict:
             "input_reference": "data:image/png;base64," + base64.b64encode(PNG).decode()}
 
 
-@pytest.mark.parametrize("target", ["input_reference", "first_frame", None])
+# The request map places input_reference into the input named image, so the role table no longer chooses it.
+@pytest.mark.parametrize("target", ["image", None])
 def test_a_supplied_primary_image_fills_its_required_role_input(target: str | None) -> None:
     contract = image_contract(target)
     spool = FakeSpool()
     result = read(create_body(contract), snap(contract), spool=spool)
-    expected = target or "input_reference"
+    expected = "image"
     assert isinstance(result, RunRequest), getattr(result, "body", result)
     assert list(result.media) == [expected]
     assert spool.staged == [(expected, PNG, "input_reference.png", "image/png")]
     assert result.media[expected][0].spool_key == "k1"
+
+
+def test_a_reference_the_request_map_does_not_place_goes_to_the_old_handler() -> None:
+    contract = image_contract("first_frame")
+    result = read(create_body(contract), snap(contract))
+    assert isinstance(result, _base.LegacyRoute), getattr(result, "body", result)
 
 
 def test_an_absent_primary_image_is_not_exempted_from_required_assets() -> None:
@@ -55,7 +62,7 @@ def test_an_absent_primary_image_is_not_exempted_from_required_assets() -> None:
     contract["video"]["requires"] = []
     result = read({"model": contract["id"], "prompt": "waves"}, snap(contract))
     assert result.status_code == 400
-    assert json.loads(result.body)["error"]["message"] == "input_reference is required for this model"
+    assert json.loads(result.body)["error"]["message"] == "image is required for this model"
 
 
 def test_a_supplied_primary_image_does_not_satisfy_a_required_secondary_image() -> None:

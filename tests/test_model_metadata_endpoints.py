@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
+import yaml
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +25,7 @@ from tests.support.config_snapshot import derived_patch
 from tests.support.access import access_context, authenticated, identity, plan_for  # noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
+from gateway.product_contracts import load_model_metadata_vocabularies  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
 from tests.support.config_snapshot import section_published
 
@@ -100,6 +103,64 @@ def _start_model_list_patches(test: unittest.TestCase, *, real_loaded_state: boo
         test.addCleanup(patcher.stop)
 
 
+# Frozen pre-migration contract, independent of either live source. These are
+# public wire enums, not a second configurable production vocabulary.
+SHIPPED_METADATA_CONTRACT = mm.MetadataContract(
+    types=("language", "embedding", "reranking", "image", "video", "audio", "decision"),
+    input_modalities=("text", "image", "audio", "video", "file"),
+    output_modalities=("text", "image", "audio", "video", "embedding"),
+    tags=("tool-use", "reasoning", "vision", "file-input"),
+    tag_types=("language",),
+    scalar_input="text",
+    fallback_output="text",
+    default_type="language",
+    output_priority=(
+        mm.ModalityTypeRule("image", "image"),
+        mm.ModalityTypeRule("audio", "audio"),
+        mm.ModalityTypeRule("video", "video"),
+        mm.ModalityTypeRule("embedding", "embedding"),
+    ),
+    input_priority=(
+        mm.ModalityTypeRule("image", "image"),
+        mm.ModalityTypeRule("audio", "audio"),
+        mm.ModalityTypeRule("video", "video"),
+    ),
+    implications=(mm.TagInputImplication("language", "vision", "image"),),
+)
+
+
+class ModelMetadataDocumentationTests(unittest.TestCase):
+    def test_documented_vocabularies_match_schema_in_order(self) -> None:
+        path = ROOT / "docs/api/MODEL_METADATA.md"
+        document = path.read_text(encoding="utf-8")
+        vocabularies = load_model_metadata_vocabularies(ROOT / "registry/defaults/models.schema.json")
+        for vocabulary, values in vocabularies.items():
+            with self.subTest(vocabulary=vocabulary):
+                start = f"<!-- model-metadata:{vocabulary}:start -->"
+                end = f"<!-- model-metadata:{vocabulary}:end -->"
+                expected_values = ", ".join(f"`{value}`" for value in values)
+                expected_span = f"{start} {expected_values} {end}"
+                for marker in (start, end):
+                    self.assertEqual(
+                        document.count(marker), 1,
+                        f"{path}: expected exactly one {marker}\nExpected marked list: {expected_span}",
+                    )
+                line = next(line for line in document.splitlines() if start in line)
+                prefix, marked = line.split(start, 1)
+                self.assertIn(
+                    end, marked,
+                    f"{path}: {vocabulary} markers must surround one list on the same line"
+                    f"\nExpected marked list: {expected_span}",
+                )
+                documented_values, suffix = marked.split(end, 1)
+                expected_line = f"{prefix}{expected_span}{suffix}"
+                self.assertEqual(
+                    documented_values, f" {expected_values} ",
+                    f"{path}: {vocabulary} must match the schema enum in order"
+                    f"\nExpected line:\n{expected_line}",
+                )
+
+
 class ModelListEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
@@ -109,6 +170,91 @@ class ModelListEndpointTests(unittest.TestCase):
         response = self.client.get(path)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    def test_shipped_metadata_rosters_keep_exact_order(self) -> None:
+        self.assertEqual(mm.MODEL_TYPES, SHIPPED_METADATA_CONTRACT.types)
+        self.assertEqual(mm.INPUT_MODALITIES, SHIPPED_METADATA_CONTRACT.input_modalities)
+        self.assertEqual(mm.OUTPUT_MODALITIES, SHIPPED_METADATA_CONTRACT.output_modalities)
+        self.assertEqual(mm.TAGS, SHIPPED_METADATA_CONTRACT.tags)
+        self.assertNotIn("mesh", mm.INPUT_MODALITIES)
+        self.assertNotIn("mesh", mm.OUTPUT_MODALITIES)
+
+    def test_shipped_models_response_bytes_match_frozen_contract(self) -> None:
+        async def no_served_declarations():
+            return set()
+
+        # Compare the entire public response body, not reserialized JSON or a
+        # metadata-only projection. Only the contract changes between requests.
+        # Existing endpoint fixtures supply the shipped catalog and registry.
+        with patch.object(proxy.time, "time", return_value=1_700_000_000), \
+                patch.object(proxy, "currently_loaded_model", return_value=None), \
+                patch.object(proxy, "_model_list_served_declarations", no_served_declarations), \
+                patch.object(httpx.AsyncClient, "send", side_effect=AssertionError("engine request")) as async_send, \
+                patch.object(httpx.HTTPTransport, "handle_request",
+                             side_effect=AssertionError("engine request")) as sync_send:
+            with patch.object(mm, "METADATA_CONTRACT", SHIPPED_METADATA_CONTRACT):
+                baseline = self.client.get("/v1/models")
+            self.assertEqual(baseline.status_code, 200, baseline.text)
+            self.assertGreater(len(baseline.json()["data"]), 20)
+            for route in ("/v1/models", "/openai/v1/models"):
+                with self.subTest(route=route):
+                    response = self.client.get(route)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.content, baseline.content)
+            async_send.assert_not_called()
+            sync_send.assert_not_called()
+
+    def test_schema_only_spectral_extension_reaches_runtime_contract(self) -> None:
+        schema = json.loads((ROOT / "registry/defaults/models.schema.json").read_text(encoding="utf-8"))
+        properties = schema["additionalProperties"]["properties"]["model_metadata"]["properties"]
+        for key in ("input_modalities", "output_modalities"):
+            properties[key]["items"]["enum"].append("spectral")
+        with tempfile.TemporaryDirectory() as directory:
+            schema_path = Path(directory) / "models.schema.json"
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+            contract = mm.load_metadata_contract(schema_path=schema_path)
+        self.assertEqual(contract.input_modalities, (*SHIPPED_METADATA_CONTRACT.input_modalities, "spectral"))
+        self.assertEqual(contract.output_modalities, (*SHIPPED_METADATA_CONTRACT.output_modalities, "spectral"))
+        with patch.object(mm, "METADATA_CONTRACT", contract):
+            metadata = mm.apply_declared(None, {
+                "type": "language",
+                "input_modalities": ["spectral", "text"],
+                "output_modalities": ["spectral"],
+            })
+            self.assertEqual(metadata.input_modalities, ("text", "spectral"))
+            self.assertEqual(metadata.output_modalities, ("spectral",))
+            self.assertEqual(mm.from_fields(metadata.to_fields()), metadata)
+
+    def test_semantic_rule_words_outside_schema_fail_load_with_source(self) -> None:
+        shipped = yaml.safe_load((ROOT / "registry/capability_intent_metadata.yml").read_text(encoding="utf-8"))
+        locations = (
+            ("tag_types", 0),
+            ("derivation", "scalar_input"),
+            ("derivation", "fallback_output"),
+            ("derivation", "default_type"),
+            ("derivation", "output_priority", 0, "modality"),
+            ("derivation", "output_priority", 0, "type"),
+            ("derivation", "input_priority", 0, "modality"),
+            ("derivation", "input_priority", 0, "type"),
+            ("implications", 0, "type"),
+            ("implications", 0, "tag"),
+            ("implications", 0, "input_modality"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            rules_path = Path(directory) / "capability_intent_metadata.yml"
+            for location in locations:
+                with self.subTest(location=location):
+                    document = copy.deepcopy(shipped)
+                    parent = document["contract"]
+                    for key in location[:-1]:
+                        parent = parent[key]
+                    parent[location[-1]] = "outside-schema"
+                    rules_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+                    with self.assertRaises(ValueError) as failure:
+                        mm.load_metadata_contract(rules_path)
+                    self.assertIn("outside-schema", str(failure.exception))
+                    self.assertIn(str(rules_path), str(failure.exception))
+                    self.assertIn("models.schema.json", str(failure.exception))
 
     def test_every_entry_gets_a_type_and_architecture(self) -> None:
         data = self._list()["data"]

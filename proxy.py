@@ -20,7 +20,7 @@ from gateway import engine_egress, engine_record_defaults
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.frontend_shapes.video_views import VideoViews
 from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
-from gateway import registry_snapshot
+from gateway import openai_model_families, registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
@@ -343,7 +343,7 @@ from gateway.transforms import (
     run_request_pipeline as _run_request_pipeline,
     run_response_pipeline as _run_response_pipeline,
     TransformRequestError as _TransformRequestError,
-    QWEN3_ENABLE_THINKING_KEY as _QWEN3_ENABLE_THINKING_KEY,
+    ENABLE_THINKING_KEY as _ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
 )
 from gateway.toolcall_detection import (
@@ -821,6 +821,18 @@ auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
 
 
+class SettingMissing(RuntimeError):
+    """A setting the release defaults ship is absent or empty in the effective snapshot."""
+
+
+def required_text_setting(group: Mapping[str, Any], key: str, dotted: str) -> str:
+    """A nonempty string setting, exactly as configured. No fallback name: the release defaults supply the value."""
+    value = group.get(key)
+    if not isinstance(value, str) or not value:
+        raise SettingMissing(f"setting {dotted} must be a nonempty string")
+    return value
+
+
 def bool_from_config(value, default: bool) -> bool:
     """Parse permissive bool config without making YAML null mean false."""
     if value is None:
@@ -1049,9 +1061,6 @@ def host_for_capability(capability: str) -> str | None:
     return None
 
 
-# Model routing - auto-detect backend from filesystem. The model directory is a startup setting (CONFIG_HOMES C10): it is
-# read from the startup file, because the model_routing section does not carry it.
-GGUF_DIR = (_bootstrap_config.get("model_routing") or {}).get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
 # Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
 # to the LLM backend. This is the max silence between bytes — NOT a wall-clock cap.
 # It governs:
@@ -1251,10 +1260,9 @@ def _image_background_removal_timeout() -> float:
 
 
 # Routes /v1/images/variations through an edit-capable workflow with a fixed
-# generic prompt (variations has no prompt of its own). The packaged default
-# mirrors the configured image-edit model.
+# generic prompt (variations has no prompt of its own). The release defaults name the workflow.
 def _image_variations_default_workflow() -> str:
-    return str(_images_group("variations").get("default_workflow", "qwen-image-2.1-edit"))
+    return required_text_setting(_images_group("variations"), "default_workflow", "images.variations.default_workflow")
 
 
 # Partial-denoise strength applied only when the resolved workflow's manifest
@@ -1264,7 +1272,8 @@ def _image_variations_denoise() -> float:
 
 
 def _image_multiref_edit_default_workflow() -> str:
-    return str(_images_group("edits").get("multiref_default_workflow", "qwen-image-2.1-edit-multiref"))
+    return required_text_setting(_images_group("edits"), "multiref_default_workflow",
+                                 "images.edits.multiref_default_workflow")
 
 
 def _image_media_jobs_group() -> Mapping[str, Any]:
@@ -1317,7 +1326,7 @@ def _videos() -> Mapping[str, Any]:
 
 
 def _video_default_workflow() -> str:
-    return _videos().get("default_workflow", "video-ltx-13b-q8")
+    return required_text_setting(_videos(), "default_workflow", "videos.default_workflow")
 
 
 def _video_workflow_table() -> Mapping[str, Any]:
@@ -3395,16 +3404,11 @@ def embeddings_model() -> str:
 
 
 def image_edit_default_model() -> str:
-    return model_compat_defaults().get("image_edits", "qwen-image-2.1-edit")
+    defaults = model_compat_defaults()
+    if "image_edits" in defaults:
+        return defaults["image_edits"]
+    return required_text_setting(_images_group("edits"), "default_workflow", "images.edits.default_workflow")
 
-
-OPENAI_STATIC_MODEL_CATEGORIES = {
-    "dall-e-2": "images",
-    "dall-e-3": "images",
-    "tts-1": "speech",
-    "tts-1-hd": "speech",
-    "whisper-1": "transcriptions",
-}
 
 OPERATION_COMPATIBLE_CATEGORIES = {
     "chat": {"chat", "unknown"},
@@ -3415,7 +3419,7 @@ OPERATION_COMPATIBLE_CATEGORIES = {
     "translations": {"transcriptions", "translations", "unknown"},
     "images": {"images", "unknown"},
     "image_edits": {"images", "unknown"},
-    # `video` is the OpenAI category for sora-* models (see infer_openai_model_category).
+    # `video` is an OpenAI family named in registry/openai_model_families.yml.
     # Local Wan/LTX names without an OpenAI category fall through as "unknown".
     "videos": {"video", "unknown"},
 }
@@ -3488,34 +3492,9 @@ def infer_openai_model_category(model_name: str) -> Optional[str]:
     if configured_category:
         return configured_category
 
-    if model_id in OPENAI_STATIC_MODEL_CATEGORIES:
-        return OPENAI_STATIC_MODEL_CATEGORIES[model_id]
-
-    if model_id.startswith(("dall-e-", "gpt-image-")) or model_id.startswith("chatgpt-image"):
-        return "images"
-
-    if "embedding" in model_id:
-        return "embeddings"
-
-    if "transcribe" in model_id or "diarize" in model_id or model_id.startswith("whisper"):
-        return "transcriptions"
-
-    if model_id.startswith("tts-") or model_id.endswith("-tts") or "-tts-" in model_id:
-        return "speech"
-
-    if model_id.startswith("sora"):
-        return "video"
-
-    if "moderation" in model_id:
-        return "moderation"
-
-    if "deep-research" in model_id:
-        return "deep_research"
-
-    if model_id.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4", "codex-", "computer-use-")):
-        if "realtime" in model_id or model_id.startswith("gpt-audio"):
-            return "audio_chat"
-        return "chat"
+    family = openai_model_families.FAMILIES.category_for(model_id)
+    if family:
+        return family
 
     generated_aliases = load_generated_openai_model_aliases()
     return generated_aliases.get(model_id)
@@ -7579,7 +7558,7 @@ async def decide_image_background_removal(
         "temperature": 0,
         "max_tokens": 160,
         "response_format": {"type": "json_object"},
-        "chat_template_kwargs": {_QWEN3_ENABLE_THINKING_KEY: False},
+        "chat_template_kwargs": {_ENABLE_THINKING_KEY: False},
     }
     lease = None
     if _transition_policy(service).enabled:
@@ -28053,7 +28032,7 @@ def _audio() -> Mapping[str, Any]:
 
 
 def _audio_default_workflow() -> str:
-    return _audio().get("default_workflow", "ace-step-1.5-xl-turbo")
+    return required_text_setting(_audio(), "default_workflow", "audio.default_workflow")
 
 
 def _audio_workflow_table() -> Mapping[str, Any]:

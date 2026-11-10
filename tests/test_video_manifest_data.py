@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from gateway.video_grid import (
-    GridSpec, SizeSpec, VideoManifest, frame_count, parse_size, resolve_size, seconds_to_length, video_facts)
+    GridSpec, SizeSpec, VideoManifest, check_video_variants, frame_count, parse_size, resolve_size, seconds_to_length, video_facts)
 from gateway.workflow_contract import check_contract
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -170,6 +170,135 @@ def test_the_frame_bounds_may_not_be_empty() -> None:
 
 def test_a_valid_section_raises_no_error() -> None:
     assert codes(doc_with(section())) == set()
+
+
+
+# ------------------------------------------------------------------------------------------- cross-registry variants
+
+
+@pytest.fixture
+def reference_variant_records(monkeypatch) -> tuple[SimpleNamespace, ...]:
+    from gateway import workflow_request_maps
+
+    document = {"schema_version": 1, "maps": [
+        {"select": {"intent": "fixture.generate", "mode": "async"},
+         "inputs": {"guide_frame": {"in": "body", "field": "input_reference"}},
+         "default": {"in": "extension"}},
+        {"select": {"any": True}, "default": {"in": "extension"}},
+    ]}
+    # The execution table is required; the bundled one serves, since no fixture intent has a row.
+    bundled = (ROOT / "registry" / "workflow_request_maps.yml").read_text(encoding="utf-8")
+    document["execution"] = yaml.safe_load(bundled)["execution"]
+    with monkeypatch.context() as context:
+        context.setattr(Path, "read_text", lambda *_args, **_kwargs: json.dumps(document))
+        maps = workflow_request_maps.load(Path("variant-reference-fixture.yml"))
+    monkeypatch.setattr(workflow_request_maps, "_MAPS", maps)
+
+    def entry(name: str, *, role: str | None = None) -> SimpleNamespace:
+        manifest = section()
+        inputs = {}
+        if role is not None:
+            manifest["roles"][role] = "guide_frame"
+            inputs["guide_frame"] = {"type": "asset", "accepts": ["image/png"]}
+        # Runtime entries need not have an intent attribute. Read the effective contract, not a stale manifest.
+        return SimpleNamespace(id=f"fixture.generate.{name}", contract={
+            "intent": "fixture.generate", "capability": "clip", "clip": manifest,
+            "inputs": inputs, "bindings": {},
+        })
+
+    owner, first, second = entry("base"), entry("first", role="guide"), entry("second", role="anchor")
+    owner.contract["clip"]["variants"] = {"guide": first.id, "anchor": second.id}
+    return owner, first, second
+
+
+def test_registry_check_rejects_ambiguous_reference_variants(reference_variant_records) -> None:
+    owner, first, second = reference_variant_records
+    edges = owner.contract["clip"]["variants"]
+    expected = f"{owner.id}: multiple variants accept the reference: {sorted([first.id, second.id])!r}"
+    for ordered in (list(edges.items()), list(reversed(edges.items()))):
+        owner.contract["clip"]["variants"] = dict(ordered)
+        with pytest.raises(ValueError) as caught:
+            check_video_variants(iter(reference_variant_records))
+        assert str(caught.value) == expected
+
+
+def test_registry_check_uses_the_variant_role_not_just_reference_acceptance(reference_variant_records) -> None:
+    owner, first, second = reference_variant_records
+    second.contract["clip"]["roles"]["anchor"] = "length"
+    check_video_variants(reference_variant_records)
+    # The selector also accepts a role whose name is the contract input, with no explicit role mapping.
+    owner.contract["clip"]["variants"] = {"guide_frame": first.id, "anchor": second.id}
+    first.contract["clip"]["roles"].pop("guide")
+    check_video_variants(reference_variant_records)
+
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_add_manifest_rejects_ambiguous_variants_without_changing_contents(reference_variant_records, replace) -> None:
+    from gateway.discovery import RegistryLoadError, WorkflowRegistry
+
+    owner, first, second = reference_variant_records
+
+    def document(record):
+        # The runtime fixture records carry only what variant selection reads; a manifest also needs outputs.
+        return {"id": record.id, "version": "1", "schema_version": 2,
+                "outputs": {"video": {"media_type": "video/mp4"}}, **copy.deepcopy(record.contract)}
+
+    registry = WorkflowRegistry()
+    registry.add_manifest(document(owner))
+    registry.add_manifest(document(first))
+    if replace:
+        previous = document(second)
+        previous["clip"]["roles"]["anchor"] = "length"
+        registry.add_manifest(previous)
+    records, errors = registry.contents()
+    errors.append(RegistryLoadError(Path("existing.yml"), "existing load error"))
+    before_records, before_errors = dict(records), list(errors)
+
+    with pytest.raises(ValueError) as caught:
+        registry.add_manifest(document(second), replace=replace)
+
+    assert str(caught.value) == (
+        f"{owner.id}: multiple variants accept the reference: {sorted([first.id, second.id])!r}")
+    after_records, after_errors = registry.contents()
+    assert after_records is records and after_records == before_records
+    assert after_errors is errors and after_errors == before_errors
+    assert all(after_records[key] is value for key, value in before_records.items())
+
+
+def test_adopt_rejects_ambiguous_variants_without_changing_contents(reference_variant_records) -> None:
+    from gateway.discovery import RegistryLoadError, WorkflowRegistry
+
+    owner, first, second = reference_variant_records
+    registry = WorkflowRegistry()
+    # Deliberately bypass add_manifest to exercise adoption of an unchecked incoming registry.
+    old_records = {first.id: first}
+    old_errors = [RegistryLoadError(Path("old.yml"), "old load error")]
+    registry.restore((old_records, old_errors))
+    incoming = WorkflowRegistry()
+    incoming_records = {record.id: record for record in reference_variant_records}
+    incoming_errors = [RegistryLoadError(Path("incoming.yml"), "incoming load error")]
+    incoming.restore((incoming_records, incoming_errors))
+
+    with pytest.raises(ValueError) as caught:
+        registry.adopt(incoming)
+
+    assert str(caught.value) == (
+        f"{owner.id}: multiple variants accept the reference: {sorted([first.id, second.id])!r}")
+    records, errors = registry.contents()
+    assert records is old_records and records == {first.id: first}
+    assert errors is old_errors and errors == [RegistryLoadError(Path("old.yml"), "old load error")]
+    assert incoming.contents()[0] is incoming_records and incoming.contents()[1] is incoming_errors
+
+
+def test_shipped_registry_has_unambiguous_reference_variants() -> None:
+    from gateway.discovery import WorkflowRegistry
+
+    registry = WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
+    assert registry.errors == []
+    records = tuple(registry.records())
+    assert any(facts.variants for record in records if (facts := video_facts(record)) is not None)
+    check_video_variants(records)
 
 
 # ---------------------------------------------------------------- the shipped manifests equal videos.yml, value for value
@@ -403,3 +532,81 @@ def test_video_facts_does_not_alias_the_contract() -> None:
     with pytest.raises((TypeError, AttributeError)):
         manifest.roles["width"] = "changed"  # type: ignore[index]
     assert contract["video"] == original
+
+
+def test_two_roles_naming_one_workflow_are_not_ambiguous(reference_variant_records) -> None:
+    owner, first, second = reference_variant_records
+    first.contract["clip"]["roles"]["anchor"] = "guide_frame"
+    owner.contract["clip"]["variants"] = {"guide": first.id, "anchor": first.id}
+    check_video_variants(reference_variant_records)
+
+
+def test_registry_load_reports_ambiguous_variants_as_a_load_error(reference_variant_records, monkeypatch) -> None:
+    from gateway import discovery
+
+    registry = discovery.WorkflowRegistry()
+    monkeypatch.setattr(registry, "records", lambda: list(reference_variant_records))
+    monkeypatch.setattr(discovery, "_iter_manifest_files", lambda _root: [])
+    registry.load_directory(ROOT / "manifests" / "workflows", policy={})
+    assert [error.source_path for error in registry.errors] == [ROOT / "manifests" / "workflows"]
+    assert [error.message for error in registry.errors] == [
+        f"{reference_variant_records[0].id}: multiple variants accept the reference: "
+        f"{sorted([reference_variant_records[1].id, reference_variant_records[2].id])!r}"
+    ]
+
+
+def test_reference_variants_skip_missing_workflows_and_video_facts():
+    from gateway.video_grid import reference_variants
+
+    eligible = SimpleNamespace(id="eligible", contract={
+        "capability": "clip", "clip": {"roles": {"guide": "guide_frame"}},
+    })
+    without_facts = SimpleNamespace(id="without-facts", contract={"capability": "clip"})
+    candidates = {"eligible": eligible, "without-facts": without_facts}
+    manifest = VideoManifest(variants={
+        "missing": "missing-workflow", "bare": "without-facts", "guide": "eligible",
+    })
+    looked_up, referenced = [], []
+
+    def get_workflow(workflow_id):
+        looked_up.append(workflow_id)
+        return candidates.get(workflow_id)
+
+    def reference_input(candidate):
+        referenced.append(candidate)
+        assert candidate is eligible
+        return "guide_frame"
+
+    result = reference_variants(manifest, get_workflow, reference_input)
+    assert looked_up == ["missing-workflow", "without-facts", "eligible"]
+    assert referenced == [eligible]
+    assert len(result) == 1
+    assert result[0][0] is eligible
+    assert result[0][1] == VideoManifest(roles={"guide": "guide_frame"})
+
+
+
+def test_a_directory_file_that_brings_a_variant_conflict_is_refused_and_absent(monkeypatch, tmp_path) -> None:
+    """One check per directory is the fast path; on a conflict the load refuses the file that brings it, as one add does."""
+    import copy
+
+    from gateway import discovery
+    from gateway.manifests import load_workflow_manifest
+
+    shipped = load_workflow_manifest(ROOT / "manifests" / "workflows" / "ace-step-1.5-xl-turbo.yml")
+    files = {tmp_path / f"{name}.yml": {**copy.deepcopy(shipped), "id": f"{shipped['id']}-{name}"} for name in ("a", "b", "c")}
+    late = f"{shipped['id']}-c"
+
+    def check(records) -> None:
+        ids = {record.id for record in records}
+        if {f"{shipped['id']}-b", late} <= ids:
+            raise ValueError(f"{late}: claims the reference of {shipped['id']}-b")
+
+    monkeypatch.setattr(discovery, "_iter_manifest_files", lambda _root: list(files))
+    monkeypatch.setattr(discovery, "load_workflow_manifest", lambda path: copy.deepcopy(files[path]))
+    monkeypatch.setattr(discovery.video_grid, "check_video_variants", check)
+    registry = discovery.WorkflowRegistry()
+    registry.load_directory(tmp_path, policy={})
+    assert registry.ids() == [f"{shipped['id']}-a", f"{shipped['id']}-b"]
+    assert [(error.source_path, error.message) for error in registry.errors] == [
+        (tmp_path / "c.yml", f"{late}: claims the reference of {shipped['id']}-b")]

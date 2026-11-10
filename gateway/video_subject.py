@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any, Mapping
 
 # The nodes of the graph this module edits are roles of the workflow's binding (``node_roles`` in the workflow's entry
@@ -33,7 +34,25 @@ ROLE_KEYS = (
 )
 
 # The ids `add_reference_fit` gives its own nodes, besides the fit canvas (a role). A role or a graph node must not use them.
-FIT_IDS = ("90", "91", "92", "93", "95", "96", "97", "98", "99", "101", "102", "104", "105", "106", "107")
+_FRAGMENTS = json.loads(
+    (Path(__file__).resolve().parent.parent / "registry/graph_fragments/video_reference_fit.json").read_text(encoding="utf-8")
+)
+FIT_IDS = tuple(node_id for node_id in _FRAGMENTS["fit"] if not node_id.startswith("${"))
+
+
+def _fragment(name: str, values: Mapping[str, Any]) -> dict[str, Any]:
+    """Instantiate ordered graph data without mutating the cached template."""
+    def bind(value: Any) -> Any:
+        if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+            return values[value[2:-1]]
+        if isinstance(value, dict):
+            return {bind(key): bind(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [bind(item) for item in value]
+        return value
+
+    return bind(_FRAGMENTS[name])
+
 
 _SCORES = re.compile(r"'scores':\s*\[([^\]]*)\]")
 
@@ -111,17 +130,9 @@ def apply_point(workflow: dict[str, Any], block: Mapping[str, Any], width: int, 
     x = int(round(point[0] * (width - 1)))
     y = int(round(point[1] * (height - 1)))
     track_node, point_node, color_node = roles["track_node"], roles["point_detect_node"], roles["color_mask_node"]
-    workflow[point_node] = {
-        "class_type": "SAM3_Detect",
-        "inputs": {
-            "model": [roles["sam_model_node"], 0],
-            "image": [roles["first_frame_node"], 0],
-            "threshold": 0.5,
-            "refine_iterations": 2,
-            "individual_masks": False,
-            "positive_coords": json.dumps([{"x": x, "y": y}]),
-        },
-    }
+    workflow.update(_fragment("point", {
+        **roles, "positive_coords": json.dumps([{"x": x, "y": y}]),
+    }))
     track = workflow[track_node]["inputs"]
     track.pop("conditioning", None)
     track["initial_mask"] = [point_node, 0]
@@ -145,45 +156,14 @@ def add_reference_fit(workflow: dict[str, Any], roles: Mapping[str, Any]) -> Non
     image and the reference mask.
     """
     g = workflow
-    sam, raw, ref_text = roles["sam_model_node"], roles["reference_raw_node"], roles["reference_text_node"]
-    track, color, detect = roles["track_node"], roles["color_mask_node"], roles["reference_detect_node"]
+    color, detect = roles["color_mask_node"], roles["reference_detect_node"]
     cropped, canvas_id = roles["reference_cropped_node"], roles["fit_canvas_node"]
     width_node, height_node = roles["size_node"]
-    nodes: dict[str, Any] = {
-        # character cut-out from the full reference image
-        "90": {"class_type": "SAM3_Detect", "inputs": {
-            "model": [sam, 0], "image": [raw, 0], "threshold": 0.5,
-            "refine_iterations": 2, "individual_masks": False, "conditioning": [ref_text, 0]}},
-        "91": {"class_type": "MaskToImage", "inputs": {"mask": ["90", 0]}},
-        "92": {"class_type": "ImageCropByMask", "inputs": {"image": [raw, 0], "mask": ["90", 0]}},
-        "93": {"class_type": "ImageCropByMask", "inputs": {"image": ["91", 0], "mask": ["90", 0]}},
-        # selected driving person in the first frame (same selection as node 23)
-        "95": {"class_type": "SCAIL2ColoredMask", "inputs": {
-            "driving_track_data": [track, 0],
-            "object_indices": g[color]["inputs"]["object_indices"],
-            "sort_by": g[color]["inputs"]["sort_by"], "replacement_mode": True}},
-        "96": {"class_type": "ImageFromBatch", "inputs": {"image": ["95", 0], "batch_index": 0, "length": 1}},
-        "97": {"class_type": "ImageToMask", "inputs": {"image": ["96", 0], "channel": "red"}},
-        "98": {"class_type": "InvertMask", "inputs": {"mask": ["97", 0]}},
-        # exact bounding box of that person's mask: x, y, width, height
-        "99": {"class_type": "INPAINT_MaskBoundingBox", "inputs": {"mask": ["98", 0]}},
-        # scale the cut-out to the person's height, keeping its aspect
-        "101": {"class_type": "ImageScale", "inputs": {
-            "image": ["92", 0], "upscale_method": "lanczos", "width": 0, "height": ["99", 3], "crop": "disabled"}},
-        "102": {"class_type": "ImageScale", "inputs": {
-            "image": ["93", 0], "upscale_method": "lanczos", "width": 0, "height": ["99", 3], "crop": "disabled"}},
-        "104": {"class_type": "ImageToMask", "inputs": {"image": ["102", 0], "channel": "red"}},
-        "105": {"class_type": "GetImageSize", "inputs": {"image": ["101", 0]}},
-        "106": {"class_type": "ComfyMathExpression", "inputs": {
-            "expression": "a + b / 2 - c / 2", "values.a": ["99", 0], "values.b": ["99", 2],
-            "values.c": ["105", 0]}},
-        "107": {"class_type": "EmptyImage", "inputs": {
-            "width": [width_node, 0], "height": [height_node, 0], "batch_size": 1, "color": 8421504}},
-        canvas_id: {"class_type": "ImageCompositeMasked", "inputs": {
-            "destination": ["107", 0], "source": ["101", 0], "x": ["106", 1], "y": ["99", 1],
-            "resize_source": False, "mask": ["104", 0]}},
-    }
-    g.update(nodes)
+    g.update(_fragment("fit", {
+        **roles, "width_node": width_node, "height_node": height_node,
+        "object_indices": g[color]["inputs"]["object_indices"],
+        "sort_by": g[color]["inputs"]["sort_by"],
+    }))
     # Use the fitted canvas wherever the cropped reference was used.
     canvas = [canvas_id, 0]
     for node in g.values():

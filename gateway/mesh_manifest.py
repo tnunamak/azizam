@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Legacy import alias only; workflow readers use the contract intent.
+# The root module still compares intents with this name to choose the mesh protocol and job content; workflow readers use the contract intent.
 MESH_INTENT = "mesh.generate"
 MESH_MEDIA_TYPE = "model/gltf-binary"
 

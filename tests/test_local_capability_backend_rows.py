@@ -118,7 +118,7 @@ def test_new_trigger_and_family_need_only_a_test_row(tmp_path, monkeypatch):
     ("set", "triggers", [], "triggers"),
     ("duplicate", None, None, "duplicate trigger"),
     ("set", "group", "unknown", "group"),
-    ("set", "flag", "unknown", "flag"),
+    ("set", "flag", "", "flag"),  # any named flag is valid row data; an empty one is not
     ("set", "execution", "stream", "execution"),
     ("set", "streaming", "yes", "streaming"),
     ("set", "gpu_required", "yes", "gpu_required"),
@@ -142,6 +142,28 @@ def test_invalid_backend_row_names_file_and_row(tmp_path, fault, field, value, m
     assert str(path) in str(caught.value)
     assert f"backend_rows row {row_number}" in str(caught.value)
     assert message in str(caught.value)
+
+
+def test_transcription_triggers_follow_loaded_recognition_rows(tmp_path, monkeypatch):
+    data = document()
+    row = next(row for row in data["backend_rows"]
+               if row["group"] == "recognition" and row["intent"] == local.INTENT_TRANSCRIPTIONS)
+    row["triggers"].append("Novel-Recognition")
+    unrelated = deepcopy(row)
+    unrelated.update(group="endpoints", triggers=["not-recognition"])
+    data["backend_rows"].append(unrelated)
+    rows = local.load_backend_capability_rows(write_rows(tmp_path, data))
+    monkeypatch.setattr(local, "_BACKEND_ROWS", rows)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("reader reloaded package data")
+
+    monkeypatch.setattr(Path, "read_text", forbidden)
+    assert local.transcription_triggers() == frozenset({
+        "transcriptions", "stt", "audio.transcriptions", "novel-recognition",
+    })
+    assert capabilities(["NOVEL-RECOGNITION"])[0].intent == local.INTENT_TRANSCRIPTIONS
+    assert "translation" not in local.transcription_triggers()
 
 
 def test_backend_rows_are_deeply_read_only():

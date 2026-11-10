@@ -203,9 +203,9 @@ def test_workflow_families_keep_default_backend_models_and_resource_tiers():
     ]
 
 
-def test_vision_role_projector_and_backend_words_independently_add_image_input():
+def test_image_input_comes_from_projector_or_backend_never_the_role_name():
     cases = [
-        ("vision", {}, [], ("text", "image")),
+        ("vision", {}, [], ("text",)),  # a role name alone adds no modality
         ("ordinary", {"mmproj": "projector.gguf"}, [], ("text", "image")),
         ("ordinary", {}, ["vision"], ("text", "image")),
         ("ordinary", {}, [], ("text",)),

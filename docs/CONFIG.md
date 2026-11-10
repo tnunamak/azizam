@@ -59,7 +59,6 @@ is an owner override of a release default in `registry/defaults/`, edited throug
 | `mcp.oauth.dynamic_client_registration` | boolean |  |  |
 | `request_body_limits.json_bytes` | integer | `AZIZAM_REQUEST_BODY_JSON_BYTES` |  |
 | `request_body_limits.media_bytes` | integer | `AZIZAM_REQUEST_BODY_MEDIA_BYTES` |  |
-| `model_routing.gguf_dir` | string |  | Directory the gateway scans for GGUF model files. A storage root. |
 | `images.cache_dir` | string |  | Durable media storage for the Library and `response_format: url`. |
 | `images.vram_estimates_file` | string |  | Persistent VRAM-per-(workflow,size) measurements. |
 | `images.signed_url_secret` | string (secret) |  | HMAC secret for signed media URLs. Empty or unset: generated at first run and kept in <cache_dir>/.url_signing_secret, mode 0600. |

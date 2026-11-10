@@ -244,6 +244,97 @@ def _aliases() -> dict:
 
 
 class WorkflowsCatalogTests(unittest.TestCase):
+    def test_every_builtin_description_uses_explicit_public_copy(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        registry = WorkflowRegistry.from_directory(root)
+        self.assertEqual(registry.errors, [])
+        records = list(registry.records())
+        self.assertTrue(records)
+        capabilities = [
+            Capability(
+                intent=record.intent,
+                backend=record.supported_backends[0],
+                workflow=record.id,
+            )
+            for record in records
+        ]
+
+        baseline = build_workflows_catalog(
+            records=records, capabilities=capabilities,
+        )
+        with patch(
+            "gateway.workflows_catalog._workflow_description",
+            side_effect=AssertionError("A builtin reached free-form note fallback"),
+        ):
+            without_note_classifier = build_workflows_catalog(
+                records=records, capabilities=capabilities,
+            )
+
+        self.assertEqual(without_note_classifier, baseline)
+        rows = {row["id"]: row for row in baseline["workflows"]}
+        self.assertEqual(set(rows), {record.id for record in records})
+        for record in records:
+            with self.subTest(workflow=record.id):
+                summary = record.contract.get("summary")
+                summary = " ".join(summary.split()) if isinstance(summary, str) else ""
+                purpose = record.contract.get("purpose")
+                purpose = purpose.strip() if isinstance(purpose, str) else ""
+                self.assertTrue(summary or purpose)
+                self.assertEqual(rows[record.id]["description"], summary or purpose)
+
+    def test_note_fallback_is_independent_of_engine_spelling(self) -> None:
+        for note in (
+            "Make pictures with ComfyUI.",
+            "Make pictures with ZephyraNova.",
+            "Make a picture from a description.",
+            "",
+            None,
+        ):
+            with self.subTest(note=note):
+                self.assertEqual(
+                    _workflow_description(note, "image"),
+                    "Generate or edit images from your prompts.",
+                )
+                self.assertEqual(
+                    _workflow_description(note, "unfamiliar-capability"),
+                    "Run this configured workflow.",
+                )
+
+    def test_public_copy_and_notes_do_not_depend_on_engine_names(self) -> None:
+        for engine in ("ComfyUI", "ZephyraNova"):
+            for has_summary in (False, True):
+                with self.subTest(engine=engine, has_summary=has_summary):
+                    manifest = yaml.safe_load(IMAGE_MANIFEST)
+                    note = f"Make pictures with {engine}."
+                    manifest.update(
+                        purpose="Make a picture",
+                        description=note,
+                    )
+                    if has_summary:
+                        manifest["summary"] = "  Make a picture   for your home.  "
+                    registry = WorkflowRegistry()
+                    registry.add_manifest(
+                        manifest, source_path="public-copy.yml", facts=STANDARD_FACTS,
+                    )
+                    payload = build_workflows_catalog(
+                        records=registry.records(),
+                        capabilities=[
+                            Capability(
+                                intent=manifest["intent"],
+                                backend="comfyui",
+                                workflow=manifest["id"],
+                            )
+                        ],
+                    )
+                    row = payload["workflows"][0]
+                    self.assertEqual(row["purpose"], "Make a picture")
+                    if has_summary:
+                        self.assertEqual(row["description"], "Make a picture for your home.")
+                        self.assertNotIn("technical_notes", row)
+                    else:
+                        self.assertEqual(row["description"], "Make a picture")
+                        self.assertEqual(row["technical_notes"], note)
+
     def test_catalog_includes_manifest_license_verbatim(self) -> None:
         manifest = yaml.safe_load(IMAGE_MANIFEST)
         manifest["license"] = "Community terms: Not For Use in restricted regions"
@@ -462,7 +553,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         kinds = {row["name"]: row["media_type"] for row in scail["inputs"] if row.get("asset")}
         self.assertEqual(kinds, {"reference_image": "image/*", "source_video": "video/*"})
 
-    def test_catalog_description_rejects_internal_tokens_files_and_license_notes(self) -> None:
+    def test_catalog_description_uses_fallback_for_internal_tokens_files_and_license_notes(self) -> None:
         for description in (
             "Edit int8_convrot images for this request.",
             "Render with `TextEncode` and an image input.",
@@ -1182,7 +1273,8 @@ class JobRunExampleTests(unittest.TestCase):
 
 # Frozen from 8333cbd7a2c24ca9d51492e94089dc15855476b8. This oracle has its own
 # route selection and response rendering, so a change to the live generator
-# cannot silently redefine byte-for-byte parity. Request helpers are unchanged.
+# cannot silently redefine byte-for-byte parity. Both request body helpers below
+# are also frozen now that live examples take placement and models from routes.
 _BASE_RESPONSE_RENDERERS = r'''def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[str, Any]:
     """Sync and async routes for one workflow, and which to prefer."""
     intent = record.intent
@@ -1355,6 +1447,92 @@ def _example_request(
         ),
     }
 
+def _example_body(
+    record: WorkflowRecord,
+    inputs: list[Mapping[str, Any]],
+    *,
+    mode: str,
+    model: str | None = None,
+) -> dict[str, Any]:
+    mapping = request_mapping(record, mode)
+    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    body: dict[str, Any] = {}
+    if model or not str(record.intent).startswith("video.edit"):
+        body["model"] = model or short_id(record)
+    extension: dict[str, Any] = {}
+    combined: dict[str, list[str]] = {}
+    for name, placement in mapping.items():
+        if name not in values or placement.get("in") == "none":
+            continue
+        location = str(placement.get("in") or "")
+        field = str(placement.get("field") or name)
+        if location == "body":
+            if placement.get("combine"):
+                combined[field] = [str(part) for part in placement["combine"]]
+            else:
+                body[field] = values[name]
+        elif location == "extension":
+            extension[field] = values[name]
+    for field, parts in combined.items():
+        if field == "size" and all(part in values for part in parts):
+            body[field] = f"{values[parts[0]]}x{values[parts[1]]}"
+    for item in route_inputs(record):
+        name = str(item.get("name") or "")
+        field = str(item.get("field") or name)
+        if name and field not in body:
+            body[field] = _example_value(item)
+    if extension:
+        body.setdefault("extensions", {})["com.azizam.workflow"] = extension
+    return body
+
+
+def _example_multipart_parts(
+    record: WorkflowRecord,
+    inputs: list[Mapping[str, Any]],
+    *,
+    model: str | None,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """The form fields and file parts the example request carries.
+
+    ``files`` is keyed by input name, and each part names the multipart field
+    it travels in. Fields can repeat (the edit route takes every picture as an
+    ``image[]`` part), so the ordering is the manifest's and the key is the
+    input, never the wire field.
+    """
+    mapping = request_mapping(record, "sync")
+    rows = {str(item.get("name")): item for item in inputs}
+    values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
+    form: dict[str, Any] = {}
+    if model and record.intent == "image.edit":
+        form["model"] = model
+    files: dict[str, dict[str, Any]] = {}
+    extension: dict[str, Any] = {}
+    combined: dict[str, list[str]] = {}
+    for name, placement in mapping.items():
+        if name not in values or placement.get("in") == "none":
+            continue
+        location = str(placement.get("in") or "")
+        field = str(placement.get("field") or name)
+        if location == "form":
+            if placement.get("combine"):
+                combined[field] = [str(part) for part in placement["combine"]]
+            else:
+                form[field] = values[name]
+        elif location == "file":
+            files[name] = {**_file_part(name, rows.get(name) or {}), "field": field}
+        elif location == "file+extension":
+            files[name] = {**_file_part(name, rows.get(name) or {}), "field": field}
+            extension[name] = {"multipart_field": field}
+        elif location == "extension":
+            extension[field] = values[name]
+    for field, parts in combined.items():
+        if field == "size" and all(part in values for part in parts):
+            form[field] = f"{values[parts[0]]}x{values[parts[1]]}"
+    if extension:
+        form["extensions"] = json.dumps({"com.azizam.workflow": extension}, separators=(",", ":"))
+    return form, files
+
+
 def _curl_example(
     url: str,
     *,
@@ -1505,6 +1683,158 @@ def _javascript_example(
         f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
     )
 '''
+
+
+class RouteFieldExampleTests(unittest.TestCase):
+    @staticmethod
+    def example(fields: dict, *, kind: str = "quartz_job", model: str | None = None,
+                content_type: str = "application/json") -> dict:
+        from types import SimpleNamespace
+        from gateway.workflows_catalog import _example_request
+
+        record = SimpleNamespace(
+            id="quartz.render.fixture", intent="quartz.render",
+            contract={"inputs": {}, "bindings": {}},
+        )
+        inputs = [
+            {"name": "prompt", "accepted": True, "default": "A crystal lattice."},
+            {"name": "texture", "accepted": True, "default": "rough"},
+        ]
+        route = {
+            "kind": kind,
+            "submit": {"method": "POST", "path": "/quartz/jobs", "content_type": content_type},
+            "fields": fields,
+        }
+        if model is not None:
+            route["submit"]["model"] = model
+        if kind == "respond_async":
+            route["submit"]["headers"] = {"Prefer": "respond-async"}
+        # Placement is already chosen by the route builder. Re-selecting a mode
+        # here would hide a spelling-based dispatch in the example generator.
+        with patch("gateway.workflows_catalog.request_mapping",
+                   side_effect=AssertionError("use the route's fields")), \
+             patch("gateway.workflows_catalog.route_inputs", return_value=[]):
+            return _example_request(record, inputs, route, "https://gateway.test")
+
+    def test_unfamiliar_job_kind_uses_its_async_placement(self) -> None:
+        async_fields = {
+            "prompt": {"in": "body", "field": "async_prompt"},
+            "texture": {"in": "extension", "field": "finish"},
+        }
+        example = self.example(async_fields, model="crystal-v1")
+        self.assertEqual(example["path"], "/quartz/jobs")
+        self.assertEqual(example["body"], {
+            "model": "crystal-v1",
+            "async_prompt": "A crystal lattice.",
+            "extensions": {"com.azizam.workflow": {"finish": "rough"}},
+        })
+        for language in ("curl", "python", "javascript"):
+            self.assertIn("async_prompt", example[language])
+
+    def test_respond_async_route_keeps_its_sync_placement(self) -> None:
+        sync_fields = {
+            "prompt": {"in": "extension", "field": "sync_prompt"},
+            "texture": {"in": "body", "field": "surface"},
+        }
+        example = self.example(sync_fields, kind="respond_async", model="crystal-v1")
+        self.assertEqual(example["body"], {
+            "model": "crystal-v1",
+            "surface": "rough",
+            "extensions": {"com.azizam.workflow": {"sync_prompt": "A crystal lattice."}},
+        })
+        for language in ("curl", "python", "javascript"):
+            self.assertIn("respond-async", example[language])
+            self.assertIn("sync_prompt", example[language])
+            self.assertNotIn("async_prompt", example[language])
+
+    def test_route_without_a_model_does_not_invent_one_from_the_intent(self) -> None:
+        example = self.example({"prompt": {"in": "body", "field": "prompt"}})
+        self.assertEqual(example["body"], {"prompt": "A crystal lattice."})
+        for language in ("curl", "python", "javascript"):
+            self.assertNotIn('"model"', example[language])
+
+    def test_omitted_route_fields_fall_back_to_sync_mapping(self) -> None:
+        from types import SimpleNamespace
+        from gateway.workflows_catalog import _example_request
+
+        record = SimpleNamespace(
+            id="quartz.render.fixture", intent="quartz.render",
+            contract={"inputs": {}, "bindings": {}},
+        )
+        inputs = [
+            {"name": "prompt", "accepted": True, "default": "A crystal lattice."},
+            {"name": "texture", "accepted": True, "default": "rough"},
+        ]
+        route = {
+            "method": "POST", "path": "/quartz/render",
+            "content_type": "application/json", "model": "crystal-v1",
+        }
+        with patch("gateway.workflows_catalog.request_mapping", return_value={
+            "prompt": {"in": "body", "field": "sync_prompt"},
+            "texture": {"in": "extension", "field": "finish"},
+        }) as mapping, patch("gateway.workflows_catalog.route_inputs", return_value=[]):
+            example = _example_request(record, inputs, route, "https://gateway.test")
+        mapping.assert_called_once_with(record, "sync")
+        self.assertEqual(example["body"], {
+            "model": "crystal-v1",
+            "sync_prompt": "A crystal lattice.",
+            "extensions": {"com.azizam.workflow": {"finish": "rough"}},
+        })
+
+    def test_explicit_empty_route_fields_do_not_fall_back_to_a_mapping(self) -> None:
+        self.assertEqual(self.example({}, model="crystal-v1")["body"], {"model": "crystal-v1"})
+
+    def test_multipart_example_uses_unfamiliar_routes_fields_and_model(self) -> None:
+        fields = {
+            "prompt": {"in": "form", "field": "async_prompt"},
+            "texture": {"in": "form", "field": "finish"},
+        }
+        example = self.example(fields, model="crystal-v1", content_type="multipart/form-data")
+        self.assertEqual(example["path"], "/quartz/jobs")
+        self.assertEqual(example["content_type"], "multipart/form-data")
+        self.assertEqual(example["body"], {})
+        self.assertEqual(example["form"], {
+            "model": "crystal-v1",
+            "async_prompt": "A crystal lattice.",
+            "finish": "rough",
+        })
+        expected = {
+            "curl": ("-F 'model=crystal-v1'", "-F 'async_prompt=A crystal lattice.'", "-F 'finish=rough'"),
+            "python": ("'model': 'crystal-v1'", "'async_prompt': 'A crystal lattice.'", "'finish': 'rough'"),
+            "javascript": (
+                'form.append("model", "crystal-v1");',
+                'form.append("async_prompt", "A crystal lattice.");',
+                'form.append("finish", "rough");',
+            ),
+        }
+        for language, fragments in expected.items():
+            with self.subTest(language=language):
+                for fragment in fragments:
+                    self.assertIn(fragment, example[language])
+                self.assertNotRegex(example[language], r"(?<!a)sync_prompt")  # async_prompt contains the substring
+                self.assertNotIn("surface", example[language])
+
+    def test_multipart_route_without_a_model_does_not_invent_one(self) -> None:
+        example = self.example(
+            {"prompt": {"in": "form", "field": "async_prompt"}},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(example["form"], {"async_prompt": "A crystal lattice."})
+        self.assertEqual(example["body"], {})
+        for language in ("curl", "python", "javascript"):
+            with self.subTest(language=language):
+                self.assertNotIn("model", example[language])
+
+    def test_shipped_image_edit_catalog_row_and_example_are_unchanged(self) -> None:
+        from tests.support import c2d_parity
+        from tests.support.c2d_snapshots import capture_workflows_catalog
+
+        workflow_id = "image.edit.qwen-image-2.1-edit"
+        actual = capture_workflows_catalog()["workflows"][workflow_id]
+        golden = c2d_parity.load_golden("workflows_catalog")["workflows"][workflow_id]
+        for part in ("row", "examples"):
+            with self.subTest(part=part):
+                self.assertEqual(actual[part]["sha256"], golden[part]["sha256"])
 
 
 class DeclaredResponseKindExampleTests(unittest.TestCase):
@@ -1659,5 +1989,77 @@ class DeclaredResponseKindExampleTests(unittest.TestCase):
                 self.assertEqual(actual, expected)
         self.assertTrue(affected, "the shipped image-edit regression must be exercised")
         self.assertEqual(changed, affected, f"changed workflows: {sorted(changed)}")
+
+    def test_put_submit_method_is_used_by_every_client(self) -> None:
+        for content_type in ("application/json", "multipart/form-data"):
+            for is_job in (False, True):
+                with self.subTest(content_type=content_type, is_job=is_job):
+                    submit = {
+                        "method": "PUT", "path": "/fixture/jobs",
+                        "content_type": content_type,
+                    }
+                    if is_job:
+                        submit["response"] = {
+                            "kind": "media_job", "poll": "/jobs/{job_id}",
+                            "content": "/jobs/{job_id}/content",
+                        }
+                    example = self.example("unfamiliar.render", {
+                        "kind": "respond_async", "submit": submit,
+                    })
+                    self.assertEqual(example["method"], "PUT")
+                    self.assertEqual(example["curl"].count("--request 'PUT'"), 1)
+                    self.assertIn("requests.request('PUT',", example["python"])
+                    self.assertIn('method: "PUT",', example["javascript"])
+
+    def test_empty_multipart_post_names_its_method(self) -> None:
+        from gateway.workflows_catalog import _curl_example
+
+        # Without -F parts curl would send GET, so the method must be explicit.
+        for job_urls in (None, ("https://example.test/jobs/{job_id}", "https://example.test/jobs/{job_id}/content")):
+            with self.subTest(job=job_urls is not None):
+                curl = _curl_example(
+                    "https://example.test", method="POST", content_type="multipart/form-data",
+                    body={}, form={}, files=[], binary_response=False, job_urls=job_urls,
+                )
+                self.assertEqual(curl.count("--request 'POST'"), 1)
+        with_part = _curl_example(
+            "https://example.test", method="POST", content_type="multipart/form-data",
+            body={}, form={"prompt": "x"}, files=[], binary_response=False,
+        )
+        self.assertNotIn("--request", with_part)
+
+    def test_every_shipped_example_keeps_legacy_post_bytes(self) -> None:
+        import gateway.workflow_openapi as route_module
+        import gateway.workflows_catalog as catalog_module
+
+        # Reuse the frozen pre-change curl renderer, not the implementation
+        # under test, including its recursive job-submit rendering.
+        namespace = {**vars(route_module), **vars(catalog_module)}
+        exec(compile(_BASE_RESPONSE_RENDERERS, "<legacy curl oracle>", "exec"), namespace)
+        legacy_curl = namespace["_curl_example"]
+
+        def render_legacy(url, *, method="POST", **kwargs):
+            self.assertEqual(method, "POST", "shipped routes must retain implicit POST")
+            return legacy_curl(url, **kwargs)
+
+        registry = WorkflowRegistry.from_directory(
+            Path(__file__).resolve().parents[1] / "manifests" / "workflows",
+        )
+        self.assertEqual(registry.errors, [])
+        records = registry.records()
+        self.assertTrue(records)
+        openapi_rows = {row["id"]: row for row in route_module.workflow_catalog(records)}
+        for record in records:
+            with self.subTest(workflow=record.id):
+                kwargs = dict(
+                    capability_rows=[], openapi_row=openapi_rows[record.id],
+                    receipts=[], jobs=[], base_url="https://gateway.test",
+                )
+                actual = catalog_module._workflow_row(record, **kwargs)["example_request"]
+                with patch("gateway.workflows_catalog._curl_example", side_effect=render_legacy):
+                    expected = catalog_module._workflow_row(record, **kwargs)["example_request"]
+                # Full equality pins all three client strings byte-for-byte,
+                # along with the request's method, path, body, form and files.
+                self.assertEqual(actual, expected)
 if __name__ == "__main__":
     unittest.main()

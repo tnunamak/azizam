@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
+from gateway.capability_ids import MODALITY_WORDS
 from gateway.workflow_policy import NEEDS_CONFIGURATION_MESSAGE
 from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
@@ -682,14 +683,11 @@ def _derive_input_modalities(
 
 
 def _media_type_modality(media_type: str) -> str | None:
-    if media_type.startswith("image/"):
-        return "image"
-    if media_type.startswith("audio/"):
-        return "audio"
-    if media_type.startswith("video/"):
-        return "video"
     if media_type.startswith("text/") or media_type in {"application/json"}:
         return "text"
+    major, separator, _subtype = media_type.partition("/")
+    if separator and major in MODALITY_WORDS:
+        return major
     return None
 
 

@@ -24,9 +24,7 @@ class GatewayAssetStore:
                 raise BudgetExceeded('max_asset_bytes', 'The media exceeds the asset size limit.')
             data.extend(chunk)
         suffix = asset_types.suffix_for_media_type(content_type)
-        kind = {'image':'img','audio':'aud','video':'vid'}.get(content_type.split('/')[0])
-        if kind is None:
-            raise ProtocolError('The protocol did not return an image, audio or video.', code='invalid_media_type')
+        kind = asset_types.asset_prefix_for_media_type(content_type)
         extra = {'origin': self._origin} if self._origin else {}
         asset_id = await asyncio.to_thread(self._store, bytes(data), kind=kind, suffix=suffix, owner_key_hash=self._owner, **extra)
         return AssetRef(asset_id, content_type, len(data), name)

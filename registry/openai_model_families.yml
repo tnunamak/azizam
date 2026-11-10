@@ -1,0 +1,37 @@
+# The family of an OpenAI model id that no owner alias and no generated row names, from OpenAI's naming conventions.
+#
+# This file is data. The gateway reads it once (gateway/openai_model_families.py). An owner alias in the
+# model_compatibility section wins over it, and the generated model list (registry/openai_model_aliases.generated.yml)
+# is read after it. A new OpenAI family ("gpt-video-") needs a row here and no code.
+#
+# exact: one model id to its family.
+# rules: tried in order; the first rule that matches wins. A rule matches when every group in `match` has at least one
+#        test that holds. A test is exactly one of prefix, suffix or contains, compared with the normalized id.
+schema_version: 1
+exact:
+  dall-e-2: images
+  dall-e-3: images
+  tts-1: speech
+  tts-1-hd: speech
+  whisper-1: transcriptions
+rules:
+  - category: images
+    match: [[{prefix: dall-e-}, {prefix: gpt-image-}, {prefix: chatgpt-image}]]
+  - category: embeddings
+    match: [[{contains: embedding}]]
+  - category: transcriptions
+    match: [[{contains: transcribe}, {contains: diarize}, {prefix: whisper}]]
+  - category: speech
+    match: [[{prefix: tts-}, {suffix: -tts}, {contains: -tts-}]]
+  - category: video
+    match: [[{prefix: sora}]]
+  - category: moderation
+    match: [[{contains: moderation}]]
+  - category: deep_research
+    match: [[{contains: deep-research}]]
+  - category: audio_chat
+    match:
+      - [{prefix: gpt-}, {prefix: chatgpt-}, {prefix: o1}, {prefix: o3}, {prefix: o4}, {prefix: codex-}, {prefix: computer-use-}]
+      - [{contains: realtime}, {prefix: gpt-audio}]
+  - category: chat
+    match: [[{prefix: gpt-}, {prefix: chatgpt-}, {prefix: o1}, {prefix: o3}, {prefix: o4}, {prefix: codex-}, {prefix: computer-use-}]]
