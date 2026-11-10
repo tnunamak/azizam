@@ -217,9 +217,7 @@ def _workflow_row(
 
 
 def _workflow_description(value: Any, capability: str) -> str:
-    raw = _first_sentence(value)
-    if raw and len(raw.split()) <= 8 and not _is_technical_workflow_note(raw):
-        return _sentence(raw)
+    # Free-form descriptions are technical notes; public copy is summary/purpose.
     return CAPABILITY_DESCRIPTIONS.get(capability, "Run this configured workflow.")
 
 
@@ -228,34 +226,6 @@ def _workflow_technical_notes(value: Any, public_description: str) -> str | None
     if not raw:
         return None
     return raw if raw != public_description else None
-
-
-def _first_sentence(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
-
-
-def _sentence(value: str) -> str:
-    text = value.strip()
-    if not text:
-        return ""
-    return text if text.endswith((".", "!", "?")) else f"{text}."
-
-
-def _is_technical_workflow_note(value: str) -> bool:
-    patterns = (
-        r"\b(?:contract|protocol|gateway-composed|engine|binding|bound|backend|schema|adapter|passthrough|checkpoint|workflow)\b",
-        r"\b(?:comfyui|localhost|port|khz|flac|gguf|safetensors|ckpt)\b",
-        r"[/:]",
-        r"\b\w+\.\w+\b",
-        r"[_`]",
-        r"\b[\w-]+\.(?:png|jpe?g|webp|mp4|mov|wav|mp3|safetensors|ckpt|gguf)\b",
-        r"\([^)]*\b(?:v?\d+(?:\.\d+)+|license|apache|mit|gpl|bsd|iclr)\b",
-    )
-    lowered = value.casefold()
-    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[str, Any]]:

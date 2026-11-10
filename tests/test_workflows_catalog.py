@@ -244,6 +244,97 @@ def _aliases() -> dict:
 
 
 class WorkflowsCatalogTests(unittest.TestCase):
+    def test_every_builtin_description_uses_explicit_public_copy(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        registry = WorkflowRegistry.from_directory(root)
+        self.assertEqual(registry.errors, [])
+        records = list(registry.records())
+        self.assertTrue(records)
+        capabilities = [
+            Capability(
+                intent=record.intent,
+                backend=record.supported_backends[0],
+                workflow=record.id,
+            )
+            for record in records
+        ]
+
+        baseline = build_workflows_catalog(
+            records=records, capabilities=capabilities,
+        )
+        with patch(
+            "gateway.workflows_catalog._workflow_description",
+            side_effect=AssertionError("A builtin reached free-form note fallback"),
+        ):
+            without_note_classifier = build_workflows_catalog(
+                records=records, capabilities=capabilities,
+            )
+
+        self.assertEqual(without_note_classifier, baseline)
+        rows = {row["id"]: row for row in baseline["workflows"]}
+        self.assertEqual(set(rows), {record.id for record in records})
+        for record in records:
+            with self.subTest(workflow=record.id):
+                summary = record.contract.get("summary")
+                summary = " ".join(summary.split()) if isinstance(summary, str) else ""
+                purpose = record.contract.get("purpose")
+                purpose = purpose.strip() if isinstance(purpose, str) else ""
+                self.assertTrue(summary or purpose)
+                self.assertEqual(rows[record.id]["description"], summary or purpose)
+
+    def test_note_fallback_is_independent_of_engine_spelling(self) -> None:
+        for note in (
+            "Make pictures with ComfyUI.",
+            "Make pictures with ZephyraNova.",
+            "Make a picture from a description.",
+            "",
+            None,
+        ):
+            with self.subTest(note=note):
+                self.assertEqual(
+                    _workflow_description(note, "image"),
+                    "Generate or edit images from your prompts.",
+                )
+                self.assertEqual(
+                    _workflow_description(note, "unfamiliar-capability"),
+                    "Run this configured workflow.",
+                )
+
+    def test_public_copy_and_notes_do_not_depend_on_engine_names(self) -> None:
+        for engine in ("ComfyUI", "ZephyraNova"):
+            for has_summary in (False, True):
+                with self.subTest(engine=engine, has_summary=has_summary):
+                    manifest = yaml.safe_load(IMAGE_MANIFEST)
+                    note = f"Make pictures with {engine}."
+                    manifest.update(
+                        purpose="Make a picture",
+                        description=note,
+                    )
+                    if has_summary:
+                        manifest["summary"] = "  Make a picture   for your home.  "
+                    registry = WorkflowRegistry()
+                    registry.add_manifest(
+                        manifest, source_path="public-copy.yml", facts=STANDARD_FACTS,
+                    )
+                    payload = build_workflows_catalog(
+                        records=registry.records(),
+                        capabilities=[
+                            Capability(
+                                intent=manifest["intent"],
+                                backend="comfyui",
+                                workflow=manifest["id"],
+                            )
+                        ],
+                    )
+                    row = payload["workflows"][0]
+                    self.assertEqual(row["purpose"], "Make a picture")
+                    if has_summary:
+                        self.assertEqual(row["description"], "Make a picture for your home.")
+                        self.assertNotIn("technical_notes", row)
+                    else:
+                        self.assertEqual(row["description"], "Make a picture")
+                        self.assertEqual(row["technical_notes"], note)
+
     def test_catalog_includes_manifest_license_verbatim(self) -> None:
         manifest = yaml.safe_load(IMAGE_MANIFEST)
         manifest["license"] = "Community terms: Not For Use in restricted regions"
@@ -462,7 +553,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         kinds = {row["name"]: row["media_type"] for row in scail["inputs"] if row.get("asset")}
         self.assertEqual(kinds, {"reference_image": "image/*", "source_video": "video/*"})
 
-    def test_catalog_description_rejects_internal_tokens_files_and_license_notes(self) -> None:
+    def test_catalog_description_uses_fallback_for_internal_tokens_files_and_license_notes(self) -> None:
         for description in (
             "Edit int8_convrot images for this request.",
             "Render with `TextEncode` and an image input.",
