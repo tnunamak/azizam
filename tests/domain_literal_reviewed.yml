@@ -12,7 +12,7 @@ sites:
     reason: Names the IANA media type family of a file in suffix and MIME tables and media_kind comparisons.
   - file: gateway/video_subject.py
     literal: image
-    count: 11
+    count: 1
     category: engine_node_input
     reason: Names the ComfyUI node input receiving image data when graph nodes are added or rewired.
   - file: gateway/prompt_memory.py

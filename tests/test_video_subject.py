@@ -32,6 +32,118 @@ def _graph() -> dict:
 
 
 class SubjectHelperTests(unittest.TestCase):
+
+    def test_fragment_matches_literal_base_snapshot_including_order(self) -> None:
+        # Literal node dictionaries captured from dc037a038; no legacy builder,
+        # generated fixture or fragment data supplies the expected values.
+        roles = {
+            "first_frame_node": "frame", "track_node": "track",
+            "color_mask_node": "color", "probe_node": "probe",
+            "point_detect_node": "point", "sam_model_node": "sam",
+            "reference_raw_node": "raw", "reference_text_node": "text",
+            "reference_detect_node": "detect", "reference_cropped_node": "cropped",
+            "fit_canvas_node": "canvas", "size_node": ["width", "height"],
+        }
+        base = {
+            "track": {"class_type": "Tracker", "inputs": {"conditioning": ["text", 0], "keep": 7}},
+            "color": {"class_type": "Mask", "inputs": {"object_indices": "0", "sort_by": "area"}},
+            "detect": {"class_type": "Detect", "inputs": {"image": ["raw", 0]}},
+            "consumer": {"class_type": "Consumer", "inputs": {"image": ["cropped", 0], "keep": 9}},
+        }
+        expected_fit = {
+            "90": {"class_type": "SAM3_Detect", "inputs": {
+            "model": ["sam", 0], "image": ["raw", 0], "threshold": 0.5,
+            "refine_iterations": 2, "individual_masks": False, "conditioning": ["text", 0]}},
+            "91": {"class_type": "MaskToImage", "inputs": {"mask": ["90", 0]}},
+            "92": {"class_type": "ImageCropByMask", "inputs": {"image": ["raw", 0], "mask": ["90", 0]}},
+            "93": {"class_type": "ImageCropByMask", "inputs": {"image": ["91", 0], "mask": ["90", 0]}},
+            "95": {"class_type": "SCAIL2ColoredMask", "inputs": {
+            "driving_track_data": ["track", 0],
+            "object_indices": "0",
+            "sort_by": "area", "replacement_mode": True}},
+            "96": {"class_type": "ImageFromBatch", "inputs": {"image": ["95", 0], "batch_index": 0, "length": 1}},
+            "97": {"class_type": "ImageToMask", "inputs": {"image": ["96", 0], "channel": "red"}},
+            "98": {"class_type": "InvertMask", "inputs": {"mask": ["97", 0]}},
+            "99": {"class_type": "INPAINT_MaskBoundingBox", "inputs": {"mask": ["98", 0]}},
+            "101": {"class_type": "ImageScale", "inputs": {
+            "image": ["92", 0], "upscale_method": "lanczos", "width": 0, "height": ["99", 3], "crop": "disabled"}},
+            "102": {"class_type": "ImageScale", "inputs": {
+            "image": ["93", 0], "upscale_method": "lanczos", "width": 0, "height": ["99", 3], "crop": "disabled"}},
+            "104": {"class_type": "ImageToMask", "inputs": {"image": ["102", 0], "channel": "red"}},
+            "105": {"class_type": "GetImageSize", "inputs": {"image": ["101", 0]}},
+            "106": {"class_type": "ComfyMathExpression", "inputs": {
+            "expression": "a + b / 2 - c / 2", "values.a": ["99", 0], "values.b": ["99", 2],
+            "values.c": ["105", 0]}},
+            "107": {"class_type": "EmptyImage", "inputs": {
+            "width": ["width", 0], "height": ["height", 0], "batch_size": 1, "color": 8421504}},
+            "canvas": {"class_type": "ImageCompositeMasked", "inputs": {
+            "destination": ["107", 0], "source": ["101", 0], "x": ["106", 1], "y": ["99", 1],
+            "resize_source": False, "mask": ["104", 0]}},
+        }
+        expected_point = {
+            "class_type": "SAM3_Detect",
+            "inputs": {
+                "model": ["sam", 0], "image": ["frame", 0], "threshold": 0.5,
+                "refine_iterations": 2, "individual_masks": False,
+                "positive_coords": '[{"x": 416, "y": 112}]',
+            },
+        }
+
+        def rename(value, prefix):
+            if isinstance(value, dict):
+                return {key: rename(item, prefix) for key, item in value.items()}
+            if isinstance(value, list):
+                return [rename(item, prefix) for item in value]
+            ids = {"frame", "track", "color", "probe", "point", "sam", "raw",
+                   "text", "detect", "cropped", "canvas", "width", "height"}
+            return prefix + value if isinstance(value, str) and value in ids else value
+
+        points = [
+            (None, None),
+            ((0.5, 0.25), '[{"x": 416, "y": 112}]'),
+            ((0.5, 0.5), '[{"x": 416, "y": 224}]'),
+            ((0.25, 0.75), '[{"x": 208, "y": 335}]'),
+            ((0.4, 0.6), '[{"x": 332, "y": 268}]'),
+            ((0, 1), '[{"x": 0, "y": 447}]'),
+        ]
+        for prefix in ("", "renamed-"):
+            for selection in ("0", "1", "0,2"):
+                for point, coords in points:
+                    with self.subTest(prefix=prefix, selection=selection, point=point):
+                        graph = json.loads(json.dumps(base))
+                        graph["color"]["inputs"]["object_indices"] = selection
+                        expected = json.loads(json.dumps(graph))
+                        fitted = json.loads(json.dumps(expected_fit))
+                        fitted["95"]["inputs"]["object_indices"] = selection
+                        if point is not None:
+                            expected["track"]["inputs"] = {
+                                "keep": 7, "initial_mask": ["point", 0], "max_objects": 1,
+                            }
+                            expected["color"]["inputs"]["object_indices"] = "0"
+                            expected["point"] = json.loads(json.dumps(expected_point))
+                            expected["point"]["inputs"]["positive_coords"] = coords
+                            fitted["95"]["inputs"]["object_indices"] = "0"
+                        expected.update(fitted)
+                        expected["detect"]["inputs"]["image"] = ["canvas", 0]
+                        expected["consumer"]["inputs"]["image"] = ["canvas", 0]
+                        graph = {prefix + key: rename(value, prefix) for key, value in graph.items()}
+                        bound_roles = {key: rename(value, prefix) for key, value in roles.items()}
+                        expected = {
+                            (prefix + key if key in {"track", "color", "detect", "consumer", "point", "canvas"} else key):
+                            rename(value, prefix) for key, value in expected.items()
+                        }
+                        block = {} if point is None else {
+                            "source_point_x": point[0], "source_point_y": point[1],
+                        }
+                        # Both helpers must use the once-loaded fragment, not reopen it.
+                        with patch.object(Path, "read_text", side_effect=AssertionError("fragment reloaded")):
+                            self.assertEqual(vs.apply_point(graph, block, 832, 448, bound_roles), point is not None)
+                            vs.add_reference_fit(graph, bound_roles)
+                        self.assertEqual(graph, expected)
+                        self.assertEqual(json.dumps(graph), json.dumps(expected))
+                        # Mutating a result must not corrupt later instantiations.
+                        graph["90"]["inputs"]["threshold"] = -1
+
     def test_shipped_roles_fit_the_shipped_graph(self) -> None:
         vs.check_roles(ROLES, _graph())
 

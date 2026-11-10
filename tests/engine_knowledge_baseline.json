@@ -11,7 +11,6 @@
     "gateway/service_registry.py": 1,
     "gateway/transforms.py": 2,
     "gateway/video_media_jobs.py": 1,
-    "gateway/video_subject.py": 1,
     "metrics_sampler.py": 8,
     "proxy.py": 207,
     "status_endpoint.py": 132
