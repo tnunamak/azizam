@@ -214,8 +214,9 @@ def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_wit
     assert done["status"] == "succeeded" and done["content"] == MOLECULE.decode()
     assert done["posts"] == [{"input": {"vector": [0.25, -1.5, 3.0, 0.0]}}]
     # Its receipt is in the owner's Activity, which the first gateway reads from the shared database.
-    receipts = [r["receipt"] for r in client.get("/admin/api/activity/requests").json()["records"]
-                if r["receipt"].get("job_id") == done["job_id"]]
+    records = client.get("/admin/api/activity/requests")
+    assert records.status_code == 200, records.text
+    receipts = [r["receipt"] for r in records.json()["records"] if r["receipt"].get("job_id") == done["job_id"]]
     assert [r["status"] for r in receipts] == ["succeeded"]
 
 
