@@ -64,6 +64,17 @@ class CompatibilityContract(Contract):
                     raise ValueError(f"alias_operation_intents: intent {row.intent} has two target prefixes")
         return self
 
+    @model_validator(mode="after")
+    def one_workflow_per_limit_key(self):
+        # The video routes invert this map to name a workflow by its record id; two ids sharing one key would make
+        # the inversion pick one silently.
+        seen: dict[str, str] = {}
+        for workflow_id, key in self.limit_key_aliases.items():
+            if key in seen:
+                raise ValueError(f"limit_key_aliases: {seen[key]} and {workflow_id} both name the key {key}")
+            seen[key] = workflow_id
+        return self
+
     @field_validator("legacy_audio_result_keys", mode="before")
     @classmethod
     def owned_key_order(cls, value):
