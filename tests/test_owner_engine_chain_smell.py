@@ -82,8 +82,10 @@ def owner(gateway, smell_engine, tmp_path, monkeypatch):  # noqa: F811 - fixture
     return client, overlay, owner_id, plan_id
 
 
-def _install_description(overlay: Path) -> None:
-    (overlay / "d0-smell.yml").write_text(SMELL.read_text(encoding="utf-8"), encoding="utf-8")
+def _install_description(client):
+    """The owner route: PUT the raw document, create-only. Nothing is written to a folder."""
+    return client.put("/admin/api/engine-protocols/d0-smell", content=SMELL.read_text(encoding="utf-8"),
+                      headers={**csrf_for(client), "Content-Type": "application/yaml", "If-None-Match": "*"})
 
 
 def _write_headers(client):
@@ -98,14 +100,18 @@ def _add_engine(client, **extra):
         "values": {"address": f"http://{HOST}", "dispatch": "protocol", "protocol_description": "d0-smell"}, **extra})
 
 
-def test_step1_the_owner_installs_the_description_in_the_overlay_directory(owner):
-    # GAP (not a break): no route writes a description. The owner path today is a file in the overlay directory
-    # (description.user_directory(), gateway/engine_protocol/description.py:689); the engine editor only lists it.
+def test_step1_the_owner_installs_the_description_with_put(owner):
+    # PUT /admin/api/engine-protocols/{id} stores the raw document as an owner row; the overlay folder stays empty.
     client, overlay, *_ = owner
     before = client.get("/admin/api/engine-protocols")
     assert before.status_code == 200, before.text
     assert "d0-smell" not in {row["id"] for row in before.json()["protocols"]}
-    _install_description(overlay)
+    created = _install_description(client)
+    assert created.status_code == 201, created.text
+    assert created.headers["ETag"] and list(overlay.iterdir()) == []
+    stored = client.get("/admin/api/engine-protocols/d0-smell")
+    assert stored.status_code == 200 and stored.headers["ETag"] == created.headers["ETag"]
+    assert stored.json()["text"] == SMELL.read_text(encoding="utf-8")
     after = client.get("/admin/api/engine-protocols")
     row = {r["id"]: r for r in after.json()["protocols"]}["d0-smell"]
     assert row["source"] == "user" and row["dispatch_supported"] is True
@@ -115,7 +121,7 @@ def test_step1_the_owner_installs_the_description_in_the_overlay_directory(owner
 
 def test_step2_the_owner_adds_an_engine_record_that_names_the_description(owner):
     client, overlay, *_ = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     created = _add_engine(client)
     assert created.status_code == 201, created.text
     record = created.json()["service_registry"]["services"]["smell-box"]
@@ -129,7 +135,7 @@ def test_step2_the_owner_adds_an_engine_record_that_names_the_description(owner)
 
 def test_step3_the_owner_declares_the_smell_task_and_turns_the_engine_on(owner, gateway):
     client, overlay, *_ = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     created = _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}])
     assert created.status_code == 201, created.text
     record = created.json()["service_registry"]["services"]["smell-box"]
@@ -159,7 +165,7 @@ def _app_key(client, owner_id, plan_id) -> str:
 
 def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, smell_engine, gateway):
     client, overlay, owner_id, plan_id = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     # Step 3 now writes the record: the task and the model row come from the owner route.
     _enabled_engine(client)
     key = _app_key(client, owner_id, plan_id)

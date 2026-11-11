@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { protocolDescriptionsApi } from "@/lib/protocol-descriptions-api";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormField, NativeSelect } from "./form";
 
 export interface ProtocolDraft {
@@ -15,10 +16,13 @@ export function ProtocolChoice({
   value,
   onChange,
   disabled = false,
+  tasks,
 }: {
   value: ProtocolDraft;
   onChange: (value: ProtocolDraft) => void;
   disabled?: boolean;
+  /** When given, the operations the chosen description declares are offered as a pick list of tasks. Never typed. */
+  tasks?: { picked: string[]; onChange: (picked: string[]) => void };
 }) {
   const { data: catalog, isLoading, isError, refetch } = useQuery({
     queryKey: ["engineProtocolDescriptions"],
@@ -139,6 +143,27 @@ export function ProtocolChoice({
                   </NativeSelect>
                 )}
               </FormField>
+              {tasks && selected?.dispatch_supported && selected.operations.length > 0 && (
+                <fieldset className="flex flex-col gap-2">
+                  <legend className="text-body font-medium">Tasks this engine does</legend>
+                  <p className="text-meta text-muted-foreground">
+                    The description declares these operations. Tick the ones this engine offers.
+                  </p>
+                  {selected.operations.map((operation) => (
+                    <label key={operation} className="text-body flex min-h-8 cursor-pointer items-center gap-3 max-sm:min-h-11">
+                      <Checkbox
+                        aria-label={operation}
+                        checked={tasks.picked.includes(operation)}
+                        disabled={disabled}
+                        onCheckedChange={(on) =>
+                          tasks.onChange(on === true ? [...tasks.picked, operation] : tasks.picked.filter((task) => task !== operation))
+                        }
+                      />
+                      <span>{operation}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               {catalog.protocols.length === 0 && (
                 <p role="status">
                   No valid protocol descriptions are installed.

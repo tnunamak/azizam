@@ -442,6 +442,30 @@
   {
     "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "handler": "gateway.engine_protocol_admin.engine_protocol",
+    "method": "GET",
+    "path": "/admin/api/engine-protocols/{protocol_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.engine_protocol_admin.put_engine_protocol",
+    "method": "PUT",
+    "path": "/admin/api/engine-protocols/{protocol_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.engine_protocol_admin.delete_engine_protocol",
+    "method": "DELETE",
+    "path": "/admin/api/engine-protocols/{protocol_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_admin.engine_access",
     "method": "POST",
     "path": "/admin/api/engines/access",

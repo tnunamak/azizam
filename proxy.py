@@ -2700,6 +2700,9 @@ ADMIN_SESSION_SIGNING_KEY = (
     else _admin_session_signing_key()
 )
 ADMIN_STORE = AdminSQLiteStore(ADMIN_DB_PATH)
+# The protocol description loader reads the owner's stored descriptions from this same database.
+from gateway import protocol_description_store as _protocol_description_store
+_protocol_description_store.use_path(lambda: ADMIN_STORE.path)
 configure_retention_fact_capture(lambda: (
     ADMIN_STORE.get_service_registry() or {},
     admin_store.retention_fact_overrides(path=ADMIN_STORE.path),

@@ -215,6 +215,8 @@ def _deliberate(key: str) -> str | None:
         return "signin"  # owner routes added after the baseline (gateway/problem_reports.py; tests/test_problem_reports.py)
     if path == ENGINE_PROTOCOLS_PATH:
         return "engine_protocols"
+    if path.startswith(ENGINE_PROTOCOLS_PATH + "/"):
+        return "engine_protocol_item"  # one description per id, owner-written (gateway/engine_protocol_admin.py; tests/test_engine_protocol_writer.py)
     if path in MESH_PATHS:
         return "mesh"
     if path in VIDEO_ROW_PATHS and _method in ("POST", "HEAD"):
@@ -351,6 +353,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
                         else "/{path:path} unmatched_route")
             if outcome == expected:
                 continue
+        if kind == "engine_protocol_item" and key not in old:
+            continue  # new owner routes: GET, PUT and DELETE of one description; tests/test_engine_protocol_writer.py covers them
         if kind == "host_commands" and key not in old:
             continue  # new owner command permission route
         if kind == "sessions" and key not in old:
@@ -460,6 +464,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
                         "none: 401 application/json; app: 404 application/json; admin: 401 application/json")
             if new.get(key) == expected:
                 continue
+        if kind == "engine_protocol_item" and key not in old:
+            continue  # new owner routes: GET, PUT and DELETE of one description; HEAD answers as the sibling item routes do
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "media_folder" and key not in old:

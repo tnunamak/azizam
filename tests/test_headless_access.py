@@ -787,6 +787,7 @@ HANDLER_ERRORS = {
     "address_invalid", "client_id_required", "test_not_passed", "test_not_found", "owner_person_required",
     "invalid_password", "service_not_found", "record_not_found", "retention_destination_not_found",
     "ledger_not_found", "unknown_section", "workflow_not_found", "report_not_found",
+    "protocol_not_found", "protocol_revision_required",
 }
 
 

@@ -698,6 +698,21 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "owner_only": false
   },
+  "GET /admin/api/engine-protocols/{protocol_id}": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
+  },
+  "PUT /admin/api/engine-protocols/{protocol_id}": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "DELETE /admin/api/engine-protocols/{protocol_id}": {
+    "tag": "engines and providers",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
   "GET /admin/api/engines/{service_id}/stt-measurements": {
     "tag": "long-audio measurement",
     "gate": "AdminAuthenticator / _require_admin; owner role required",

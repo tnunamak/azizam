@@ -767,6 +767,9 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
             unsupported_fields[field] = "Protocol dispatch uses its connection and installed description. This legacy setting is not used."
     values["dispatch"] = connection.get("dispatch") or ""
     values["protocol_description"] = connection.get("protocol") or ""
+    # The tasks the installed description declares, when the record offers them, are listed beside the definition's own.
+    caps = [*caps, *(op for op in sorted(described_operations(values))
+                     if op in (record.get("capabilities") or ()) and op not in caps)]
     hidden = config.get(projection.HIDDEN_KEY) if isinstance(config.get(projection.HIDDEN_KEY), int) else 0
     other = {name: value for name, value in config.items()
              if name not in _KNOWN_CONFIG_KEYS and name not in ("engine_capabilities", projection.HIDDEN_KEY)}
@@ -1427,7 +1430,10 @@ class EngineService:
                 if (k not in _KNOWN_CONFIG_KEYS or k in unmodelled) and k != "engine_capabilities"}
         words = capability_words(catalog, definition)
         # Sent capabilities keep the words this kind does not use; unsent ones stay exactly as stored.
-        extra_capabilities = [c for c in record.get("capabilities") or () if c not in words]
+        # A described task is not one of those words: it stays only when the edit names it (see build_raw).
+        described = described_operations(clean) | described_operations({
+            "dispatch": before["values"].get("dispatch"), "protocol_description": before["values"].get("protocol_description")})
+        extra_capabilities = [c for c in record.get("capabilities") or () if c not in words and c not in described]
         return self._write(ctx, catalog, definition, clean, service_id=service_id, name=name, capabilities=capabilities,
                            models=models, enabled=enabled, check=check_summary, tests=tests, key=key, existing=record,
                            expected_generation=expected_generation, action="update", keep=keep,
