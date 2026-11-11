@@ -102,3 +102,25 @@ def test_row_that_is_not_submittable_with_a_route_is_refused():
     doc["intents"][1]["route"] = "/v1/videos"
     with pytest.raises(ValueError):
         media_job_intents.parse_rows(doc)
+
+
+def test_a_table_with_no_submittable_intent_is_refused():
+    doc = {"intents": [{"intent": "image.edit", "modality": "image", "submittable": False}]}
+    with pytest.raises(ValueError, match="no submittable"):
+        media_job_intents.parse_rows(doc)
+
+
+def test_one_component_naming_two_routes_is_refused():
+    doc = _doc()
+    doc["intents"].append({"intent": "audio.generate", "modality": "audio", "submittable": True,
+                           "route": "/v1/audio/generate", "component": "ImageGenerationRequest"})
+    with pytest.raises(ValueError, match="names two routes"):
+        media_job_intents.parse_rows(doc)
+
+
+def test_one_route_naming_two_components_is_refused():
+    doc = _doc()
+    doc["intents"].append({"intent": "image.identity", "modality": "image", "submittable": True,
+                           "route": "/v1/images/generations", "component": "OtherRequest"})
+    with pytest.raises(ValueError, match="names two components"):
+        media_job_intents.parse_rows(doc)
