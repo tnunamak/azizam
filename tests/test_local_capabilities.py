@@ -1113,9 +1113,22 @@ def test_graph_selection_defaults_reject_invalid_schema(tmp_path, table, change,
     assert message in str(error.value)
 
 
-def test_unmasked_graph_selection_keeps_non_iterable_capability_error():
-    with pytest.raises(TypeError):
-        build_local_capabilities({}, backends={"malformed": {"capabilities": 7}})
+def test_unmasked_inventory_skips_non_list_capabilities_without_losing_valid_rows():
+    config = {
+        "videos": {"workflows": {"clip": {"file": "clip.json"}}},
+        "audio": {"workflows": {"sound": {"file": "sound.json"}}},
+    }
+    backends = {
+        "chat-good": {"capabilities": ["chat"]},
+        "malformed": {"capabilities": 7},
+    }
+    # These are the default, unmasked graph flags. A malformed record must
+    # not abort generic discovery or accidentally publish image/workflow rows.
+    caps = build_local_capabilities(config, backends=backends)
+    assert [(cap.intent, cap.backend) for cap in caps] == [
+        ("chat.completions", "chat-good"),
+    ]
+    assert build_local_capabilities({}, backends={"malformed": {"capabilities": 7}}) == []
 
 
 if __name__ == "__main__":

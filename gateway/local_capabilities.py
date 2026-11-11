@@ -548,7 +548,14 @@ def _family_backend(
                 f"{family}.backend must be a non-empty string; got {backend!r}"
             )
         return backend
-    selection = selected_service(backends, capability)
+    # Generic backend rows only accept list-valued capability declarations.
+    # Apply the same inventory boundary to graph selection without changing
+    # selected_service's (shared with the gateway) iterable contract.
+    selectable = {
+        service_id: record for service_id, record in backends.items()
+        if isinstance(record, Mapping) and isinstance(record.get("capabilities"), list)
+    }
+    selection = selected_service(selectable, capability)
     return selection[0] if selection is not None else None
 
 
