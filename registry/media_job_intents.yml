@@ -1,0 +1,16 @@
+# The intents a media job can carry, the modality each belongs to, and (for the ones a client can submit) the sync
+# route whose body is the job's `request` and the OpenAPI component that types it.
+#
+# This file is data. gateway/media_job_intents.py reads it once; the submit schema, its prose, the unsupported-intent
+# error, the audio dispatch set and the resource class of a job all derive from these rows.
+# Row order is the published order of the submittable intents.
+#
+# submittable: false rows are intents the gateway runs for itself (an edit, an identity photo); a client cannot submit them.
+intents:
+  - {intent: image.generate, modality: image, submittable: true, route: /v1/images/generations, component: ImageGenerationRequest}
+  - {intent: image.edit, modality: image, submittable: false}
+  - {intent: image.identity, modality: image, submittable: false}
+  - {intent: audio.generate, modality: audio, submittable: true, route: /v1/audio/generate, component: AudioGenerationRequest}
+  - {intent: music.generate, modality: audio, submittable: true, route: /v1/audio/generate, component: AudioGenerationRequest}
+  - {intent: sfx.generate, modality: audio, submittable: true, route: /v1/audio/generate, component: AudioGenerationRequest}
+  - {intent: video.generate, modality: video, submittable: true, route: /v1/videos, component: VideoGenerationRequest}
