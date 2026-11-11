@@ -50,6 +50,8 @@ async def _job(proxy, key: str) -> dict:
 
 def main(admin_db: str) -> None:
     import proxy
+    from gateway import receipt_store
+    receipt_store.init_db()  # the lifespan does this at start; the child does not run it
     path = Path(admin_db)
     proxy.ADMIN_STORE.path = path
     proxy.ADMIN_DB_PATH = path
