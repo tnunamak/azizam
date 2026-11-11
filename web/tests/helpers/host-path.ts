@@ -4,11 +4,11 @@
 export const GGUF =
   "/srv/models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 // A home directory of any user name, or a mount under the host's mnt or
-// media root. Both arms require a path-start boundary, so a gateway URL
-// containing /home or /media is not mistaken for a host path. A file directly
-// below /mnt or /media is a host path too.
+// media root. Bare home directories and files directly below a mount count.
+// Wrappers are text boundaries; key= must also start at a text boundary,
+// so an equals sign inside a URL query does not introduce a host path.
 export const HOST_PATH =
-  /\/srv\/models\/|\/GGUF\/|(?:^|[\s"'()\[\]=:])\/(?:(?:home|Users)\/[^/\s]+\/|(?:mnt|media)\/[^/\s]+(?:\/|(?=$|[\s"'()\[\]=:,;!?])))/;
+  /\/srv\/models\/|\/GGUF\/|(?:^|[\s"'`()\[\]<>:])(?:[\w.-]+=)?\/(?:home|Users|mnt|media)\/[^/\s]+(?:\/|(?=$|[\s"'`()\[\]<>:=,;!?]))/;
 
 /** Text a person can read now: closed disclosures keep only their summary. */
 export function readableText(root: HTMLElement = document.body): string {
