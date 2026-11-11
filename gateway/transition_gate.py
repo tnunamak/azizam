@@ -402,7 +402,8 @@ CREATE TABLE IF NOT EXISTS transition_gate (
     domain  TEXT PRIMARY KEY,
     state   TEXT NOT NULL CHECK (state IN ('open', 'closed', 'failed_closed', 'reconciling')),
     op_id   TEXT,
-    updated REAL NOT NULL
+    updated REAL NOT NULL,
+    generation INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -453,6 +454,7 @@ class GateStore:
         self._lock = threading.Lock()
         self._cache: dict[str, str] = {}
         self._parked: dict[str, str] = {}
+        self._generations: dict[str, int] = {}
         self._readable = False
         self._retry_s = retry_s
         self._clock = clock
@@ -471,7 +473,16 @@ class GateStore:
             with self._connect() as connection:
                 connection.execute(_SCHEMA)
                 connection.executescript(OPERATION_SCHEMA)
-                rows = connection.execute("SELECT domain, state FROM transition_gate").fetchall()
+                # Serialize the migration, including concurrent first loads of an older database.
+                connection.execute("BEGIN IMMEDIATE")
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(transition_gate)")}
+                if "generation" not in columns:
+                    connection.execute(
+                        "ALTER TABLE transition_gate ADD COLUMN generation INTEGER NOT NULL DEFAULT 0")
+                connection.commit()
+                # Both queries must describe the same committed gate/park snapshot.
+                connection.execute("BEGIN")
+                rows = connection.execute("SELECT domain, state, generation FROM transition_gate").fetchall()
                 # A domain is parked when its latest finished operation is a successful park (decision G5).
                 last = connection.execute(
                     "SELECT domain, kind, op_id FROM transition_op WHERE state = 'succeeded' AND seq = "
@@ -481,21 +492,31 @@ class GateStore:
             print(f"[transition-gate] gate table unreadable, enabled domains fail closed: {exc}", flush=True)
             with self._lock:
                 self._readable = False
-                self._cache = {}
-                self._parked = {}
+                # Retain versions and holds while unreadable; state() still fails closed.
             return
         with self._lock:
-            # A state this build does not know fails closed.
-            self._cache = {str(domain): (state if state in GATE_STATES else "failed_closed")
-                           for domain, state in rows}
-            self._parked = {str(domain): str(op_id) for domain, kind, op_id in last if kind == "park"}
+            parked = {str(domain): str(op_id) for domain, kind, op_id in last if kind == "park"}
+            for domain, state, generation in rows:
+                domain = str(domain)
+                # Missing rows in an older snapshot cannot erase a newer domain either.
+                if int(generation) <= self._generations.get(domain, -1):
+                    continue
+                self._generations[domain] = int(generation)
+                self._cache[domain] = state if state in GATE_STATES else "failed_closed"
+                if domain in parked:
+                    self._parked[domain] = parked[domain]
+                else:
+                    self._parked.pop(domain, None)
             self._readable = True
 
-    def note_write(self, domain: str, state: str, parked_by: Optional[str] = None, *, clears_park: bool = False) -> None:
+    def note_write(self, domain: str, state: str, parked_by: Optional[str] = None, *, clears_park: bool = False,
+                   generation: Optional[int] = None) -> None:
         """Refresh the cache after a committed gate write in this process (T1.2). Call after the commit.
 
         ``parked_by`` marks the domain parked by that operation; ``clears_park`` marks it not parked. A cache
         that was never read is loaded first, so a write never hides what the table holds.
+        Durable writers supply their committed generation. Equal generations are duplicates, including
+        after a conservative in-memory hold. The unversioned form retains the existing cache-only API.
         """
         with self._lock:
             readable = self._readable
@@ -503,6 +524,10 @@ class GateStore:
             self.load()
         with self._lock:
             if self._readable:
+                if generation is not None and generation <= self._generations.get(domain, -1):
+                    return
+                self._generations[domain] = (generation if generation is not None
+                                             else self._generations.get(domain, 0))
                 self._cache[domain] = state if state in GATE_STATES else "failed_closed"
                 if parked_by is not None:
                     self._parked[domain] = parked_by
@@ -510,8 +535,9 @@ class GateStore:
                     self._parked.pop(domain, None)
 
     def force(self, domain: str, state: str) -> None:
-        """Hold ``domain`` in memory when the table cannot be written (the durable state is then older)."""
+        """Hold at the current durable generation; a later commit may legitimately release the hold."""
         with self._lock:
+            self._generations.setdefault(domain, 0)
             self._cache[domain] = state
 
     def readable(self) -> bool:

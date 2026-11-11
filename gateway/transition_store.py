@@ -117,19 +117,31 @@ class SqliteOperationStore:
         if not self.gates.readable():
             self.gates.load()
 
-    def _write_gate(self, connection: sqlite3.Connection, domain: str, state: str, op_id: Optional[str]) -> None:
+    def _write_gate(self, connection: sqlite3.Connection, domain: str, state: str,
+                    op_id: Optional[str]) -> tuple[int, Optional[str]]:
         connection.execute(
-            "INSERT INTO transition_gate (domain, state, op_id, updated) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(domain) DO UPDATE SET state = excluded.state, op_id = excluded.op_id, updated = excluded.updated",
+            "INSERT INTO transition_gate (domain, state, op_id, updated, generation) VALUES (?, ?, ?, ?, 1) "
+            "ON CONFLICT(domain) DO UPDATE SET state = excluded.state, op_id = excluded.op_id, "
+            "updated = excluded.updated, generation = transition_gate.generation + 1",
             (domain, state, op_id, self._clock()))
+        generation = int(connection.execute(
+            "SELECT generation FROM transition_gate WHERE domain = ?", (domain,)).fetchone()[0])
+        # Publish the complete park snapshot, not a delta whose earlier publisher may be delayed.
+        last = connection.execute(
+            "SELECT kind, op_id FROM transition_op WHERE domain = ? AND state = 'succeeded' "
+            "ORDER BY seq DESC LIMIT 1", (domain,)).fetchone()
+        return generation, (str(last[1]) if last is not None and last[0] == "park" else None)
 
     # -- OperationStore -----------------------------------------------------
 
     def begin(self, *, domain: str, kind: TransitionKind, idempotency_key: str, target: Optional[str],
               incarnation: Optional[str], config_revision: int, compensates: Optional[str] = None) -> BeginResult:
         rhash = request_hash(kind, target, compensates)
+        generation = 0
+        parked_by: Optional[str] = None
 
         def work(connection: sqlite3.Connection) -> BeginResult:
+            nonlocal generation, parked_by
             same_key = self._fetch(connection, "domain = ? AND idempotency_key = ?", (domain, idempotency_key))
             if same_key is not None:
                 return SameOperation(same_key) if same_key.request_hash == rhash else Conflict(same_key)
@@ -145,12 +157,12 @@ class SqliteOperationStore:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', 'close', ?, ?, ?, ?)",
                 (op_id, domain, kind, idempotency_key, rhash, target, incarnation, config_revision, compensates,
                  now, now, seq))
-            self._write_gate(connection, domain, "closed", op_id)
+            generation, parked_by = self._write_gate(connection, domain, "closed", op_id)
             return Begun(self._fetch(connection, "op_id = ?", (op_id,)))  # type: ignore[arg-type]
 
         result = self._transaction(work)
         if isinstance(result, Begun):
-            self.gates.note_write(domain, "closed")
+            self.gates.note_write(domain, "closed", parked_by, clears_park=parked_by is None, generation=generation)
         return result
 
     def write_intent(self, op_id: str, intent: StepIntent, held: Optional[EffectResult] = None) -> Operation:
@@ -234,10 +246,10 @@ class SqliteOperationStore:
         if state not in GATE_FOR_STATE or GATE_FOR_STATE[state] != gate:
             raise ValueError(f"operation state {state!r} cannot leave the gate {gate!r}")
         parked_by: Optional[str] = None
-        clears_park = False
+        generation = 0
 
         def work(connection: sqlite3.Connection) -> Operation:
-            nonlocal parked_by, clears_park
+            nonlocal parked_by, generation
             current = self._fetch(connection, "op_id = ?", (op_id,))
             if current is None:
                 raise KeyError(op_id)
@@ -253,22 +265,21 @@ class SqliteOperationStore:
             seq = connection.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM transition_op").fetchone()[0]
             connection.execute("UPDATE transition_op SET state = ?, updated = ?, seq = ? WHERE op_id = ?",
                                (state, self._clock(), seq, op_id))
-            self._write_gate(connection, current.domain, gate, op_id)
-            if state == "succeeded":
-                if current.kind == "park":
-                    parked_by = op_id
-                else:
-                    clears_park = True
+            generation, parked_by = self._write_gate(connection, current.domain, gate, op_id)
             return self._fetch(connection, "op_id = ?", (op_id,))  # type: ignore[return-value]
 
         done = self._transaction(work)
-        self.gates.note_write(done.domain, gate, parked_by, clears_park=clears_park)
+        self.gates.note_write(done.domain, gate, parked_by, clears_park=parked_by is None, generation=generation)
         return done
 
     def resume(self, op_id: str) -> Operation:
         """Move a ``reconciling`` operation back to ``running`` with the gate ``closed``, after a held step
         was resolved to an outcome that lets the operation go on. Only a reconciling operation resumes."""
+        generation = 0
+        parked_by: Optional[str] = None
+
         def work(connection: sqlite3.Connection) -> Operation:
+            nonlocal generation, parked_by
             current = self._fetch(connection, "op_id = ?", (op_id,))
             if current is None:
                 raise KeyError(op_id)
@@ -276,11 +287,11 @@ class SqliteOperationStore:
                 raise StaleOutcome(f"operation {op_id} is {current.state}, not reconciling")
             connection.execute("UPDATE transition_op SET state = 'running', updated = ? WHERE op_id = ?",
                                (self._clock(), op_id))
-            self._write_gate(connection, current.domain, "closed", op_id)
+            generation, parked_by = self._write_gate(connection, current.domain, "closed", op_id)
             return self._fetch(connection, "op_id = ?", (op_id,))  # type: ignore[return-value]
 
         done = self._transaction(work)
-        self.gates.note_write(done.domain, "closed")
+        self.gates.note_write(done.domain, "closed", parked_by, clears_park=parked_by is None, generation=generation)
         return done
 
     def get(self, op_id: str) -> Optional[Operation]:
