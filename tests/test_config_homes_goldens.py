@@ -42,9 +42,11 @@ ENTRIES_CHANGED_ON_PURPOSE = {
     # (tracked and live_like) lost compile_from_pin and shows the release defaults of the S4 to S8 train (I7).
     # videos: each workflow entry gained its node_roles (S7 parity M9, builder V2), the roles that were the graph file's
     # _meta block before.
+    # backends: the deployment fixture's graph engine record declares audio.generate, so the audio family selects it
+    # by capability (train 47, 0764cb8b6); the golden is not regenerated.
     # images: graph_roles holds the non-input graph roles (image metadata migration step 2).
-    "tracked": {"models", "routing", "admin", "workflow_execution", "videos", "images"},
-    "live_like": {"models", "routing", "admin", "workflow_execution", "videos", "images"},
+    "tracked": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends"},
+    "live_like": {"models", "routing", "admin", "workflow_execution", "videos", "images", "backends"},
     "first_run": {"models", "workflow_execution", "videos", "images"},
 }
 

@@ -160,7 +160,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "0beadb145638a4db6ed6a320b92c9db07b590ba2a5ea5df5aa498c01dde9bbb2",
+      "source_sha256": "c669621a07b169ace0eb23cb84a9eb1b3183e9a91e0602d3a11f210b3a9f6217",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -168,7 +168,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_video_media_job",
-      "source_sha256": "7a73078c7bdfeb2a996d65a8f3f9c1763f96101f315d777f031476c877ec6ff8",
+      "source_sha256": "e1ab84ed8302ee05c3c2dd773f1cc6b21fde4a75f15825ce8c3b9e74b77792be",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "3fc4e42bd363e64cbc41cadc193781ce2a3a7f93a398130a19797390e13fb3fd",
+      "source_sha256": "f45921ca94aeb4f498120ba1feab052ff8005748e98a88d0cf59d53ae6b6cddf",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"

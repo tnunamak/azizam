@@ -200,7 +200,7 @@ def test_the_protocol_job_loop_checks_before_any_engine_call(domains) -> None:
 
 _SOURCE = Path(proxy.__file__).read_text()
 _GUARD_CALLS = {"_require_egress_lease", "require_egress_lease", "_egress_refusal_response", "_inference_connection",
-                "_graph_connection", "_graph", "_tts_connection", "_stt_connection", "_identity_face_client",
+                "_graph_connection", "_graph_service_connection", "_graph", "_tts_connection", "_stt_connection", "_identity_face_client",
                 "_native_engine_base"}
 _BUILDERS = {"AdapterConnection", "engine_egress.async_client", "engine_egress.client", "httpx.AsyncClient", "httpx.Client", "websockets.connect",
              "aiohttp.ClientSession", "urllib.request.urlopen"}
