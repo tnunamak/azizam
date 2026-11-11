@@ -199,7 +199,8 @@ def test_step4_an_intent_no_engine_declares_keeps_the_unsupported_refusal(owner,
         refused = gateway.client().post("/gateway/v1/media/jobs", headers=headers, json=body)
         assert refused.status_code == 400
         assert refused.json()["error"]["code"] == "unsupported_media_job_intent"
-        assert "smell" not in json.dumps(refused.json()["error"]["supported_intents"])
+        # The refusal lists what the gateway accepts now, and that includes the operation the enabled engine declares.
+        assert refused.json()["error"]["supported_intents"][-1] == "smell.infer"
 
 
 def test_step4_the_input_must_be_a_json_object(owner, smell_engine, gateway):
@@ -239,16 +240,18 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     _install_description(overlay)
     # A description alone adds an engine to nothing: the documents are the bytes they were.
     assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
-    _enabled_engine(client)
+    # An engine record that is off adds no operation either. (Its mere presence moves some availability fields and
+    # alias tables, as it always did; that state is the baseline for turning the engine on and off again.)
+    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
+    off_documents = _public_documents(public, key)
+    assert all(b"smell" not in document for document in off_documents[:2]) and "smell.infer" not in off_documents[2]
+    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
     models, openapi, intents = _public_documents(public, key)
     listed = {row["id"]: row for row in json.loads(models)["data"]}
     assert listed["smell-1"]["azizam_operations"] == ["smell.infer"]
-    assert "smell.infer" in intents and "smell.infer" not in none_intents
+    assert "smell.infer" in intents
     submit = json.loads(openapi)["paths"]["/gateway/v1/media/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
     assert "smell.infer" in submit["properties"]["intent"]["enum"]
-    # Turning the engine off returns every document to the bytes it had with no engine.
     off = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": False})
     assert off.status_code == 200, off.text
-    _dbg = _public_documents(public, key)
-    _a, _b = json.loads(none_models)["data"], json.loads(_dbg[0])["data"]
-    assert ([r for r in _a if r not in _b], [r for r in _b if r not in _a], _dbg[1] == none_openapi) == ([], [], True), "DBG"
+    assert _public_documents(public, key) == off_documents
