@@ -220,6 +220,33 @@ def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_wit
     assert [r["status"] for r in receipts] == ["succeeded"]
 
 
+def test_step8_a_declared_job_left_queued_or_running_by_a_restart_ends_failed_with_its_receipt_closed(gateway):
+    """The startup recovery (proxy._recover_media_jobs) cannot resume a declared job: its task died with the gateway, and
+    the input it ran on is not kept for a second run. It fails the job with the restart reason and closes the receipt."""
+    import proxy
+    from gateway import declared_operation_job, media_jobs, receipt_store
+    from gateway.receipts import RouteReceipt
+
+    media_jobs.init_db(path=media_jobs.DB_PATH)
+    receipt_store.init_db()
+    left = {}
+    for status in (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING):
+        job = media_jobs.create(media_jobs.MediaJob(
+            intent="smell.infer", backend="smell-box", status=status, request_id=f"decljob_restart_{status}",
+            metadata={"mode": declared_operation_job.MODE, "model": "smell-1"}), input_data={"vector": [1.0]}, path=media_jobs.DB_PATH)
+        receipt_store.begin(RouteReceipt(protocol="gateway.media", intent="smell.infer", path="/gateway/v1/media/jobs",
+                                         request_id=job.request_id, job_id=job.job_id, backend="smell-box"))
+        left[status] = job
+    proxy._recover_media_jobs()
+    for status, job in left.items():
+        settled = media_jobs.get(job.job_id, path=media_jobs.DB_PATH)
+        assert settled["status"] == "failed", status
+        assert "gateway restarted" in settled["error"], status
+        assert not media_jobs.holds_resources(settled["status"])
+        receipt = receipt_store.get(job.request_id, audience="admin")
+        assert receipt["status"] == "failed", status
+
+
 def _submit_and_read(public, key, smell_engine) -> dict:
     submitted = public.post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
                             json={"intent": "smell.infer", "model": "smell-1", "input": {"vector": [0.25, -1.5, 3.0, 0.0]}})
