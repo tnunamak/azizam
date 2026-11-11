@@ -9155,18 +9155,22 @@ def _acts_for(translator: str, operation: str):
     registry/protocol_frontends.yml) and spells no intent of its own. A request the mount matched to this
     operation carries its row; any other caller (a job runner, another handler) gets the row the mount
     holds for the operation. A caller may pass ``intents`` itself. Route policy keeps its own field.
+    The request is the handler's parameter named ``request`` (not always the first), or absent.
     """
     def decorate(handler):
+        public = inspect.signature(handler).replace(
+            parameters=[value for name, value in inspect.signature(handler).parameters.items() if name != "intents"])
+
         @functools.wraps(handler)
-        async def acting(request, *args, intents=None, **kwargs):
+        async def acting(*args, intents=None, **kwargs):
             if intents is None:
+                request = public.bind_partial(*args, **kwargs).arguments.get("request")
                 intents = frontend_mount.matched_intents(getattr(request, "scope", None) or {}, translator, operation)
             if intents is None:
                 intents = FRONTEND_MOUNTS.execution_intents(translator, operation)
-            return await handler(request, *args, intents=intents, **kwargs)
+            return await handler(*args, intents=intents, **kwargs)
 
-        parameters = [value for name, value in inspect.signature(handler).parameters.items() if name != "intents"]
-        acting.__signature__ = inspect.signature(handler).replace(parameters=parameters)  # type: ignore[attr-defined]
+        acting.__signature__ = public  # type: ignore[attr-defined]
         return acting
 
     return decorate
@@ -11845,6 +11849,7 @@ async def _submit_video_graph(
     record_extra: Mapping[str, Any] | None = None,
     payload_extra: Mapping[str, Any] | None = None,
     progress_units: list[dict[str, str]] | None = None,
+    admission_intent: str,
 ) -> Response:
     """Queue `workflow` on ComfyUI, record the job, and return the video resource.
 
@@ -11852,12 +11857,13 @@ async def _submit_video_graph(
     (extensions, storyboards, long `seconds`). `record_extra` and `payload_extra`
     add fields to the stored record and to the response. `progress_units` names
     the per-segment sampler/decode nodes so progress spans the whole chain.
+    ``admission_intent`` is the intent the calling route admits under; the caller passes its own.
     """
     headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "video.generate", auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+                admission_intent, auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
                 service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -12098,8 +12104,10 @@ async def _proxy_graph_video_create(
             raise
         return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
+    # Create has no mounted row to read this from (see registry/README.md, "Execution intents"): it stays spelled here.
+    admission_intent = "video.generate"
     admission = _dispatch_admission_response(
-        'video.generate', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        admission_intent, auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
         service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -12236,7 +12244,8 @@ async def _proxy_graph_video_create(
     if chain_cfg is not None:
         return await _submit_video_chain(
             request, auth_context, body=body, workflow_name=str(chain_name),
-            requested_model=requested_model, public_model=public_model, media_holder=media_holder)
+            requested_model=requested_model, public_model=public_model, media_holder=media_holder,
+            admission_intent=admission_intent)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -12761,6 +12770,7 @@ async def _proxy_graph_video_create(
         actual_seconds=actual_seconds,
         remixed_from_video_id=remixed_from_video_id,
         duration_adjustment_reason=duration_adjustment_reason,
+        admission_intent=admission_intent,
     )
 
 
@@ -12944,9 +12954,10 @@ async def _submit_video_chain(
     source: Any = None,
     source_video_id: str | None = None,
     media_holder: media_inputs.Holder | None = None,
+    admission_intent: str,
 ) -> Response:
     """Plan, build and queue a long-video chain (create with shots or long
-    seconds, or an extension of `source`)."""
+    seconds, or an extension of `source`). ``admission_intent`` is the intent the calling route admits under."""
     extending = source is not None
     try:
         chain_controls = video_controls.parse_video_controls(body)
@@ -13109,6 +13120,7 @@ async def _submit_video_chain(
         payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
                        "segments": len(segments), "seconds": _seconds_text(total_seconds)},
         progress_units=built.units,
+        admission_intent=admission_intent,
     )
 
 
@@ -13116,7 +13128,11 @@ def _seconds_text(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.3f}".rstrip("0").rstrip(".")
 
 
-async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
+@_acts_for("identity", "videos.extend")
+async def proxy_graph_video_extend(
+    request: Request, auth_context: AuthContext, *, intents: frontend_mount.ExecutionIntents,
+    receipt: RouteReceipt | None = None,
+) -> Response:
     """POST /v1/videos/extensions -- Sora's extend shape: `{"video": {"id"}, "prompt", "seconds"}`.
 
     The result is a new video: the source followed by `seconds` of new footage.
@@ -13127,11 +13143,11 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     if receipt is None:
         from gateway import media_ingestion
         receipt = await media_ingestion.start_receipt(
-            request, auth_context, intent="video.extend", protocol="openai.video",
+            request, auth_context, intent=intents.require_receipt(), protocol="openai.video",
             route_path=str(getattr(getattr(request, "url", None), "path", "/v1/videos/extensions")),
         )
         try:
-            response = await proxy_graph_video_extend(request, auth_context, receipt=receipt)
+            response = await proxy_graph_video_extend(request, auth_context, intents=intents, receipt=receipt)
         except BaseException as error:
             await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
             raise
@@ -13139,7 +13155,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
 
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.extend', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
         service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -13198,7 +13214,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     return await _with_request_media_inputs(lambda holder: _submit_video_chain(
         request, auth_context, body=body, workflow_name=workflow_name,
         requested_model=requested, public_model=public_model,
-        source=video, source_video_id=source_id, media_holder=holder))
+        source=video, source_video_id=source_id, media_holder=holder, admission_intent=intents.require_admission()))
 
 
 
@@ -13929,10 +13945,13 @@ async def _submit_video_remix(
     )
 
 
+@_acts_for("identity", "videos.remix")
 async def proxy_graph_video_remix(
     video_id: str,
     auth_context: AuthContext,
     request: Request | None = None,
+    *,
+    intents: frontend_mount.ExecutionIntents,
 ) -> Response:
     """POST /v1/videos/{video_id}/remix -- re-render a completed video with a new prompt.
 
@@ -13944,7 +13963,7 @@ async def proxy_graph_video_remix(
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.remix', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
         service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -13994,7 +14013,10 @@ async def proxy_graph_video_remix(
     )
 
 
-async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) -> Response:
+@_acts_for("identity", "videos.edit")
+async def proxy_graph_video_edit(
+    request: Request, auth_context: AuthContext, *, intents: frontend_mount.ExecutionIntents,
+) -> Response:
     """POST /v1/videos/edits -- OpenAI's video edit: prompt plus a source video.
 
     `video` is either an uploaded file (multipart) or a reference to a
@@ -14003,7 +14025,7 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.edit', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
         service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:

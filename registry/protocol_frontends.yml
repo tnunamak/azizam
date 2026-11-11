@@ -231,12 +231,14 @@ records:
       - methods: [POST]
         translator: identity
         intent: videos.remix
+        execution_intents: {admission: video.remix}
         canonical: /v1/videos/{video_id}/remix
         alias: /openai/v1/videos/{video_id}/remix
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
         translator: identity
         intent: videos.edit
+        execution_intents: {admission: video.edit}
         canonical: /v1/videos/edits
         alias: /openai/v1/videos/edits
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
@@ -256,6 +258,7 @@ records:
       - methods: [POST]
         translator: identity
         intent: videos.extend
+        execution_intents: {admission: video.extend, receipt: video.extend}
         canonical: /v1/videos/extensions
         extensions: [com.azizam.prompts]
         extension_order: 40
