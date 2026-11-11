@@ -48,7 +48,7 @@ ADDED_PATHS: dict[str, str] = {
     "/admin/api/engines/{service_id}/retention/ledger": "engine ledger; tests/test_retention_slice6.py covers it",
     "/admin/api/engines/{service_id}/retention/facts": "owner-edited engine facts; tests/test_retention_slice6.py covers it",
     "/admin/api/providers/{provider_id}/retention/facts": "owner-edited provider facts; tests/test_retention_slice6.py covers it",
-    "/admin/api/engine-protocols": "validated installed protocol choices for the engine form; tests/test_engine_protocol_admin.py covers seed and user data",
+    "/admin/api/engine-protocols": "validated installed protocol choices for the engine form (GET), and one item per description id: GET, PUT and DELETE, owner rows with ETag and If-Match; tests/test_engine_protocol_admin.py covers seed and user data, tests/test_engine_protocol_writer.py the writes",
     "/admin/api/engines/{service_id}/stt-measurements": "owner-only long-audio measurement options and job lifecycle; tests/test_stt_measurement.py covers owner gates, bounds and durable progress",
     "/admin/api/engines/{service_id}/stt-settings": "owner-only long-audio settings with registry compare-and-swap; tests/test_stt_measurement.py covers validation and persistence",
     "/native": "per-engine native pass-through (contract section 5): one route, off unless an "
@@ -268,7 +268,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-11: ace-step-1.5-xl-turbo declares audio/flac, the type its SaveAudio writer produces, so its
         # one output entry in the workflow list moved; nothing else did (tests/fixtures/headless_openapi.json shows the same
         # one change). Before it the digest was 34e4f7b03ab2d187d99edd673cdfb691721b7e74b90ccf2eebbeace866762e7c.
-        assert route_graph.openapi_digest(proxy.app) == "145ba35107145b77c73cebbfd8cc0beb3b79dad245b19e7a0f3fbfbc67032d06"
+                # Re-captured 2026-11-11 for GET, PUT and DELETE /admin/api/engine-protocols/{protocol_id} (see ADDED_PATHS): only that
+        # path is new (tests/fixtures/headless_openapi.json shows the same addition and nothing else). Before it the digest was
+        # 145ba35107145b77c73cebbfd8cc0beb3b79dad245b19e7a0f3fbfbc67032d06.
+assert route_graph.openapi_digest(proxy.app) == "49d96932a9d710ff5f20a2b833fbe5449901f4c455c41161918e75c8fca63587"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -323,4 +326,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # VideoGenerationRequest). Before it the frozen digest was 5d4a53fd5340c2a5a40263eaf1cdc6268f2e1a5cb23d06dd5cc3dea3010d86c0.
     # Re-captured 2026-11-11: ace-step-1.5-xl-turbo declares audio/flac (its SaveAudio writer writes FLAC); only its
     # output entry moved. Before it the frozen digest was 90a6a005c57d01b1092479448f948571aecf0ccc7bfd1c4a90c17136367069d3.
+    # Re-captured 2026-11-11 for the protocol description item routes: only that path differs. Before it the frozen digest was
+    # dc5901a47a554ab6ad138535e2218107798fa5847830d173048a08c2057812d8.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
