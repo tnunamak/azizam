@@ -45,7 +45,7 @@ import yaml
 from gateway.capabilities import Capability, ResourceEstimate
 from gateway.engine_protocol.reviewed import adapter_serves, speaks_serving_adapter
 from gateway.model_files import missing_model_file_caveat, model_file_availability
-from gateway.service_priority import selected_service
+from gateway.service_priority import selected_service, service_priority
 
 # Intent vocabulary used by the gateway. Mirrors what proxy.py advertises
 # today, kept here so this module does not depend on the proxy.
@@ -603,6 +603,14 @@ def _family_backend(
         if isinstance(record, Mapping) and isinstance(record.get("capabilities"), list)
         and (not adapter_family or speaks_serving_adapter(record, capability))
     }
+    # A stored record whose priority the selector refuses (a fraction, a boolean, a non-number) is left out, so one
+    # bad record cannot abort the whole inventory; the valid records still compete. This module stays pure: the
+    # gateway's own selection and the deploy selection check report such a record.
+    for service_id, record in list(selectable.items()):
+        try:
+            service_priority(record)
+        except ValueError:
+            del selectable[service_id]
     selection = selected_service(selectable, capability)
     return selection[0] if selection is not None else None
 

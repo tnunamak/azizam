@@ -79,3 +79,11 @@ def test_the_protocol_may_be_named_in_the_connection_block():
     assert _runner_ids(backends)["images"] == "graph"
     backends["named"] = _other(2, None, connection={"protocol": "node-graph"})
     assert _runner_ids(backends)["images"] == "named"
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_a_record_with_a_fractional_priority_is_skipped_not_fatal(family):
+    # One stored record with a priority the selector refuses (5.7) must not abort the whole local inventory: it is left
+    # out, and the valid graph record still serves the family.
+    backends = {"bad": _graph(7002, 5.7), "graph-a": _graph(7001, 100)}
+    assert _family_backend({}, "section", backends, family) == "graph-a"
