@@ -359,7 +359,7 @@ from gateway.toolcall_detection import (
 from gateway.discovery import WorkflowRegistry
 from gateway.workflow_policy import (
     NEEDS_CONFIGURATION_CODE, NEEDS_CONFIGURATION_MESSAGE, NeedsConfiguration, PolicyFacts)
-from gateway.video_limits import limits_for_workflow, video_limits
+from gateway.video_limits import limits_for_workflow, video_limits, workflow_id_for_video_key
 from gateway.app_key_openapi import augment_app_key_openapi
 from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
@@ -11945,7 +11945,7 @@ async def _submit_video_graph(
                             kind="video",
                             requested_model=public_model,
                             resolved_model=workflow_name,
-                            workflow_id=f"video.generate.{workflow_name}",
+                            workflow_id=workflow_id_for_video_key(workflow_name),
                             backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
                             seed=seed_val,
                             parameters={
@@ -12208,7 +12208,7 @@ async def _proxy_graph_video_create(
             protocol="openai.video",
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
-            workflow=f"video.generate.{workflow_name}",
+            workflow=workflow_id_for_video_key(workflow_name),
             backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
@@ -12223,7 +12223,7 @@ async def _proxy_graph_video_create(
         capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=str(workflow_name),
-        extra_ids=(f"video.generate.{workflow_name}",),
+        extra_ids=(workflow_id_for_video_key(workflow_name),),
     )
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
@@ -12770,7 +12770,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
             protocol="openai.video",
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
-            workflow=f"video.generate.{workflow_name}",
+            workflow=workflow_id_for_video_key(workflow_name),
             backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
@@ -12785,7 +12785,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
         capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=str(workflow_name),
-        extra_ids=(f"video.generate.{workflow_name}",),
+        extra_ids=(workflow_id_for_video_key(workflow_name),),
     )
     if target is not None and target.denied:
         return _policy_denied_response(target)
@@ -14920,7 +14920,7 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
         if intent == INTENT_VIDEO_GENERATE:
             name, _ = _resolve_video_workflow(target)
             if name:
-                workflow = f"video.generate.{name}"
+                workflow = workflow_id_for_video_key(name)
         elif intent == INTENT_AUDIO_GENERATE:
             name, _ = _resolve_audio_workflow(target)
             if name:
@@ -25821,7 +25821,7 @@ def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, 
             protocol="openai.video",
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
-            workflow=f"video.generate.{workflow_name}",
+            workflow=workflow_id_for_video_key(workflow_name),
             backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
@@ -25853,7 +25853,7 @@ def _video_media_job_step_auth(
         capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model),
         resolved=workflow_name,
-        extra_ids=(f"video.generate.{workflow_name}",),
+        extra_ids=(workflow_id_for_video_key(workflow_name),),
     )
     if target is not None and target.denied:
         return _media_job_failure(_policy_denied_response(target))
@@ -25891,7 +25891,7 @@ async def _submit_video_media_job(
         capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=workflow_name,
-        extra_ids=(f"video.generate.{workflow_name}",),
+        extra_ids=(workflow_id_for_video_key(workflow_name),),
     )
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)

@@ -20,6 +20,7 @@ from gateway import media_delivery, media_jobs, provenance, receipt_store
 from gateway.receipts import RouteReceipt, new_request_id, record_retention_fact_failure, run_receipt_write
 from gateway.ownership import owner_key
 from gateway.runtime_auth import plan_ref
+from gateway.video_limits import workflow_id_for_video_key
 
 _KIND_BY_PREFIX = {"img": "image", "aud": "audio", "vid": "video"}
 _MEDIA_TYPE_BY_SUFFIX = {
@@ -270,7 +271,7 @@ def _safe_video_workflow(record: Mapping[str, Any]) -> str | None:
             return workflow
     resolved = record.get("resolved_model")
     if isinstance(resolved, str) and resolved:
-        return f"video.generate.{resolved}"
+        return workflow_id_for_video_key(resolved)
     return None
 
 

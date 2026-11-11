@@ -455,7 +455,7 @@
                 "resolved_model": "video-ltx-2.5-t2v",
                 "schema": "azizam.provenance/1",
                 "seed": 192058881,
-                "workflow_id": "video.generate.video-ltx-2.5-t2v"
+                "workflow_id": "video.generate.ltx-2.5-t2v"
               },
               "resolved_model": "video-ltx-2.5-t2v",
               "seconds": "5",

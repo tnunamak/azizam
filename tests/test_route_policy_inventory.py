@@ -1814,7 +1814,7 @@ def test_ungoverned_discovery_preserves_custom_voices_and_unresolved_aliases(gat
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
 @pytest.mark.parametrize("service,operation,intent,model,aliases", [
-    ("video.generate.video-ltx-2.5-t2v", "videos", "video.generate",
+    ("video.generate.ltx-2.5-t2v", "videos", "video.generate",
      "video-ltx-2.5-t2v", {"video", "video-fast"}),
     ("image.edit.flux2-klein-4b", "image_edits", "image.edit",
      "flux2-klein-4b-edit", {"image-fast", "image-edit-fast"}),
@@ -1833,14 +1833,16 @@ def test_media_discovery_uses_the_execution_workflow_target(gateway, service, op
 
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)
-def test_video_model_discovery_does_not_use_the_gateway_manifest_service(gateway):
+def test_video_model_discovery_follows_the_manifest_workflow_id(gateway):
+    # One id names the workflow in the catalog, the plan and the video routes, so a grant of
+    # the catalog id shows the video models behind it (it used to name a config key no plan listed).
     _activate_discovery_grants(gateway, {"video.generate.ltx-2.5-t2v": ("video.generate", "models.list")})
     response = gateway.client.get("/gateway/v1/workflows", headers=gateway.headers)
     assert response.status_code == 200
     assert {row["id"] for row in response.json()["workflows"]} == {"video.generate.ltx-2.5-t2v"}
     response = gateway.client.get("/v1/models", headers=gateway.headers)
     assert response.status_code == 200
-    assert not {"video", "video-fast", "video-ltx-2.5-t2v"} & {row["id"] for row in response.json()["data"]}
+    assert {"video", "video-fast", "video-ltx-2.5-t2v"} <= {row["id"] for row in response.json()["data"]}
 
 
 @pytest.mark.parametrize("gateway", ["categories"], indirect=True)

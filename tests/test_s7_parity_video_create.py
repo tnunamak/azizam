@@ -272,6 +272,16 @@ def test_video_04_access_plan_refuses_before_engine(world):
     run(drive())
 
 
+def test_video_04b_a_plan_naming_the_catalog_workflow_id_runs_the_video_job(world):
+    async def drive():
+        plan = plan_for(caps=("video",), workflows=["video.generate.ltx-2.5-t2v"])
+        with authenticated(identity(plan)):
+            submitted = await submit_job(world)
+            done = await terminal_job(world, submitted.json()["job_id"])
+        assert done["status"] == "succeeded", done
+    run(drive())
+
+
 def test_video_05_same_key_deduplicates_under_the_allowed_delta(world):
     async def drive():
         responses = []

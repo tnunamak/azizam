@@ -842,7 +842,7 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         self.assertEqual((created["object"], created["status"]), ("video", "queued"))
         record = proxy._video_job_records[NEW_PROMPT_ID]
         self.assertEqual(record["resolved_model"], "video-minimax-h3-keyframes")
-        self.assertEqual(record["provenance"]["workflow_id"], "video.generate.video-minimax-h3-keyframes")
+        self.assertEqual(record["provenance"]["workflow_id"], "video.generate.minimax-h3-keyframes")
         self.assertEqual(record["size"], "960x544")
         self.assertIsNotNone(record["owner_key_hash"])
         self.assertNotIn("last_frame", json.dumps(record["provenance"]))
@@ -867,7 +867,7 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
         job = media_jobs.get_by_request_id(NEW_ID, path=self.media_db)
         assert job is not None
         self.assertEqual(job["intent"], "video.generate")
-        self.assertEqual(job["workflow"], "video.generate.video-minimax-h3-keyframes")
+        self.assertEqual(job["workflow"], "video.generate.minimax-h3-keyframes")
         self.assertEqual(job["backend"], "comfyui")
         self.assertEqual(job["status"], media_jobs.STATUS_SUCCEEDED)
         self.assertEqual((job["assets"][0]["kind"], job["assets"][0]["media_type"]), ("video", "video/mp4"))

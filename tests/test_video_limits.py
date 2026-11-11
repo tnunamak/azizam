@@ -122,5 +122,26 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         self.assertTrue(all("limits" not in w for w in catalog.values() if not w["intent"].startswith("video.")))
 
 
+class WorkflowIdForVideoKeyTests(unittest.TestCase):
+    def test_every_shipped_key_maps_to_a_manifest_workflow_id(self) -> None:
+        from pathlib import Path
+        import yaml
+        from gateway.video_limits import workflow_id_for_video_key
+        root = Path(__file__).resolve().parent.parent
+        shipped = yaml.safe_load((root / "registry" / "defaults" / "videos.yml").read_text(encoding="utf-8"))["workflows"]
+        ids = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in (root / "manifests" / "workflows").glob("*.yml")}
+        self.assertTrue(shipped)
+        for key in shipped:
+            self.assertIn(workflow_id_for_video_key(key), ids, key)
+
+    def test_scail_maps_to_the_edit_id(self) -> None:
+        from gateway.video_limits import workflow_id_for_video_key
+        self.assertEqual(workflow_id_for_video_key("video-scail-2-replace"), "video.edit.scail-2-replace")
+
+    def test_an_owner_added_key_keeps_the_generate_prefix(self) -> None:
+        from gateway.video_limits import workflow_id_for_video_key
+        self.assertEqual(workflow_id_for_video_key("my-own"), "video.generate.my-own")
+
+
 if __name__ == "__main__":
     unittest.main()

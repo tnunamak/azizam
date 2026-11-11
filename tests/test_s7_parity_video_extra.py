@@ -1461,7 +1461,7 @@ def test_video_provenance_embeds_the_prompt_only_when_the_plan_allows(tmp_path, 
         # resolved_model and the workflow id to the manifest id; reported as a wire change no section 5.4 kind covers.
         assert provenance["requested_model"] == "ltx-2.5-t2v"
         assert provenance["resolved_model"] == "video-ltx-2.5-t2v"
-        assert provenance["workflow_id"] == "video.generate.video-ltx-2.5-t2v"
+        assert provenance["workflow_id"] == "video.generate.ltx-2.5-t2v"
         assert provenance["parameters"]["size"] == "960x512"
         assert isinstance(provenance.get("seed"), int), provenance
         assert b"make it dusk" not in body  # the prompt is kept for the maker, not written into the file

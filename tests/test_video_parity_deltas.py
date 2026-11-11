@@ -12,7 +12,7 @@ GOLDEN = {"scenario": "video_lifecycle",
                                    "body": {"text": '{"id": "video_p1", "status": "queued", "error": null}'}}}],
           "engine_requests": [{"method": "POST", "path": "/prompt"}],
           "assets": [{"asset_id": "vid_1"}],
-          "receipts": [{"job_id": None, "workflow": "video.generate.video-ltx-2.5-t2v"}]}
+          "receipts": [{"job_id": None, "workflow": "video.generate.ltx-2.5-t2v"}]}
 
 
 def delta(kind, path, old, new):
@@ -56,10 +56,8 @@ def test_a_video_id_delta_changes_the_id_in_the_body_text_and_nothing_else():
     assert changed["engine_requests"] == GOLDEN["engine_requests"] and changed["assets"] == GOLDEN["assets"]
 
 
-def test_a_receipt_delta_names_the_job_and_the_workflow():
-    changed = apply_deltas(GOLDEN, [
-        delta("receipt_names_job", "$.receipts[0].job_id", None, "mj_x"),
-        delta("receipt_names_job", "$.receipts[0].workflow", "video.generate.video-ltx-2.5-t2v", "video.generate.ltx-2.5-t2v")])
+def test_a_receipt_delta_names_the_job():
+    changed = apply_deltas(GOLDEN, [delta("receipt_names_job", "$.receipts[0].job_id", None, "mj_x")])
     assert changed["receipts"][0] == {"job_id": "mj_x", "workflow": "video.generate.ltx-2.5-t2v"}
 
 

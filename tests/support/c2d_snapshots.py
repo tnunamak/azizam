@@ -204,7 +204,7 @@ def capture_models_catalog() -> dict[str, Any]:
     alias_views = {
         "images": {"stable": [{"alias": "image-fast", "resolves_to": "image.generate.flux2-klein-4b"}]},
         "image_edits": {"stable": [{"alias": "image-edit-fast", "resolves_to": "image.edit.flux2-klein-4b"}]},
-        "videos": {"stable": [{"alias": "video-default", "resolves_to": "video.generate.video-ltx-2.5-t2v"}]},
+        "videos": {"stable": [{"alias": "video-default", "resolves_to": "video.generate.ltx-2.5-t2v"}]},
         "chat": {"stable": [{"alias": "chat-default", "resolves_to": "default"}]},
     }
     catalog = models_catalog.build_models_catalog(capabilities=caps, alias_views=alias_views)
