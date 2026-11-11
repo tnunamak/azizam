@@ -582,9 +582,17 @@ class Executor:
         try:
             await self._drive(operation, trigger, after)
         except asyncio.CancelledError:
-            # Shutdown: the next admission in this process must reconcile the still-running durable row, too.
-            self._recovery_pending = True
-            self._gate_hold(operation.domain, "reconciling")
+            # A cancelled to_thread await does not stop finish: its commit may already be durable.
+            current = None
+            try:
+                current = await asyncio.to_thread(self.store.get, operation.op_id)
+            except Exception:  # noqa: BLE001 - an unreadable row still needs the conservative shutdown hold
+                pass
+            finally:
+                # Preserve a terminal row's gate. An unfinished or unreadable row must reconcile before admission.
+                if current is None or current.state not in FINISHED_STATES:
+                    self._recovery_pending = True
+                    self._gate_hold(operation.domain, "reconciling")
             raise
         except Exception as exc:  # noqa: BLE001
             print(f"[transition-gate] operation {operation.op_id} stopped by {log_scrub.describe_error(exc)}", flush=True)

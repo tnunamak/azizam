@@ -625,8 +625,17 @@ def test_a_hold_written_in_the_previous_format_re_reads_the_clean_check(tmp_path
     assert len(cleans) == 1, "the clean check was read once, not skipped"
 
 
-def test_cancelling_after_a_successful_finish_reholds_only_the_gate_cache(tmp_path, monkeypatch) -> None:
-    """Pin the current shutdown defect after both the successful commit and its cache publication."""
+def test_cancelling_after_a_successful_finish_keeps_the_gate_open(tmp_path, monkeypatch) -> None:
+    """Cancellation after the durable success and cache publication cannot re-hold the gate."""
+    _cancel_at_finish(tmp_path, monkeypatch, finished=True)
+
+
+def test_cancelling_before_finish_reholds_the_gate(tmp_path, monkeypatch) -> None:
+    """Cancellation before the finish commit must still hold the running operation for recovery."""
+    _cancel_at_finish(tmp_path, monkeypatch, finished=False)
+
+
+def _cancel_at_finish(tmp_path, monkeypatch, *, finished: bool) -> None:
     gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
     engine.clean, engine.resident = True, "alpha"
     executor = runtime.executor()
@@ -641,43 +650,50 @@ def test_cancelling_after_a_successful_finish_reholds_only_the_gate_cache(tmp_pa
 
     async def go() -> None:
         loop = asyncio.get_running_loop()
-        published = asyncio.Event()
+        paused = asyncio.Event()
         worker_returned = asyncio.Event()
         release_worker = threading.Event()
         real_finish = executor.store.finish
         task = None
 
         def finish(op: str, state: str, gate: str) -> Any:
-            done = real_finish(op, state, gate)
-            if (op, state, gate) == (op_id, "succeeded", "open"):
-                # Signal after the real commit AND note_write, while the executor still awaits this worker.
-                loop.call_soon_threadsafe(published.set)
-                try:
-                    assert release_worker.wait(timeout=10.0), "the finish worker was not released"
-                finally:
-                    loop.call_soon_threadsafe(worker_returned.set)
-            return done
+            if (op, state, gate) != (op_id, "succeeded", "open"):
+                return real_finish(op, state, gate)
+            try:
+                if finished:
+                    done = real_finish(op, state, gate)
+                # Stop either before the commit or after the real commit AND note_write.
+                loop.call_soon_threadsafe(paused.set)
+                assert release_worker.wait(timeout=10.0), "the finish worker was not released"
+                return done if finished else real_finish(op, state, gate)
+            finally:
+                loop.call_soon_threadsafe(worker_returned.set)
 
         monkeypatch.setattr(executor.store, "finish", finish)
         try:
             await asyncio.wait_for(executor.reconcile_startup(), timeout=10.0)
             task = executor._tasks[op_id]
-            await asyncio.wait_for(published.wait(), timeout=10.0)
+            await asyncio.wait_for(paused.wait(), timeout=10.0)
             before = await asyncio.to_thread(executor.store.get, op_id)
             assert before is not None
-            assert (before.state, gates.state("dom")) == ("succeeded", "open")
+            expected_before = ("succeeded", "open") if finished else ("running", "closed")
+            assert (before.state, gates.state("dom")) == expected_before
             assert not task.done(), "the finish worker must still be blocked"
             assert task.cancel(), "cancel the captured executor task, not the observer"
-            release_worker.set()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
-            await asyncio.wait_for(worker_returned.wait(), timeout=10.0)
             after = await asyncio.to_thread(executor.store.get, op_id)
             assert after is not None
-            # Current behavior: _run's cancellation handler forces an in-memory hold over a finished row.
-            assert (after.state, gates.state("dom")) == ("succeeded", "reconciling")
-            assert executor._recovery_pending
+            expected_after = ("succeeded", "open") if finished else ("running", "reconciling")
+            assert (after.state, gates.state("dom")) == expected_after
+            assert executor._recovery_pending is (not finished)
             assert not executor._lock_for("dom").locked()
+            # Inspect the cancellation result before allowing the worker to commit or return.
+            release_worker.set()
+            await asyncio.wait_for(worker_returned.wait(), timeout=10.0)
+            settled = await asyncio.to_thread(executor.store.get, op_id)
+            assert settled is not None
+            assert (settled.state, gates.state("dom")) == ("succeeded", "open")
         finally:
             # A failed assertion/watchdog must not strand a worker or let loop shutdown do the cancellation.
             release_worker.set()
