@@ -476,7 +476,8 @@
       "capabilities": [
         "images",
         "generations",
-        "videos"
+        "videos",
+        "audio.generate"
       ],
       "default_model": "krea2-turbo",
       "description": "Create images and videos from your ideas.",
