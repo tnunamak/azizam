@@ -209,6 +209,34 @@ class TestMetricsSampler(unittest.TestCase):
         tags = json.loads(rows[0][0])
         self.assertNotIn("key", tags)
 
+    def test_async_probes_receive_the_config_and_log_no_failure(self) -> None:
+        """Both probes take the gateway config; a call without it raised TypeError and was logged every cycle."""
+        config = {"backends": {}}
+        seen: list[object] = []
+
+        async def comfy(cfg):
+            seen.append(cfg)
+            return {"running": 2, "pending": 3}, None
+
+        async def llama(cfg):
+            seen.append(cfg)
+            return None, [{"is_processing": True}, {"is_processing": False}]
+
+        with (
+            patch.object(metrics_sampler.status_endpoint, "_comfy_queue_and_stats", comfy),
+            patch.object(metrics_sampler.status_endpoint, "_llama_props_and_slots", llama),
+            patch("builtins.print") as printed,
+        ):
+            asyncio.run(metrics_sampler._emit_fast_async(self._writer, 1_800_000_000, config))
+        self.assertEqual(seen, [config, config])
+        self.assertFalse([c for c in printed.call_args_list if "probe failed" in str(c)])
+
+    def test_async_probes_run_for_real_without_a_config(self) -> None:
+        """The real probes, with no config at all, return without a TypeError."""
+        with patch("builtins.print") as printed:
+            asyncio.run(metrics_sampler._emit_fast_async(self._writer, 1_800_000_000))
+        self.assertFalse([c for c in printed.call_args_list if "probe failed" in str(c)])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
