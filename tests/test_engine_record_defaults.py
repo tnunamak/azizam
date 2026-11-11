@@ -53,8 +53,22 @@ def test_the_defaults_file_is_checked_by_its_schema_and_holds_no_address():
 
 
 def test_a_missing_default_is_an_error_not_a_guess():
-    with pytest.raises(KeyError):
+    assert "audio.speech" in engine_record_defaults.release_defaults()
+    with pytest.raises(KeyError) as missing:
         engine_record_defaults.record_value("audio.speech", {}, "default_model")
+    assert missing.value.args == ("default_model",)
+
+
+@pytest.mark.parametrize("defaults", [
+    {"audio.speach": {"timeout": 7}},
+    {"tts": {"timeout": 7}},
+    {"audio.speech": {"video_timeout": 7}},
+    {"videos": {"timeout": 7}},
+])
+def test_the_schema_refuses_a_bucket_or_key_the_gateway_does_not_read(defaults):
+    schema = json.loads(engine_record_defaults.SCHEMA_PATH.read_text(encoding="utf-8"))
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.Draft202012Validator(schema).validate({"defaults": defaults})
 
 
 def test_a_record_that_serves_two_roles_takes_each_roles_default(monkeypatch):
