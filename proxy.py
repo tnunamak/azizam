@@ -118,7 +118,7 @@ from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway import request_history, request_history_api, request_history_capture, request_history_slot
 from gateway.http_tls import tls_context
-from gateway import asset_types, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
+from gateway import asset_types, declared_operation_job, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
@@ -25971,6 +25971,62 @@ def _unsupported_gateway_media_job_response(intent: str) -> Response:
     )
 
 
+_declared_operation_job_tasks: set[asyncio.Task] = set()
+
+
+async def _submit_declared_operation_job(*, request: Request, payload: Mapping[str, Any], intent: str) -> Response | None:
+    """A job for an operation an owner's engine description declares; None when no enabled engine declares it."""
+    from gateway.engine_protocol import dispatch as protocol_dispatch
+    from gateway.engine_protocol.media import GatewayAssetStore
+    model = payload.get("model")
+    try:
+        target = await asyncio.to_thread(
+            lambda: declared_operation_job.resolve(ADMIN_STORE.get_service_registry(), intent, model))
+    except ProtocolError as error:
+        return _protocol_failure(error)
+    if target is None:
+        return None
+    auth_context = _gateway_auth_context(request, "/gateway/v1/media/jobs")
+    if isinstance(auth_context, Response):
+        return auth_context
+    body = payload.get("input")
+    if not isinstance(body, Mapping):
+        return _json_error(400, "The media job input must be a JSON object.", code="invalid_media_job_input", param="input")
+    decision = evaluate_and_apply(auth_context.identity, make_policy_request(
+        intent=intent, model=str(model), backend=target.engine_id))
+    if decision.denied:
+        return _policy_denied_response(decision)
+    caller = auth_context.identity
+    request_id = f"decljob_{uuid.uuid4().hex}"
+    job = media_jobs.MediaJob(
+        intent=intent, backend=target.engine_id, request_id=request_id, parent_request_id=request_id,
+        app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
+        api_key_name=caller.name if caller else None, app_profile=plan_ref(caller),
+        metadata={"mode": declared_operation_job.MODE, "model": str(model)})
+    created = media_jobs.create(job, input_data=dict(body), path=media_jobs.DB_PATH)
+    store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
+
+    async def work() -> None:
+        job_id = created.job_id
+        try:
+            runtime = await asyncio.to_thread(
+                protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
+                                     path=media_jobs.DB_PATH)
+            await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
+        except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
+            canceled = isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
+            media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED if canceled else media_jobs.STATUS_FAILED,
+                                     error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+
+    task = asyncio.create_task(work())
+    _declared_operation_job_tasks.add(task)
+    task.add_done_callback(_declared_operation_job_tasks.discard)
+    return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
+
+
 async def _dispatch_gateway_media_job_submission(
     *,
     request: Request,
@@ -25995,7 +26051,8 @@ async def _dispatch_gateway_media_job_submission(
     if body is None:
         if intent == "image.generate":
             return None
-        return _unsupported_gateway_media_job_response(intent)
+        declared = await _submit_declared_operation_job(request=request, payload=payload, intent=intent)
+        return declared if declared is not None else _unsupported_gateway_media_job_response(intent)
     headers = _safe_image_job_headers(request)
     idempotency_key = request.headers.get("idempotency-key")
     if idempotency_key:
@@ -26255,6 +26312,17 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
+def _declared_operation_job_content(job: Mapping[str, Any]) -> Response:
+    """A finished declared-operation job's content is the one file the engine returned, in its own media type."""
+    asset = next((a for a in job.get("assets") or [] if isinstance(a, Mapping) and a.get("asset_id")), None)
+    path = asset_cache_path(str(asset["asset_id"])) if asset else None
+    if path is None:
+        return JSONResponse({"error": {"message": "media job has no result file", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return FileResponse(path, media_type=str(asset.get("media_type") or "application/octet-stream"),
+                        headers={"x-asset-id": str(asset["asset_id"])})
+
+
 def _run_job_content(job_id: str, caller: Any, request: Any = None) -> Response | None:
     """A finished run's content: the wire of the row that took the job reads it its own way; else, with exactly one file
     result, that file in its own media type; else None."""
@@ -26352,6 +26420,8 @@ async def gateway_media_job_content(job_id: str, request: Request):
             return single
     if intent == mesh_api.MESH_INTENT:
         return _mesh_job_content(job)  # the plan was checked above, with the other kinds
+    if (job.get("metadata") or {}).get("mode") == declared_operation_job.MODE:
+        return _declared_operation_job_content(job)
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"

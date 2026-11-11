@@ -9,6 +9,7 @@ marked as an expected failure, with the missing piece named in its reason.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -144,14 +145,6 @@ def _app_key(client, owner_id, plan_id) -> str:
     return key.json()["credential"]["api_key"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Step 4 breaks even though step 3 now stores the record: the public job route admits only the intents of a closed table "
-    "(registry/media_job_intents.yml:10-16, read by gateway/media_job_intents.py; refusal at proxy.py:25940), and the "
-    "protocol dispatch callers pass a fixed operation (proxy.py:26073 'images', proxy.py:33788 intents for "
-    "chat/embeddings/images/speech). The engine layer itself accepts smell.infer once the record holds a model row and "
-    "the task (dispatch.resolve returned a Target for it in a probe). The generic workflow run route needs a "
-    "description that names a binding (proxy.py:26829-26843), and an http-v1 description cannot serve a record by "
-    "capability (description.py:392)."))
 def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, smell_engine, gateway):
     client, overlay, owner_id, plan_id = owner
     _install_description(overlay)
@@ -159,7 +152,11 @@ def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, s
     assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
     assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
     key = _app_key(client, owner_id, plan_id)
-    public = gateway.client()
+    with gateway.client() as public:  # one event loop for the whole exchange, so the background job outlives the submit
+        _submit_and_read(public, key, smell_engine)
+
+
+def _submit_and_read(public, key, smell_engine) -> None:
     submitted = public.post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
                             json={"intent": "smell.infer", "model": "smell-1", "input": {"vector": [0.25, -1.5, 3.0, 0.0]}})
     assert submitted.status_code == 202, submitted.text
@@ -168,5 +165,40 @@ def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, s
         polled = public.get(f"/gateway/v1/media/jobs/{job['id']}", headers={"authorization": f"Bearer {key}"}).json()
         if polled["status"] in ("succeeded", "failed"):
             break
+        time.sleep(0.1)
     assert polled["status"] == "succeeded"
     assert smell_engine.posts == [{"input": {"vector": [0.25, -1.5, 3.0, 0.0]}}]
+    content = public.get(job["content_url"], headers={"authorization": f"Bearer {key}"})
+    assert content.status_code == 200, content.text
+    assert content.content == MOLECULE
+
+
+def _enabled_engine(client):
+    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
+    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
+
+
+def test_step4_an_intent_no_engine_declares_keeps_the_unsupported_refusal(owner, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    headers = {"authorization": f"Bearer {key}"}
+    for body in ({"intent": "smell.other", "model": "smell-1", "input": {}},
+                 {"intent": "smell.infer", "model": "unknown-model", "input": {}}):
+        refused = gateway.client().post("/gateway/v1/media/jobs", headers=headers, json=body)
+        assert refused.status_code == 400
+        assert refused.json()["error"]["code"] == "unsupported_media_job_intent"
+        assert "smell" not in json.dumps(refused.json()["error"]["supported_intents"])
+
+
+def test_step4_the_input_must_be_a_json_object(owner, smell_engine, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    refused = gateway.client().post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
+                                    json={"intent": "smell.infer", "model": "smell-1", "input": [1, 2]})
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "invalid_media_job_input"
+    assert smell_engine.posts == []

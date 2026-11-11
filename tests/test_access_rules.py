@@ -12,6 +12,7 @@ import sqlite3
 import pytest
 
 from gateway import category_enforcement
+from gateway.access_plans import AccessPlan
 from gateway.capabilities import Capability, capability_with_policy_view
 from gateway.policy import APP_SIDE, PERSON_SIDE, PolicyRequest, evaluate
 from gateway.runtime_auth import evaluate_and_apply, make_policy_request
@@ -35,6 +36,14 @@ def test_a_capability_the_plan_does_not_include():
     rule = decision.rule
     assert (rule.code, rule.kind, rule.id, rule.side, rule.subject) == (
         "plan.capability_not_granted", "plan", "plan_kids", PERSON_SIDE, "video")
+
+
+def test_an_intent_no_capability_names_needs_a_plan_that_grants_every_type_of_work():
+    # An owner's engine can declare a kind of work no capability names; only an all-work-types plan admits it.
+    assert not _ask(AccessPlan(id="plan_all", name="all", all_work_types=True), intent="smell.infer", model="smell-1").denied
+    decision = _ask(KIDS, intent="smell.infer", model="smell-1")
+    assert decision.denied
+    assert decision.rule.code == "plan.capability_not_granted"
 
 
 def test_an_item_the_plan_does_not_list():
