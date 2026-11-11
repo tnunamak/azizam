@@ -30,17 +30,10 @@ def graph_record(**fields: Any) -> dict[str, Any]:
 def mirror(views: Mapping[str, Any], name: str, value: Any) -> dict[str, Any]:
     """*views* (the snapshot's ``GRAPH_SERVICES``) with the derived value *name* set in every family's view.
 
-    A family the base config selects no service for is served by the same service as ``images``, the way one record
-    declaring every capability would serve it."""
+    A family the base config selects no service for stays empty: a fixture record declares the capabilities it serves
+    (``graph_record``), and a test of a missing family leaves one out."""
     field = GRAPH_MIRROR[name]
-    base = views.get("images")
-    out = {}
-    for capability, view in views.items():
-        if not view.service_id and base is not None:
-            view = base
-        out[capability] = replace(view, **{field: value}, service_id=view.service_id or GRAPH_SERVICE_ID,
-                                  record=view.record or graph_record())
-    return out
+    return {capability: replace(view, **{field: value}) for capability, view in views.items()}
 
 
 def set_derived(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
@@ -49,3 +42,9 @@ def set_derived(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
     monkeypatch.setitem(derived, name, value)
     if name in GRAPH_MIRROR:
         monkeypatch.setitem(derived, "GRAPH_SERVICES", mirror(derived["GRAPH_SERVICES"], name, value))
+    if name == "COMFY_TIMEOUT":
+        # A run waits as long as the record it was pinned to says, so every graph record in the config carries the value.
+        backends = {service_id: {**record, "timeout": value} if record.get("protocol") == "node-graph" or
+                    set(GRAPH_CAPABILITIES) & set(record.get("capabilities") or ()) else record
+                    for service_id, record in (proxy.config.get("backends") or {}).items()}
+        monkeypatch.setitem(proxy.config, "backends", backends)
