@@ -228,7 +228,7 @@
         "sha256": "1d8c173f50d97c4c0f0da1d21b7f6cb4a9aea0ff0ea4e4f2527982bda2a593b7"
       },
       "row": {
-        "bytes": 17722,
+        "bytes": 17723,
         "full": {
           "aliases": [],
           "availability": {
@@ -742,7 +742,7 @@
           },
           "outputs": [
             {
-              "media_type": "audio/wav",
+              "media_type": "audio/flac",
               "name": "audio"
             }
           ],
@@ -755,7 +755,7 @@
           "try_url": "/try/?workflow=audio.generate.ace-step-1.5-xl-turbo",
           "typical_seconds": null
         },
-        "sha256": "b49c84b6b6850f0644eecc62f58f0a5d2174dbae257fded09a7aaff86f79a08c"
+        "sha256": "dcc0964a31514fd99997af99e6731aa4e4bdcc8b83b7025b2125188f88693263"
       }
     },
     "audio.generate.sa3-small-sfx": {

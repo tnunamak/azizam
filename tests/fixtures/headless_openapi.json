@@ -37327,7 +37327,7 @@
       "intent": "audio.generate",
       "outputs": [
         {
-          "media_type": "audio/wav",
+          "media_type": "audio/flac",
           "name": "audio"
         }
       ],

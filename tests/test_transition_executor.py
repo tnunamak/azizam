@@ -938,6 +938,47 @@ def test_a_store_that_cannot_record_anything_holds_the_gate_closed_in_memory(tmp
     run(scenario)
 
 
+@pytest.mark.parametrize("observation", ["stale", "unfinished", "timeout"])
+def test_cancelled_executor_holds_only_the_observed_generation(tmp_path: Path, monkeypatch, observation: str) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        op = _begun(h)
+        release = threading.Event()
+        observed = threading.Event()
+        real_get = h.store.get
+        real_snapshot = h.store.current_with_generation
+
+        def read(reader, key):
+            result = reader(key)
+            observed.set()
+            if observation == "stale":
+                h.store.finish(op.op_id, "aborted", "open")
+            elif observation == "timeout":
+                assert release.wait(5), "test must release the timed-out reader"
+            return result
+
+        monkeypatch.setattr(h.store, "get", lambda key: read(real_get, key))
+        monkeypatch.setattr(h.store, "current_with_generation", lambda key: read(real_snapshot, key))
+        monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.02)
+
+        async def cancelled(*args):
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(h.executor, "_drive", cancelled)
+        lock = asyncio.Lock()
+        await lock.acquire()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await h.executor._run(op, lock, None, None)
+            assert observed.is_set()
+            assert h.gate() == ("open" if observation == "stale" else "reconciling")
+            assert not lock.locked()
+        finally:
+            release.set()
+
+    run(scenario)
+
+
 def test_policy_retry_after_comes_from_the_declared_transition() -> None:
     services = {"svc": {"residency": {"domain": DOMAIN, "transition": {"enabled": True, "retry_after_s": 7, "profile": "p"}}}}
     policy = policy_for("svc", services)

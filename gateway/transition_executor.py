@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
@@ -450,7 +451,7 @@ class Executor:
     def __init__(self, *, store: OperationStore, steps: Mapping[StepName, Step],
                  adapter_for: Callable[[str], TransitionAdapter], policy_of: Callable[[str], Mapping[str, object]],
                  lock_for: Callable[[str], asyncio.Lock], config_revision: Callable[[], int] = lambda: 0,
-                 snapshots: Any = None, gate_hold: Optional[Callable[[str, str], None]] = None,
+                 snapshots: Any = None, gate_hold: Optional[Callable[..., None]] = None,
                  gate_parked: Optional[Callable[[str], Optional[str]]] = None,
                  is_domain: Callable[[str], bool] = lambda name: True) -> None:
         self.store = store
@@ -463,6 +464,12 @@ class Executor:
         self._snapshots = snapshots
         gates = getattr(store, "gates", None)
         self._gate_hold = gate_hold or (gates.force if gates is not None else (lambda domain, state: None))
+        try:
+            inspect.signature(self._gate_hold).bind("", "", generation=0)
+        except (TypeError, ValueError):
+            self._versioned_gate_hold = False
+        else:
+            self._versioned_gate_hold = True
         self._gate_parked = gate_parked or (gates.parked if gates is not None else (lambda domain: None))
         self._submit_locks: dict[str, asyncio.Lock] = {}
         self._tasks: dict[str, "asyncio.Task[None]"] = {}
@@ -584,25 +591,43 @@ class Executor:
         try:
             await self._drive(operation, trigger, after)
         except asyncio.CancelledError:
-            # A cancelled to_thread await does not stop finish: its commit may already be durable.
-            current = None
-            try:
-                # A stalled read must not keep the cancelled task and its domain lock alive; it holds instead.
-                current = await asyncio.wait_for(asyncio.to_thread(self.store.get, operation.op_id),
-                                                 CANCEL_READ_DEADLINE_S)
-            except Exception:  # noqa: BLE001 - an unreadable or late row still needs the conservative shutdown hold
-                pass
-            finally:
-                # Preserve a terminal row's gate. An unfinished or unreadable row must reconcile before admission.
-                if current is None or current.state not in FINISHED_STATES:
-                    self._recovery_pending = True
-                    self._gate_hold(operation.domain, "reconciling")
+            # The cancellation read may return before a newer finish commits; carry its generation.
+            await self._hold_after_interrupt(operation)
             raise
         except Exception as exc:  # noqa: BLE001
             print(f"[transition-gate] operation {operation.op_id} stopped by {log_scrub.describe_error(exc)}", flush=True)
             await self._hold(operation)
         finally:
             lock.release()
+
+    def _observe_hold(self, operation: Operation) -> tuple[Optional[Operation], Optional[int]]:
+        """Keep an unfinished row and its gate generation from the same SQLite snapshot."""
+        snapshot = getattr(self.store, "current_with_generation", None)
+        if snapshot is not None:
+            observed = snapshot(operation.domain)
+            if observed is not None and observed[0].op_id == operation.op_id:
+                return observed
+        # Terminal/missing rows and legacy stores have no unfinished observation.
+        return self.store.get(operation.op_id), None
+
+    def _force_hold(self, domain: str, generation: Optional[int] = None) -> None:
+        if self._versioned_gate_hold and generation is not None:
+            self._gate_hold(domain, "reconciling", generation=generation)
+        else:
+            # Injected two-argument callbacks remain supported; unreadable state is unconditional.
+            self._gate_hold(domain, "reconciling")
+
+    async def _hold_after_interrupt(self, operation: Operation) -> None:
+        current, generation = None, None
+        try:
+            current, generation = await asyncio.wait_for(
+                asyncio.to_thread(self._observe_hold, operation), CANCEL_READ_DEADLINE_S)
+        except Exception:  # noqa: BLE001 - no usable observation: preserve the conservative fallback
+            pass
+        finally:
+            if current is None or current.state not in FINISHED_STATES:
+                self._recovery_pending = True
+                self._force_hold(operation.domain, generation)
 
     async def _hold(self, operation: Operation) -> None:
         """An unexpected error: keep the gate closed, and say what is known.
@@ -611,8 +636,9 @@ class Executor:
         engine changed and the operation unfinished: ``failed_closed``, for a compensating operation. A failure
         before any effect changed nothing: the operation aborts and the gate opens.
         """
+        generation = None
         try:
-            current = await asyncio.to_thread(self.store.get, operation.op_id)
+            current, generation = await asyncio.to_thread(self._observe_hold, operation)
             if current is None or current.state in FINISHED_STATES:
                 return
             outstanding = current.step_intent is not None and current.step_outcome in (None, "unknown")
@@ -628,7 +654,7 @@ class Executor:
                 await asyncio.to_thread(self.store.finish, current.op_id, "aborted", "open")
         except Exception as exc:  # noqa: BLE001 - the table cannot be written: hold the gate in memory
             print(f"[transition-gate] cannot record the hold of {operation.op_id}: {type(exc).__name__}", flush=True)
-            self._gate_hold(operation.domain, "reconciling")
+            self._force_hold(operation.domain, generation)
             # The row still says running. Keep the in-memory hold until a durable write succeeds, and have the next
             # admission reconcile before it accepts work, so storage coming back never leaves a wedged domain.
             self._recovery_pending = True
@@ -1010,7 +1036,7 @@ class Executor:
             # A store call may have committed before raising, or task creation may have failed. The next
             # admission must recover any row left without a driver, even if this process was already ready.
             self._recovery_pending = True
-            self._gate_hold(operation.domain, "reconciling")
+            await self._hold_after_interrupt(operation)
             raise
 
     # -- a parked domain ----------------------------------------------------

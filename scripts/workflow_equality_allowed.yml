@@ -194,6 +194,13 @@ allowed:
     before: [{input: tags, node: "5"}]
     after: "<absent>"
     reason: "Named defect fix: the bundled file mapped both prompt and tags to node 5 input tags; the prompt mapping is gone."
+  - checks: [projections]
+    scopes: ["summary:*"]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/outputs[]/media_type"]
+    before: audio/wav
+    after: audio/flac
+    reason: "Named defect fix: the ComfyUI SaveAudio writer of this workflow writes FLAC, so the output declares audio/flac (tests/test_workflow_manifest_bindings.py checks every writer)."
 binding_edits:
   - workflow: audio.generate.ace-step-1.5-xl-turbo
     path: [comfyui, map, prompt]

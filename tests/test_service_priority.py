@@ -16,7 +16,7 @@ def test_a_records_priority(record, expected):
     assert type(service_priority(record)) is int
 
 
-@pytest.mark.parametrize("value", ["first", False, True, 5.7])
+@pytest.mark.parametrize("value", ["first", False, True, 5.7, [5], {"rank": 5}, (5,)])
 def test_a_priority_that_is_not_a_whole_number_is_refused(value):
     with pytest.raises(ValueError):
         service_priority({"priority": value})
@@ -31,7 +31,7 @@ def test_selected_service_sorts_an_integral_float_as_an_integer():
     assert selected_service(backends, "custom.capability") == ("a-float", backends["a-float"])
 
 
-@pytest.mark.parametrize("priority", [False, True, 5.7, float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("priority", [False, True, 5.7, float("inf"), float("-inf"), float("nan"), [5], {"rank": 5}])
 def test_selected_service_names_the_record_with_an_invalid_priority(priority):
     backends = {"bad-priority": {"capabilities": ["custom.capability"], "priority": priority}}
     with pytest.raises(ValueError) as exc:
