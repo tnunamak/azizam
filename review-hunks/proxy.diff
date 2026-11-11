@@ -1,0 +1,395 @@
+diff --git a/proxy.py b/proxy.py
+index ccc9992e8..83ab1722a 100755
+--- a/proxy.py
++++ b/proxy.py
+@@ -1497,61 +1497,67 @@ def _stored_registry_for_boot() -> dict[str, Any] | None:
+         return service_registry.load_service_registry(path=ADMIN_DB_PATH)
+     except Exception:  # noqa: BLE001
+         if REGISTRY_APPLY_PROBLEM is None:
+             raise
+         return None
+ 
+ 
+ def _record_default(capability: str, record: Mapping[str, Any], key: str) -> Any:
+     """The record's own value for *key*, else the release default of the capability being derived
+     (registry/engine_record_defaults.yml), whatever the record's id."""
+     return engine_record_defaults.record_value(capability, record, key)
+ 
+ 
+ def _workflows_directory(configured: Any) -> Path:
+     """A workflow directory from a registry record or the release default: absolute as given, else relative to proxy.py."""
+     path = Path(str(configured))
+     return path if path.is_absolute() else (Path(__file__).parent / path).resolve()
+ 
+ 
+ def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
+     """The model id the selected embeddings service's record names (the role's default when it names none)."""
+     record = (_selected_service(backends or {}, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
+     return engine_record_defaults.record_value(_EMBEDDINGS_CAPABILITY, record, "model_id")
+ 
+ 
++def _graph_timeout(record: Mapping[str, Any]) -> int:
++    """The longest a request to the graph service *record* waits on it, queue time included: its own ``timeout``, else
++    the release default."""
++    return int(_record_default(_GRAPH_CAPABILITY, record, "timeout"))
++
++
+ def _graph_services_of(backends: Mapping[str, Any]) -> dict[str, GraphService]:
+     """The service each graph family selects in *backends*, family by family. A family no record declares is the empty
+     service: no id, no address, off. A selected record that is disabled or names no address stays the selection."""
+     views: dict[str, GraphService] = {}
+     for capability in _GRAPH_FAMILIES:
+         service_id, record = _selected_service(backends, capability) or ("", {})
+         host = service_registry.engine_base_address(record)
+         views[capability] = GraphService(
+             service_id=service_id, record=record, host=host,
+             enabled=bool(service_id) and bool_from_config(record.get("enabled"), True) and bool(host),
+-            timeout=int(_record_default(_GRAPH_CAPABILITY, record, "timeout")),
++            timeout=_graph_timeout(record),
+         )
+     return views
+ 
+ 
+ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
+     """Derive every registry-derived value (class A and B of docs/design/CONFIG_HOMES.md, 1.2) from *effective_cfg*.
+ 
+     The result is the snapshot's ``derived`` mapping: readers take each value through ``DERIVED``, so the boot and a
+     reload compute them by this one function and a reader never holds a copy that a registry edit leaves behind.
+     ``registry`` is the stored registry the routes are read from (None reads the release registry, as a boot with no
+     stored registry does). Pure: it reads no global state, so a bad candidate raises before anything goes live.
+     """
+     backends = effective_cfg.get("backends") or {}
+     tts_c = (_selected_service(backends, _SPEECH_CAPABILITY) or ("", {}))[1]
+     stt_c = (_selected_service(backends, _TRANSCRIPTION_CAPABILITY) or ("", {}))[1]
+     emb_c = (_selected_service(backends, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
+     graph = _graph_services_of(backends)
+     images, videos = graph[_GRAPH_CAPABILITY], graph[_VIDEO_GRAPH_CAPABILITY]
+     protocol_registry = registry or service_registry.release_registry()
+     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
+ 
+     return {
+         # A record that names no address gives "" here and the engine is not configured: nothing is dialed.
+         "TTS_HOST": service_registry.engine_base_address(tts_c),
+         "STT_HOST": service_registry.engine_base_address(stt_c),
+@@ -26798,132 +26804,130 @@ _workflow_core_cache: tuple[Any, Any, Any, Any, Any] | None = None
+ 
+     from gateway.ownership import stored_owner_key
+     if identity is None:
+         return ""
+     return stored_owner_key(getattr(identity, "key_hash", None), app_id=getattr(identity, "app_id", None),
+                             path=ADMIN_STORE.path) or ""
+ 
+ 
+     if identity is None or not scope:
+         return None
+     return result_bundle.Reader(
+         owner_scope=scope, person_id=getattr(identity, "person_id", None) or None,
+         connection_id=getattr(identity, "connection_id", None) or None)
+ 
+ 
+ def _backend_address(record: Mapping[str, Any]) -> str | None:
+     return service_registry.engine_base_address(record) or None
+ 
+ 
+-def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
++def _workflow_engine(binding_key: str | None, service_id: str | None = None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+     """The configured service whose reviewed protocol holds the bindings under ``binding_key``: (service id, record,
+     protocol, adapter). Found by data (the protocol description's ``binding`` key and the record's protocol), never by
+-    an engine name."""
++    an engine name. With ``service_id`` only that service is considered: a job runs on the service it was pinned to."""
+     from gateway.engine_protocol import description as protocol_description
+     from gateway.engine_protocol import reviewed
+     from gateway.engine_protocol.errors import ProtocolError
+     for doc in protocol_description.load_registry().values():
+         if not binding_key or doc.binding != binding_key:
+             continue
+         # A record is the engine for this binding when it names the protocol itself, or when its service id is the
+         # binding key. A record that merely could serve a capability is not: that would pick any service with an address.
+         candidates = []
+-        for service_id, record in (config.get("backends") or {}).items():
++        for candidate_id, record in (config.get("backends") or {}).items():
++            if service_id is not None and candidate_id != service_id:
++                continue
+             if not isinstance(record, Mapping) or _backend_address(record) is None:
+                 continue
+             connection = record.get("connection")
+             named = next((str(source["protocol"]).strip() for source in (connection if isinstance(connection, Mapping) else {}, record)
+                           if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
+-            if named == doc.id or service_id == binding_key:
+-                candidates.append((named != doc.id, service_id, record))
+-        for _, service_id, record in sorted(candidates, key=lambda item: item[0]):
++            if named == doc.id or candidate_id == binding_key:
++                candidates.append((named != doc.id, candidate_id, record))
++        for _, candidate_id, record in sorted(candidates, key=lambda item: item[0]):
+             for capability in (*doc.serves, ""):
+                 try:
+                     if reviewed.protocol_for_backend(record, capability).id != doc.id:
+                         continue
+-                    return service_id, record, doc, reviewed.adapter_for_backend(record, capability)
++                    return candidate_id, record, doc, reviewed.adapter_for_backend(record, capability)
+                 except ProtocolError:
+                     continue
+     return None
+ 
+ 
+ def _workflow_binding_problem(binding: Any) -> str | None:
+     """Whether this deployment can run ``binding`` (I3): its adapter is registered for a configured service."""
+     runner = workflow_adapters.for_binding(binding.adapter_id)
+     if runner is not None:
+         return runner.binding_problem(binding)
+     return None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE
+ 
+ 
+ def _refused_from_response(response: Response) -> RunRefused:
+     try:
+         error = (json.loads(response.body) or {}).get("error") or {}
+     except (TypeError, ValueError):
+         error = {}
+     retry = response.headers.get("retry-after")
+     return RunRefused(
+         response.status_code, str(error.get("code") or error.get("type") or "refused"),
+         str(error.get("message") or "The gateway cannot take this run now."),
+         retry_after_s=int(retry) if retry and retry.isdigit() else None)
+ 
+ 
+     """Plan and exposure for one workflow, from the facts of its record. None: allowed. No facts is not asked here."""
+     facts = entry.facts
+     if facts is None:
+         return None
+     decision = evaluate_and_apply(
+         make_policy_request(
+             protocol=_protocol_for_intent(entry.intent), intent=entry.intent, workflow=entry.id,
+             capability_exposure=facts.exposure, capability_trust_tier=facts.trust_tier,
+             capability_resource_tier=facts.resource_tier, capability_tags=facts.tags))
+     if decision.denied:
+         return decision
+     runnable = any(_workflow_binding_problem(b) is None for b in entry.bindings.values())
+     return _target_activation_policy_decision(
+         available_label="available workflow ids", empty_label="no available workflow was reported")
+ 
+ 
+-def _graph_wait_s() -> float:
+-    """The longest a run waits on the graph engine: queue time included."""
+-    return float(_graph_service(_GRAPH_CAPABILITY).timeout)
+-
+-
+ def _graph_service_connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+-    """The connection to one graph service's address, with the run's wait as its read bound. A request is about to
+-    go to ``service_id``, so this needs its serving lease."""
++    """The connection to one graph service's address, with that service's own wait as the run's read bound. A request
++    is about to go to ``service_id``, so this needs its serving lease."""
+     _require_egress_lease(service_id)
++    wait = float(_graph_timeout(record))
+     return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
+-        connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
++        connect_s=10, first_byte_s=wait, total_s=wait))
+ 
+ 
+ class _WorkflowRunPort:
+     """``workflow_run.RunPort`` over this module's helpers."""
+ 
+     def __init__(self) -> None:
+         self.available = workflow_run.BindingAvailability(_workflow_binding_problem)
+ 
+     # who is asking
+     def owner_scope(self, caller: AuthContext) -> str:
+         return _caller_owner_scope(caller)
+ 
+     def maker(self, caller: AuthContext) -> str:
+         identity = caller.identity
+         return _auth_person_id(caller) or (getattr(identity, "name", None) or "")
+ 
+     def is_owner(self, caller: AuthContext) -> bool:
+         person_id = _auth_person_id(caller)
+         if not person_id:
+             return False
+         try:
+             return "owner" in admin_store.effective_admin_roles("user", person_id, path=ADMIN_STORE.path)
+         except Exception:  # noqa: BLE001 - fails closed
+             return False
+ 
+@@ -27003,67 +27007,67 @@ class _WorkflowRunPort:
+     def load_payload(self, job_id: str) -> Mapping[str, Any] | None:
+         return _load_image_media_job_payload(job_id)
+ 
+     def drop_payload(self, job_id: str) -> None:
+         _delete_image_media_job_payload(job_id)
+ 
+     def caller_from_payload(self, payload: Mapping[str, Any]) -> AuthContext | None:
+ 
+     def resume_on_start(self) -> bool:
+         return _image_media_job_resume_on_start()
+ 
+     # running
+     def schedule(self, job_id: str) -> None:
+         _schedule_workflow_run(job_id)
+ 
+     async def run_adapter(self, ctx: workflow_run.RunContext) -> None:
+         """Run or poll the job through the adapter it pinned. The pinned contract, binding and template are what the
+         adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
+         result bundle is committed by ``engine_protocol.jobs.run`` itself."""
+         from gateway.engine_protocol import jobs as protocol_jobs
+         runner = workflow_adapters.for_binding(ctx.pin.envelope.binding_key)
+         if runner is not None:
+             return await runner.run(ctx)
+         from gateway.engine_protocol.media import GatewayAssetStore
+-        engine = _workflow_engine(ctx.pin.envelope.binding_key)
++        engine = _workflow_engine(ctx.pin.envelope.binding_key, ctx.pin.envelope.service_id)
+         if engine is None:
+             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
+         service_id, record, protocol, _ = engine
+         # The result files are kept for the person who asked, so the adapter is built over that person's asset store.
+         owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+         adapter = reviewed_adapters.adapter_for_backend(
+             record, next(iter(protocol.serves), ""),
+             assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
+                                      origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
+ 
+         def connection() -> AdapterConnection:
+             return _graph_service_connection(service_id, record)
+ 
+         runtime_ = pinned_runtime.PinnedRuntime(
+             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
+-            timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
++            timing=(2.0, connection().timeouts.total_s), jobs_path=media_jobs.DB_PATH,
+             context=ResultContext(self.result_limits()))
+         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
+         # it. No operation of the protocol is picked by position.
+         op = str(ctx.pin.contract["intent"])
+         # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
+         body = {**dict(ctx.inputs), **dict(ctx.generated)}
+         if ctx.media:
+             body.update(await self._stage_media(ctx, adapter, connection))
+         await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+ 
+     async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
+         """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with
+         the job (staged in its spool, or named from the Library); an adapter that cannot take one refuses the run."""
+         stage = getattr(adapter, "stage_input", None)
+         if stage is None:
+             raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
+         staged: dict[str, str] = {}
+         kept_off_engine = set(ctx.pin.binding.get("edge_only_inputs") or ())
+         for name, refs in ctx.media.items():
+             if name in kept_off_engine:
+                 continue
+             if len(refs) != 1:
+                 raise ProtocolError("The adapter for this job takes one file for an input.", code="media_input_unsupported")
+             ref = refs[0]
+             data = await self.read_media(ctx, ref)
+@@ -27272,51 +27276,51 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
+                 if ref.spool_key is not None:
+                     data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
+                 else:
+                     data = await asyncio.to_thread(_WORKFLOW_RUN_PORT.read_asset, str(ref.asset_id), ctx.caller)
+                 if data:
+                     given.append(asset_types.OutputInput(data, ref.filename or "input", ref.media_type))
+         context = ctx.caller if isinstance(ctx.caller, AuthContext) else None
+         return await asyncio.to_thread(_store_workflow_sources, given, _asset_owner_key(context), _auth_person_id(context))
+ 
+     def connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
+         return _graph_service_connection(service_id, record)
+ 
+     def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+         found = _workflow_engine(binding.adapter_id)
+         if found is None:
+             raise ValueError(workflow_run.BINDING_UNAVAILABLE)
+         service_id, record, protocol, adapter_ = found
+         return workflow_run.AdapterIdentity(
+             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=pinned_runtime.adapter_identity(protocol),
+             interface_version=adapter_.interface_version, service_id=service_id, origin=_backend_address(record) or "")
+ 
+     return node_graph_runner.GraphHost(
+         engine=_workflow_engine, identity=identity,
+         problem=_graph_binding_problem,
+         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
+-        max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
++        control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+         headers=lambda ctx: configured_downstream_headers(ctx.caller, ctx.pin.envelope.service_id) if ctx.caller is not None else {},
+         batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
+         sources=run_sources,
+         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
+         wire_id=lambda job_id: _job_wire_id(job_id))
+ 
+ 
+ def _register_graph_runner() -> None:
+     """One runner for the bindings of each protocol description the node-graph adapter serves."""
+     from gateway.engine_protocol import description as protocol_description
+     for doc in protocol_description.load_registry().values():
+         if doc.executor == f"adapter:{node_graph.ADAPTER_ID}":
+             workflow_adapters.register(node_graph_runner.NodeGraphRunner(
+                 doc.binding, pinned_runtime.adapter_identity(doc), _graph_runner_host()))
+ 
+ 
+ _register_graph_runner()
+ 
+ # The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.ImageJobs.shape_id] = _image_default_model
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipart.shape_id] = image_edit_default_model
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[
+     frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
+ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+     if wait_s <= 0 and view.disposition == "new":
+         owner.handoff()                         # nothing may await between this call and leaving the receipt
+         return _workflow_run_response(view)
+     if wait_s > 0 and view.status in ("queued", "running"):
+         with contextlib.suppress(JobNotFound):
+                                        disposition=view.disposition)
+     status, reason = row_routes._outcome(view, waited=wait_s > 0)
+     owner.report(status=status, reason=reason)
+     return _workflow_run_response(view)
+ 
+ 
+ def _video_row():
+     """The frontend row that owns the video create route."""
+     return next((r for r in frontend_shapes.bundled_rows() if any(route.canonical == "/v1/videos" and "POST" in route.methods for route in r.routes)), None)
+ 
+ 
+ def _video_wire_shape():
+     """The wire shape that answers the create route, found by the route it owns; the lifecycle routes render job views with it."""
+     row = _video_row()
+     return frontend_shapes.build_shape(row) if row is not None else None
+ 
+ 
+     """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
+-    file stops being reachable there. A job the engine never took has none; a failure is not the caller's."""
++    file stops being reachable there. The engine asked is the service the job was pinned to, which holds that history even
++    after a priority change gave the videos family another winner. A job the engine never took, or that pinned no service,
++    has none; a service no longer configured cannot be asked; a failure is not the caller's."""
+     job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
+     kept = (job or {}).get("metadata") or {}
+     prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
+     if not prompt_id:
+         return
+     try:
++        envelope = await asyncio.to_thread(definition_store.DefinitionStore(media_jobs.DB_PATH).envelope, job_id)
++        service_id = envelope.service_id if envelope is not None else ""
++        record = (config.get("backends") or {}).get(service_id)
++        if not service_id or not isinstance(record, Mapping):
++            return
++        adapter = reviewed_adapters.adapter_for_backend(record, _VIDEO_GRAPH_CAPABILITY)
+         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
+-            await _graph(client, "videos").delete_history([str(prompt_id)], headers=headers)
++            await adapter.attach(_graph_service_connection(service_id, record), client).delete_history([str(prompt_id)], headers=headers)
+     except Exception:  # noqa: BLE001 - best effort
+         pass
+ 
+ 
+     """Ask the run of an unfinished video to stop and wait for it, for at most the row's ``cancel_wait_s``. The wait is an
+     asyncio wait on the job's wake-up; it holds no thread. A run that has not stopped is left for the delete to refuse."""
+     row = _video_row()
+     wait_s = row.cancel_wait_s if row is not None else 0.0
+     ledger = _video_ledger(shape)
+     if not isinstance(hit, JobHit) or media_jobs.is_terminal(hit.view.status) or wait_s <= 0:
+         return
+     jobs = _workflow_job_service()
+     job_id = hit.view.job_id
+ 
+ 
+ def _job_wire_id(job_id: str) -> str:
+     """The id a caller sees for a job, as its create wire writes it."""
+     return _video_wire_shape().wire_id(job_id)
+ 
+ 
+ def _job_prompt_text(job_id: str, person_id: str) -> str | None:
