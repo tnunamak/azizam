@@ -9,6 +9,9 @@ marked as an expected failure, with the missing piece named in its reason.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -57,6 +60,16 @@ def smell_engine(fake_upstreams, monkeypatch):  # noqa: F811 - fixture
     engine = SmellEngine()
     fake_upstreams.router.add(HOST, engine)
     return engine
+
+
+class EmptyModelCatalog:
+    """The LLM substrate's model list, empty: the gateway asks it for one when an engine is enabled."""
+
+    async def __call__(self, scope, receive, send):
+        body = b'{"object": "list", "data": []}'
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
 
 
 @pytest.fixture
@@ -144,22 +157,97 @@ def _app_key(client, owner_id, plan_id) -> str:
     return key.json()["credential"]["api_key"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Step 4 breaks even though step 3 now stores the record: the public job route admits only the intents of a closed table "
-    "(registry/media_job_intents.yml:10-16, read by gateway/media_job_intents.py; refusal at proxy.py:25940), and the "
-    "protocol dispatch callers pass a fixed operation (proxy.py:26073 'images', proxy.py:33788 intents for "
-    "chat/embeddings/images/speech). The engine layer itself accepts smell.infer once the record holds a model row and "
-    "the task (dispatch.resolve returned a Target for it in a probe). The generic workflow run route needs a "
-    "description that names a binding (proxy.py:26829-26843), and an http-v1 description cannot serve a record by "
-    "capability (description.py:392)."))
 def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, smell_engine, gateway):
     client, overlay, owner_id, plan_id = owner
     _install_description(overlay)
     # Step 3 now writes the record: the task and the model row come from the owner route.
-    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
-    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
+    _enabled_engine(client)
     key = _app_key(client, owner_id, plan_id)
-    public = gateway.client()
+    with gateway.client() as public:  # one event loop for the whole exchange, so the background job outlives the submit
+        _submit_and_read(public, key, smell_engine)
+
+
+def test_step6_the_job_leaves_a_receipt_and_shows_in_the_owner_activity(owner, smell_engine, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        job = _submit_and_read(public, key, smell_engine)
+    records = client.get("/admin/api/activity/requests")
+    assert records.status_code == 200, records.text
+    receipts = [r["receipt"] for r in records.json()["records"] if r["receipt"].get("job_id") == job["id"]]
+    assert len(receipts) == 1, records.json()["records"]
+    receipt = receipts[0]
+    assert receipt["status"] == "succeeded" and receipt["backend"] == "smell-box" and receipt["intent"] == "smell.infer"
+    assert receipt["path"] == "/gateway/v1/media/jobs"
+    assert "CCO" not in json.dumps(records.json())  # the receipt names the work, not its input or its result
+
+
+def _heard(process) -> dict:
+    """The next message of the second gateway; its own boot lines carry no prefix."""
+    for line in process.stdout:
+        if line.startswith("SECOND "):
+            return json.loads(line.removeprefix("SECOND "))
+    raise AssertionError("the second gateway ended without answering")
+
+
+def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_without_a_restart(owner, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    # The second gateway is a separate process over the same admin database (as a second worker would be). It starts
+    # before the engine exists, so nothing in its own configuration can know the engine.
+    second = subprocess.Popen(
+        [sys.executable, "-m", "tests.support.second_gateway_smell", str(gateway.path)], cwd=ROOT,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        ready = _heard(second)
+        assert ready == {"event": "ready", "knows_engine": False}
+        _enabled_engine(client)  # the first gateway enables it; the second is not told
+        key = _app_key(client, owner_id, plan_id)
+        second.stdin.write(json.dumps({"key": key}) + "\n")
+        second.stdin.flush()
+        done = _heard(second)
+    finally:
+        second.stdin.close()  # a second gateway still waiting for its key ends on this
+        second.wait(timeout=30)
+    assert done["status"] == "succeeded" and done["content"] == MOLECULE.decode()
+    assert done["posts"] == [{"input": {"vector": [0.25, -1.5, 3.0, 0.0]}}]
+    # Its receipt is in the owner's Activity, which the first gateway reads from the shared database.
+    records = client.get("/admin/api/activity/requests")
+    assert records.status_code == 200, records.text
+    receipts = [r["receipt"] for r in records.json()["records"] if r["receipt"].get("job_id") == done["job_id"]]
+    assert [r["status"] for r in receipts] == ["succeeded"]
+
+
+def test_step8_a_declared_job_left_queued_or_running_by_a_restart_ends_failed_with_its_receipt_closed(gateway):
+    """The startup recovery (proxy._recover_media_jobs) cannot resume a declared job: its task died with the gateway, and
+    the input it ran on is not kept for a second run. It fails the job with the restart reason and closes the receipt."""
+    import proxy
+    from gateway import declared_operation_job, media_jobs, receipt_store
+    from gateway.receipts import RouteReceipt
+
+    media_jobs.init_db(path=media_jobs.DB_PATH)
+    receipt_store.init_db()
+    left = {}
+    for status in (media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING):
+        job = media_jobs.create(media_jobs.MediaJob(
+            intent="smell.infer", backend="smell-box", status=status, request_id=f"decljob_restart_{status}",
+            metadata={"mode": declared_operation_job.MODE, "model": "smell-1"}), input_data={"vector": [1.0]}, path=media_jobs.DB_PATH)
+        receipt_store.begin(RouteReceipt(protocol="gateway.media", intent="smell.infer", path="/gateway/v1/media/jobs",
+                                         request_id=job.request_id, job_id=job.job_id, backend="smell-box"))
+        left[status] = job
+    proxy._recover_media_jobs()
+    for status, job in left.items():
+        settled = media_jobs.get(job.job_id, path=media_jobs.DB_PATH)
+        assert settled["status"] == "failed", status
+        assert "gateway restarted" in settled["error"], status
+        assert not media_jobs.holds_resources(settled["status"])
+        receipt = receipt_store.get(job.request_id, audience="admin")
+        assert receipt["status"] == "failed", status
+
+
+def _submit_and_read(public, key, smell_engine) -> dict:
     submitted = public.post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
                             json={"intent": "smell.infer", "model": "smell-1", "input": {"vector": [0.25, -1.5, 3.0, 0.0]}})
     assert submitted.status_code == 202, submitted.text
@@ -168,5 +256,84 @@ def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, s
         polled = public.get(f"/gateway/v1/media/jobs/{job['id']}", headers={"authorization": f"Bearer {key}"}).json()
         if polled["status"] in ("succeeded", "failed"):
             break
+        time.sleep(0.1)
     assert polled["status"] == "succeeded"
     assert smell_engine.posts == [{"input": {"vector": [0.25, -1.5, 3.0, 0.0]}}]
+    content = public.get(job["content_url"], headers={"authorization": f"Bearer {key}"})
+    assert content.status_code == 200, content.text
+    assert content.content == MOLECULE
+    return job
+
+
+def _enabled_engine(client):
+    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
+    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
+
+
+def test_step4_an_intent_no_engine_declares_keeps_the_unsupported_refusal(owner, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    headers = {"authorization": f"Bearer {key}"}
+    for body in ({"intent": "smell.other", "model": "smell-1", "input": {}},
+                 {"intent": "smell.infer", "model": "unknown-model", "input": {}}):
+        refused = gateway.client().post("/gateway/v1/media/jobs", headers=headers, json=body)
+        assert refused.status_code == 400
+        assert refused.json()["error"]["code"] == "unsupported_media_job_intent"
+        # The refusal lists what the gateway accepts now, and that includes the operation the enabled engine declares.
+        assert refused.json()["error"]["supported_intents"][-1] == "smell.infer"
+
+
+def test_step4_the_input_must_be_a_json_object(owner, smell_engine, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    refused = gateway.client().post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
+                                    json={"intent": "smell.infer", "model": "smell-1", "input": [1, 2]})
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "invalid_media_job_input"
+    assert smell_engine.posts == []
+
+
+def _public_documents(public, key) -> tuple[bytes, bytes, dict]:
+    """The public models listing, the OpenAPI document and a refusal's supported intents, as the caller sees them."""
+    headers = {"authorization": f"Bearer {key}"}
+    models = public.get("/v1/models", headers=headers)
+    assert models.status_code == 200, models.text
+    # The loaded-model row stamps `created` with the time of the request; every other byte is the listing's.
+    listing = json.loads(models.content)
+    for row in listing["data"]:
+        row.pop("created", None)
+    openapi = public.get("/openapi.json", headers=headers)
+    assert openapi.status_code == 200, openapi.text
+    refused = public.post("/gateway/v1/media/jobs", headers=headers, json={"intent": "smell.other", "model": "x", "input": {}})
+    assert refused.status_code == 400, refused.text
+    return json.dumps(listing, sort_keys=True).encode("utf-8"), openapi.content, refused.json()["error"]["supported_intents"]
+
+
+def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_changes_nothing(owner, gateway, fake_upstreams):  # noqa: F811
+    client, overlay, owner_id, plan_id = owner
+    key = _app_key(client, owner_id, plan_id)
+    public = gateway.client()  # no lifespan: nothing here runs a background job
+    fake_upstreams.router.add("127.0.0.1:4011", EmptyModelCatalog())
+    none_models, none_openapi, none_intents = _public_documents(public, key)
+    _install_description(overlay)
+    # A description alone adds an engine to nothing: the documents are the bytes they were.
+    assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
+    # An engine record that is off adds no operation either. (Its mere presence moves some availability fields and
+    # alias tables, as it always did; that state is the baseline for turning the engine on and off again.)
+    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
+    off_documents = _public_documents(public, key)
+    assert all(b"smell" not in document for document in off_documents[:2]) and "smell.infer" not in off_documents[2]
+    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
+    models, openapi, intents = _public_documents(public, key)
+    listed = {row["id"]: row for row in json.loads(models)["data"]}
+    assert listed["smell-1"]["azizam_operations"] == ["smell.infer"]
+    assert "smell.infer" in intents
+    submit = json.loads(openapi)["paths"]["/gateway/v1/media/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    assert "smell.infer" in submit["properties"]["intent"]["enum"]
+    off = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": False})
+    assert off.status_code == 200, off.text
+    assert _public_documents(public, key) == off_documents

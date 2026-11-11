@@ -270,6 +270,14 @@
       "access": "content:job:read"
     },
     {
+      "path": "gateway/declared_operation_job.py",
+      "function": "run",
+      "source_sha256": "97d20155f35a28dfcde7de113355db3a78bf18db366b46549ee2469011d6c81b",
+      "call": "append_event",
+      "event": "'succeeded'",
+      "access": "content:job:read"
+    },
+    {
       "path": "proxy.py",
       "function": "_run_identity_job",
       "source_sha256": "0f4a1a7d163403c4d1fd218a064561a3f98f6b5b362deb6fb4f60e7e388ff601",

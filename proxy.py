@@ -118,7 +118,7 @@ from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway import request_history, request_history_api, request_history_capture, request_history_slot
 from gateway.http_tls import tls_context
-from gateway import asset_types, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
+from gateway import asset_types, declared_operation_job, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
@@ -25952,8 +25952,8 @@ async def _submit_video_media_job(
     return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
 
 
-def _unsupported_gateway_media_job_response(intent: str) -> Response:
-    supported_intents = list(media_job_intents.SUBMITTABLE_INTENTS)
+def _unsupported_gateway_media_job_response(intent: str, *, declared: Iterable[str] = ()) -> Response:
+    supported_intents = [*media_job_intents.SUBMITTABLE_INTENTS, *declared]
     return Response(
         content=json.dumps({
             "error": {
@@ -25969,6 +25969,74 @@ def _unsupported_gateway_media_job_response(intent: str) -> Response:
         status_code=400,
         media_type="application/json",
     )
+
+
+_declared_operation_job_tasks: set[asyncio.Task] = set()
+
+
+async def _submit_declared_operation_job(*, request: Request, payload: Mapping[str, Any], intent: str) -> Response | None:
+    """A job for an operation an owner's engine description declares; None when no enabled engine declares it."""
+    from gateway.engine_protocol import dispatch as protocol_dispatch
+    from gateway.engine_protocol.media import GatewayAssetStore
+    model = payload.get("model")
+    try:
+        target = await asyncio.to_thread(
+            lambda: declared_operation_job.resolve(ADMIN_STORE.get_service_registry(), intent, model))
+    except ProtocolError as error:
+        return _protocol_failure(error)
+    if target is None:
+        return None
+    auth_context = _gateway_auth_context(request, "/gateway/v1/media/jobs")
+    if isinstance(auth_context, Response):
+        return auth_context
+    body = payload.get("input")
+    if not isinstance(body, Mapping):
+        return _json_error(400, "The media job input must be a JSON object.", code="invalid_media_job_input", param="input")
+    decision = evaluate_and_apply(auth_context.identity, make_policy_request(
+        intent=intent, model=str(model), backend=target.engine_id))
+    if decision.denied:
+        return _policy_denied_response(decision)
+    caller = auth_context.identity
+    request_id = f"decljob_{uuid.uuid4().hex}"
+    job = media_jobs.MediaJob(
+        intent=intent, backend=target.engine_id, request_id=request_id, parent_request_id=request_id,
+        app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
+        api_key_name=caller.name if caller else None, app_profile=plan_ref(caller),
+        metadata={"mode": declared_operation_job.MODE, "model": str(model)})
+    created = media_jobs.create(job, input_data=dict(body), path=media_jobs.DB_PATH)
+    # The receipt is the Activity row: opened here under the job's request id (so a restart closes it with the job),
+    # closed by the task that runs the job. It names the work and the engine, never the input or the result.
+    receipt = RouteReceipt(
+        protocol="gateway.media", intent=intent, path="/gateway/v1/media/jobs", request_id=request_id, job_id=created.job_id,
+        backend=target.engine_id, api_key_name=caller.name if caller else None, app_id=caller.app_id if caller else None,
+        owner_key_hash=_asset_owner_key(auth_context), app_profile=plan_ref(caller),
+        visibility=_access_for_auth_context(auth_context).receipt_detail)
+    receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
+    receipt_owner = ReceiptLifecycleOwner(receipt).handoff()
+    store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
+
+    async def work() -> None:
+        job_id = created.job_id
+        try:
+            runtime = await asyncio.to_thread(
+                protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
+            media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
+                                     path=media_jobs.DB_PATH)
+            await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
+            receipt_owner.report(status="succeeded", reason="completed")
+            await receipt_owner.settle()
+        except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
+            canceled = isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
+            media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED if canceled else media_jobs.STATUS_FAILED,
+                                     error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH)
+            await receipt_owner.settle(asyncio.CancelledError() if canceled else exc)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+
+    task = asyncio.create_task(work())
+    _declared_operation_job_tasks.add(task)
+    task.add_done_callback(_declared_operation_job_tasks.discard)
+    return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
 
 
 async def _dispatch_gateway_media_job_submission(
@@ -25995,7 +26063,11 @@ async def _dispatch_gateway_media_job_submission(
     if body is None:
         if intent == "image.generate":
             return None
-        return _unsupported_gateway_media_job_response(intent)
+        declared = await _submit_declared_operation_job(request=request, payload=payload, intent=intent)
+        if declared is not None:
+            return declared
+        offered = await asyncio.to_thread(lambda: declared_operation_job.intents(ADMIN_STORE.get_service_registry()))
+        return _unsupported_gateway_media_job_response(intent, declared=offered)
     headers = _safe_image_job_headers(request)
     idempotency_key = request.headers.get("idempotency-key")
     if idempotency_key:
@@ -26255,6 +26327,17 @@ def _mesh_job_content(job: Mapping[str, Any]) -> Response:
     return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
 
 
+def _declared_operation_job_content(job: Mapping[str, Any]) -> Response:
+    """A finished declared-operation job's content is the one file the engine returned, in its own media type."""
+    asset = next((a for a in job.get("assets") or [] if isinstance(a, Mapping) and a.get("asset_id")), None)
+    path = asset_cache_path(str(asset["asset_id"])) if asset else None
+    if path is None:
+        return JSONResponse({"error": {"message": "media job has no result file", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return FileResponse(path, media_type=str(asset.get("media_type") or "application/octet-stream"),
+                        headers={"x-asset-id": str(asset["asset_id"])})
+
+
 def _run_job_content(job_id: str, caller: Any, request: Any = None) -> Response | None:
     """A finished run's content: the wire of the row that took the job reads it its own way; else, with exactly one file
     result, that file in its own media type; else None."""
@@ -26352,6 +26435,8 @@ async def gateway_media_job_content(job_id: str, request: Request):
             return single
     if intent == mesh_api.MESH_INTENT:
         return _mesh_job_content(job)  # the plan was checked above, with the other kinds
+    if (job.get("metadata") or {}).get("mode") == declared_operation_job.MODE:
+        return _declared_operation_job_content(job)
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"
@@ -29854,6 +29939,8 @@ async def list_models(request: Request):
         protocol_models = await _protocol_models_payload(auth_context)
     except ProtocolError as error:
         return _protocol_failure(error)
+    protocol_models = _with_declared_operations(
+        protocol_models, await asyncio.to_thread(lambda: declared_operation_job.model_rows(ADMIN_STORE.get_service_registry())))
     if protocol_models:
         upstream_payload["data"] = [*(upstream_payload.get("data") or []), *protocol_models]
 
@@ -33971,6 +34058,20 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     return response
 
 
+def _with_declared_operations(listed: list[dict], declared_rows: list[dict]) -> list[dict]:
+    """The protocol engines' listed models, each offering that serves a declared operation naming it (a new row when
+    the engine's own list does not carry the offering)."""
+    rows = [dict(row) for row in listed]
+    by_id = {row.get("id"): row for row in rows}
+    for declared_row in declared_rows:
+        existing = by_id.get(declared_row["id"])
+        if existing is None:
+            rows.append(declared_row)
+        else:
+            existing["azizam_operations"] = declared_row["azizam_operations"]
+    return rows
+
+
 async def _protocol_models_payload(auth_context):
     from gateway.engine_protocol import inventory
     registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
@@ -35617,7 +35718,9 @@ def _gateway_openapi() -> dict[str, Any]:
     aliases = _gateway_aliases_provider()
     limits = video_limits(config.get("videos"))
     registry_view = GATEWAY_REGISTRY_PROVIDER.current()
-    inputs = json.dumps([aliases, limits, registry_view.digest], sort_keys=True, default=str)
+    # An operation an enabled engine declares is a submit intent too, so the engine records are an input of the document.
+    declared_intents = declared_operation_job.intents(ADMIN_STORE.get_service_registry())
+    inputs = json.dumps([aliases, limits, registry_view.digest, declared_intents], sort_keys=True, default=str)
     if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
     app.openapi_schema = None
@@ -35627,6 +35730,7 @@ def _gateway_openapi() -> dict[str, Any]:
         SnapshotRegistry(registry_view, published_only=True).records(),
         aliases=aliases,
         video_limits=limits,
+        declared_intents=declared_intents,
     )
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)
