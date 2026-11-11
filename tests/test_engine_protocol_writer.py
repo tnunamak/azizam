@@ -452,7 +452,10 @@ def test_a_refusal_never_carries_posted_text_or_a_path(env, kind):
     assert _rows(env) == []
 
 
-def test_a_registry_write_that_names_a_missing_description_is_refused(env):
+def test_a_registry_write_that_names_a_missing_description_is_refused(env, monkeypatch):
+    # Registry validation also loads bundled workflows, whose profiles need the real shipped protocol defaults.
+    # This test exercises owner rows alongside those workflows, rather than the isolated listing fixture's seeds.
+    monkeypatch.setattr(description, "REGISTRY_DIR", ROOT / "registry" / "protocols")
     client = _client()
     _create(client)
 
