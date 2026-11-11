@@ -37,6 +37,7 @@ PARAMETERS = {
     "system_id": "gateway",
     "request_id": "sweep-request",
     "section": "services", "record_id": "held-url",  # the routes that fix or remove a record the registry leaves out
+    "protocol_id": "openai-compatible",  # a shipped engine protocol description; the GET answers it from the registry
     "workflow_id": "owner.sweep.demo",  # the owner workflow routes; a built call saves it first
 }
 UNSEEDED_ID = "unseeded-id"

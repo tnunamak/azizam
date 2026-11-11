@@ -407,6 +407,10 @@ REVIEWED_UNGUARDED_TABLES = {
     "operator_settings": "settings; the ones that hold a secret keep it in provider_secrets, and the registry and OIDC writers are guarded",
 }
 NOT_CREDENTIAL_TABLES = {
+    # Owner-installed engine protocol descriptions (gateway/protocol_description_store.py): protocol text only. The parser
+    # refuses a header whose name looks like a credential and an auth block names a kind (bearer, header, query, none),
+    # never a value. The writer route is owner-only.
+    "protocol_descriptions",
     # Agent problem reports (gateway/problem_reports.py): untrusted report text, a fingerprint, a count and the
     # reporting App's id. A row grants nothing and holds no secret; text is scrubbed before it is stored.
     "problem_reports",
