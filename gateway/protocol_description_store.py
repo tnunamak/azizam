@@ -2,9 +2,9 @@
 
 A description the owner installs through the engine protocols route is stored here as the raw document. The dispatch
 loader (``gateway/engine_protocol/description.py``) merges these rows with the shipped files and the overlay folder. A
-second gateway worker needs no restart: every write moves the counter ``protocol_descriptions`` in
-``operator_settings_generations``, the loader reads that one number on each call and parses the rows again only when it
-changed. The counter never goes down, so a row revision is never reused, not even after a delete and a create.
+gateway's single process invalidates its dispatch cache after each committed write. Standalone readers still check the
+stored counter, so administrative scripts do not keep stale snapshots. The counter never goes down, so a row revision
+is never reused, not even after a delete and a create.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ GENERATION_KEY = "protocol_descriptions"
 # Where the running gateway keeps its admin database. proxy.py registers its store here; a bare process (a script, a
 # second worker's loader before the app exists) reads the default path.
 _provider: Callable[[], Path] | None = None
+_cache_revisions: dict[Path, int] = {}
 
 
 def use_path(provider: Callable[[], Path] | None) -> None:
@@ -31,6 +32,15 @@ def use_path(provider: Callable[[], Path] | None) -> None:
 
 def db_path() -> Path:
     return Path(_provider()) if _provider is not None else Path(admin_store.DB_PATH)
+
+
+def cache_revision(path: Path) -> int:
+    """No database access in the running gateway; standalone readers check the persisted revision."""
+    return _cache_revisions.get(path, 0) if _provider is not None else generation(path)
+
+
+def _invalidate(path: Path) -> None:
+    _cache_revisions[path] = _cache_revisions.get(path, 0) + 1
 
 
 class StoreConflict(Exception):
@@ -183,6 +193,7 @@ def put(protocol_id: str, text: str, *, expect: int | None, updated_by: str | No
             "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
             (protocol_id, text, revision, int(time.time()), updated_by))
         _set_generation(conn, revision)
+        tx.after_commit(lambda: _invalidate(path or db_path()))
         return revision
 
 
@@ -207,6 +218,7 @@ def delete(protocol_id: str, *, expect: int, path: Path | None = None) -> None:
             raise StoreConflict("referenced", ", ".join(naming))
         conn.execute("DELETE FROM protocol_descriptions WHERE id=?", (protocol_id,))
         _set_generation(conn, _generation_in(conn) + 1)
+        tx.after_commit(lambda: _invalidate(path or db_path()))
 
 
 class DescriptionRefused(ValueError):

@@ -23,6 +23,7 @@ SCANNED = [ROOT / "proxy.py", *sorted((ROOT / "gateway").rglob("*.py"))]
 
 # function -> why it records no envelope. A site that does record is not listed.
 UNPINNED = {
+    "_submit_declared_operation_job": "an owner-declared engine operation, not a manifest workflow: no contract or template to pin",
     "_protocol_image_result": "an engine offering, not a manifest workflow: no contract or template to pin until S2.5",
     "store_creator": "the raw media-jobs API: an outside adapter reports the work, the gateway runs no workflow",
     "_submit": "the Make route picks its workflow at dispatch, after the job row exists",

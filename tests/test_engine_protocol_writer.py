@@ -467,3 +467,21 @@ def test_a_registry_write_that_names_a_missing_description_is_refused(env):
     assert write("tiny", 0)["operator_settings_generation"] == 1
     # A reference the registry already holds does not stop an unrelated write.
     assert write("tiny", 1)["operator_settings_generation"] == 2
+
+
+def test_gateway_cache_reads_no_database_until_a_committed_writer_invalidates_it(env, monkeypatch):
+    protocol_description_store.use_path(lambda: env.db)
+    client = _client()
+    assert "tiny" not in description.owner_descriptions()[0]
+    etag = _create(client)
+    assert description.get_description("tiny").title == "Tiny protocol"
+    replaced = _put(client, "tiny", _text(title="Tiny two"), **{"If-Match": etag})
+    assert replaced.status_code == 200
+    assert description.get_description("tiny").title == "Tiny two"
+    # A warmed dispatch read does not need even the generation query.
+    with monkeypatch.context() as blocked:
+        _lock_the_reads(blocked)
+        assert description.get_description("tiny").title == "Tiny two"
+        assert description.registry_problems() == []
+    assert client.delete(f"{PATH}/tiny", headers={"If-Match": replaced.headers["ETag"]}).status_code == 200
+    assert "tiny" not in description.owner_descriptions()[0]

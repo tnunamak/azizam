@@ -699,16 +699,16 @@ _OWNER_MEMO: dict[Path, tuple[int, dict[str, ProtocolDescription], dict[str, str
 def owner_descriptions() -> tuple[dict[str, ProtocolDescription], dict[str, str]]:
     """The descriptions the owner installed through the admin route, and a problem per row that no longer parses.
 
-    One counter read per call tells a worker whether another worker wrote; the rows are parsed again only then."""
+    The running gateway checks an in-process revision invalidated by committed writes; standalone readers check SQLite."""
     from gateway import protocol_description_store as store
 
     path = store.db_path()
     cached = _OWNER_MEMO.get(path)
     try:
-        counter = store.generation(path)
+        counter = store.cache_revision(path)
         if cached is not None and cached[0] == counter:
             return dict(cached[1]), dict(cached[2])
-        counter, rows = store.read_all(path)
+        _, rows = store.read_all(path)
     except sqlite3.Error as error:
         # A read that failed is not "nothing installed": keep the last good snapshot and say the store could not be read.
         _LOG.warning("Cannot read the stored protocol descriptions: %s", type(error).__name__)
@@ -717,13 +717,14 @@ def owner_descriptions() -> tuple[dict[str, ProtocolDescription], dict[str, str]
     loaded: dict[str, ProtocolDescription] = {}
     problems: dict[str, str] = {}
     for row in rows:
+        description_id = row.id
         try:
-            parsed = parse_description_text(row.text, source=row.id)
+            parsed = parse_description_text(row.text, source=description_id)
             if parsed.id != row.id:
                 raise DescriptionError(row.id, ["The stored id must equal the description id."])
             loaded[row.id] = parsed
         except DescriptionError as error:
-            _LOG.warning("Cannot load owner protocol description %s: %s", row.id, error)
+            _LOG.warning("Cannot load owner protocol description %s: %s", description_id, error)
             problems[f"{row.id} (owner)"] = "The description is invalid. Replace or delete it."
     _OWNER_MEMO.clear()
     _OWNER_MEMO[path] = (counter, loaded, problems)

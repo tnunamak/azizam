@@ -139,6 +139,10 @@ def _request(operation: tuple[str, str] | None, intents) -> StarletteRequest:
 
 
 def _spy_admission(monkeypatch):
+    from gateway import media_job_intents
+    # Synthetic frontend rows still need modality rows before graph admission can resolve them.
+    for intent in (MADE_UP, "edit.made_up", "extend.made_up"):
+        monkeypatch.setitem(media_job_intents.MODALITY_BY_INTENT, intent, "image")
     seen: list[str] = []
 
     def spy(intent, **_kwargs):
@@ -416,3 +420,10 @@ def test_the_realtime_resource_class_the_chain_asset_kind_and_the_operation_keys
     allowed = {entry["literal"] for entry in document["sites"] if entry["file"] == "proxy.py"}
     assert not allowed & {"audio", "video", "audio.speech", "audio.transcriptions", "audio.translations",
                           "audio.generate", "audio.models", "audio.realtime"}
+
+
+def test_graph_admission_refuses_an_intent_without_a_modality_row(monkeypatch):
+    from gateway import media_job_intents
+    monkeypatch.delitem(media_job_intents.MODALITY_BY_INTENT, MADE_UP, raising=False)
+    with pytest.raises(ValueError, match="media job intent 'frobnicate.widget' has no row in media_job_intents.yml"):
+        proxy._graph_media_admission(MADE_UP, auth_context=object())
