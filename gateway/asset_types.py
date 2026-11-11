@@ -8,6 +8,7 @@ standard library already knows the suffix.
 from __future__ import annotations
 
 import mimetypes
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,19 +25,33 @@ KIND_WORDS = ("label", "plural", "untitled", "input")
 
 
 def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
-    """The kind table in a data file: ``{kind: {label, plural, untitled, input}}``. A file that is missing a word, or holds
-    anything but plain text for one, is a fault in what was shipped, so it raises."""
+    """Load kind words and optional unique stored-id prefixes from the bundled data file.
+
+    Words must be non-empty text; a prefix must be 1-8 lowercase ASCII letters.
+    Invalid or unknown fields are a fault in what was shipped, so they raise.
+    """
     document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     rows = document.get("kinds") if isinstance(document, dict) else None
     if not isinstance(rows, dict) or not rows:
         raise ValueError(f"{path.name}: expected a 'kinds' mapping")
     table: dict[str, dict[str, str]] = {}
+    prefixes: set[str] = set()
     for kind, words in rows.items():
         if not isinstance(kind, str) or not kind or kind != kind.lower() or not isinstance(words, dict):
             raise ValueError(f"{path.name}: kind {kind!r} must be a lower-case name with a mapping of words")
-        if set(words) != set(KIND_WORDS) or not all(isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS):
-            raise ValueError(f"{path.name}: kind {kind!r} needs exactly {', '.join(KIND_WORDS)}, each a non-empty string")
+        if set(words) not in (set(KIND_WORDS), set(KIND_WORDS) | {"prefix"}) or not all(
+            isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS
+        ):
+            raise ValueError(f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix")
         table[kind] = {word: words[word].strip() for word in KIND_WORDS}
+        if "prefix" in words:
+            prefix = words["prefix"]
+            if not isinstance(prefix, str) or re.fullmatch(r"[a-z]{1,8}", prefix) is None:
+                raise ValueError(f"{path.name}: kind {kind!r} prefix must be 1-8 lowercase ASCII letters")
+            if prefix in prefixes:
+                raise ValueError(f"{path.name}: kind {kind!r} has duplicate prefix {prefix!r}")
+            prefixes.add(prefix)
+            table[kind]["prefix"] = prefix
     return table
 
 
@@ -94,7 +109,7 @@ def kind_names(kind: str) -> dict[str, str]:
     if row is None:
         word = kind[:1].upper() + kind[1:] if kind else "File"
         row = {"label": word, "plural": word, "untitled": word, "input": word.lower()}
-    return {"kind": kind, **row}
+    return {"kind": kind, **{word: row[word] for word in KIND_WORDS}}
 
 
 def input_word(modality: str) -> str:
@@ -128,9 +143,13 @@ def download_file_name(stem: str | None, suffix: str | None, media_type: str | N
     return f"{clean or fallback}{extension}"
 
 
-# The stored-id prefix of the types that have a fixed one (see ``proxy._ASSET_SUFFIXES_BY_KIND``); any other type
-# is stored under ``ast``.
-ASSET_PREFIX_BY_TOP_TYPE: dict[str, str] = {"image": "img", "audio": "aud", "video": "vid"}
+def asset_prefixes_by_top_type(kinds: dict[str, dict[str, str]]) -> dict[str, str]:
+    """The stored-id prefixes declared by validated kind rows; rows without one are omitted."""
+    return {kind: row["prefix"] for kind, row in kinds.items() if "prefix" in row}
+
+
+# A kind without a configured prefix is stored under the generic prefix.
+ASSET_PREFIX_BY_TOP_TYPE: dict[str, str] = asset_prefixes_by_top_type(KIND_NAMES)
 OTHER_ASSET_PREFIX = "ast"
 
 

@@ -534,7 +534,12 @@ class GateStore:
                     self._parked.pop(domain, None)
 
     def force(self, domain: str, state: str) -> None:
-        """Hold at the current durable generation; a later commit may legitimately release the hold."""
+        """Hold at the current durable generation; a later commit may legitimately release the hold.
+
+        Only non-open gate states may be forced; opening requires a newer durable publication.
+        """
+        if state not in GATE_STATES or state == "open":
+            raise ValueError(f"residency domain {domain!r} cannot force gate state {state!r}; expected a hold state")
         with self._lock:
             self._generations.setdefault(domain, 0)
             self._cache[domain] = state

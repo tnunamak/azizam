@@ -115,6 +115,31 @@ def _candidates(record: Mapping[str, Any], capability: str) -> list[description.
     return found
 
 
+def adapter_serves(capability: str) -> bool:
+    """Whether any reviewed adapter description (active registry, then the shipped floor) lists ``capability`` in ``serves``."""
+    return any(
+        doc.adapter_id is not None and capability in doc.serves
+        for directory in (None, description.REGISTRY_DIR) for doc in _documents(directory).values()
+    )
+
+
+def speaks_serving_adapter(record: Mapping[str, Any], capability: str) -> bool:
+    """Whether ``record`` speaks a reviewed adapter protocol that serves ``capability``.
+
+    A record that names a protocol speaks it only when that is an adapter description listing the capability in
+    ``serves``; a record that names none speaks the adapter whose ``serves`` lists the capability (the inference
+    ``protocol_for_backend`` makes). A record naming another adapter, an HTTP protocol or an unknown one does not.
+    The active registry answers first and the shipped one is the floor, as in ``protocol_for_backend``.
+    """
+    named = _named_protocol(record)
+    for directory in (None, description.REGISTRY_DIR):
+        documents = _documents(directory)
+        candidates = [documents.get(named)] if named else list(documents.values())
+        if any(doc is not None and doc.adapter_id is not None and capability in doc.serves for doc in candidates):
+            return True
+    return False
+
+
 def protocol_for_backend(record: Mapping[str, Any], capability: str) -> description.ProtocolDescription:
     """The adapter protocol description that serves ``capability`` for ``record``.
 

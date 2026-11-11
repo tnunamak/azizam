@@ -186,7 +186,9 @@ def registry(engine_port: int, scenario: str = "default") -> dict:
             "base_url": f"http://127.0.0.1:{engine_port}",
             "host": "127.0.0.1",
             "port": engine_port,
-            "protocol": "openai-compatible",
+            # The graph engine record speaks the node-graph protocol (the fake engine answers its routes too): a record
+            # naming another protocol never receives graph work, so it would leave images, videos and audio off.
+            "protocol": "node-graph" if sid == "comfyui" else "openai-compatible",
             "health_endpoint": "/fixture/degraded"
             if sid == "household-video"
             else "/fixture/down"

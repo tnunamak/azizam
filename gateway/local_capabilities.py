@@ -43,8 +43,9 @@ from typing import Any
 import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate
+from gateway.engine_protocol.reviewed import adapter_serves, speaks_serving_adapter
 from gateway.model_files import missing_model_file_caveat, model_file_availability
-from gateway.service_priority import selected_service
+from gateway.service_priority import selected_service, service_priority
 
 # Intent vocabulary used by the gateway. Mirrors what proxy.py advertises
 # today, kept here so this module does not depend on the proxy.
@@ -117,6 +118,7 @@ def _load_local_capability_rows(
     Mapping[str, Any],
     tuple[Mapping[str, Any], ...],
     Mapping[str, Any],
+    tuple[Mapping[str, Any], ...],
 ]:
     """Load ordered package facts; errors identify the file and logical row."""
     source = Path(path)
@@ -165,6 +167,8 @@ def _load_local_capability_rows(
         fail("document row 0", "schema_version must be 1")
 
     aliases = {}
+    alias_rows = []
+    shared_names: dict[str, int] = {}
     families = []
     common = {"intent", "input_modalities", "output_modalities"}
     for table, name_key, required in (
@@ -177,21 +181,56 @@ def _load_local_capability_rows(
         names = set()
         for number, row in enumerate(rows, start=1):
             where = f"{table} row {number}"
-            fields(row, required, where, frozenset({"capability"}) if table == "alias_operations" else frozenset())
+            fields(row, required, where, frozenset({
+                "capability", "shared_operations", "engine_operation", "publish_capability",
+            }) if table == "alias_operations" else frozenset())
             name = text(row, name_key, where)
             if name in names:
                 fail(where, f"duplicate name: {name!r}")
             names.add(name)
-            intent = text(row, "intent", where)
-            inputs = modalities(row, "input_modalities", where)
-            outputs = modalities(row, "output_modalities", where)
             if table == "alias_operations":
-                execution = text(row, "execution", where)
-                if execution not in {"sync", "job"}:
+                if name in shared_names:
+                    fail(where, f"shared operation is a row name: {name!r}")
+                shared = row.get("shared_operations", [])
+                if not isinstance(shared, list) or any(
+                    not isinstance(value, str) or not value.strip() for value in shared
+                ):
+                    fail(where, "shared_operations must be a list of non-empty strings")
+                for value in shared:
+                    if value in names:
+                        fail(where, f"shared operation is a row name: {value!r}")
+                    if value in shared_names:
+                        fail(where, f"duplicate shared operation: {value!r}")
+                    shared_names[value] = number
+                engine = row.get("engine_operation", False)
+                publish = row.get("publish_capability", True)
+                for key, value in (("engine_operation", engine), ("publish_capability", publish)):
+                    if type(value) is not bool:
+                        fail(where, f"{key} must be a boolean")
+                # Non-publishing rows may explicitly leave unsupported metadata unknown.
+                intent = text(row, "intent", where) if publish or row["intent"] is not None else None
+                inputs = (modalities(row, "input_modalities", where)
+                          if publish or row["input_modalities"] is not None else None)
+                outputs = (modalities(row, "output_modalities", where)
+                           if publish or row["output_modalities"] is not None else None)
+                execution = (text(row, "execution", where)
+                             if publish or row["execution"] is not None else None)
+                if execution is not None and execution not in {"sync", "job"}:
                     fail(where, "execution must be sync or job")
                 subtype = text(row, "capability", where) if "capability" in row else None
-                aliases[name] = (intent, inputs, outputs, execution, subtype)
+                alias_rows.append(MappingProxyType({
+                    "name": name, "intent": intent,
+                    "input_modalities": inputs, "output_modalities": outputs,
+                    "execution": execution, "capability": subtype,
+                    "shared_operations": tuple(shared), "engine_operation": engine,
+                    "publish_capability": publish,
+                }))
+                if publish:
+                    aliases[name] = (intent, inputs, outputs, execution, subtype)
             else:
+                intent = text(row, "intent", where)
+                inputs = modalities(row, "input_modalities", where)
+                outputs = modalities(row, "output_modalities", where)
                 flag = text(row, "enabled_flag", where)
                 tier = text(row, "resource_tier", where)
                 if tier not in {"batch", "expensive"}:
@@ -320,7 +359,7 @@ def _load_local_capability_rows(
         backend_rows.append(MappingProxyType(frozen))
     return (
         MappingProxyType(aliases), tuple(families), tuple(backend_rows),
-        image_defaults, tuple(images), workflow_defaults,
+        image_defaults, tuple(images), workflow_defaults, tuple(alias_rows),
     )
 
 
@@ -346,13 +385,18 @@ def load_local_capability_image_rows(
     path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
 ) -> tuple[Mapping[str, Any], tuple[Mapping[str, Any], ...], Mapping[str, Any]]:
     """Return deeply read-only image defaults/rows and workflow defaults."""
-    return _load_local_capability_rows(path)[3:]
+    return _load_local_capability_rows(path)[3:6]
 
 
 (
     _ALIAS_INTENTS, _WORKFLOW_FAMILIES, _BACKEND_ROWS,
-    _IMAGE_DEFAULTS, _IMAGE_ROWS, _WORKFLOW_DEFAULTS,
+    _IMAGE_DEFAULTS, _IMAGE_ROWS, _WORKFLOW_DEFAULTS, _ALIAS_ROWS,
 ) = _load_local_capability_rows()
+
+
+def alias_operation_rows() -> tuple[Mapping[str, Any], ...]:
+    """Return ordered, immutable alias rows without reloading package data."""
+    return _ALIAS_ROWS
 
 
 def transcription_triggers() -> frozenset[str]:
@@ -550,11 +594,23 @@ def _family_backend(
         return backend
     # Generic backend rows only accept list-valued capability declarations.
     # Apply the same inventory boundary to graph selection without changing
-    # selected_service's (shared with the gateway) iterable contract.
+    # selected_service's (shared with the gateway) iterable contract. When an adapter protocol serves the capability,
+    # only records that speak it compete, so a service of another protocol never receives its work. A capability no
+    # adapter serves (a row's own word) keeps plain capability selection.
+    adapter_family = adapter_serves(capability)
     selectable = {
         service_id: record for service_id, record in backends.items()
         if isinstance(record, Mapping) and isinstance(record.get("capabilities"), list)
+        and (not adapter_family or speaks_serving_adapter(record, capability))
     }
+    # A stored record whose priority the selector refuses (a fraction, a boolean, a non-number) is left out, so one
+    # bad record cannot abort the whole inventory; the valid records still compete. This module stays pure: the
+    # gateway's own selection and the deploy selection check report such a record.
+    for service_id, record in list(selectable.items()):
+        try:
+            service_priority(record)
+        except ValueError:
+            del selectable[service_id]
     selection = selected_service(selectable, capability)
     return selection[0] if selection is not None else None
 

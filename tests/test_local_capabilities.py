@@ -1131,5 +1131,197 @@ def test_unmasked_inventory_skips_non_list_capabilities_without_losing_valid_row
     assert build_local_capabilities({}, backends={"malformed": {"capabilities": 7}}) == []
 
 
+# Alias-operation rows drive the resolver vocabulary without changing capability output.
+def _alias_rows_document():
+    return yaml.safe_load(
+        (ROOT / "registry" / "local_capability_rows.yml").read_text(encoding="utf-8")
+    )
+
+
+def _write_alias_rows_document(tmp_path, document):
+    path = tmp_path / "local_capability_rows.yml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return path
+
+
+def test_alias_operation_constants_match_previous_literals():
+    from gateway import stable_aliases
+
+    # Independent oracle: the three declarations before the row-driven refactor.
+    operations = (
+        "chat",
+        "embeddings",
+        "images",
+        "image_edits",
+        "videos",
+        "speech",
+        "transcriptions",
+        "audio_generate",
+        "rerank",
+        "decisions",
+    )
+    shared = {
+        "completions": "chat",
+        "translations": "transcriptions",
+    }
+    engines = ("speech", "transcriptions", "rerank", "decisions")
+    assert type(stable_aliases.OPERATIONS) is tuple
+    assert stable_aliases.OPERATIONS == operations
+    assert type(stable_aliases._SECTION_FOR_OPERATION) is dict
+    assert list(stable_aliases._SECTION_FOR_OPERATION.items()) == list(shared.items())
+    assert type(stable_aliases.ENGINE_OPERATIONS) is tuple
+    assert stable_aliases.ENGINE_OPERATIONS == engines
+
+
+def test_alias_operation_accessor_is_cached_and_deeply_immutable():
+    with patch.object(Path, "read_text", side_effect=AssertionError("unexpected reload")):
+        rows = local_capabilities.alias_operation_rows()
+        assert local_capabilities.alias_operation_rows() is rows
+    assert type(rows) is tuple
+    with pytest.raises(TypeError):
+        rows[0]["name"] = "replacement"
+    with pytest.raises(TypeError):
+        rows[0]["shared_operations"][0] = "replacement"
+    with pytest.raises(TypeError):
+        rows[0]["input_modalities"][0] = "replacement"
+
+
+def test_alias_operation_rows_preserve_capability_and_image_loader_apis():
+    aliases, families = local_capabilities.load_local_capability_rows()
+    assert tuple(aliases) == (
+        "chat", "embeddings", "images", "image_edits", "videos",
+        "speech", "transcriptions", "audio_generate",
+    )
+    assert aliases == local_capabilities._ALIAS_INTENTS
+    assert families == local_capabilities._WORKFLOW_FAMILIES
+    assert local_capabilities.load_local_capability_image_rows() == (
+        local_capabilities._IMAGE_DEFAULTS,
+        local_capabilities._IMAGE_ROWS,
+        local_capabilities._WORKFLOW_DEFAULTS,
+    )
+    rows = local_capabilities.alias_operation_rows()
+    assert rows[-2]["name"] == "rerank" and rows[-2]["intent"] is None
+    assert rows[-1]["name"] == "decisions" and rows[-1]["intent"] == "decision.systemone"
+    for row in rows[-2:]:
+        assert row["publish_capability"] is False
+        assert row["input_modalities"] is None
+        assert row["output_modalities"] is None
+        assert row["execution"] is None
+    assert local_capabilities.build_alias_capabilities({
+        name: {"stable": [{"alias": "sample", "resolves_to": "slot", "engine": "slot"}]}
+        for name in ("rerank", "decisions")
+    }) == []
+
+
+@pytest.mark.parametrize("index, shared, message", [
+    (1, ["completions"], "duplicate shared operation"),
+    (0, ["completions", "completions"], "duplicate shared operation"),
+    (0, ["embeddings"], "shared operation is a row name"),
+    (1, ["chat"], "shared operation is a row name"),
+    (0, ["chat"], "shared operation is a row name"),
+], ids=["across-rows", "within-row", "later-row", "earlier-row", "own-row"])
+def test_alias_rows_reject_shared_name_collisions(tmp_path, index, shared, message):
+    document = _alias_rows_document()
+    document["alias_operations"][index]["shared_operations"] = shared
+    path = _write_alias_rows_document(tmp_path, document)
+    with pytest.raises(ValueError, match=message) as error:
+        local_capabilities.load_local_capability_rows(path)
+    assert f"{path}: alias_operations row " in str(error.value)
+
+
+@pytest.mark.parametrize("shared", [None, "completions", 1, [None], [""]])
+def test_alias_rows_reject_malformed_shared_names(tmp_path, shared):
+    document = _alias_rows_document()
+    document["alias_operations"][0]["shared_operations"] = shared
+    path = _write_alias_rows_document(tmp_path, document)
+    with pytest.raises(ValueError, match="shared_operations must be a list of non-empty strings"):
+        local_capabilities.load_local_capability_rows(path)
+
+
+@pytest.mark.parametrize("engine", [None, 0, 1, "true", [], {}])
+def test_alias_rows_reject_non_boolean_engine_flag(tmp_path, engine):
+    document = _alias_rows_document()
+    document["alias_operations"][0]["engine_operation"] = engine
+    path = _write_alias_rows_document(tmp_path, document)
+    with pytest.raises(ValueError, match="engine_operation must be a boolean"):
+        local_capabilities.load_local_capability_rows(path)
+
+
+@pytest.mark.parametrize("publish", [None, 1, "false"])
+def test_alias_rows_reject_non_boolean_publication_flag(tmp_path, publish):
+    document = _alias_rows_document()
+    document["alias_operations"][0]["publish_capability"] = publish
+    path = _write_alias_rows_document(tmp_path, document)
+    with pytest.raises(ValueError, match="publish_capability must be a boolean"):
+        local_capabilities.load_local_capability_rows(path)
+
+
+@pytest.mark.parametrize("key", ["intent", "input_modalities", "output_modalities", "execution"])
+def test_publishing_alias_rows_still_require_complete_metadata(tmp_path, key):
+    document = _alias_rows_document()
+    document["alias_operations"][0][key] = None
+    path = _write_alias_rows_document(tmp_path, document)
+    with pytest.raises(ValueError, match=f"{key} must be"):
+        local_capabilities.load_local_capability_rows(path)
+
+
+def test_alias_row_new_fields_have_backward_compatible_defaults(tmp_path):
+    document = _alias_rows_document()
+    document["alias_operations"] = document["alias_operations"][:8]
+    for row in document["alias_operations"]:
+        row.pop("shared_operations", None)
+        row.pop("engine_operation", None)
+        row.pop("publish_capability", None)
+    path = _write_alias_rows_document(tmp_path, document)
+    loaded = local_capabilities._load_local_capability_rows(path)
+    assert loaded[0] == local_capabilities._ALIAS_INTENTS
+    assert all(row["shared_operations"] == () for row in loaded[-1])
+    assert all(row["engine_operation"] is False for row in loaded[-1])
+    assert all(row["publish_capability"] is True for row in loaded[-1])
+
+
+@pytest.mark.parametrize("engine", [False, True])
+def test_new_alias_row_drives_all_three_collections(tmp_path, monkeypatch, engine):
+    import importlib.util
+
+    from gateway import stable_aliases
+
+    document = _alias_rows_document()
+    document["alias_operations"].append({
+        "name": "unfamiliar-operation",
+        "intent": "unfamiliar.intent",
+        "input_modalities": ["unfamiliar-input"],
+        "output_modalities": ["unfamiliar-output"],
+        "execution": "sync",
+        "shared_operations": ["unfamiliar-request"],
+        "engine_operation": engine,
+    })
+    path = _write_alias_rows_document(tmp_path, document)
+    loaded = local_capabilities._load_local_capability_rows(path)
+    monkeypatch.setattr(local_capabilities, "_ALIAS_ROWS", loaded[-1])
+    # Execute a fresh module against the loaded rows without replacing live classes.
+    name = "gateway._test_row_stable_aliases"
+    spec = importlib.util.spec_from_file_location(name, stable_aliases.__file__)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, module)
+    with patch.object(Path, "read_text", side_effect=AssertionError("unexpected reload")):
+        spec.loader.exec_module(module)
+    assert module.OPERATIONS == (*stable_aliases.OPERATIONS, "unfamiliar-operation")
+    assert list(module._SECTION_FOR_OPERATION.items()) == [
+        *stable_aliases._SECTION_FOR_OPERATION.items(),
+        ("unfamiliar-request", "unfamiliar-operation"),
+    ]
+    expected_engines = (
+        (*stable_aliases.ENGINE_OPERATIONS, "unfamiliar-operation")
+        if engine else stable_aliases.ENGINE_OPERATIONS
+    )
+    assert module.ENGINE_OPERATIONS == expected_engines
+    assert module.section_for_operation("unfamiliar-request") == "unfamiliar-operation"
+    assert loaded[0]["unfamiliar-operation"] == (
+        "unfamiliar.intent", ("unfamiliar-input",), ("unfamiliar-output",), "sync", None,
+    )
+
+
 if __name__ == "__main__":
     unittest.main()

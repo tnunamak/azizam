@@ -39,26 +39,18 @@ from typing import Any, Callable, Mapping
 from gateway.compatibility import COMPATIBILITY
 
 from gateway.config_layers import DANGLING, INVALID, Problem
+from gateway.local_capabilities import alias_operation_rows
 from gateway.public_failure import describe
 
-OPERATIONS = (
-    "chat",
-    "embeddings",
-    "images",
-    "image_edits",
-    "videos",
-    "speech",
-    "transcriptions",
-    "audio_generate",
-    "rerank",
-    "decisions",
-)
+_OPERATION_ROWS = alias_operation_rows()
+OPERATIONS = tuple(row["name"] for row in _OPERATION_ROWS)
 # Request operations that share another operation's alias table.
 _SECTION_FOR_OPERATION = {
-    "completions": "chat",
-    "translations": "transcriptions",
+    operation: row["name"]
+    for row in _OPERATION_ROWS
+    for operation in row["shared_operations"]
 }
-ENGINE_OPERATIONS = ("speech", "transcriptions", "rerank", "decisions")
+ENGINE_OPERATIONS = tuple(row["name"] for row in _OPERATION_ROWS if row["engine_operation"])
 _MAX_CHAIN = 6
 
 EngineAvailable = Callable[[str, Mapping[str, Any]], bool]

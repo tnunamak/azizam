@@ -5,11 +5,12 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import accounts, admin_store, asset_types, media_jobs, me_media, prompt_memory, receipt_store
+from gateway import accounts, admin_store, asset_types, media_jobs, me_media, prompt_memory, receipt_store, workflow_call
 from gateway.admin_oidc import AdminSession
 
 GLB = b"glTF\x02\x00\x00\x00" + b"\x00" * 24
@@ -339,7 +340,8 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     table = asset_types.load_kind_names()
     assert table == asset_types.KIND_NAMES
     assert {"image", "video", "audio", "model", "text", "file"} <= set(table)
-    assert all(set(words) == set(asset_types.KIND_WORDS) for words in table.values())
+    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix"}
+               for words in table.values())
 
 
 @pytest.mark.parametrize("text", [
@@ -375,3 +377,64 @@ def test_a_kind_added_only_in_the_data_file_is_named_filtered_and_listed(library
     assert {"kind": "smell", "label": "Aroma", "plural": "Aromas", "untitled": "Scent", "input": "aroma sample"} in listing["kinds"]
     filtered = library.client.get("/me/api/media?kind=smell").json()
     assert [i["asset_id"] for i in filtered["assets"]] == [smell]
+
+
+# --- stored-id prefixes are kind data; callers retain their distinct unknown-type defaults ----------------------------
+
+def test_the_shipped_asset_prefixes_keep_the_existing_ids_and_kind_name_shape():
+    assert asset_types.ASSET_PREFIX_BY_TOP_TYPE == {"image": "img", "audio": "aud", "video": "vid"}
+    assert asset_types.asset_prefixes_by_top_type(asset_types.load_kind_names()) == asset_types.ASSET_PREFIX_BY_TOP_TYPE
+    assert asset_types.OTHER_ASSET_PREFIX == "ast"
+    assert asset_types.asset_prefix_for_media_type("model/gltf-binary") == "ast"
+    assert asset_types.asset_prefix_for_media_type("smell/aroma-bundle") == "ast"
+    for kind, prefix in asset_types.ASSET_PREFIX_BY_TOP_TYPE.items():
+        assert asset_types.asset_prefix_for_media_type(f"{kind}/example") == prefix
+        assert set(asset_types.kind_names(kind)) == {"kind", *asset_types.KIND_WORDS}
+
+
+@pytest.mark.parametrize("prefix", [
+    None, True, 7, "", "Msh", "msh1", "m_sh", "m-sh", "m sh", "meshmeshx", "mésh", "msh ",
+])
+def test_a_malformed_asset_prefix_is_refused(tmp_path, prefix):
+    path = tmp_path / "asset_kinds.yml"
+    row = {"label": "Mesh", "plural": "Meshes", "untitled": "Mesh", "input": "mesh", "prefix": prefix}
+    path.write_text(yaml.safe_dump({"kinds": {"mesh": row}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="asset_kinds.yml:.*prefix"):
+        asset_types.load_kind_names(path)
+
+
+def test_duplicate_asset_prefixes_are_refused(tmp_path):
+    path = tmp_path / "asset_kinds.yml"
+    row = {"label": "Mesh", "plural": "Meshes", "untitled": "Mesh", "input": "mesh", "prefix": "msh"}
+    path.write_text(yaml.safe_dump({"kinds": {"mesh": row, "other": dict(row)}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="asset_kinds.yml:.*duplicate prefix"):
+        asset_types.load_kind_names(path)
+
+
+def test_a_prefix_added_only_in_the_kind_file_is_used(tmp_path, monkeypatch):
+    path = tmp_path / "asset_kinds.yml"
+    path.write_text(asset_types.KIND_NAMES_PATH.read_text(encoding="utf-8")
+                    + "  mesh: {label: Mesh, plural: Meshes, untitled: Mesh, input: mesh, prefix: msh}\n",
+                    encoding="utf-8")
+    kinds = asset_types.load_kind_names(path)
+    monkeypatch.setattr(asset_types, "KIND_NAMES", kinds)
+    monkeypatch.setattr(asset_types, "ASSET_PREFIX_BY_TOP_TYPE", asset_types.asset_prefixes_by_top_type(kinds))
+    assert asset_types.asset_prefix_for_media_type("mesh/example") == "msh"
+    assert workflow_call.kind_for("mesh/example") == "msh"
+    assert "prefix" not in asset_types.kind_names("mesh")
+    assert asset_types.asset_prefix_for_media_type("model/gltf-binary") == "ast"
+    assert workflow_call.kind_for("model/gltf-binary") == ""
+
+
+@pytest.mark.parametrize("media_type,prefix", [
+    ("image/png", "img"),
+    ("audio/mpeg", "aud"),
+    ("video/mp4", "vid"),
+    ("model/gltf-binary", ""),
+    ("smell/aroma-bundle", ""),
+    ("", ""),
+    ("nonsense", ""),
+    ("IMAGE/png", ""),
+])
+def test_workflow_asset_prefixes_keep_the_empty_unknown_default(media_type, prefix):
+    assert workflow_call.kind_for(media_type) == prefix

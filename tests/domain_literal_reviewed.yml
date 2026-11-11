@@ -25,21 +25,6 @@ sites:
     count: 2
     category: media_type
     reason: Names the IANA media family in a suffix-derived media_kind comparison used to read or restore container metadata.
-  - file: gateway/asset_types.py
-    literal: audio
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/asset_types.py
-    literal: image
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/asset_types.py
-    literal: video
-    count: 1
-    category: media_type
-    reason: Names an IANA top-level media type in the MIME-family-to-asset-prefix lookup table.
   - file: gateway/media_delivery.py
     literal: audio
     count: 1
@@ -110,21 +95,6 @@ sites:
     count: 2
     category: wire_enum
     reason: Names the video discriminators in the gateway-published video response contract, both the OpenAI Video object's object field and the gateway assets[].kind extension; neither occurrence selects a workflow, model, engine or intent.
-  - file: gateway/workflow_call.py
-    literal: audio
-    count: 1
-    category: media_type
-    reason: Names the IANA audio media type family in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/workflow_call.py
-    literal: image
-    count: 1
-    category: media_type
-    reason: Names the IANA image media type family in the MIME-family-to-asset-prefix lookup table.
-  - file: gateway/workflow_call.py
-    literal: video
-    count: 1
-    category: media_type
-    reason: Names the IANA video media type family in the MIME-family-to-asset-prefix lookup table.
   - file: gateway/custom_voices.py
     literal: audio.voice_consent
     count: 1
@@ -165,6 +135,16 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
+  - file: gateway/local_capabilities.py
+    literal: "video.generate"
+    count: 1
+    category: wire_enum
+    reason: Names the video.generate intent word the local inventory exports as INTENT_VIDEO_GENERATE; published intent vocabulary, not a selection of workflow behavior.
+  - file: gateway/local_capabilities.py
+    literal: "audio.generate"
+    count: 1
+    category: wire_enum
+    reason: Names the audio.generate intent word the local inventory exports as INTENT_AUDIO_GENERATE; published intent vocabulary, not a selection of workflow behavior.
   - file: gateway/openai_media_schemas.py
     literal: audio
     count: 1
