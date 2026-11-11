@@ -26870,10 +26870,13 @@ def _workflow_engine(binding_key: str | None, service_id: str | None = None, fam
             graph = _graph_services_of(config.get("backends") or {})
             chosen = [graph[name].service_id for name in ((family,) if family else doc.serves) if name in graph]
             chosen = [name for name in chosen if name]
-            if chosen and family:
-                candidates = [item for item in candidates if item[1] == chosen[0]]
-            elif chosen:
-                candidates.sort(key=lambda item: item[1] != chosen[0])
+            # Only a service as direct a candidate as the best one (it names the protocol, as that one does) can be the
+            # selection's pin: a record matched only by its id never outranks one that names the protocol, as before.
+            best = min((item[0] for item in candidates), default=None)
+            direct = [item for item in candidates if item[0] == best]
+            if chosen and any(item[1] == chosen[0] for item in direct):
+                candidates = [item for item in direct if item[1] == chosen[0]] if family else sorted(
+                    direct, key=lambda item: item[1] != chosen[0]) + [item for item in candidates if item[0] != best]
         for _, candidate_id, record in sorted(candidates, key=lambda item: item[0]):
             for capability in (*doc.serves, ""):
                 try:
