@@ -26828,10 +26828,25 @@ def _backend_address(record: Mapping[str, Any]) -> str | None:
     return service_registry.engine_base_address(record) or None
 
 
-def _workflow_engine(binding_key: str | None, service_id: str | None = None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+# A family is named for the media it makes ("images" makes image/*, "audio.generate" makes audio/*).
+_GRAPH_FAMILY_OF_MEDIA = {name.split(".", 1)[0].removesuffix("s"): name for name in _GRAPH_FAMILIES}
+
+
+def _workflow_graph_family(contract: Mapping[str, Any]) -> str | None:
+    """The graph family a workflow's first output belongs to (its media type's top level), or None when it names none."""
+    for output in (contract.get("outputs") or {}).values():
+        family = _GRAPH_FAMILY_OF_MEDIA.get(str((output or {}).get("media_type") or "").split("/", 1)[0])
+        if family is not None:
+            return family
+    return None
+
+
+def _workflow_engine(binding_key: str | None, service_id: str | None = None, family: str | None = None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
     """The configured service whose reviewed protocol holds the bindings under ``binding_key``: (service id, record,
     protocol, adapter). Found by data (the protocol description's ``binding`` key and the record's protocol), never by
-    an engine name. With ``service_id`` only that service is considered: a job runs on the service it was pinned to."""
+    an engine name. With ``service_id`` only that service is considered: a job runs on the service it was pinned to.
+    Without it, the graph family's selected service (``_graph_services_of``: capability, then priority, then id) is the
+    one a new job pins; ``family`` names the family, and a lookup that names none prefers the first listed family's."""
     from gateway.engine_protocol import description as protocol_description
     from gateway.engine_protocol import reviewed
     from gateway.engine_protocol.errors import ProtocolError
@@ -26851,6 +26866,14 @@ def _workflow_engine(binding_key: str | None, service_id: str | None = None) -> 
                           if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
             if named == doc.id or candidate_id == binding_key:
                 candidates.append((named != doc.id, candidate_id, record))
+        if service_id is None:
+            graph = _graph_services_of(config.get("backends") or {})
+            chosen = [graph[name].service_id for name in ((family,) if family else doc.serves) if name in graph]
+            chosen = [name for name in chosen if name]
+            if chosen and family:
+                candidates = [item for item in candidates if item[1] == chosen[0]]
+            elif chosen:
+                candidates.sort(key=lambda item: item[1] != chosen[0])
         for _, candidate_id, record in sorted(candidates, key=lambda item: item[0]):
             for capability in (*doc.serves, ""):
                 try:
@@ -26979,7 +27002,7 @@ class _WorkflowRunPort:
         runner = workflow_adapters.for_binding(binding_key)
         if runner is not None:
             return runner.identity(entry, binding_key, binding)
-        engine = _workflow_engine(binding.adapter_id)
+        engine = _workflow_engine(binding.adapter_id, family=_workflow_graph_family(workflow_run.plain(entry.contract)))
         if engine is None:
             raise ValueError(workflow_run.BINDING_UNAVAILABLE)
         service_id, record, protocol, adapter = engine
@@ -27288,7 +27311,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         return _graph_service_connection(service_id, record)
 
     def identity(entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
-        found = _workflow_engine(binding.adapter_id)
+        found = _workflow_engine(binding.adapter_id, family=_workflow_graph_family(workflow_run.plain(entry.contract)))
         if found is None:
             raise ValueError(workflow_run.BINDING_UNAVAILABLE)
         service_id, record, protocol, adapter_ = found
