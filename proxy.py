@@ -1530,7 +1530,9 @@ def _graph_services_of(backends: Mapping[str, Any]) -> dict[str, GraphService]:
     service: no id, no address, off. A selected record that is disabled or names no address stays the selection."""
     views: dict[str, GraphService] = {}
     for capability in _GRAPH_FAMILIES:
-        service_id, record = _selected_service(backends, capability) or ("", {})
+        speakers = {service_id: record for service_id, record in backends.items()
+                    if isinstance(record, Mapping) and reviewed_adapters.speaks_serving_adapter(record, capability)}
+        service_id, record = _selected_service(speakers, capability) or ("", {})
         host = service_registry.engine_base_address(record)
         views[capability] = GraphService(
             service_id=service_id, record=record, host=host,

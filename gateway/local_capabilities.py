@@ -43,6 +43,7 @@ from typing import Any
 import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate
+from gateway.engine_protocol.reviewed import speaks_serving_adapter
 from gateway.model_files import missing_model_file_caveat, model_file_availability
 from gateway.service_priority import selected_service
 
@@ -593,10 +594,12 @@ def _family_backend(
         return backend
     # Generic backend rows only accept list-valued capability declarations.
     # Apply the same inventory boundary to graph selection without changing
-    # selected_service's (shared with the gateway) iterable contract.
+    # selected_service's (shared with the gateway) iterable contract. Only records that speak the adapter protocol
+    # serving the family compete, so a service of another protocol never receives its work.
     selectable = {
         service_id: record for service_id, record in backends.items()
         if isinstance(record, Mapping) and isinstance(record.get("capabilities"), list)
+        and speaks_serving_adapter(record, capability)
     }
     selection = selected_service(selectable, capability)
     return selection[0] if selection is not None else None
