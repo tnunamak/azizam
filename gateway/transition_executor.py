@@ -67,6 +67,8 @@ DEFAULTS: dict[str, float] = {
 
 
 DEFAULT_FRESH_WITHIN_S = 2.0
+# How long a cancelled operation reads its row before it holds the gate anyway: the store's SQLite busy timeout.
+CANCEL_READ_DEADLINE_S = 5.0
 """How old evidence may be when the reviewed profile does not say. It is not an owner setting."""
 
 
@@ -585,8 +587,10 @@ class Executor:
             # A cancelled to_thread await does not stop finish: its commit may already be durable.
             current = None
             try:
-                current = await asyncio.to_thread(self.store.get, operation.op_id)
-            except Exception:  # noqa: BLE001 - an unreadable row still needs the conservative shutdown hold
+                # A stalled read must not keep the cancelled task and its domain lock alive; it holds instead.
+                current = await asyncio.wait_for(asyncio.to_thread(self.store.get, operation.op_id),
+                                                 CANCEL_READ_DEADLINE_S)
+            except Exception:  # noqa: BLE001 - an unreadable or late row still needs the conservative shutdown hold
                 pass
             finally:
                 # Preserve a terminal row's gate. An unfinished or unreadable row must reconcile before admission.

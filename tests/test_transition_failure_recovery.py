@@ -635,7 +635,12 @@ def test_cancelling_before_finish_reholds_the_gate(tmp_path, monkeypatch) -> Non
     _cancel_at_finish(tmp_path, monkeypatch, finished=False)
 
 
-def _cancel_at_finish(tmp_path, monkeypatch, *, finished: bool) -> None:
+def test_a_stalled_cancellation_read_still_holds_the_gate_and_releases_the_lock(tmp_path, monkeypatch) -> None:
+    """The cancellation reads the row to keep a finished gate open; a read that does not return in time holds instead."""
+    _cancel_at_finish(tmp_path, monkeypatch, finished=False, stall_read=True)
+
+
+def _cancel_at_finish(tmp_path, monkeypatch, *, finished: bool, stall_read: bool = False) -> None:
     gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
     engine.clean, engine.resident = True, "alpha"
     executor = runtime.executor()
@@ -669,7 +674,18 @@ def _cancel_at_finish(tmp_path, monkeypatch, *, finished: bool) -> None:
             finally:
                 loop.call_soon_threadsafe(worker_returned.set)
 
+        real_get = executor.store.get
+        stalled = threading.Event()  # set after the cancel: the handler's read then blocks until released
+
+        def get(op: str) -> Any:
+            if stalled.is_set() and op == op_id:
+                assert release_worker.wait(timeout=10.0), "the stalled read was not released"
+            return real_get(op)
+
         monkeypatch.setattr(executor.store, "finish", finish)
+        if stall_read:
+            monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.2)
+            monkeypatch.setattr(executor.store, "get", get)
         try:
             await asyncio.wait_for(executor.reconcile_startup(), timeout=10.0)
             task = executor._tasks[op_id]
@@ -679,10 +695,12 @@ def _cancel_at_finish(tmp_path, monkeypatch, *, finished: bool) -> None:
             expected_before = ("succeeded", "open") if finished else ("running", "closed")
             assert (before.state, gates.state("dom")) == expected_before
             assert not task.done(), "the finish worker must still be blocked"
+            if stall_read:
+                stalled.set()
             assert task.cancel(), "cancel the captured executor task, not the observer"
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
-            after = await asyncio.to_thread(executor.store.get, op_id)
+                await asyncio.wait_for(asyncio.shield(task), timeout=2.0 if stall_read else 10.0)
+            after = await asyncio.to_thread(real_get, op_id)
             assert after is not None
             expected_after = ("succeeded", "open") if finished else ("running", "reconciling")
             assert (after.state, gates.state("dom")) == expected_after
