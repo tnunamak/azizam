@@ -159,14 +159,30 @@ def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, s
     client, overlay, owner_id, plan_id = owner
     _install_description(overlay)
     # Step 3 now writes the record: the task and the model row come from the owner route.
-    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
-    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
+    _enabled_engine(client)
     key = _app_key(client, owner_id, plan_id)
     with gateway.client() as public:  # one event loop for the whole exchange, so the background job outlives the submit
         _submit_and_read(public, key, smell_engine)
 
 
-def _submit_and_read(public, key, smell_engine) -> None:
+def test_step6_the_job_leaves_a_receipt_and_shows_in_the_owner_activity(owner, smell_engine, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        job = _submit_and_read(public, key, smell_engine)
+    records = client.get("/admin/api/activity/requests")
+    assert records.status_code == 200, records.text
+    receipts = [r["receipt"] for r in records.json()["records"] if r["receipt"].get("intent") == "smell.infer"]
+    assert len(receipts) == 1, records.json()["records"]
+    receipt = receipts[0]
+    assert receipt["status"] == "succeeded" and receipt["backend"] == "smell-box" and receipt["job_id"] == job["id"]
+    assert receipt["path"] == "/gateway/v1/media/jobs"
+    assert "CCO" not in json.dumps(records.json())  # the receipt names the work, not its input or its result
+
+
+def _submit_and_read(public, key, smell_engine) -> dict:
     submitted = public.post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
                             json={"intent": "smell.infer", "model": "smell-1", "input": {"vector": [0.25, -1.5, 3.0, 0.0]}})
     assert submitted.status_code == 202, submitted.text
@@ -181,6 +197,7 @@ def _submit_and_read(public, key, smell_engine) -> None:
     content = public.get(job["content_url"], headers={"authorization": f"Bearer {key}"})
     assert content.status_code == 200, content.text
     assert content.content == MOLECULE
+    return job
 
 
 def _enabled_engine(client):
