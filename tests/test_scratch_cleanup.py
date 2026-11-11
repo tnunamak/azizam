@@ -119,6 +119,7 @@ exec 9>"$1/host.lock"
 flock -n 9
 dir=$(mktemp -d "$1/fake-XXXXXX")
 scratch_reap_on_death "$dir"
+sleep 0.5  # the watcher is running and has seen its owner alive, so it would hold an inherited lock until its next poll
 echo "$dir"
 """
     result = subprocess.run(["bash", "-c", script, "harness", str(tmp_path)], capture_output=True, text=True, timeout=10)

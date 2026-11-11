@@ -15,9 +15,10 @@ def test_a_records_priority(record, expected):
     assert service_priority(record) == expected
 
 
-def test_a_priority_that_is_not_a_whole_number_is_refused():
+@pytest.mark.parametrize("value", ["first", False, True])
+def test_a_priority_that_is_not_a_whole_number_is_refused(value):
     with pytest.raises(ValueError):
-        service_priority({"priority": "first"})
+        service_priority({"priority": value})
 
 
 def test_a_service_at_priority_zero_is_selected_over_one_at_ten():
