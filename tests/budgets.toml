@@ -961,7 +961,7 @@ ad_hoc_upstream_fake_files = 46
 # OpenAI model families read from registry/openai_model_families.yml (-2): 313.
 # The speech and transcription selection names each capability once (-1): 312.
 # The graph engine is selected by capability, so no fixed id is named (-1), and the three media resource classes are named once (-4): 307 (measured).
-domain_literals = 298  # 305 -> 298 (2026-11-11): the media job intents come from registry/media_job_intents.yml
+domain_literals = 289  # 298 -> 289 (2026-11-11): the video routes name the workflow by its manifest id, not by an intent-prefixed config key. 305 -> 298 (2026-11-11): the media job intents come from registry/media_job_intents.yml
 
 # XC task 1: model vocabularies and implication roles moved to capability_intent_metadata.yml.
 # XC task 2: binding names, managed input words and legacy role paths moved to frontend data.
