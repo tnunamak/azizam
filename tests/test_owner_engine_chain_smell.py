@@ -175,7 +175,7 @@ def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, s
 
 def test_step6_the_job_leaves_a_receipt_and_shows_in_the_owner_activity(owner, smell_engine, gateway):
     client, overlay, owner_id, plan_id = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     _enabled_engine(client)
     key = _app_key(client, owner_id, plan_id)
     with gateway.client() as public:
@@ -200,7 +200,7 @@ def _heard(process) -> dict:
 
 def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_without_a_restart(owner, gateway):
     client, overlay, owner_id, plan_id = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     # The second gateway is a separate process over the same admin database (as a second worker would be). It starts
     # before the engine exists, so nothing in its own configuration can know the engine.
     second = subprocess.Popen(
@@ -278,7 +278,7 @@ def _enabled_engine(client):
 
 def test_step4_an_intent_no_engine_declares_keeps_the_unsupported_refusal(owner, gateway):
     client, overlay, owner_id, plan_id = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     _enabled_engine(client)
     key = _app_key(client, owner_id, plan_id)
     headers = {"authorization": f"Bearer {key}"}
@@ -293,7 +293,7 @@ def test_step4_an_intent_no_engine_declares_keeps_the_unsupported_refusal(owner,
 
 def test_step4_the_input_must_be_a_json_object(owner, smell_engine, gateway):
     client, overlay, owner_id, plan_id = owner
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     _enabled_engine(client)
     key = _app_key(client, owner_id, plan_id)
     refused = gateway.client().post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
@@ -325,7 +325,7 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     public = gateway.client()  # no lifespan: nothing here runs a background job
     fake_upstreams.router.add("127.0.0.1:4011", EmptyModelCatalog())
     none_models, none_openapi, none_intents = _public_documents(public, key)
-    _install_description(overlay)
+    assert _install_description(client).status_code == 201
     # A description alone adds an engine to nothing: the documents are the bytes they were.
     assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
     # An engine record that is off adds no operation either. (Its mere presence moves some availability fields and
