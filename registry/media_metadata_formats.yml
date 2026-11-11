@@ -1,0 +1,65 @@
+# Container aliases for the metadata helpers. Handler names select existing algorithms.
+# Rows with a muxer use their first suffix when processing any listed MIME type.
+# Rows without a muxer intentionally contribute no MIME processing suffix.
+schema_version: 1
+formats:
+  - handler: png
+    suffixes: [.png]
+    mime_types: [image/png]
+  - handler: jpeg
+    suffixes: [.jpg, .jpeg, .jpe, .jfif]
+    mime_types: [image/jpeg, image/jpg]
+  - handler: webp
+    suffixes: [.webp]
+    mime_types: [image/webp]
+  - handler: video
+    suffixes: [.mp4, .m4v]
+    mime_types: [video/mp4]
+    muxer: mp4
+  - handler: video
+    suffixes: [.mov]
+    mime_types: [video/quicktime]
+    muxer: mov
+  - handler: video
+    suffixes: [.webm]
+    mime_types: [video/webm]
+    muxer: webm
+  - handler: video
+    suffixes: [.mkv]
+    mime_types: [video/x-matroska]
+    muxer: matroska
+  - handler: video
+    suffixes: [.avi]
+    mime_types: [video/x-msvideo]
+    muxer: avi
+  - handler: null
+    suffixes: [.gif]
+    mime_types: []
+  - handler: audio
+    suffixes: [.wav]
+    mime_types: [audio/wav, audio/x-wav, audio/wave, audio/vnd.wave]
+    muxer: wav
+  - handler: audio
+    suffixes: [.flac]
+    mime_types: [audio/flac, audio/x-flac]
+    muxer: flac
+  - handler: audio
+    suffixes: [.mp3]
+    mime_types: [audio/mpeg, audio/mp3]
+    muxer: mp3
+  - handler: audio
+    suffixes: [.ogg, .oga, .opus]
+    mime_types: [audio/ogg, audio/opus]
+    muxer: ogg
+  - handler: audio
+    suffixes: [.m4a]
+    mime_types: [audio/mp4, audio/x-m4a, audio/m4a]
+    muxer: mp4
+  - handler: audio
+    suffixes: [.aac]
+    mime_types: [audio/aac]
+    muxer: adts
+  - handler: audio
+    suffixes: [.mka]
+    mime_types: [audio/x-matroska]
+    muxer: matroska

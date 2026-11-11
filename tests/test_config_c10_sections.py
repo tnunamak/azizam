@@ -129,3 +129,15 @@ def test_for_the_owner_each_of_them_answers_as_an_unknown_route_does(live):
         answer = client.request(method, path, headers=headers, json={} if method == "POST" else None)
         assert answer.status_code in (401, 404, 405), (method, path, answer.status_code)
         assert answer.status_code == unknown[method].status_code and answer.json() == unknown[method].json(), (method, path)
+
+
+def test_an_owner_edit_of_the_models_section_reaches_the_catalog_readers_without_a_restart():
+    from tests.support.config_snapshot import section_published
+
+    backend = next(iter(proxy.config.get("backends") or {}))
+    entry = {"backend": backend, "path": "/models/fixture-edit.gguf"}
+    assert "fixture-edit" not in proxy._models_catalog()
+    with section_published("models", {"fixture-edit": entry}):
+        assert proxy._models_catalog()["fixture-edit"]["path"] == "/models/fixture-edit.gguf"
+        assert proxy._configured_model_record_for_id("fixture-edit")[0] == backend
+    assert "fixture-edit" not in proxy._models_catalog()

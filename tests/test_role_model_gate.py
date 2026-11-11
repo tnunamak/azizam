@@ -70,7 +70,7 @@ def _role_entries(roles: dict, backends: dict | None = None) -> list[dict]:
     with (
         patch.dict(proxy.config, {"backends": backends or {}}),
         section_published("roles", roles),
-        patch.object(proxy, "MODELS_CATALOG", {}),
+        patch.object(proxy, "_models_catalog", lambda: {}),
         derived_patch("EMBEDDINGS_ENABLED", False),
     ):
         return proxy._build_role_catalog_entries()
@@ -372,7 +372,7 @@ class TestRoleIsAlarmOnly(unittest.TestCase):
         with (
             patch.dict(proxy.config, {"backends": backends}),
             section_published("roles", {}),
-            patch.object(proxy, "MODELS_CATALOG", {}),
+            patch.object(proxy, "_models_catalog", lambda: {}),
         ):
             backend, record = proxy._configured_model_record_for_id("special-model")
         # The standby service is still resolvable — role does not gate resolution.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from gateway.compat import get_env
 from gateway import log_scrub
+from gateway.service_priority import service_priority
 
 from dataclasses import dataclass
 import asyncio
@@ -182,7 +183,7 @@ def _litellm_service_candidates(
         service.setdefault("id", service_id)
         if is_litellm_service_record(service_id, service):
             candidates.append(service)
-    return sorted(candidates, key=lambda item: int(item.get("priority") or 100))
+    return sorted(candidates, key=service_priority)
 
 
 def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:

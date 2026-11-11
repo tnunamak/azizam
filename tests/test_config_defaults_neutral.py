@@ -393,6 +393,22 @@ def test_the_release_defaults_are_neutral():
     assert not found, "\n".join(found)
 
 
+def test_every_workflow_file_the_release_names_ships_in_the_repository():
+    # The neutrality check above reads ids, not files: a household graph path would pass it while its id is shipped.
+    documents = release_documents()
+    declared = {entry["file"] for section in ("audio", "videos") for entry in documents[f"{section}.yml"]["workflows"].values()}
+    declared |= set(documents["images.yml"]["graph_roles"])
+    bundled = {path.relative_to(ROOT).as_posix() for path in (ROOT / "workflows").rglob("*.json") if not path.name.endswith(".ui.json")}
+    assert declared and declared <= bundled, sorted(declared - bundled)
+
+
+def test_the_release_names_no_model_listing_but_openais_and_no_owner_choice():
+    documents = release_documents()
+    assert documents["model_compatibility.yml"]["openai_models_api_url"] == "https://api.openai.com/v1/models"
+    # These sections hold only an owner's choices; the release ships them empty.
+    assert all(documents[f"{name}.yml"] == {} for name in ("identity", "models", "roles", "service_availability"))
+
+
 def comment_problems(name: str, text: str) -> list[str]:
     """Host paths and addresses on any line of a default file, comments included."""
     found = []
@@ -633,8 +649,10 @@ def test_stable_names_and_engine_ids_are_read_from_the_section_shape():
 
 
 def test_the_release_stable_names_resolve_to_shipped_ids_or_nothing():
-    stable = {n: t for body in yaml.safe_load((DEFAULTS / "model_aliases.yml").read_text(encoding="utf-8")).values() for n, t in body["stable"].items()}
-    assert stable and all(target is None for target in stable.values())
+    # Per operation: one name (image, image-fast) can appear under two operations, and a flattened map would keep one.
+    document = yaml.safe_load((DEFAULTS / "model_aliases.yml").read_text(encoding="utf-8"))
+    targets = [target for body in document.values() for target in body["stable"].values()]
+    assert targets and all(target is None for target in targets)
 
 
 def test_a_shipped_service_workflow_or_model_passes():

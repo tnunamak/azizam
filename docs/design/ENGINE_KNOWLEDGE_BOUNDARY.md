@@ -277,8 +277,8 @@ is the *content* of a config row.
 |---|---|---|---|
 | `voxtral-voices` | transforms.py:887 | `value-map` (voice) | seed transform row, attached to speech service |
 | `ollama-unsupported-params` | transforms.py:968 | `drop-params` | seed transform row |
-| `llamacpp-cache-prompt` | transforms.py:986 | `default-params` | seed transform row |
-| `mistral-penalty-clamp` | transforms.py:998 | `clamp` ×2 | seed transform row |
+| `llamacpp-cache-prompt` | `registry/transform_packs.yml` | `default-params` | seed transform row, loaded and validated through `REGISTRY.register` |
+| `mistral-penalty-clamp` | `registry/transform_packs.yml` | `clamp` ×2 | seed transform row, loaded and validated through `REGISTRY.register` |
 | `tabby-penalty-floor` | transforms.py:1020 | `clamp` ×2 | seed transform row |
 | `TOOLCALL_MARKERS` table | toolcall_detection.py:52 | data table (5 tuples) | **stays as data, already on the right side** — see note |
 | `PROVIDER_PRESETS` | service_registry.py:503 | preset dicts | stays data; gains optional `transforms` list |

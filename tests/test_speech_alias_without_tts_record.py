@@ -30,12 +30,15 @@ class SpeechWithoutTtsRecordTests(CustomVoiceRouteCase):
         self.assertIn("TTS not enabled", resp.text)
         self.assertEqual(_FakeClient.requests, [])
 
-    def test_the_operator_tts_override_still_blocks_an_alias_request(self) -> None:
+    def test_the_default_services_operator_override_still_blocks_an_alias_request(self) -> None:
         from unittest.mock import patch
 
         import proxy
 
-        overrides = {"service_availability": {"tts": {"state": "maintenance", "retry_after_seconds": 31}}, "media_job_admission": {}}
+        # The override that blocks every speech request is the one on the selected default speech service.
+        default_id = proxy._speech_service()[0]
+        self.assertNotEqual(default_id, proxy.resolve_model_for_operation("speech", "chatterbox").alias.service)
+        overrides = {"service_availability": {default_id: {"state": "maintenance", "retry_after_seconds": 31}}, "media_job_admission": {}}
         with patch.object(proxy.ADMIN_STORE, "operator_overrides", return_value=overrides):
             resp = self.speak("alloy", model="chatterbox")
         self.assertEqual(resp.status_code, 503, resp.text)

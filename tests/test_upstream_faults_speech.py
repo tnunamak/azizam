@@ -34,6 +34,7 @@ async def _open(fake: FakeUpstream):
             stream_format="audio",
             response_format="pcm",
             native_rate=24000,
+            service_id="tts",
         )
 
 

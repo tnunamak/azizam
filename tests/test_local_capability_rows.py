@@ -226,3 +226,115 @@ def test_loader_keeps_file_order_instead_of_sorting(tmp_path):
     aliases, families = local.load_local_capability_rows(write_rows(tmp_path, value))
     assert list(aliases) == ["chat", "aaa"]
     assert [row[0] for row in families] == ["videos", "aaa"]
+
+
+def _literal_speech_row():
+    # Pin the complete base-row constructor, independently of the loaded YAML.
+    return local.Capability(
+        intent="speech.synthesis", backend="voice-one", capability="speech",
+        input_modalities=("text",), output_modalities=("audio",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+        tags=(
+            "response_format:wav", "response_format:mp3", "response_format:opus",
+            "response_format:aac", "response_format:flac", "response_format:pcm",
+        ),
+    )
+
+
+def _rows_for_voice_one(capabilities, *, enabled_flags=None):
+    return local.build_local_capabilities(
+        {}, backends={"voice-one": {"capabilities": capabilities}},
+        enabled_flags=enabled_flags,
+    )
+
+
+def test_audio_speech_matches_legacy_row_and_tts_flag():
+    expected = [_literal_speech_row()]
+    for flags in (None, {}, {"tts": True}, {"speech": False, "audio.speech": False}):
+        canonical = _rows_for_voice_one(["audio.speech"], enabled_flags=flags)
+        legacy = _rows_for_voice_one(["speech"], enabled_flags=flags)
+        assert len(canonical) == 1
+        assert canonical == legacy == expected
+    for trigger in ("audio.speech", "speech"):
+        assert _rows_for_voice_one([trigger], enabled_flags={"tts": False}) == []
+
+
+@pytest.mark.parametrize("capabilities", [
+    ["audio.speech", "audio.speech"],
+    ["audio.speech", "speech"],
+])
+def test_audio_speech_aliases_emit_one_literal_row(capabilities):
+    rows = _rows_for_voice_one(capabilities)
+    assert len(rows) == 1
+    assert rows == [_literal_speech_row()]
+
+
+def test_all_preexisting_backend_triggers_keep_literal_rows():
+    # Synthetic coverage of every preexisting trigger, not a shipped-service
+    # inventory. Values below come from the base YAML, not the loaded tables.
+    chat = local.Capability(
+        intent="chat.completions", backend="voice-one",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+    )
+    vision_chat = local.Capability(
+        intent="chat.completions", backend="voice-one",
+        input_modalities=("text", "image"), output_modalities=("text",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+    )
+    completion = local.Capability(
+        intent="text.completions", backend="voice-one",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=True,
+        resources=local.ResourceEstimate(gpu_required=True),
+    )
+    embedding = local.Capability(
+        intent="text.embeddings", backend="voice-one",
+        input_modalities=("text",), output_modalities=("text",),
+        execution="sync", streaming=False,
+        resources=local.ResourceEstimate(gpu_required=False),
+    )
+    transcription = local.Capability(
+        intent="speech.transcription", backend="voice-one",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False,
+        resources=local.ResourceEstimate(gpu_required=True),
+        action_label="Transcribe", recordable_inputs=("audio",),
+    )
+    translation = local.Capability(
+        intent="speech.translation", backend="voice-one",
+        input_modalities=("audio",), output_modalities=("text",),
+        execution="sync", streaming=False,
+        resources=local.ResourceEstimate(gpu_required=True),
+        action_label="Translate", recordable_inputs=("audio",),
+        caveats=(
+            "Only advertised when the local STT backend declares translation support.",
+        ),
+    )
+    speech = _literal_speech_row()
+    cases = [
+        (["chat"], [chat]),
+        (["chat", "vision"], [vision_chat]),
+        (["completions"], [completion]),
+        (["embeddings"], [embedding]),
+        (["speech"], [speech]),
+        (["tts"], [speech]),
+        (["transcriptions"], [transcription]),
+        (["stt"], [transcription]),
+        (["audio.transcriptions"], [transcription]),
+        (["translations"], [translation]),
+        (["translation"], [translation]),
+        (
+            [
+                "chat", "vision", "completions", "embeddings", "speech", "tts",
+                "transcriptions", "stt", "audio.transcriptions",
+                "translations", "translation",
+            ],
+            [vision_chat, completion, embedding, speech, transcription, translation],
+        ),
+    ]
+    for capabilities, expected in cases:
+        assert _rows_for_voice_one(capabilities) == expected, capabilities

@@ -431,7 +431,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         patches = [
             patch.object(proxy, "config", cfg),
             section_published("roles", {}),
-            patch.object(proxy, "MODELS_CATALOG", {}),
+            patch.object(proxy, "_models_catalog", lambda: {}),
             derived_patch("LLM_BACKEND_HOSTS", {
                 name: record["base_url"] for name, record in self.backends.items()}),
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
@@ -493,7 +493,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         target = self._route_current()
         self.assertEqual(target.model, "loaded-kobold")
         self.assertEqual(proxy._roles(), {})
-        self.assertEqual(proxy.MODELS_CATALOG, {})
+        self.assertEqual(proxy._models_catalog(), {})
         self.assertNotEqual(self.backends["kobold"]["models"][0]["id"], target.model)
         self.assertNotEqual(self.backends["kobold"]["models"][0]["model"], target.model)
         activation = proxy._configured_litellm_local_model_target("private-public", service_id="kobold")

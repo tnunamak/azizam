@@ -45,7 +45,10 @@ from __future__ import annotations
 import ast
 import re
 import textwrap
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -442,22 +445,25 @@ def _check_primitive_vocabulary_closed() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Check 6: engine-knowledge RATCHET (no allowlist, counts only fall)
+# Check 6: engine-knowledge RATCHET (unreviewed counts only fall)
 #
 # Check 1 only sees engine literals inside branch conditions and only for LLM
 # engine names. The audit (engine-knowledge-audit-2026-10-12) found ~95 items
 # of engine knowledge that pass it: media engines, literals passed as
 # arguments, `engine_id == "omnivoice"`, engine-named identifiers.
 #
-# This check counts EVERY engine-name hit in production Python, per file, and
-# compares the count with tests/engine_knowledge_baseline.json:
+# This check counts engine-name hits in production Python, per file, subtracts
+# exact reviewed literals in tests/engine_knowledge_reviewed.yml, and compares
+# the remaining count with tests/engine_knowledge_baseline.json:
 #   - a count above its baseline fails (new engine knowledge);
 #   - a file with hits that is not in the baseline fails (new file);
 #   - a count below its baseline fails too, until the baseline is lowered, so
 #     a deletion cannot be given back later.
 # Lower the baseline with:  python tests/test_engine_knowledge_boundary.py --lower-baseline
-# The tool refuses to raise a count. There is no allowlist: the target is an
-# empty baseline.
+# The tool refuses to raise a count. The target is an empty unreviewed baseline.
+# Reviewed protocol fields, file formats, wire values and documentation examples
+# have bounded exact file/literal allowances, with a category and reason. Stale
+# or over-counted entries fail; new occurrences and identifiers still count.
 #
 # A "hit" is one AST node, outside docstrings, whose text names an engine:
 # a string literal, a name, an attribute, a def/class name, an argument name
@@ -468,6 +474,7 @@ def _check_primitive_vocabulary_closed() -> list[str]:
 # ---------------------------------------------------------------------------
 
 _BASELINE_PATH = Path(__file__).parent / "engine_knowledge_baseline.json"
+_REVIEWED_PATH = Path(__file__).parent / "engine_knowledge_reviewed.yml"
 
 _ENGINE_KNOWLEDGE_PATTERN = re.compile(
     r"(?<![a-z])(?:"
@@ -500,40 +507,97 @@ def _docstring_ids(tree: ast.AST) -> set[int]:
     return ids
 
 
-def _count_engine_knowledge(source: str, filename: str = "<source>") -> int:
+def _engine_knowledge_sites(source: str, filename: str = "<source>") -> list[tuple[int, str, bool]]:
+    """(line, exact text, is_string_literal) for each raw engine-knowledge hit."""
     tree = ast.parse(source, filename=filename)
     skip = _docstring_ids(tree)
-    hits = 0
+    found: list[tuple[int, str, bool]] = []
     for node in ast.walk(tree):
-        texts: list[str] = []
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
-            texts.append(node.value)
+        text = None
+        literal = isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip
+        if literal:
+            text = node.value
         elif isinstance(node, ast.Name):
-            texts.append(node.id)
+            text = node.id
         elif isinstance(node, ast.Attribute):
-            texts.append(node.attr)
+            text = node.attr
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            texts.append(node.name)
+            text = node.name
         elif isinstance(node, ast.arg):
-            texts.append(node.arg)
+            text = node.arg
         elif isinstance(node, ast.keyword) and node.arg:
-            texts.append(node.arg)
-        if any(_ENGINE_KNOWLEDGE_PATTERN.search(text) for text in texts):
-            hits += 1
-    return hits
+            text = node.arg
+        if text is not None and _ENGINE_KNOWLEDGE_PATTERN.search(text):
+            found.append((node.lineno, text, literal))
+    return sorted(found)
+
+
+def _count_engine_knowledge(source: str, filename: str = "<source>") -> int:
+    """Raw hits, before applying reviewed literal allowances."""
+    return len(_engine_knowledge_sites(source, filename))
+
+
+def _partition_reviewed_engine_knowledge(
+    found: dict[str, list[tuple[int, str, bool]]], reviewed_path: Path = _REVIEWED_PATH,
+) -> tuple[dict[str, list[tuple[int, str, bool]]], dict[str, list[tuple[int, str, bool]]]]:
+    """Apply tests/engine_knowledge_reviewed.yml without exempting identifiers."""
+    document = yaml.safe_load(reviewed_path.read_text(encoding="utf-8"))
+    assert isinstance(document, dict), f"{reviewed_path}: expected a mapping"
+    unknown = set(document) - {"schema_version", "sites"}
+    assert not unknown, f"{reviewed_path}: unknown keys {sorted(map(str, unknown))}"
+    assert type(document.get("schema_version")) is int and document["schema_version"] == 1, (
+        f"{reviewed_path}: schema_version must be 1"
+    )
+    assert isinstance(document.get("sites"), list), f"{reviewed_path}: sites must be a list"
+    remaining: dict[tuple[str, str], int] = {}
+    fields = {"file", "literal", "count", "category", "reason"}
+    categories = {"protocol_field", "file_format", "wire_value", "doc_example"}
+    for index, entry in enumerate(document["sites"]):
+        label = f"{reviewed_path.name} sites[{index}]"
+        assert isinstance(entry, dict), f"{label}: expected a mapping"
+        unknown = set(entry) - fields
+        assert not unknown, f"{label}: unknown keys {sorted(map(str, unknown))}"
+        assert fields <= set(entry), f"{label}: missing keys {sorted(fields - set(entry))}"
+        for field in ("file", "literal", "category", "reason"):
+            assert isinstance(entry[field], str) and entry[field].strip(), f"{label}: {field} must be non-empty text"
+        file, literal, count = entry["file"], entry["literal"], entry["count"]
+        label += f" ({file}, {literal!r}, count={count!r})"
+        file_path = PurePosixPath(file)
+        assert not file_path.is_absolute() and ".." not in file_path.parts and str(file_path) == file \
+            and "\\" not in file and file != ".", f"{label}: file must be a repository-relative path"
+        assert type(count) is int and count > 0, f"{label}: count must be a positive integer"
+        assert entry["category"] in categories, f"{label}: unknown category {entry['category']!r}"
+        key = (file, literal)
+        assert key not in remaining, f"{label}: duplicate file/literal allowance for {file} {literal!r}"
+        actual = sum(is_literal and text == literal for _line, text, is_literal in found.get(file, []))
+        assert count <= actual, f"{label}: stale entry reviews {count} sites but only {actual} were found"
+        remaining[key] = count
+
+    reviewed: dict[str, list[tuple[int, str, bool]]] = {}
+    unreviewed: dict[str, list[tuple[int, str, bool]]] = {}
+    for file, rows in found.items():
+        for row in rows:
+            key = (file, row[1])
+            if row[2] and remaining.get(key, 0):
+                reviewed.setdefault(file, []).append(row)
+                remaining[key] -= 1
+            else:
+                unreviewed.setdefault(file, []).append(row)
+    return reviewed, unreviewed
 
 
 def _engine_knowledge_counts(
-    _sources: dict[str, str] | None = None,
+    _sources: dict[str, str] | None = None, *, reviewed_path: Path = _REVIEWED_PATH,
 ) -> dict[str, int]:
-    """Hits per file; files without hits are omitted."""
+    """Unreviewed hits per file; files without unreviewed hits are omitted."""
     if _sources is None:
         _sources = {
             path.relative_to(_REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
             for path in _production_files()
         }
-    counts = {rel: _count_engine_knowledge(src, rel) for rel, src in sorted(_sources.items())}
-    return {rel: n for rel, n in counts.items() if n}
+    found = {rel: _engine_knowledge_sites(src, rel) for rel, src in sorted(_sources.items())}
+    _reviewed, unreviewed = _partition_reviewed_engine_knowledge(found, reviewed_path)
+    return {rel: len(rows) for rel, rows in unreviewed.items()}
 
 
 def _load_baseline() -> dict[str, int]:
@@ -859,9 +923,11 @@ class TestEngineKnowledgeRatchet:
         assert any("gateway/a.py" in v for v in _ratchet_violations({"proxy.py": 3}, baseline))
 
     def test_mutant_new_engine_literal_branch_fails_the_ratchet(self) -> None:
+        # Reviewed files can now have zero unreviewed hits and leave the baseline.
+        # Scan the full production scope so their allowances can still be validated.
         sources = {
-            rel: (_REPO_ROOT / rel).read_text(encoding="utf-8")
-            for rel in _load_baseline()
+            path.relative_to(_REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
+            for path in _production_files()
         }
         assert _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline()) == []
         sources["gateway/lifecycle_drivers.py"] += '\n\ndef _mutant(engine_id):\n    if engine_id == "newengine-flux9":\n        return 1\n'
@@ -869,6 +935,160 @@ class TestEngineKnowledgeRatchet:
         violations = _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline())
         assert any("gateway/lifecycle_drivers.py" in v and "rose" in v for v in violations)
         assert any("gateway/brand_new_module.py" in v and "new file" in v for v in violations)
+
+
+class TestReviewedEngineKnowledge:
+    """Reviewed literals lower the ratchet without opening an exemption hole."""
+
+    @staticmethod
+    def _write_review(path: Path, entries: list[dict], **extra) -> None:
+        path.write_text(yaml.safe_dump({"schema_version": 1, "sites": entries, **extra}), encoding="utf-8")
+
+    @staticmethod
+    def _entry(**changes) -> dict:
+        return {
+            "file": "gateway/sample.py", "literal": "mmproj", "count": 1,
+            "category": "protocol_field", "reason": "Names a projector-file configuration field.",
+            **changes,
+        }
+
+    def test_reviewed_sites_are_bounded_exact_literals(self, tmp_path) -> None:
+        sources = {
+            "gateway/sample.py": 'mmproj = "mmproj"\ncopy = "mmproj"\ncase = "MMPROJ"\nother = "activation_mmproj"\n',
+            "gateway/other.py": 'field = "mmproj"\n',
+        }
+        path = tmp_path / "reviewed.yml"
+        self._write_review(path, [self._entry()])
+        found = {rel: _engine_knowledge_sites(source, rel) for rel, source in sources.items()}
+        reviewed, unreviewed = _partition_reviewed_engine_knowledge(found, path)
+        assert reviewed == {"gateway/sample.py": [(1, "mmproj", True)]}
+        assert (1, "mmproj", False) in unreviewed["gateway/sample.py"]
+        assert _engine_knowledge_counts(sources, reviewed_path=path) == {
+            "gateway/sample.py": 4, "gateway/other.py": 1,
+        }
+        assert len(found["gateway/sample.py"]) == 5  # Partitioning must not mutate the scan.
+
+    def test_stale_and_over_counted_entries_fail(self, tmp_path) -> None:
+        path = tmp_path / "reviewed.yml"
+        found = {"gateway/sample.py": _engine_knowledge_sites('field = "mmproj"\n')}
+        for changes in ({"count": 2}, {"file": "gateway/missing.py"}, {"literal": "MMPROJ"}):
+            entry = self._entry(**changes)
+            self._write_review(path, [entry])
+            with pytest.raises(AssertionError) as exc:
+                _partition_reviewed_engine_knowledge(found, path)
+            message = str(exc.value)
+            assert "stale" in message
+            assert entry["file"] in message and repr(entry["literal"]) in message
+            assert f"count={entry['count']}" in message
+        self._write_review(path, [self._entry()])
+        with pytest.raises(AssertionError, match="stale.*only 0"):
+            _partition_reviewed_engine_knowledge(
+                {"gateway/sample.py": _engine_knowledge_sites("mmproj = 1\n")}, path,
+            )
+
+    def test_unknown_review_category_is_rejected(self, tmp_path) -> None:
+        path = tmp_path / "reviewed.yml"
+        self._write_review(path, [self._entry(category="engine")])
+        with pytest.raises(AssertionError, match="category.*engine"):
+            _engine_knowledge_counts({"gateway/sample.py": 'field = "mmproj"\n'}, reviewed_path=path)
+
+    def test_review_schema_is_strict(self, tmp_path) -> None:
+        path = tmp_path / "reviewed.yml"
+        sources = {"gateway/sample.py": 'field = "mmproj"\n'}
+        entry = self._entry()
+        for field, value in (
+            ("count", True), ("count", 0), ("count", -1), ("count", 1.5),
+            ("literal", ""), ("reason", " "), ("file", "../sample.py"),
+            ("file", "/gateway/sample.py"), ("file", "gateway\\sample.py"),
+        ):
+            self._write_review(path, [{**entry, field: value}])
+            with pytest.raises(AssertionError, match=field):
+                _engine_knowledge_counts(sources, reviewed_path=path)
+        for document, message in (
+            ({"schema_version": True, "sites": [entry]}, "schema_version"),
+            ({"schema_version": 1, "sites": {}}, "sites must be a list"),
+            ({"schema_version": 1, "sites": [entry], "extra": []}, "unknown keys"),
+            ({"schema_version": 1, "sites": [{**entry, "line": 1}]}, "unknown keys"),
+            ({"schema_version": 1, "sites": [{key: value for key, value in entry.items() if key != "reason"}]}, "missing keys"),
+            ({"schema_version": 1, "sites": [entry, entry]}, "duplicate"),
+            ({"schema_version": 1, "sites": [None]}, "expected a mapping"),
+            ([], "expected a mapping"),
+        ):
+            path.write_text(yaml.safe_dump(document), encoding="utf-8")
+            with pytest.raises(AssertionError, match=message):
+                _engine_knowledge_counts(sources, reviewed_path=path)
+
+    def test_all_review_categories_are_supported(self, tmp_path) -> None:
+        path = tmp_path / "reviewed.yml"
+        for category in ("protocol_field", "file_format", "wire_value", "doc_example"):
+            self._write_review(path, [self._entry(category=category)])
+            assert _engine_knowledge_counts(
+                {"gateway/sample.py": 'field = "mmproj"\n'}, reviewed_path=path,
+            ) == {}
+
+    def test_new_engine_and_extra_reviewed_literal_mutants_still_fail(self, tmp_path) -> None:
+        path = tmp_path / "reviewed.yml"
+        self._write_review(path, [self._entry()])
+        original = 'field = "mmproj"\nother = "whisper"\n'
+        baseline = {"gateway/sample.py": 1}
+        assert _ratchet_violations(_engine_knowledge_counts(
+            {"gateway/sample.py": original}, reviewed_path=path,
+        ), baseline) == []
+        for addition in ('new = "newengine-flux9"\n', 'duplicate = "mmproj"\n', "mmproj = 1\n"):
+            counts = _engine_knowledge_counts(
+                {"gateway/sample.py": original + addition}, reviewed_path=path,
+            )
+            assert any("rose 1 -> 2" in violation for violation in _ratchet_violations(counts, baseline))
+
+    def test_seeded_entries_review_exactly_four_hits(self) -> None:
+        document = yaml.safe_load(_REVIEWED_PATH.read_text(encoding="utf-8"))
+        assert len(document["sites"]) == 4
+        assert {(entry["file"], entry["literal"], entry["count"], entry["category"]) for entry in document["sites"]} == {
+            ("gateway/model_files.py", "mmproj", 1, "protocol_field"),
+            ("gateway/model_files.py", "activation_mmproj", 1, "protocol_field"),
+            ("gateway/model_ids.py", r"\.(?:gguf|safetensors|ckpt|onnx|bin)$", 1, "file_format"),
+            ("gateway/local_capabilities.py", "mmproj", 1, "protocol_field"),
+        }
+        sources = {
+            entry["file"]: (_REPO_ROOT / entry["file"]).read_text(encoding="utf-8")
+            for entry in document["sites"]
+        }
+        raw = {rel: _count_engine_knowledge(source, rel) for rel, source in sources.items()}
+        assert raw == {
+            "gateway/model_files.py": 2, "gateway/model_ids.py": 1,
+            "gateway/local_capabilities.py": 3,
+        }
+        counts = _engine_knowledge_counts(sources)
+        assert counts == {"gateway/local_capabilities.py": 2}
+        assert sum(raw.values()) - sum(counts.values()) == 4
+
+    def test_lower_baseline_uses_reviewed_counts_and_refuses_increases(self, tmp_path, monkeypatch) -> None:
+        import json
+
+        document = yaml.safe_load(_REVIEWED_PATH.read_text(encoding="utf-8"))
+        paths = sorted({_REPO_ROOT / entry["file"] for entry in document["sites"]})
+        baseline = tmp_path / "baseline.json"
+        raw = {
+            path.relative_to(_REPO_ROOT).as_posix(): _count_engine_knowledge(path.read_text(encoding="utf-8"))
+            for path in paths
+        }
+        baseline.write_text(json.dumps({"files": raw}), encoding="utf-8")
+        monkeypatch.setitem(globals(), "_BASELINE_PATH", baseline)
+        monkeypatch.setitem(globals(), "_production_files", lambda: paths)
+        _lower_baseline()
+        assert _load_baseline() == {"gateway/local_capabilities.py": 2}
+        _lower_baseline()  # The lowered baseline is idempotent.
+        baseline.write_text('{"files": {"gateway/local_capabilities.py": 1}}\n', encoding="utf-8")
+        with pytest.raises(SystemExit, match="refusing to raise"):
+            _lower_baseline()
+        assert _load_baseline() == {"gateway/local_capabilities.py": 1}
+
+    def test_reviewed_literals_do_not_disable_engine_branch_guard(self, tmp_path) -> None:
+        path = tmp_path / "reviewed.yml"
+        self._write_review(path, [self._entry(literal="vllm", category="doc_example")])
+        source = 'if backend == "vllm": pass\n'
+        assert _engine_knowledge_counts({"gateway/sample.py": source}, reviewed_path=path) == {}
+        assert _check_engine_named_branches([("gateway/sample.py", source.splitlines())])
 
 
 if __name__ == "__main__":

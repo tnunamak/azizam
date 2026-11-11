@@ -16,6 +16,7 @@ Features:
 """
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
+from gateway.service_priority import service_priority
 from gateway import engine_egress, engine_record_defaults
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.frontend_shapes.video_views import VideoViews
@@ -943,7 +944,7 @@ def _highest_priority_chat_backend() -> Optional[str]:
         bcfg = backends.get(bid)
         if not isinstance(bcfg, Mapping):
             continue
-        priority = int(bcfg.get("priority") or 100)
+        priority = service_priority(bcfg)
         candidates.append((priority, bid))
     if not candidates:
         return None
@@ -967,7 +968,7 @@ def vision_capable_llm_backends() -> list[str]:
         caps = {str(c).strip().lower() for c in (bcfg.get("capabilities") or []) if str(c).strip()}
         if "vision" not in caps:
             continue
-        priority = int(bcfg.get("priority") or 100)
+        priority = service_priority(bcfg)
         result.append((priority, bid))
     result.sort()
     return [bid for _, bid in result]
@@ -977,8 +978,12 @@ def backends_for_capability(
     capability: str,
     *,
     backends: Mapping[str, Any] | None = None,
+    include_disabled: bool = False,
 ) -> list[str]:
     """Return ids of enabled backends that declare *capability*, ordered by priority (asc).
+
+    ``include_disabled`` keeps disabled backends in the order too, for a caller that selects a role's service and then
+    treats a disabled selection as off (``_selected_service``).
 
     Mirrors the §2.1 resolution algorithm: scan config["backends"], keep every
     backend that is enabled and whose capabilities list includes the requested
@@ -1010,7 +1015,7 @@ def backends_for_capability(
     for bid, bcfg in backends.items():
         if not isinstance(bcfg, Mapping):
             continue
-        if not bool_from_config(bcfg.get("enabled"), True):
+        if not include_disabled and not bool_from_config(bcfg.get("enabled"), True):
             continue
         caps = {str(c).strip().lower() for c in (bcfg.get("capabilities") or []) if str(c).strip()}
         # Match either the full compound string or all component parts.
@@ -1020,7 +1025,7 @@ def backends_for_capability(
             matched = cap in caps
         if not matched:
             continue
-        priority = int(bcfg.get("priority") or 100)
+        priority = service_priority(bcfg)
         result.append((priority, bid))
     result.sort()
     return [bid for _, bid in result]
@@ -1044,6 +1049,42 @@ def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | N
             continue
         return service_id, service
     return None
+
+
+# The speech, transcription and embeddings services are the services selected for these capabilities, never records of
+# a fixed id.
+_SPEECH_CAPABILITY = "audio.speech"
+_TRANSCRIPTION_CAPABILITY = "audio.transcriptions"
+_EMBEDDINGS_CAPABILITY = "embeddings"
+
+
+def _selected_service(backends: Mapping[str, Any], capability: str) -> tuple[str, Mapping[str, Any]] | None:
+    """The highest-priority record in *backends* that declares *capability* (ties go to the lower id), or None.
+
+    Pure: the boot and a reload select from the candidate config they are deriving. A selected record that is disabled
+    or names no address is still the selection: the service is off, and no other service takes its place (as when the
+    role was the record of a fixed id).
+    """
+    for service_id in backends_for_capability(capability, backends=backends, include_disabled=True):
+        record = backends.get(service_id)
+        if isinstance(record, Mapping):
+            return service_id, record
+    return None
+
+
+def _speech_service() -> tuple[str, Mapping[str, Any]] | None:
+    """The selected speech service in the live config."""
+    return _selected_service(config.get("backends") or {}, _SPEECH_CAPABILITY)
+
+
+def _transcription_service() -> tuple[str, Mapping[str, Any]] | None:
+    """The selected transcription service in the live config."""
+    return _selected_service(config.get("backends") or {}, _TRANSCRIPTION_CAPABILITY)
+
+
+def _embeddings_service() -> tuple[str, Mapping[str, Any]] | None:
+    """The selected embeddings service in the live config."""
+    return _selected_service(config.get("backends") or {}, _EMBEDDINGS_CAPABILITY)
 
 
 def host_for_capability(capability: str) -> str | None:
@@ -1104,7 +1145,7 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
-# All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
+# All models catalog entries require a local file path (this is a GGUF catalog).
 # Any enabled registry backend may appear here.
 def _extra_model_entries(raw) -> dict:
     """The ``models`` section as ``{normalized id: entry}``. The section is a mapping of the model name a client sends
@@ -1145,14 +1186,11 @@ def _normalize_models_catalog(raw) -> dict:
     return out
 
 
-MODELS_CATALOG = _normalize_models_catalog(config.get("models"))
+def _models_catalog() -> dict:
+    """The models section of the live config, normalized; read on each call, so an owner's edit applies to the next request."""
+    return _normalize_models_catalog(config.get("models"))
 
-# TTS backend
-tts_cfg = config.get("backends", {}).get("tts", {})
-_TTS_BACKEND_ID = "tts"
-
-
-def _tts_adapter(service_id: str = _TTS_BACKEND_ID):
+def _tts_adapter(service_id: str):
     """The reviewed adapter a speech service's record selects (contract v2.1 section 4); core never branches on what it is."""
     return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(service_id) or {}, "speech")
 
@@ -1165,9 +1203,6 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
     _require_egress_lease(service_id)
     read = read_s or DERIVED.TTS_TIMEOUT
     return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
-
-# STT backend
-stt_cfg = config.get("backends", {}).get("stt", {})
 
 # The embeddings, ComfyUI (graph engine) and speech/transcription addresses, timeouts, workflow directories and default
 # model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
@@ -1438,9 +1473,10 @@ def _stored_registry_for_boot() -> dict[str, Any] | None:
         return None
 
 
-def _record_default(service_id: str, record: Mapping[str, Any], key: str) -> Any:
-    """The record's own value for *key*, else the release default (registry/engine_record_defaults.yml)."""
-    return engine_record_defaults.record_value(service_id, record, key)
+def _record_default(capability: str, record: Mapping[str, Any], key: str) -> Any:
+    """The record's own value for *key*, else the release default of the capability being derived
+    (registry/engine_record_defaults.yml), whatever the record's id."""
+    return engine_record_defaults.record_value(capability, record, key)
 
 
 def _workflows_directory(configured: Any) -> Path:
@@ -1450,8 +1486,9 @@ def _workflows_directory(configured: Any) -> Path:
 
 
 def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
-    """The model id the embeddings service's record names (its default when the record names none)."""
-    return engine_record_defaults.record_value("embeddings", (backends or {}).get("embeddings"), "model_id")
+    """The model id the selected embeddings service's record names (the role's default when it names none)."""
+    record = (_selected_service(backends or {}, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
+    return engine_record_defaults.record_value(_EMBEDDINGS_CAPABILITY, record, "model_id")
 
 
 def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
@@ -1463,9 +1500,9 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     stored registry does). Pure: it reads no global state, so a bad candidate raises before anything goes live.
     """
     backends = effective_cfg.get("backends") or {}
-    tts_c = backends.get("tts") or {}
-    stt_c = backends.get("stt") or {}
-    emb_c = backends.get("embeddings") or {}
+    tts_c = (_selected_service(backends, _SPEECH_CAPABILITY) or ("", {}))[1]
+    stt_c = (_selected_service(backends, _TRANSCRIPTION_CAPABILITY) or ("", {}))[1]
+    emb_c = (_selected_service(backends, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
     cfy_c = backends.get(_GRAPH_BACKEND_ID) or {}
     protocol_registry = registry or service_registry.release_registry()
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
@@ -1478,21 +1515,21 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "COMFY_HOST": service_registry.engine_base_address(cfy_c),
         "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
         "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
-        "STT_TIMEOUT": int(_record_default("stt", stt_c, "timeout")),
+        "STT_TIMEOUT": int(_record_default(_TRANSCRIPTION_CAPABILITY, stt_c, "timeout")),
         "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
         "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_base_address(cfy_c)),
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
-        "TTS_TIMEOUT": int(_record_default("tts", tts_c, "timeout")),
-        "EMBEDDINGS_HEALTH_ENDPOINT": _record_default("embeddings", emb_c, "health_endpoint"),
-        "EMBEDDINGS_TIMEOUT": int(_record_default("embeddings", emb_c, "timeout")),
+        "TTS_TIMEOUT": int(_record_default(_SPEECH_CAPABILITY, tts_c, "timeout")),
+        "EMBEDDINGS_HEALTH_ENDPOINT": _record_default(_EMBEDDINGS_CAPABILITY, emb_c, "health_endpoint"),
+        "EMBEDDINGS_TIMEOUT": int(_record_default(_EMBEDDINGS_CAPABILITY, emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "timeout")),
-        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_BACKEND_ID, cfy_c, "default_model"),
-        "COMFY_VIDEO_TIMEOUT": int(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_timeout")),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "workflows_dir")),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_BACKEND_ID, cfy_c, "video_workflows_dir")),
+        "COMFY_TIMEOUT": int(_record_default(_GRAPH_CAPABILITY, cfy_c, "timeout")),
+        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, cfy_c, "default_model"),
+        "COMFY_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, cfy_c, "video_timeout")),
+        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, cfy_c, "workflows_dir")),
+        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, cfy_c, "video_workflows_dir")),
         "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(cfy_c, "images").binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
@@ -1716,7 +1753,7 @@ def _llm_backend_candidates() -> list[str]:
     # Sort by priority (lower = higher priority) so the preferred backend wins.
     return sorted(
         snapshot.derived["LLM_BACKEND_HOSTS"].keys(),
-        key=lambda bid: int((backends.get(bid) or {}).get("priority") or 100),
+        key=lambda bid: service_priority(backends.get(bid)),
     )
 
 
@@ -3381,7 +3418,8 @@ def model_compat_aliases() -> Mapping[str, Any]:
 
 
 def tts_backend_model() -> str:
-    return model_compat_defaults().get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+    record = (_speech_service() or ("", {}))[1]
+    return model_compat_defaults().get("speech") or record.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
 
 
 SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3", "opus", "aac", "flac", "pcm"}
@@ -3396,7 +3434,8 @@ TTS_RESPONSE_MEDIA_TYPES = {
 
 
 def stt_backend_model() -> str:
-    return model_compat_defaults().get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
+    record = (_transcription_service() or ("", {}))[1]
+    return model_compat_defaults().get("transcriptions") or record.get("default_model", "parakeet-tdt-0.6b-v3")
 
 
 def embeddings_model() -> str:
@@ -4420,10 +4459,11 @@ async def check_service_health(service_id: str) -> bool:
 
 
 async def check_embeddings_health() -> bool:
-    """Check if the dedicated embeddings backend is healthy."""
-    if not DERIVED.EMBEDDINGS_ENABLED:
+    """Check if the selected embeddings service is healthy."""
+    selected = _embeddings_service()
+    if not DERIVED.EMBEDDINGS_ENABLED or selected is None:
         return False
-    return await check_service_health("embeddings")
+    return await check_service_health(selected[0])
 
 
 # =============================================================================
@@ -4431,10 +4471,11 @@ async def check_embeddings_health() -> bool:
 # =============================================================================
 
 async def check_tts_health() -> bool:
-    """Check if TTS backend is healthy."""
-    if not DERIVED.TTS_ENABLED:
+    """Check if the selected speech service is healthy."""
+    selected = _speech_service()
+    if not DERIVED.TTS_ENABLED or selected is None:
         return False
-    return await check_service_health("tts")
+    return await check_service_health(selected[0])
 
 
 def convert_wav_to_mp3(wav_content: bytes) -> bytes:
@@ -4501,8 +4542,14 @@ def _speech_voice_aliases() -> dict[str, str]:
 
 def _builtin_voice_names() -> frozenset[str]:
     """Voice names of the default speech engine and their older spellings, which a custom voice may not take."""
-    records = speech_voices.voice_records(_speech_engine_for_service("tts"))
+    records = speech_voices.voice_records(_default_speech_engine())
     return frozenset(record["id"].lower() for record in records) | frozenset(_speech_voice_aliases())
+
+
+def _default_speech_engine() -> Mapping[str, Any]:
+    """The first speech engine of the selected speech service; empty when no speech service is selected."""
+    selected = _speech_service()
+    return _speech_engine_for_service(selected[0]) if selected is not None else {}
 
 
 def _speech_engine_for_service(service_id: str) -> Mapping[str, Any]:
@@ -4530,7 +4577,7 @@ def _speech_model_engines(resolution: ModelResolution) -> list[tuple[str | None,
     """
     alias = resolution.alias
     if alias is None or not alias.engine or alias.engine_spec is None:
-        return [(None, _speech_engine_for_service("tts"))]
+        return [(None, _default_speech_engine())]
     engines = _speech_engines()
     return [(alias.engine, alias.engine_spec),
             *((engine, engines.get(engine) or {}) for engine, _service in alias.fallbacks)]
@@ -4703,9 +4750,10 @@ async def _reference_transcript(
     """Transcript of a voice's reference clip (OmniVoice clones from audio plus its exact text); cached in the voice record."""
     if meta.get("transcript"):
         return str(meta["transcript"])
-    stt = (config.get("backends") or {}).get("stt")
-    if not isinstance(stt, Mapping) or not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
-        raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs the stt service.")
+    selected = _transcription_service()
+    stt_service_id, stt = selected if selected is not None else ("", {})
+    if not stt.get("host") or not bool_from_config(stt.get("enabled"), True):
+        raise custom_voices.VoiceError(503, "backend_unavailable", "Transcribing the voice sample needs a transcription service.")
     if receipt is not None:
         receipt.metadata.setdefault("stt", {"field_count": 1, "file_count": 1, "attempts_started": 0, "chunked": False})
 
@@ -4718,11 +4766,11 @@ async def _reference_transcript(
             op="stt.transcribe",
             on_whole_file_attempt=record_attempt,
             execution=stt_chunking.SttExecutionConfig.from_service(
-                service_id="stt", service_config=stt, config_directory=CONFIG_PATH.parent),
+                service_id=stt_service_id, service_config=stt, config_directory=CONFIG_PATH.parent),
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
             body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
         )
-        _require_egress_lease("stt")
+        _require_egress_lease(stt_service_id)
         resp = await _stt_adapter(stt).invoke(
             AdapterConnection(address=service_registry.engine_base_address(stt),
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
@@ -4913,8 +4961,7 @@ async def _stream_tts_upstream(
     stream_format: str,
     response_format: str,
     native_rate: int,
-    service_id: str = _TTS_BACKEND_ID,
-    host_service_id: str | None = None,
+    service_id: str,
 ) -> Response:
     """Forward an engine's PCM stream to the client while it is still synthesizing.
 
@@ -4929,8 +4976,7 @@ async def _stream_tts_upstream(
     # including cancellation.
     try:
         try:
-            # The host in ``url`` can belong to another service than ``service_id``: both need the lease.
-            _require_egress_lease(host_service_id or service_id)
+            _require_egress_lease(service_id)
             upstream = await _tts_adapter(service_id).invoke(
                 _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH), service_id=service_id), "speech.stream",
                 AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
@@ -5058,8 +5104,8 @@ async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | N
     return accepting, notes, accepting[0][0] if accepting[0][0] != alias.engine else None
 
 
-def _speech_alias_service_with_address(body: bytes, model_override: str | None) -> str | None:
-    """The speech service the request's model alias names, when it is not "tts" and its record names an address."""
+def _speech_alias_service_with_address(body: bytes, model_override: str | None, default_service_id: str) -> str | None:
+    """The speech service the request's model alias names, when it is not the default one and its record names an address."""
     try:
         requested = model_override or json.loads(body).get("model", "tts-1")
         resolution = resolve_model_for_operation("speech", requested)
@@ -5067,16 +5113,19 @@ def _speech_alias_service_with_address(body: bytes, model_override: str | None) 
         return None
     alias = resolution.alias
     service = (alias.service or "") if alias is not None and alias.engine_spec is not None else ""
-    return service if service and service != "tts" and _speech_service_base(service) else None
+    return service if service and service != default_service_id and _speech_service_base(service) else None
 
 
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
     body = await request.body()
-    # A model whose alias names another speech service with an address does not need the "tts" record to name an
-    # address: that service is dialed instead. The speech route's own admission and the operator's "tts" override
-    # still apply to every speech request, as before.
-    alias_service = _speech_alias_service_with_address(body, model_override)
+    # The default speech service is the one selected for the speech capability, whatever its id.
+    selected = _speech_service()
+    default_service_id = selected[0] if selected is not None else ""
+    # A model whose alias names another speech service with an address does not need the default service to name an
+    # address: that service is dialed instead. The speech route's own admission and the operator's override of the
+    # default service still apply to every speech request, as before.
+    alias_service = _speech_alias_service_with_address(body, model_override, default_service_id)
     if alias_service is None and not DERIVED.TTS_ENABLED:
         return openai_error_response(
             "TTS not enabled",
@@ -5084,18 +5133,18 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             error_type="service_unavailable",
         )
     admission = _dispatch_admission_response(
-        "speech.synthesis", auth_context=auth_context, service_id="tts",
+        "speech.synthesis", auth_context=auth_context, service_id=default_service_id,
         service_available=DERIVED.TTS_ENABLED or alias_service is not None, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
-    service_response = (await asyncio.to_thread(_service_availability_response, "tts", service_label="TTS"))
+    service_response = (await asyncio.to_thread(_service_availability_response, default_service_id, service_label="TTS"))
     if service_response is not None:
         return service_response
 
     # Voice mapping is module-scoped (single source of truth shared with /v1/voices).
-    headers = prepare_downstream_headers(request.headers, auth_context, "tts")
-    tts_service_id = "tts"
+    headers = prepare_downstream_headers(request.headers, auth_context, default_service_id)
+    tts_service_id = default_service_id
 
     # Map voice in request body
     requested_response_format = "mp3"
@@ -5169,8 +5218,8 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 )
             body_json["voice"] = voice
         if engine is not None:
-            tts_service_id = model_resolution.alias.service or "tts"
-            if tts_service_id != "tts":
+            tts_service_id = model_resolution.alias.service or default_service_id
+            if tts_service_id != default_service_id:
                 admission = _dispatch_admission_response(
                     "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
                     resource_class="audio", receipt=receipt,
@@ -5203,7 +5252,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class='audio', receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5212,19 +5261,13 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if not_ready is not None:
         return not_ready
 
-    # The host can belong to another service than ``tts_service_id``; the lease check names both.
-    _speech_capability = "audio.speech"
-    _tts_selected = service_for_capability(_speech_capability)
-    _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
-    _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
-    if tts_service_id != "tts":
-        _tts_host = _speech_service_base(tts_service_id)
-        _tts_host_service = tts_service_id
-        if not _tts_host:
-            return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
+    # The request goes to the address of the service that serves it: the selected default, or the alias's own service.
+    _tts_host = _speech_service_base(tts_service_id)
+    if not _tts_host:
+        return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED or tts_service_id != "tts", resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5244,12 +5287,11 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             response_format=requested_response_format,
             native_rate=native_rate,
             service_id=tts_service_id,
-            host_service_id=_tts_host_service,
         )
 
     try:
         # The adapter owns the HTTP client; the answer handling below is unchanged.
-        _require_egress_lease(_tts_host_service)
+        _require_egress_lease(tts_service_id)
         resp = await _tts_adapter(tts_service_id).invoke(
             _tts_connection(_tts_host, service_id=tts_service_id), "speech.synthesize",
             AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
@@ -5342,15 +5384,16 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 # =============================================================================
 
 async def check_stt_health() -> bool:
-    """Check if STT backend is healthy."""
-    if not DERIVED.STT_ENABLED:
+    """Check if the selected transcription service is healthy."""
+    selected = _transcription_service()
+    if not DERIVED.STT_ENABLED or selected is None:
         return False
-    return await check_service_health("stt")
+    return await check_service_health(selected[0])
 
 
 def stt_backend_supports_translation() -> bool:
-    stt_backend = config.get("backends", {}).get("stt", {})
-    capabilities = stt_backend.get("capabilities", []) if isinstance(stt_backend, dict) else []
+    stt_backend = (_transcription_service() or ("", {}))[1]
+    capabilities = stt_backend.get("capabilities") or []
     backend_caps = {str(cap).lower() for cap in capabilities if isinstance(cap, str)}
     return bool({"translation", "translations"} & backend_caps)
 
@@ -14722,7 +14765,7 @@ def _role_catalog_ids_for_loaded_path(
             if matches_path(role_model):
                 ids.add(str(role_name))
 
-    for model_id, spec in MODELS_CATALOG.items():
+    for model_id, spec in _models_catalog().items():
         if not isinstance(spec, Mapping) or spec.get("backend") != backend:
             continue
         if matches_path(spec.get("path")):
@@ -15037,7 +15080,8 @@ def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
         config,
         enabled_flags={
             "llm": bool(DERIVED.LLM_BACKEND_HOSTS),
-            "embeddings": DERIVED.EMBEDDINGS_ENABLED and bool((runtime().config.get("backends") or {}).get("embeddings")),
+            "embeddings": DERIVED.EMBEDDINGS_ENABLED and _selected_service(
+                runtime().config.get("backends") or {}, _EMBEDDINGS_CAPABILITY) is not None,
             "tts": DERIVED.TTS_ENABLED,
             "stt": DERIVED.STT_ENABLED,
             "images": DERIVED.COMFY_ENABLED,
@@ -15358,7 +15402,7 @@ async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
                 if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
                     selected[0]
-                    for capability in ("audio.speech", "audio.transcriptions", "audio.translations", "embeddings")
+                    for capability in (_SPEECH_CAPABILITY, _TRANSCRIPTION_CAPABILITY, "audio.translations", _EMBEDDINGS_CAPABILITY)
                     if (selected := service_for_capability(capability)) is not None
                 ] + [service_id for service_id in [_highest_priority_chat_backend()] if service_id]
                 + [str(route["service_id"])
@@ -20831,7 +20875,7 @@ def _speech_engine_voices() -> dict[str, Any]:
     """
     section = (config.get("model_aliases") or {}).get("speech") or {}
     available = _alias_engine_available_for("speech")
-    shared = {record["id"]: record for record in speech_voices.voice_records(_speech_engine_for_service("tts"))}
+    shared = {record["id"]: record for record in speech_voices.voice_records(_default_speech_engine())}
     out: dict[str, Any] = {}
     for engine_id, spec in (section.get("engines") or {}).items():
         if not isinstance(spec, Mapping) or not spec.get("voice_map") or not available(str(engine_id), spec):
@@ -28748,7 +28792,7 @@ def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[
         backend = str(role.get("backend") or "").strip() or None
         return backend, role
 
-    catalog = MODELS_CATALOG.get(normalized)
+    catalog = _models_catalog().get(normalized)
     if isinstance(catalog, Mapping):
         backend = str(catalog.get("backend") or "").strip() or None
         return backend, catalog
@@ -29074,7 +29118,7 @@ def _build_role_catalog_entries() -> list[dict]:
             }
         entries.append(entry)
 
-    for mid, cat in MODELS_CATALOG.items():
+    for mid, cat in _models_catalog().items():
         entries.append({
             "id": mid,
             "object": "model",

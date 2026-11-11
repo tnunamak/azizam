@@ -135,29 +135,36 @@ class WorkflowRegistry:
         if not root.is_dir():
             raise ManifestError(f"manifest directory not found: {root}")
 
-        added: list[tuple[Path, dict[str, Any], WorkflowRecord]] = []
+        parsed: list[tuple[Path, dict[str, Any]]] = []
+        added: list[WorkflowRecord] = []
+        insertion_errors: list[RegistryLoadError] = []
         for path in sorted(_iter_manifest_files(root)):
             try:
                 manifest = load_workflow_manifest(path)
-                record = self.add_manifest(
+            except (ManifestError, OSError, ValueError) as exc:
+                self._errors.append(RegistryLoadError(source_path=path, message=str(exc)))
+                continue
+            parsed.append((path, manifest))
+            try:
+                added.append(self.add_manifest(
                     manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])),
                     _check_variants=False,  # checked once below; a per-file check would copy the registry each time
-                )
-                added.append((path, manifest, record))
-            except (ManifestError, OSError, ValueError) as exc:
-                self._errors.append(
-                    RegistryLoadError(source_path=path, message=str(exc))
-                )
+                ))
+            except ValueError as exc:   # a duplicate id, among others
+                insertion_errors.append(RegistryLoadError(source_path=path, message=str(exc)))
+                self._errors.append(insertion_errors[-1])
         try:
             video_grid.check_video_variants(self.records())
         except ValueError:
-            # Two variants claim one reference. Add this directory's records again one at a time, each checked, so the
-            # file that brings the conflict is refused and absent, as a single add would refuse it.
-            for _path, _manifest, record in added:
+            # Two variants claim one reference. Add every file of this directory again in order, each checked, so the
+            # file that brings the conflict is refused and absent, and a later file with its id takes its place, as
+            # adding the files one at a time would.
+            for record in added:
                 del self._records[record.identity.id]
-            for path, manifest, record in added:
+            self._errors[:] = [error for error in self._errors if not any(error is gone for gone in insertion_errors)]
+            for path, manifest in parsed:
                 try:
-                    self.add_manifest(manifest, source_path=path, provenance=provenance, facts=record.facts)
+                    self.add_manifest(manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])))
                 except ValueError as exc:   # a registry error, not a request error
                     self._errors.append(RegistryLoadError(source_path=path, message=str(exc)))
             try:   # a conflict among records this load did not add stays a load error of the directory

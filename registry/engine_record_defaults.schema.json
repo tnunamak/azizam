@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://azizam.local/schemas/engine_record_defaults.schema.json",
   "title": "Engine record defaults",
-  "description": "Values an engine's service record may leave out, by service id. Closed: no address (host, port, base URL) may appear here.",
+  "description": "Values an engine's service record may leave out, by the capability a service is selected for. Closed: no address (host, port, base URL) may appear here.",
   "type": "object",
   "additionalProperties": false,
   "required": ["defaults"],

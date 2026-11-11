@@ -11,7 +11,7 @@ const rules = (text: string, role: Role = "member", extra: Partial<TextItem> = {
 
 describe("sweep text rules", () => {
   it("flags filesystem paths but not app URLs", () => {
-    expect(rules("/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Q4_K_M.gguf", "owner")).toContain("path");
+    expect(rules("/srv/models/LLMs/GGUF/Qwen3.8-27B-Q4_K_M.gguf", "owner")).toContain("path");
     expect(rules("Choose ./source-image.bin", "owner")).toContain("path");
     expect(rules("C:\\Models\\x", "owner")).toContain("path");
     expect(rules("Open https://ai.household.example/", "owner")).not.toContain("path");

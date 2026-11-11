@@ -88,7 +88,7 @@ backend_rows:
     gpu_required: false
     resources_from: backend
   - group: speech
-    triggers: [speech, tts]
+    triggers: [speech, tts, audio.speech]
     flag: tts
     capability: speech
     intent: speech.synthesis

@@ -111,6 +111,7 @@ def test_voice_reference_transcription_does_not_dial_a_disabled_stt_row(
     import httpx
 
     import proxy
+    from tests.support.speech_roles import sole_transcription
     from gateway import custom_voices
     from tests.support.fake_upstream import HandlerTransport
 
@@ -124,7 +125,7 @@ def test_voice_reference_transcription_does_not_dial_a_disabled_stt_row(
 
     fake_upstreams.router.add_transport("disabled-stt.fk.test:9876", HandlerTransport(handler))
     service = {"host": "disabled-stt.fk.test", "port": 9876, "enabled": enabled, "default_model": "test"}
-    with patch.dict(proxy.config["backends"], {"stt": service}), patch.object(proxy, "_voice_store"):
+    with patch.dict(proxy.config["backends"], sole_transcription(proxy.config["backends"], service), clear=True), patch.object(proxy, "_voice_store"):
         with pytest.raises(custom_voices.VoiceError) as caught:
             asyncio.run(proxy._reference_transcript(None, {"id": "test"}, source))
     assert caught.value.status == 503

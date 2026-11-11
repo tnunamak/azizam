@@ -53,7 +53,7 @@ def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_
     upstream = media_metadata.embed_media_tags(_wav(), ".wav", {"comment": sentinel})
 
     speech = fake_upstreams.asgi(load_scenario("openai-compatible/speech-buffered", wav_hex=upstream.hex()))
-    monkeypatch.setattr(proxy, "host_for_capability", lambda _: speech.base_url)
+    monkeypatch.setattr(proxy, "_speech_service_base", lambda _service_id: speech.base_url)
     # One engine id ("tts") serves every model: the privacy contract does not depend on the tier.
     monkeypatch.setattr(proxy, "resolve_model_for_operation", lambda op, model: proxy.ModelResolution(model, model, op))
 

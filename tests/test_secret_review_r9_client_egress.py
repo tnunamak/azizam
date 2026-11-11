@@ -391,7 +391,8 @@ def test_a_speech_engines_error_never_carries_the_credential_to_the_client(fake_
     async def open_stream():
         async with asyncio.timeout(10):
             return await proxy._stream_tts_upstream(url=f"{fake.base_url}/v1/audio/speech", headers={}, body=b'{"input":"hello","voice":"v"}',
-                                                    stream_format="audio", response_format="pcm", native_rate=24000)
+                                                    stream_format="audio", response_format="pcm", native_rate=24000,
+                                                    service_id="tts")
 
     response = asyncio.run(open_stream())
     assert response.status_code == 400

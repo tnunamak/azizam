@@ -7,13 +7,13 @@ import {
   technicalModelDetails,
 } from "@/lib/model-name";
 
-const GGUF = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
+const GGUF = "/srv/models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf";
 
 describe("model names never expose a path on the gateway host", () => {
   test("technical model details preserve owner IDs without mutating member scrubbing", () => {
     const payload = { requested_model: GGUF, resolved_model: GGUF, fallback_model: GGUF, metadata: { resolves_to: { chat: GGUF } } };
     const member = technicalModelDetails(payload, false);
-    expect(JSON.stringify(member)).not.toContain("/media/");
+    expect(JSON.stringify(member)).not.toContain("/srv/models/");
     expect(member.fallback_model).toBe(safeModelId(GGUF));
     expect(technicalModelDetails(payload, true)).toBe(payload);
     expect(payload.resolved_model).toBe(GGUF);
@@ -95,7 +95,7 @@ describe("model names never expose a path on the gateway host", () => {
     expect(scrubbed.models[0].resolves_to).toEqual({ chat: file });
     expect(scrubbed.models[0].examples[0].body.model).toBe(file);
     expect(scrubbed.models[0].examples[0].body.messages).toEqual(["/etc/not-a-model"]);
-    expect(JSON.stringify(scrubbed)).not.toContain("/media/");
+    expect(JSON.stringify(scrubbed)).not.toContain("/srv/models/");
   });
 });
 

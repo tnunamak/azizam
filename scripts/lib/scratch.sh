@@ -1,16 +1,19 @@
 # Scratch-directory ownership for test harnesses (source this file).
 #
 # A harness deletes its own scratch directory when it ends (trap on EXIT, HUP, INT,
-# TERM). SIGKILL runs no trap, so every directory also carries a marker naming its
-# owner, "<pid>-<start time>", and the next harness start removes the directories
-# whose owner is dead. A reused PID has a different start time, so it does not
-# keep a dead owner's directory alive.
+# TERM). SIGKILL runs no trap, so a detached watcher removes the directory when its
+# owner is gone, and every directory also carries a marker naming its owner,
+# "<pid>-<start time>", so the next harness start removes the directories whose owner
+# is dead (the watcher can die too: a service stop kills its whole cgroup). A reused
+# PID has a different start time, so it does not keep a dead owner's directory alive.
 #
 #   scratch_mark DIR            record the calling shell as DIR's owner
 #   scratch_sweep ROOT PREFIX   remove ROOT/PREFIX*/ directories whose owner is dead;
 #                               directories without a marker are left alone.
 #                               $SCRATCH_KEEP (a path) is never removed.
 #   scratch_on_signal           make HUP, INT and TERM run the EXIT trap
+#   scratch_reap_on_death DIR.. start a detached watcher that removes DIR.. once the
+#                               calling shell has ended, however it ended
 scratch_start_time() {
   local stat_line
   stat_line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
@@ -41,4 +44,26 @@ scratch_on_signal() {
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
+}
+scratch_reap_on_death() {
+  local started
+  started=$(scratch_start_time $$) || return 0
+  # The watcher holds none of the caller's descriptors: an inherited lock or pipe would outlive the caller.
+  # A subshell closes them, then starts the watcher, so they are closed before the watcher exists.
+  # The watcher reads /proc directly (no fork per poll) and holds no terminal or pipe open.
+  (
+    for fd in /proc/$BASHPID/fd/*; do
+      fd=${fd##*/}
+      if (( fd > 2 )); then eval "exec $fd>&-" || true; fi
+    done 2>/dev/null
+    setsid -f bash -c '
+      owner=$1 started=$2; shift 2
+      while read -r line 2>/dev/null < "/proc/$owner/stat"; do
+        line=${line##*) }; fields=($line)
+        [[ ${fields[19]} == "$started" ]] || break
+        sleep 2
+      done
+      rm -rf -- "$@"
+    ' scratch-reaper "$$" "$started" "$@" </dev/null >/dev/null 2>&1
+  ) || true
 }

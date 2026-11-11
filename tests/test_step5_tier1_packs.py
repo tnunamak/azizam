@@ -18,9 +18,13 @@ import copy
 from typing import Any
 
 import pytest
+import yaml
 
 from gateway.transforms import (
     REGISTRY,
+    TRANSFORM_PACKS_FILE,
+    TransformRegistry,
+    load_transform_packs,
     run_request_pipeline,
 )
 
@@ -265,3 +269,67 @@ class TestTier1PacksNonAlteration:
         result = run_request_pipeline(["mistral-penalty-clamp"], copy.deepcopy(body))
         # Both in [-2, 2] — unchanged
         assert result == body
+
+
+# ---------------------------------------------------------------------------
+# Declarative pack file: compatibility, extension and validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "specs"),
+    [
+        ("llamacpp-cache-prompt", [
+            {"kind": "default-params", "set": {"cache_prompt": True}},
+        ]),
+        ("mistral-penalty-clamp", [
+            {"kind": "clamp", "param": "frequency_penalty", "min": -2.0, "max": 2.0},
+            {"kind": "clamp", "param": "presence_penalty", "min": -2.0, "max": 2.0},
+        ]),
+    ],
+)
+def test_data_packs_match_previous_primitives(name: str, specs: list[dict[str, Any]]) -> None:
+    expected = TransformRegistry()
+    expected.register(name, specs)
+    assert [(type(p), vars(p)) for p in REGISTRY.resolve(name)] == [
+        (type(p), vars(p)) for p in expected.resolve(name)
+    ]
+
+
+def test_pack_added_only_to_data_file_resolves(tmp_path) -> None:
+    data = yaml.safe_load(TRANSFORM_PACKS_FILE.read_text(encoding="utf-8"))
+    data["packs"].append({
+        "id": "fixture-only-pack",
+        "source": "Test fixture: a pack defined only in data.",
+        "specs": [{"kind": "default-params", "set": {"fixture_mode": "ready"}}],
+    })
+    path = tmp_path / "transform_packs.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    registry = TransformRegistry()
+
+    load_transform_packs(path, registry)
+
+    assert len(registry.resolve("fixture-only-pack")) == 1
+    assert run_request_pipeline(["fixture-only-pack"], {}, registry=registry) == {
+        "fixture_mode": "ready",
+    }
+
+
+def test_malformed_data_pack_names_file_and_id_without_partial_registration(tmp_path) -> None:
+    data = yaml.safe_load(TRANSFORM_PACKS_FILE.read_text(encoding="utf-8"))
+    data["packs"].append({
+        "id": "fixture-invalid",
+        "source": "Test fixture: clamp is missing its required param.",
+        "specs": [{"kind": "clamp", "min": -2.0}],
+    })
+    path = tmp_path / "malformed-packs.yml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    registry = TransformRegistry()
+
+    with pytest.raises(ValueError) as error:
+        load_transform_packs(path, registry)
+
+    assert str(path) in str(error.value)
+    assert "fixture-invalid" in str(error.value)
+    assert "param" in str(error.value)
+    assert registry.names() == []

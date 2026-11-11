@@ -622,7 +622,7 @@ claims:
     service: comfyui
     mode: shared
   - kind: disk
-    path: /media/windows
+    path: /srv/models
     estimate_mb: 5000
 ```
 

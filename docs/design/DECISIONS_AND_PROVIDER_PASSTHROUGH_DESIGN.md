@@ -108,7 +108,7 @@ Setup:
   during every run (postgres, Claude and the speech services).
 - Files: `decider-2b-v11-Q8_0.gguf` (2.0 GB) and `decider-4b-v2.1-Q4_K_M.gguf`
   (2.7 GB), from `Mapika/decider-*-GGUF`, in
-  `/media/windows/AI Models/LLMs/GGUF/decider-*/`.
+  `decider-*/` under the owner's model directory.
 - Runtimes: `decider-ai` 1.8.1 with llama-cpp-python 0.3.36 (CPU build), and
   the stock `llama-server` b11337, run on ports 18931–18932 and stopped
   afterwards. 8 threads, `n_ctx` 4096, `CUDA_VISIBLE_DEVICES=""`.

@@ -384,7 +384,7 @@ class TestReadSiteLiveness(unittest.TestCase):
             "kobold": _kobold_backend(),
             "tts": {
                 "enabled": True,
-                "capabilities": ["tts"],
+                "capabilities": ["audio", "speech"],
                 "host": "127.0.0.1",
                 "port": 9988,
             },
@@ -540,9 +540,9 @@ class TestDeriveBackendConstants(unittest.TestCase):
             "backends": {
                 "vision-llm": _vision_backend(host="10.1.0.1", port=5050),
                 "kobold": _kobold_backend(host="10.1.0.2", port=5051),
-                "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880},
-                "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321},
-                "embeddings": {"enabled": True, "host": "10.1.0.5", "port": 5061},
+                "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880, "capabilities": ["audio", "speech"]},
+                "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321, "capabilities": ["audio", "transcriptions"]},
+                "embeddings": {"enabled": True, "host": "10.1.0.5", "port": 5061, "capabilities": ["openai", "embeddings"]},
                 "comfyui": {"enabled": True, "host": "10.1.0.6", "port": 7890},
             }
         }
@@ -585,14 +585,14 @@ class TestDeriveBackendConstants(unittest.TestCase):
         result = proxy._derive_backend_constants(cfg)
         self.assertEqual(result["LLM_BACKEND_HOSTS"], {})
 
-    def test_tts_disabled_flag_propagated(self):
-        cfg = {
-            "backends": {
-                "tts": {"enabled": False, "host": "127.0.0.1", "port": 8880},
-            }
-        }
-        result = proxy._derive_backend_constants(cfg)
-        self.assertFalse(result["TTS_ENABLED"])
+    def test_speech_and_transcription_enabled_flags_propagate(self):
+        # The selected service is the record that declares the capability, whatever its id.
+        for capabilities, key in ((["audio", "speech"], "TTS_ENABLED"), (["audio", "transcriptions"], "STT_ENABLED")):
+            for enabled in (True, False):
+                with self.subTest(key=key, enabled=enabled):
+                    record = {"enabled": enabled, "host": "127.0.0.1", "port": 8880, "capabilities": capabilities}
+                    result = proxy._derive_backend_constants({"backends": {"renamed-one": record}})
+                    self.assertIs(result[key], enabled)
 
     def test_comfy_enabled_flag_propagated(self):
         cfg = {

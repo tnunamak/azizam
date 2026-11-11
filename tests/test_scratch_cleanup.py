@@ -1,8 +1,9 @@
 """Test harnesses delete their own scratch directories (scripts/lib/scratch.sh, scripts/scratch_owner.py)
 and receipts keep a bounded size (scripts/ci/prune_receipts.py).
 
-A harness removes its directory on EXIT, HUP, INT and TERM. SIGKILL runs no trap, so the next start
-removes directories whose owner (pid and start time in .scratch-owner) is dead. A directory with a live
+A harness removes its directory on EXIT, HUP, INT and TERM. SIGKILL runs no trap, so a detached watcher
+removes it when the owner is gone, and the next start removes directories whose owner (pid and start time
+in .scratch-owner) is dead. A directory with a live
 owner, no marker or a symlink is left alone, and so is the one path named in SCRATCH_KEEP.
 """
 
@@ -82,6 +83,53 @@ def test_a_signalled_harness_leaves_nothing(tmp_path: Path, signal_name: str) ->
     process.wait(timeout=20)
     assert not directory.exists()
     assert process.returncode == {"TERM": 143, "HUP": 129}[signal_name]
+
+
+def test_a_killed_harness_directory_is_removed_by_its_watcher(tmp_path: Path) -> None:
+    script = f"""
+source {LIB}
+dir=$(mktemp -d "$1/fake-XXXXXX")
+scratch_reap_on_death "$dir"
+echo "$dir" > "$1/announced"
+sleep 60 &
+wait $!
+"""
+    process = subprocess.Popen([sys.executable, "-c", RESET_THEN_EXEC, "bash", "-c", script, "harness", str(tmp_path)])
+    deadline = time.monotonic() + 10
+    while not (tmp_path / "announced").exists():
+        assert time.monotonic() < deadline and process.poll() is None, "harness did not start"
+        time.sleep(0.02)
+    directory = Path((tmp_path / "announced").read_text().strip())
+    time.sleep(3)  # the owner is alive: the watcher keeps the directory
+    assert directory.is_dir()
+    subprocess.run(["kill", "-KILL", str(process.pid)], check=True)
+    process.wait(timeout=20)
+    deadline = time.monotonic() + 10
+    while directory.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not directory.exists()
+
+
+def test_the_watcher_holds_no_lock_or_pipe_of_its_caller(tmp_path: Path) -> None:
+    # ci-local holds the host lock on a descriptor; a watcher that kept a copy would hold the lock after ci-local ends.
+    script = f"""
+set -euo pipefail
+source {LIB}
+exec 9>"$1/host.lock"
+flock -n 9
+dir=$(mktemp -d "$1/fake-XXXXXX")
+scratch_reap_on_death "$dir"
+sleep 0.5  # the watcher is running and has seen its owner alive, so it would hold an inherited lock until its next poll
+echo "$dir"
+"""
+    result = subprocess.run(["bash", "-c", script, "harness", str(tmp_path)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert subprocess.run(["flock", "-n", str(tmp_path / "host.lock"), "true"]).returncode == 0
+    directory = Path(result.stdout.strip())
+    deadline = time.monotonic() + 10
+    while directory.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not directory.exists()
 
 
 def test_a_dead_owners_directory_is_removed_when_the_next_harness_starts(tmp_path: Path) -> None:

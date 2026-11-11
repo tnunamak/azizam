@@ -1,4 +1,4 @@
-# The family of an OpenAI model id that no owner alias and no generated row names, from OpenAI's naming conventions.
+# The family of an OpenAI model id that no owner alias names, from OpenAI's naming conventions.
 #
 # This file is data. The gateway reads it once (gateway/openai_model_families.py). An owner alias in the
 # model_compatibility section wins over it, and the generated model list (registry/openai_model_aliases.generated.yml)
