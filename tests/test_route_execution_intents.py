@@ -138,11 +138,11 @@ def _request(operation: tuple[str, str] | None, intents) -> StarletteRequest:
     return StarletteRequest(scope)
 
 
-def _spy_admission(monkeypatch):
+def _spy_admission(monkeypatch, modality="image"):
     from gateway import media_job_intents
     # Synthetic frontend rows still need modality rows before graph admission can resolve them.
     for intent in (MADE_UP, "edit.made_up", "extend.made_up"):
-        monkeypatch.setitem(media_job_intents.MODALITY_BY_INTENT, intent, "image")
+        monkeypatch.setitem(media_job_intents.MODALITY_BY_INTENT, intent, modality)
     seen: list[str] = []
 
     def spy(intent, **_kwargs):
@@ -163,7 +163,7 @@ HANDLERS = {
 
 @pytest.mark.parametrize("operation", sorted(HANDLERS))
 def test_the_matched_rows_admission_intent_reaches_admission(operation, monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "audio" if operation == "audio.generate" else "image")
     intents = frontend_mount.ExecutionIntents(admission=MADE_UP, receipt=MADE_UP_RECEIPT)
     asyncio.run(HANDLERS[operation](_request(("identity", operation), intents), object()))
     assert seen == [MADE_UP]
@@ -171,7 +171,7 @@ def test_the_matched_rows_admission_intent_reaches_admission(operation, monkeypa
 
 @pytest.mark.parametrize("operation", sorted(HANDLERS))
 def test_a_caller_outside_a_request_acts_under_the_mounted_row_of_the_operation(operation, monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "audio" if operation == "audio.generate" else "image")
     row = frontend_mount.RouteRow(
         frontend="probe", path="/v1/probe", methods=frozenset({"POST"}), intent=operation, translator="identity",
         execution_intents=frontend_mount.ExecutionIntents(admission=MADE_UP),
@@ -292,7 +292,7 @@ VIDEO_OPERATIONS = ["videos.remix", "videos.edit", "videos.extend"]
 
 @pytest.mark.parametrize("operation", VIDEO_OPERATIONS)
 def test_the_matched_video_rows_admission_intent_reaches_admission(operation, monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "video")
     _noop_warm(monkeypatch)
     intents = frontend_mount.ExecutionIntents(admission=MADE_UP, receipt=MADE_UP_RECEIPT)
     asyncio.run(_video_call(operation, _request(("identity", operation), intents)))
@@ -301,7 +301,7 @@ def test_the_matched_video_rows_admission_intent_reaches_admission(operation, mo
 
 @pytest.mark.parametrize("operation", VIDEO_OPERATIONS)
 def test_a_video_handler_called_outside_a_request_acts_under_the_mounted_row(operation, monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "video")
     _noop_warm(monkeypatch)
     row = frontend_mount.RouteRow(
         frontend="probe", path="/v1/probe", methods=frozenset({"POST"}), intent=operation, translator="identity",
@@ -314,7 +314,7 @@ def test_a_video_handler_called_outside_a_request_acts_under_the_mounted_row(ope
 
 @pytest.mark.parametrize("operation", VIDEO_OPERATIONS)
 def test_a_video_row_without_an_admission_intent_stops_the_work(operation, monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "video")
     _noop_warm(monkeypatch)
     with pytest.raises(frontend_mount.FrontendMountError):
         asyncio.run(_video_call(operation, _request(
@@ -325,7 +325,7 @@ def test_a_video_row_without_an_admission_intent_stops_the_work(operation, monke
 def test_the_extend_receipt_and_admission_are_two_roles_that_each_reach_their_own_site(monkeypatch):
     from gateway import media_ingestion
     started: list[str] = []
-    admitted = _spy_admission(monkeypatch)
+    admitted = _spy_admission(monkeypatch, "video")
     _noop_warm(monkeypatch)
 
     async def start_receipt(_request, _auth, *, intent, **_kwargs):
@@ -343,7 +343,7 @@ def test_the_extend_receipt_and_admission_are_two_roles_that_each_reach_their_ow
 
 
 def test_a_request_matched_to_another_video_operation_does_not_lend_its_intents(monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "video")
     _noop_warm(monkeypatch)
     extend_row = frontend_mount.RouteRow(
         frontend="probe", path="/v1/probe", methods=frozenset({"POST"}), intent="videos.extend", translator="identity",
@@ -356,7 +356,7 @@ def test_a_request_matched_to_another_video_operation_does_not_lend_its_intents(
 
 
 def test_the_shared_video_graph_helper_admits_under_the_intent_its_caller_passes(monkeypatch):
-    seen = _spy_admission(monkeypatch)
+    seen = _spy_admission(monkeypatch, "video")
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *_args, **_kwargs: {})
     response = asyncio.run(proxy._submit_video_graph(
         workflow={}, auth_context=object(), workflow_name="w", requested_model="m", public_model="m", prompt="p",

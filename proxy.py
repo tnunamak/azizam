@@ -13155,7 +13155,9 @@ async def proxy_graph_video_extend(
 
     if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
+    service_response = await asyncio.to_thread(
+        lambda: _service_availability_response(
+            _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
     if not _video_extend_workflow():
@@ -13582,7 +13584,9 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
+    service_response = await asyncio.to_thread(
+        lambda: _service_availability_response(
+            _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
 
@@ -13722,7 +13726,9 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
+    service_response = await asyncio.to_thread(
+        lambda: _service_availability_response(
+            _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
 
@@ -13966,7 +13972,9 @@ async def proxy_graph_video_remix(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
+    service_response = await asyncio.to_thread(
+        lambda: _service_availability_response(
+            _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
 
@@ -14023,7 +14031,9 @@ async def proxy_graph_video_edit(
 
     if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
+    service_response = await asyncio.to_thread(
+        lambda: _service_availability_response(
+            _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
     try:
