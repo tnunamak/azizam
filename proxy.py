@@ -8519,7 +8519,7 @@ async def _graph_run_round(
             is_disconnected=lambda: _request_is_disconnected(request),
             binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
-            cadence=adapter.poll_for(intent or IMAGE_GENERATE_INTENT),
+            cadence=adapter.poll_for(intent or _image_admission_intent("images.generate")),
             say=lambda text: print(f"[proxy] {text}", flush=True))
     except graph_round.RoundFailure as failed:
         return _round_failure_response(failed, adapter, graph), []
@@ -9299,8 +9299,8 @@ async def proxy_graph_image_request(
         return _gateway_input_error("prompt is required")
     _record_image_input(receipt, "prompt")
 
-    manifest = _find_image_manifest("image.generate", str(model))
-    refusal = _generate_refusal_for_other_intent_stem(receipt, str(model), manifest)
+    manifest = _find_image_manifest(intents.require_admission(), str(model))
+    refusal = _generate_refusal_for_other_intent_stem(receipt, str(model), manifest, intents.require_admission())
     if refusal is not None:
         return refusal
     gateway_binding = _gateway_image_generate_binding(manifest)
@@ -9315,7 +9315,7 @@ async def proxy_graph_image_request(
             output_format=output_format, output_compression=output_compression, quality=quality, background=background,
         )
 
-    workflow = load_graph_workflow(model, intent=IMAGE_GENERATE_INTENT)
+    workflow = load_graph_workflow(model, intent=intents.require_admission())
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -9763,7 +9763,7 @@ async def proxy_graph_image_edit_request(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
 
-    workflow = load_graph_workflow(model, intent=IMAGE_EDIT_INTENT)
+    workflow = load_graph_workflow(model, intent=intents.require_admission())
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -9771,7 +9771,7 @@ async def proxy_graph_image_edit_request(
                 code="model_not_found",
             )
         )
-    manifest = _find_image_manifest("image.edit", str(model))
+    manifest = _find_image_manifest(intents.require_admission(), str(model))
     if requested_dimensions is not None and manifest is not None:
         for field, value in zip(("width", "height"), requested_dimensions):
             spec = (manifest.get("inputs") or {}).get(field) or {}
@@ -10312,7 +10312,7 @@ async def proxy_graph_image_variations_request(
         "prompt": IMAGE_VARIATIONS_PROMPT,
         "model": model,
     }
-    manifest = _find_image_manifest("image.edit", model)
+    manifest = _find_image_manifest(_image_admission_intent("images.edit"), model)
     if manifest is not None and "denoise" in (manifest.get("inputs") or {}):
         # Only inject the denoise extension when the resolved workflow's
         # manifest actually declares it -- an unsupported extension input
@@ -21275,20 +21275,28 @@ async def realtime_v1(websocket: WebSocket):
     await _handle_realtime(websocket)
 
 
-# Map image route paths to canonical intents for receipt construction.
-_IMAGE_ROUTE_INTENTS = {
-    "/v1/images/generations": "image.generate",
-    "/v1/images/edits": "image.edit",
-    "/v1/images/variations": "image.variation",
-}
-# The intents of the generation and edit routes, named once here; a route loads its workflow record under its own intent.
-IMAGE_GENERATE_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/generations"]
-IMAGE_EDIT_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/edits"]
+def _image_admission_intent(operation: str) -> str:
+    """The intent the image frontend's mounted row admits ``operation`` (``images.generate``, ``images.edit``) under."""
+    return FRONTEND_MOUNTS.execution_intents("identity", operation).require_admission()
+
+
+class ImageRouteIntentError(LookupError):
+    """An image receipt was asked for on a route no mounted frontend row declares an intent for."""
+
+
+def _mounted_route_intent(path: str) -> str:
+    """The admission intent of the mounted frontend row at ``path``; a path no such row serves raises."""
+    for row in FRONTEND_MOUNTS.rows():
+        if row.path == path and row.execution_intents is not None and row.execution_intents.admission:
+            return row.execution_intents.admission
+    raise ImageRouteIntentError(f"no mounted frontend row at {path} declares an admission intent")
 
 
 def start_image_route_receipt(
     path: str,
     auth_context: AuthContext,
+    *,
+    intent: str | None = None,
 ) -> RouteReceipt:
     """Build an observational route receipt for an image endpoint after auth.
 
@@ -21297,7 +21305,7 @@ def start_image_route_receipt(
     auth/profile model. It never reads the request body, so no prompts, file
     names, or uploaded bytes can leak into the receipt.
     """
-    intent = _IMAGE_ROUTE_INTENTS.get(path, "image.generate")
+    intent = intent or _mounted_route_intent(path)
     key_name = auth_context.identity.name if auth_context.identity else None
     app_id = auth_context.identity.app_id if auth_context.identity else None
     access = _access_for_auth_context(auth_context)
@@ -21701,15 +21709,13 @@ def _gateway_image_model_id(record_manifest: Mapping[str, Any]) -> str | None:
 def _gateway_binding_value(
     manifest: Mapping[str, Any],
     name: str,
-    *,
-    fallback: str,
-) -> str:
+) -> str | None:
     binding = (manifest.get("bindings") or {}).get("gateway")
     if isinstance(binding, Mapping):
         value = binding.get(name)
         if isinstance(value, str) and value:
             return value
-    return fallback
+    return None
 
 
 def _gateway_workflow_extension_values(
@@ -22006,33 +22012,28 @@ async def _proxy_offset_inpaint_tile_request(
     if control_error is not None:
         return control_error
 
-    base_model = _gateway_binding_value(
-        manifest,
-        "base_model",
-        fallback="flux2-klein-4b",
-    )
-    inpaint_model = _gateway_binding_value(
-        manifest,
-        "inpaint_model",
-        fallback="flux2-klein-4b-inpaint",
-    )
-    base_workflow = load_graph_workflow(base_model, intent=IMAGE_GENERATE_INTENT)
-    inpaint_workflow = load_graph_workflow(inpaint_model, intent=IMAGE_EDIT_INTENT)
-    base_manifest = _find_image_manifest("image.generate", base_model)
-    inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
-    if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
+    base_model = _gateway_binding_value(manifest, "base_model")
+    inpaint_model = _gateway_binding_value(manifest, "inpaint_model")
+    generate_intent = _image_admission_intent("images.generate")
+    edit_intent = _image_admission_intent("images.edit")
+    missing = [name for name, value in (("base_model", base_model), ("inpaint_model", inpaint_model)) if not value]
+    base_workflow = inpaint_workflow = base_manifest = inpaint_manifest = None
+    if not missing:
+        base_workflow = load_graph_workflow(base_model, intent=generate_intent)
+        inpaint_workflow = load_graph_workflow(inpaint_model, intent=edit_intent)
+        base_manifest = _find_image_manifest(generate_intent, base_model)
+        inpaint_manifest = _find_image_manifest(edit_intent, inpaint_model)
+    if missing or not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
         if receipt is not None:
             receipt.add_fallback_reason("offset_inpaint_tile_prerequisite_missing")
+        message = (
+            "offset-inpaint tile generation requires the workflow's gateway binding to name "
+            + " and ".join(missing)
+            if missing else
+            "offset-inpaint tile generation requires the base and inpaint workflows plus their manifests"
+        )
         return Response(
-            content=json.dumps({
-                "error": {
-                    "message": (
-                        "offset-inpaint tile generation requires the Flux2 "
-                        "base and inpaint workflows plus their manifests"
-                    ),
-                    "type": "api_error",
-                }
-            }),
+            content=json.dumps({"error": {"message": message, "type": "api_error"}}),
             status_code=503,
             media_type="application/json",
         )
@@ -22302,7 +22303,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
         return model
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
-    return candidate if load_graph_workflow(candidate, intent=IMAGE_EDIT_INTENT) else model
+    return candidate if load_graph_workflow(candidate, intent=_image_admission_intent("images.edit")) else model
 
 
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
@@ -22316,12 +22317,13 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
         # The edit route's own record (intent image.edit) decides, the same one its final load uses: another
         # intent's record of the same name never supplies metadata or hides this record's refusal.
-        direct_workflow = load_graph_workflow(selected, intent=IMAGE_EDIT_INTENT)
-        if direct_workflow is None and graph_workflow_refused(selected, intent=IMAGE_EDIT_INTENT):
+        edit_intent = _image_admission_intent("images.edit")
+        direct_workflow = load_graph_workflow(selected, intent=edit_intent)
+        if direct_workflow is None and graph_workflow_refused(selected, intent=edit_intent):
             return selected  # a refused package model is unavailable; it never becomes its -edit sibling
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         direct_roles = _image_graph_roles(
-            _find_image_manifest(IMAGE_EDIT_INTENT, selected), direct_meta, direct_workflow or {}, selected)
+            _find_image_manifest(edit_intent, selected), direct_meta, direct_workflow or {}, selected)
         if not (direct_roles.get("image_node") or direct_roles.get("image_nodes")):
             selected = f"{selected}-edit"
 
@@ -22371,10 +22373,12 @@ def _image_workflow_record(intent: str, resolved_model: str) -> Any:
     return find_workflow_record(GATEWAY_WORKFLOW_REGISTRY.records(), intent, resolved_model)
 
 
-def _generate_refusal_for_other_intent_stem(receipt: RouteReceipt | None, model: str, manifest: dict[str, Any] | None):
+def _generate_refusal_for_other_intent_stem(
+    receipt: RouteReceipt | None, model: str, manifest: dict[str, Any] | None, generate_intent: str,
+):
     """A 404 when a generate request names another intent's workflow (an edit graph needs a source picture and its own
     role map); None when the name is a generate workflow or no record claims it (an owner graph)."""
-    if manifest is not None or not other_intent_owns_stem(GATEWAY_WORKFLOW_REGISTRY.records(), "image.generate", model):
+    if manifest is not None or not other_intent_owns_stem(GATEWAY_WORKFLOW_REGISTRY.records(), generate_intent, model):
         return None
     _record_image_input(receipt, "model", rejected_reason="model_incompatible")
     return model_compatibility_error(
@@ -26160,6 +26164,7 @@ async def gateway_image_generations_media_job(request: Request):
     receipt = start_image_route_receipt(
         "/gateway/v1/media/jobs/image-generations",
         auth_context,
+        intent=_image_admission_intent("images.generate"),
     )
     # Submission queues work but does not commit prompt content. The worker
     # owns the separate receipt that reports its eventual retention outcome.
@@ -26229,7 +26234,8 @@ async def gateway_image_generations_media_job(request: Request):
     if protocol_target is not None:
         receipt.backend = protocol_target.engine_id
     model = str(body.get("model", _image_default_model()))
-    manifest = _find_image_manifest("image.generate", model)
+    generate_intent = _image_admission_intent("images.generate")
+    manifest = _find_image_manifest(generate_intent, model)
     if receipt is not None:
         receipt.requested_workflow = model
         if manifest is not None:
@@ -26241,8 +26247,8 @@ async def gateway_image_generations_media_job(request: Request):
                 manifest_hash=identity.manifest_hash,
             )
         else:
-            _attach_image_manifest_if_available(receipt, "image.generate", model)
-    refusal = _generate_refusal_for_other_intent_stem(receipt, model, manifest)
+            _attach_image_manifest_if_available(receipt, generate_intent, model)
+    refusal = _generate_refusal_for_other_intent_stem(receipt, model, manifest, generate_intent)
     if refusal is not None:
         await run_receipt_write(finish_image_route_receipt, receipt, refusal)
         return refusal
@@ -26543,12 +26549,13 @@ async def gateway_media_job_content(job_id: str, request: Request):
     )
 
 
-async def images_generations(request: Request):
+@_acts_for("identity", "images.generate")
+async def images_generations(request: Request, *, intents: frontend_mount.ExecutionIntents):
     """OpenAI-compatible image generation endpoint - routes to ComfyUI backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/generations"))
     if isinstance(auth_context, Response):
         return auth_context
-    receipt = start_image_route_receipt("/v1/images/generations", auth_context)
+    receipt = start_image_route_receipt("/v1/images/generations", auth_context, intent=intents.require_admission())
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
@@ -26563,7 +26570,8 @@ async def images_generations(request: Request):
     return response
 
 
-async def images_variations(request: Request):
+@_acts_for("identity", "images.variations")
+async def images_variations(request: Request, *, intents: frontend_mount.ExecutionIntents):
     """OpenAI-compatible image variations endpoint.
 
     Routed through an edit-capable workflow (images.variations.default_workflow
@@ -26573,7 +26581,7 @@ async def images_variations(request: Request):
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/variations"))
     if isinstance(auth_context, Response):
         return auth_context
-    receipt = start_image_route_receipt("/v1/images/variations", auth_context)
+    receipt = start_image_route_receipt("/v1/images/variations", auth_context, intent=intents.require_admission())
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)
@@ -26588,12 +26596,13 @@ async def images_variations(request: Request):
     return response
 
 
-async def images_edits(request: Request):
+@_acts_for("identity", "images.edit")
+async def images_edits(request: Request, *, intents: frontend_mount.ExecutionIntents):
     """OpenAI-compatible image edit endpoint - routes to ComfyUI backend."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/images/edits"))
     if isinstance(auth_context, Response):
         return auth_context
-    receipt = start_image_route_receipt("/v1/images/edits", auth_context)
+    receipt = start_image_route_receipt("/v1/images/edits", auth_context, intent=intents.require_admission())
     decision = _apply_image_route_policy(receipt, auth_context)
     if decision.denied:
         response = _policy_denied_response(decision)

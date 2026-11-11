@@ -530,6 +530,10 @@ class FrontendMounts:
                 return row.execution_intents
         raise FrontendMountError(f"no mounted row of {translator}/{intent} declares execution intents")
 
+    def rows(self) -> tuple[RouteRow, ...]:
+        """The mounted rows, for a caller that holds a request path and needs the row that serves it."""
+        return tuple(self._rows)
+
     def status(self) -> list[dict[str, Any]]:
         """Every frontend with ``status`` mounted, broken or disabled, and the errors of a broken one."""
         return copy.deepcopy(self._status)
