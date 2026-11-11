@@ -44,6 +44,7 @@ import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate
 from gateway.model_files import missing_model_file_caveat, model_file_availability
+from gateway.service_priority import selected_service
 
 # Intent vocabulary used by the gateway. Mirrors what proxy.py advertises
 # today, kept here so this module does not depend on the proxy.
@@ -197,7 +198,7 @@ def _load_local_capability_rows(
                     fail(where, "resource_tier must be batch or expensive")
                 families.append((name, flag, intent, inputs, outputs, tier))
     default_fields = {
-        "section_required", "backend_presence", "default_backend",
+        "section_required", "backend_presence",
         "execution", "streaming", "gpu_required",
     }
 
@@ -206,7 +207,7 @@ def _load_local_capability_rows(
         row = document[table]
         fields(row, required, where)
         frozen = dict(row)
-        for key in ("section", "enabled_flag", "default_backend", "backend_presence", "execution"):
+        for key in ("section", "enabled_flag", "backend_capability", "backend_presence", "execution"):
             if key in required:
                 text(row, key, where)
         for key in ("section_required", "streaming", "gpu_required"):
@@ -222,12 +223,21 @@ def _load_local_capability_rows(
                 fail(where, "resource_tier must be batch or expensive")
         if "output_modalities" in required:
             frozen["output_modalities"] = modalities(row, "output_modalities", where)
+        if "backend_capabilities" in required:
+            capability_where = f"{where} backend_capabilities"
+            capabilities = row["backend_capabilities"]
+            sections = {family[0] for family in families}
+            fields(capabilities, sections, capability_where)
+            frozen["backend_capabilities"] = MappingProxyType({
+                section: text(capabilities, section, capability_where)
+                for section in capabilities
+            })
         return MappingProxyType(frozen)
 
     image_defaults = family_defaults("image_defaults", default_fields | {
-        "section", "enabled_flag", "output_modalities", "resource_tier",
+        "section", "enabled_flag", "output_modalities", "resource_tier", "backend_capability",
     })
-    workflow_defaults = family_defaults("workflow_defaults", default_fields)
+    workflow_defaults = family_defaults("workflow_defaults", default_fields | {"backend_capabilities"})
     if not isinstance(document["image_rows"], list):
         fail("document row 0", "image_rows must be a list")
     images = []
@@ -528,13 +538,18 @@ def _build_stt_capabilities(
     return _build_backend_capabilities(backends, flags, "recognition")
 
 
-def _family_backend(section: Mapping[str, Any], family: str, default_backend: str) -> str:
-    backend = section.get("backend", default_backend)
-    if not isinstance(backend, str) or not backend:
-        raise ValueError(
-            f"{family}.backend must be a non-empty string; got {backend!r}"
-        )
-    return backend
+def _family_backend(
+    section: Mapping[str, Any], family: str, backends: Mapping[str, Any], capability: str,
+) -> str | None:
+    if "backend" in section:
+        backend = section["backend"]
+        if not isinstance(backend, str) or not backend:
+            raise ValueError(
+                f"{family}.backend must be a non-empty string; got {backend!r}"
+            )
+        return backend
+    selection = selected_service(backends, capability)
+    return selection[0] if selection is not None else None
 
 
 def _family_backend_present(backends: Mapping[str, Any], backend: str, presence: str) -> bool:
@@ -563,8 +578,8 @@ def _build_image_capabilities(
     section = _as_mapping(config.get(defaults["section"]))
     if defaults["section_required"] and not section:
         return []
-    backend = _family_backend(section, defaults["section"], defaults["default_backend"])
-    if not _family_backend_present(backends, backend, defaults["backend_presence"]):
+    backend = _family_backend(section, defaults["section"], backends, defaults["backend_capability"])
+    if backend is None or not _family_backend_present(backends, backend, defaults["backend_presence"]):
         return []
     backend_spec = _as_mapping(backends.get(backend))
     roots = {"backend": backend_spec, "config": config}
@@ -612,8 +627,10 @@ def _build_workflow_capabilities(
         section = _as_mapping(config.get(section_key))
         if _WORKFLOW_DEFAULTS["section_required"] and not section:
             continue
-        backend = _family_backend(section, section_key, _WORKFLOW_DEFAULTS["default_backend"])
-        if not _family_backend_present(backends, backend, _WORKFLOW_DEFAULTS["backend_presence"]):
+        backend = _family_backend(
+            section, section_key, backends, _WORKFLOW_DEFAULTS["backend_capabilities"][section_key],
+        )
+        if backend is None or not _family_backend_present(backends, backend, _WORKFLOW_DEFAULTS["backend_presence"]):
             continue
         out.extend(
             _workflow_family_capabilities(

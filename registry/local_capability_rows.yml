@@ -133,7 +133,7 @@ image_defaults:
   enabled_flag: images
   section_required: false
   backend_presence: nonempty_mapping
-  default_backend: comfyui
+  backend_capability: images
   output_modalities: [image]
   execution: job
   streaming: false
@@ -152,7 +152,9 @@ image_rows:
 workflow_defaults:
   section_required: true
   backend_presence: declared
-  default_backend: comfyui
+  backend_capabilities:
+    videos: videos
+    audio: audio.generate
   execution: job
   streaming: false
   gpu_required: true

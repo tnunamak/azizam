@@ -28,8 +28,10 @@ EXPECTED_FAMILIES = (
 
 
 def document():
+    shipped = yaml.safe_load(ROWS.read_text(encoding="utf-8"))
     return {
-        **yaml.safe_load(ROWS.read_text(encoding="utf-8")),
+        **shipped,
+        "workflow_defaults": {**shipped["workflow_defaults"], "backend_capabilities": {"videos": "videos"}},
         "schema_version": 1,
         "alias_operations": [{
             "name": "chat", "intent": "chat.completions",
@@ -92,8 +94,12 @@ def test_new_workflow_family_uses_its_rows_flag_and_tier(tmp_path, monkeypatch):
         "input_modalities": ["text", "image"], "output_modalities": ["video"],
         "resource_tier": "batch",
     })
-    _, families = local.load_local_capability_rows(write_rows(tmp_path, value))
+    value["workflow_defaults"]["backend_capabilities"]["scenes"] = "custom.scene"
+    path = write_rows(tmp_path, value)
+    _, families = local.load_local_capability_rows(path)
+    _, _, defaults = local.load_local_capability_image_rows(path)
     monkeypatch.setattr(local, "_WORKFLOW_FAMILIES", families)
+    monkeypatch.setattr(local, "_WORKFLOW_DEFAULTS", defaults)
     config = {
         "backends": {"renderer": {}},
         "scenes": {"backend": "renderer", "workflows": {"scene-one": {"file": "scene.json"}}},
@@ -223,6 +229,7 @@ def test_loader_keeps_file_order_instead_of_sorting(tmp_path):
     value["workflow_families"].append({
         **value["workflow_families"][0], "section": "aaa", "enabled_flag": "aaa",
     })
+    value["workflow_defaults"]["backend_capabilities"]["aaa"] = "custom.aaa"
     aliases, families = local.load_local_capability_rows(write_rows(tmp_path, value))
     assert list(aliases) == ["chat", "aaa"]
     assert [row[0] for row in families] == ["videos", "aaa"]

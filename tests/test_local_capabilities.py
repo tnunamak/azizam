@@ -56,7 +56,7 @@ REPRESENTATIVE_CONFIG: dict = {
         },
         "comfyui": {
             "name": "ComfyUI",
-            "capabilities": ["images", "generations", "videos"],
+            "capabilities": ["images", "generations", "videos", "audio.generate"],
             "workflows_dir": "./workflows/images",
             "default_model": "flux2-klein-4b",
         },
@@ -471,7 +471,7 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         # Reference a workflow file that obviously does not exist; module must
         # still return a capability without raising or attempting to open it.
         config = {
-            "backends": {"comfyui": {"workflows_dir": "/nope"}},
+            "backends": {"comfyui": {"capabilities": ["videos"], "workflows_dir": "/nope"}},
             "videos": {
                 "workflows": {
                     "phantom": {"file": "/does/not/exist.json"},
@@ -547,7 +547,7 @@ def test_local_capabilities_golden_has_no_paths_or_secrets():
     ("family", "intent"),
     [("videos", "video.generate"), ("audio", "audio.generate")],
 )
-def test_workflow_family_absent_comfyui_has_no_capabilities(family, intent):
+def test_workflow_family_without_a_selected_service_has_no_capabilities(family, intent):
     config = {
         "backends": {},
         family: {"workflows": {"sample": {"file": "sample.json"}}},
@@ -603,7 +603,7 @@ def test_workflow_family_uses_backend_present_only_in_override(family, intent):
         "backends": {},
         family: {"workflows": {"sample": {"file": "sample.json"}}},
     }
-    live_backends = {"comfyui": {"name": "Live ComfyUI"}}
+    live_backends = {"comfyui": {"name": "Live ComfyUI", "capabilities": ["videos", "audio.generate"]}}
 
     caps = _by_intent(
         build_local_capabilities(config, backends=live_backends), intent
@@ -615,7 +615,7 @@ def test_workflow_family_uses_backend_present_only_in_override(family, intent):
     assert config["backends"] == {}
 
 
-def test_image_family_requires_comfyui_control():
+def test_image_family_requires_a_selected_service_control():
     config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
     del config["backends"]["comfyui"]
 
@@ -637,7 +637,7 @@ def test_image_family_requires_comfyui_control():
 @pytest.mark.parametrize("backend", [None, "", ["other"]])
 def test_family_backend_rejects_malformed_declared_value(family, backend):
     config = {
-        "backends": {"comfyui": {"default_model": "image-model"}},
+        "backends": {"comfyui": {"capabilities": ["images", "videos", "audio.generate"], "default_model": "image-model"}},
         family: {
             "backend": backend,
             "workflows": {"sample": {"file": "sample.json"}},
@@ -692,7 +692,7 @@ def test_image_family_reads_metadata_from_selected_backend():
     ]
 
 
-def test_image_family_default_backend_preserves_rows():
+def test_image_family_selected_backend_preserves_rows():
     config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
     assert "images" not in config
     caps = [
@@ -718,7 +718,7 @@ def test_image_family_default_backend_preserves_rows():
         ),
     ]
 
-    # Preserve the existing default behavior for an empty backend record too.
+    # An empty record declares no capability, so there is no selected image service.
     config["backends"]["comfyui"] = {}
     assert _by_intent(build_local_capabilities(config), "image.generate") == []
     assert _by_intent(build_local_capabilities(config), "image.edit") == []
@@ -904,7 +904,10 @@ def test_empty_config_backend_rows_match_complete_records(trigger, expected, nor
 
 @pytest.mark.parametrize("backend", CATALOG_EMPTY_DECLARATIONS)
 def test_empty_config_backend_rows_require_a_declared_list(backend):
-    assert build_local_capabilities({}, backends={"declared-service": backend}) == []
+    # Isolate generic rows: graph selection follows the selector's iterable-capability contract.
+    assert build_local_capabilities(
+        {}, backends={"declared-service": backend}, enabled_flags=CATALOG_OLD_FLAGS,
+    ) == []
 
 
 def test_empty_config_backend_rows_preserve_vision_and_resource_fields():
@@ -924,9 +927,9 @@ def test_empty_config_backend_rows_preserve_vision_and_resource_fields():
     ]
 
 
-@pytest.mark.parametrize("backend_id", ["comfyui", "unrelated-engine"])
+@pytest.mark.parametrize("backend_id", ["comfyui", "graph-one"])
 @pytest.mark.parametrize("default_model", [None, "concrete-image-model"])
-def test_empty_config_preserves_generic_rows_and_only_adds_bound_image(backend_id, default_model):
+def test_empty_config_preserves_generic_rows_and_binds_images_after_service_rename(backend_id, default_model):
     backend = {
         "capabilities": [trigger for trigger, _expected in CATALOG_TRIGGER_CASES]
                         + ["images", "generations", "videos", "audio"],
@@ -948,7 +951,7 @@ def test_empty_config_preserves_generic_rows_and_only_adds_bound_image(backend_i
         dataclasses.asdict(cap) for cap in expected_generic
     ]
     expected_bound = []
-    if backend_id == "comfyui" and default_model is not None:
+    if default_model is not None:
         expected_bound = [Capability(
             intent="image.generate", backend=backend_id, model=default_model,
             input_modalities=("text",), output_modalities=("image",),
@@ -958,6 +961,161 @@ def test_empty_config_preserves_generic_rows_and_only_adds_bound_image(backend_i
     assert [dataclasses.asdict(cap) for cap in default] == [
         dataclasses.asdict(cap) for cap in expected_generic + expected_bound
     ]
+
+
+@pytest.mark.parametrize("use_override", [False, True])
+def test_renamed_graph_service_preserves_complete_rows_under_its_id(use_override):
+    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
+    expected = [
+        dataclasses.replace(cap, backend="graph-one") if cap.backend == "comfyui" else cap
+        for cap in build_local_capabilities(config)
+    ]
+    renamed = dict(config["backends"])
+    renamed["graph-one"] = renamed.pop("comfyui")
+    before = json.loads(json.dumps(config))
+    if use_override:
+        actual = build_local_capabilities(config, backends=renamed)
+        assert config == before
+    else:
+        config["backends"] = renamed
+        actual = build_local_capabilities(config)
+    assert actual == expected
+    assert len([cap for cap in actual if cap.backend == "graph-one"]) == 6
+    assert not any(cap.backend == "comfyui" for cap in actual)
+
+
+def _graph_family_config(backends):
+    return {
+        "backends": backends,
+        **{
+            section: json.loads(json.dumps(REPRESENTATIVE_CONFIG[section]))
+            for section in ("videos", "audio", "model_compatibility")
+        },
+    }
+
+
+def test_image_only_service_does_not_advertise_video_or_audio_workflows():
+    config = _graph_family_config({
+        "graph-one": {"capabilities": ["images"], "default_model": "image-model"},
+    })
+    caps = build_local_capabilities(config)
+    assert [(cap.intent, cap.backend) for cap in caps] == [
+        ("image.generate", "graph-one"), ("image.edit", "graph-one"),
+    ]
+
+
+def test_graph_families_select_their_own_capability():
+    config = _graph_family_config({
+        "still-one": {"capabilities": ["images"], "default_model": "image-model"},
+        "motion-one": {"capabilities": ["videos"]},
+        "sound-one": {"capabilities": [" AUDIO ", " GENERATE "]},
+    })
+    caps = build_local_capabilities(config)
+    assert [(cap.intent, cap.backend) for cap in caps] == [
+        ("image.generate", "still-one"), ("image.edit", "still-one"),
+        ("video.generate", "motion-one"), ("video.generate", "motion-one"),
+        ("audio.generate", "sound-one"), ("audio.generate", "sound-one"),
+    ]
+
+
+@pytest.mark.parametrize("winner_state", [
+    {"enabled": False, "host": "127.0.0.1", "port": 18101},
+    {},
+], ids=["disabled", "addressless"])
+def test_graph_inventory_keeps_the_selected_winner_without_falling_through(winner_state):
+    graph = json.loads(json.dumps(REPRESENTATIVE_CONFIG["backends"]["comfyui"]))
+    config = _graph_family_config({
+        "runner-up": {**graph, "priority": 10, "enabled": True,
+                      "host": "127.0.0.1", "port": 18102},
+        "winner": {**graph, **winner_state, "priority": 0},
+    })
+    expected = [
+        dataclasses.replace(cap, backend="winner")
+        for cap in build_local_capabilities(_graph_family_config({"comfyui": graph}))
+    ]
+    assert len(expected) == 6
+    assert build_local_capabilities(config) == expected
+    # Inventory remains raw. Supplied family flags, not record.enabled, suppress rows.
+    assert build_local_capabilities(
+        config, enabled_flags={"images": False, "videos": False, "audio": False},
+    ) == []
+
+
+@pytest.mark.parametrize("family, intent", [
+    ("images", "image.generate"), ("videos", "video.generate"), ("audio", "audio.generate"),
+])
+@pytest.mark.parametrize("pin_state", ["declared", "empty", "missing"])
+def test_explicit_graph_family_pin_keeps_presence_and_no_fallthrough(family, intent, pin_state):
+    backends = {
+        "candidate": {"capabilities": ["images", "videos", "audio.generate"],
+                      "default_model": "wrong-model", "priority": 0},
+    }
+    if pin_state != "missing":
+        backends["pinned"] = {"default_model": "pinned-model"} if pin_state == "declared" else {}
+    config = {
+        "backends": backends,
+        family: {"backend": "pinned", "workflows": {"sample": {"file": "sample.json"}}},
+        "model_compatibility": {"defaults": {"images": "compat-model"}},
+    }
+    flags = {key: key == family for key in ("images", "videos", "audio")}
+    caps = build_local_capabilities(config, enabled_flags=flags)
+    if pin_state == "missing" or (family == "images" and pin_state == "empty"):
+        assert caps == []
+    else:
+        assert len(caps) == 1
+        assert (caps[0].intent, caps[0].backend) == (intent, "pinned")
+        assert caps[0].model == ("pinned-model" if family == "images" else None)
+
+
+@pytest.mark.parametrize("table, change, key, value, message", [
+    ("image_defaults", "delete", "backend_capability", None, "missing fields"),
+    ("image_defaults", "set", "default_backend", "comfyui", "unknown fields"),
+    ("image_defaults", "set", "backend_capability", "", "non-empty string"),
+    ("image_defaults", "set", "backend_capability", "  ", "non-empty string"),
+    ("image_defaults", "set", "backend_capability", None, "non-empty string"),
+    ("image_defaults", "set", "backend_capability", [], "non-empty string"),
+    ("image_defaults", "set", "backend_capability", 7, "non-empty string"),
+    ("image_defaults", "set", "backend_capability", False, "non-empty string"),
+    ("workflow_defaults", "delete", "backend_capabilities", None, "missing fields"),
+    ("workflow_defaults", "set", "default_backend", "comfyui", "unknown fields"),
+    ("workflow_defaults", "set", "backend_capabilities", None, "must be a mapping"),
+    ("workflow_defaults", "set", "backend_capabilities", [], "must be a mapping"),
+    ("workflow_defaults", "set", "backend_capabilities", "videos", "must be a mapping"),
+    ("workflow_defaults", "set", "backend_capabilities", {}, "missing fields"),
+    ("workflow_defaults", "set", "backend_capabilities", {"videos": "videos"}, "missing fields"),
+    ("workflow_defaults", "set", "backend_capabilities",
+     {"videos": "videos", "audio": "audio.generate", "extra": "images"}, "unknown fields"),
+    ("workflow_defaults", "set", "backend_capabilities",
+     {"videos": " ", "audio": "audio.generate"}, "non-empty string"),
+    ("workflow_defaults", "set", "backend_capabilities",
+     {"videos": "videos", "audio": None}, "non-empty string"),
+    ("workflow_defaults", "set", "backend_capabilities",
+     {"videos": "videos", "audio": ["audio.generate"]}, "non-empty string"),
+    ("workflow_defaults", "set", "backend_capabilities",
+     {"videos": "videos", "audio": "audio.generate", 7: "images"}, "unknown fields"),
+    ("workflow_defaults", "set", "backend_capabilities",
+     {"videos": "videos", "audio": 7}, "non-empty string"),
+])
+def test_graph_selection_defaults_reject_invalid_schema(tmp_path, table, change, key, value, message):
+    document = yaml.safe_load(
+        (ROOT / "registry" / "local_capability_rows.yml").read_text(encoding="utf-8")
+    )
+    if change == "delete":
+        del document[table][key]
+    else:
+        document[table][key] = value
+    path = tmp_path / "invalid-selection-rows.yml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError) as error:
+        local_capabilities.load_local_capability_image_rows(path)
+    assert str(path) in str(error.value)
+    assert f"{table} row 1" in str(error.value)
+    assert message in str(error.value)
+
+
+def test_unmasked_graph_selection_keeps_non_iterable_capability_error():
+    with pytest.raises(TypeError):
+        build_local_capabilities({}, backends={"malformed": {"capabilities": 7}})
 
 
 if __name__ == "__main__":
