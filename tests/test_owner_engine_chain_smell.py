@@ -174,10 +174,10 @@ def test_step6_the_job_leaves_a_receipt_and_shows_in_the_owner_activity(owner, s
         job = _submit_and_read(public, key, smell_engine)
     records = client.get("/admin/api/activity/requests")
     assert records.status_code == 200, records.text
-    receipts = [r["receipt"] for r in records.json()["records"] if r["receipt"].get("intent") == "smell.infer"]
-    assert len(receipts) == 1, [(r["request_id"], r["path"], r["status"], r["app_id"], r["job_id"], r["protocol"]) for r in receipts]
+    receipts = [r["receipt"] for r in records.json()["records"] if r["receipt"].get("job_id") == job["id"]]
+    assert len(receipts) == 1, records.json()["records"]
     receipt = receipts[0]
-    assert receipt["status"] == "succeeded" and receipt["backend"] == "smell-box" and receipt["job_id"] == job["id"]
+    assert receipt["status"] == "succeeded" and receipt["backend"] == "smell-box" and receipt["intent"] == "smell.infer"
     assert receipt["path"] == "/gateway/v1/media/jobs"
     assert "CCO" not in json.dumps(records.json())  # the receipt names the work, not its input or its result
 
