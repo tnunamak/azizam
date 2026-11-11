@@ -72,6 +72,11 @@ class PinnedRuntime:
         self._jobs_path = jobs_path
         self._context = context or ResultContext(ResultLimits())
 
+    @property
+    def wait_s(self) -> float:
+        """The longest this job waits on its engine, queue time included: the wait of the service it was pinned to."""
+        return float(self._timing[1])
+
     def _pin(self) -> pinned_definitions.PinnedDefinitions:
         return pinned_definitions.load(self.job_id, self._jobs_path or media_jobs.DB_PATH)
 

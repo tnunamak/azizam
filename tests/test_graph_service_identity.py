@@ -267,3 +267,83 @@ def test_no_module_value_holds_the_service_id_or_its_record(monkeypatch):
     _publish(monkeypatch, {"second-one": _record(7002)})
     assert proxy._graph_service_id("images") == "second-one"
     assert proxy._graph_connection(capability="images", probe=True).address == "http://203.0.113.7:7002"
+
+
+# --- a job goes to the service it was pinned to, with that service's own wait ---------------------------------------------
+
+def _split_graph(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Two graph records on different addresses and timeouts: ``graph-img`` serves images, ``graph-vid`` serves the
+    other two families. It is the live config too, because the runner finds the pinned record there."""
+    backends = {
+        "graph-img": _record(7001, capabilities=["images", "generations"], timeout=31),
+        "graph-vid": _record(7002, capabilities=["videos", "audio.generate"], timeout=41),
+    }
+    _publish(monkeypatch, backends)
+    monkeypatch.setitem(proxy.config, "backends", backends)
+    monkeypatch.setattr(proxy, "_require_egress_lease", lambda _id: None)
+    return backends
+
+
+def test_the_runner_connects_to_the_service_the_job_was_pinned_to_with_that_services_wait(monkeypatch):
+    backends = _split_graph(monkeypatch)
+    host = proxy._graph_runner_host()
+    key = proxy.DERIVED._GRAPH_BINDING
+    for service_id, port, wait in (("graph-img", 7001, 31), ("graph-vid", 7002, 41)):
+        found = host.engine(key, service_id)
+        assert found is not None and found[0] == service_id
+        connection = host.connection(found[0], found[1])
+        assert connection.address == f"http://203.0.113.7:{port}"
+        assert (connection.timeouts.first_byte_s, connection.timeouts.total_s) == (wait, wait)
+    # A pin that names a service no longer configured is not run on another one.
+    assert host.engine(key, "gone") is None
+
+
+class _SpySession:
+    def __init__(self, connection: Any, seen: list[tuple[str, list[str]]]) -> None:
+        self.connection, self.seen = connection, seen
+
+    async def delete_history(self, ids, *, headers):
+        self.seen.append((self.connection.address, list(ids)))
+
+
+class _SpyClient:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def test_deleting_a_video_forgets_its_history_on_the_service_it_ran_on(monkeypatch, tmp_path):
+    from gateway import media_jobs
+    from gateway.definition_store import DefinitionStore
+    from gateway.job_envelope import build_job_envelope
+
+    # The job ran on "old-vid"; since then "new-vid" took the videos family by priority.
+    backends = {
+        "new-vid": _record(7002, capabilities=["videos"], priority=1),
+        "old-vid": _record(7003, capabilities=["videos"], priority=2),
+    }
+    _publish(monkeypatch, backends)
+    monkeypatch.setitem(proxy.config, "backends", backends)
+    monkeypatch.setattr(proxy, "_require_egress_lease", lambda _id: None)
+    db = tmp_path / "jobs.db"
+    media_jobs.init_db(db)
+    monkeypatch.setattr(media_jobs, "DB_PATH", db)
+    built = build_job_envelope(
+        source_kind="workflow", source_id="wf", contract={"n": 1}, binding={"n": 1}, template=None, protocol_id="proto-x",
+        adapter_id="adapter-x", interface_version=1, service_id="old-vid", origin="http://203.0.113.7:7003")
+    job = media_jobs.create(media_jobs.MediaJob(intent="video.generate", request_id="r1", metadata={"protocol_job": "p1"}),
+                            envelope=built, path=db)
+    seen: list[tuple[str, list[str]]] = []
+    headers_for: list[str] = []
+    real = proxy.reviewed_adapters.adapter_for_backend
+    monkeypatch.setattr(proxy.reviewed_adapters, "adapter_for_backend", lambda record, capability: type(
+        "Adapter", (), {"attach": staticmethod(lambda connection, client: _SpySession(connection, seen)),
+                        "label": real(record, capability).label})())
+    monkeypatch.setattr(proxy, "configured_downstream_headers", lambda ctx, service: headers_for.append(service) or {})
+    monkeypatch.setattr(proxy.engine_egress, "async_client", lambda **kwargs: _SpyClient())
+
+    asyncio.run(proxy._forget_video_history(job.job_id, object()))
+    assert seen == [("http://203.0.113.7:7003", ["p1"])]
+    assert headers_for == ["old-vid"]

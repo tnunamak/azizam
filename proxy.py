@@ -1519,6 +1519,12 @@ def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
     return engine_record_defaults.record_value(_EMBEDDINGS_CAPABILITY, record, "model_id")
 
 
+def _graph_timeout(record: Mapping[str, Any]) -> int:
+    """The longest a request to the graph service *record* waits on it, queue time included: its own ``timeout``, else
+    the release default."""
+    return int(_record_default(_GRAPH_CAPABILITY, record, "timeout"))
+
+
 def _graph_services_of(backends: Mapping[str, Any]) -> dict[str, GraphService]:
     """The service each graph family selects in *backends*, family by family. A family no record declares is the empty
     service: no id, no address, off. A selected record that is disabled or names no address stays the selection."""
@@ -1529,7 +1535,7 @@ def _graph_services_of(backends: Mapping[str, Any]) -> dict[str, GraphService]:
         views[capability] = GraphService(
             service_id=service_id, record=record, host=host,
             enabled=bool(service_id) and bool_from_config(record.get("enabled"), True) and bool(host),
-            timeout=int(_record_default(_GRAPH_CAPABILITY, record, "timeout")),
+            timeout=_graph_timeout(record),
         )
     return views
 
@@ -26820,10 +26826,10 @@ def _backend_address(record: Mapping[str, Any]) -> str | None:
     return service_registry.engine_base_address(record) or None
 
 
-def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+def _workflow_engine(binding_key: str | None, service_id: str | None = None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
     """The configured service whose reviewed protocol holds the bindings under ``binding_key``: (service id, record,
     protocol, adapter). Found by data (the protocol description's ``binding`` key and the record's protocol), never by
-    an engine name."""
+    an engine name. With ``service_id`` only that service is considered: a job runs on the service it was pinned to."""
     from gateway.engine_protocol import description as protocol_description
     from gateway.engine_protocol import reviewed
     from gateway.engine_protocol.errors import ProtocolError
@@ -26833,20 +26839,22 @@ def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], A
         # A record is the engine for this binding when it names the protocol itself, or when its service id is the
         # binding key. A record that merely could serve a capability is not: that would pick any service with an address.
         candidates = []
-        for service_id, record in (config.get("backends") or {}).items():
+        for candidate_id, record in (config.get("backends") or {}).items():
+            if service_id is not None and candidate_id != service_id:
+                continue
             if not isinstance(record, Mapping) or _backend_address(record) is None:
                 continue
             connection = record.get("connection")
             named = next((str(source["protocol"]).strip() for source in (connection if isinstance(connection, Mapping) else {}, record)
                           if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
-            if named == doc.id or service_id == binding_key:
-                candidates.append((named != doc.id, service_id, record))
-        for _, service_id, record in sorted(candidates, key=lambda item: item[0]):
+            if named == doc.id or candidate_id == binding_key:
+                candidates.append((named != doc.id, candidate_id, record))
+        for _, candidate_id, record in sorted(candidates, key=lambda item: item[0]):
             for capability in (*doc.serves, ""):
                 try:
                     if reviewed.protocol_for_backend(record, capability).id != doc.id:
                         continue
-                    return service_id, record, doc, reviewed.adapter_for_backend(record, capability)
+                    return candidate_id, record, doc, reviewed.adapter_for_backend(record, capability)
                 except ProtocolError:
                     continue
     return None
@@ -26891,17 +26899,13 @@ def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDeci
         available_label="available workflow ids", empty_label="no available workflow was reported")
 
 
-def _graph_wait_s() -> float:
-    """The longest a run waits on the graph engine: queue time included."""
-    return float(_graph_service(_GRAPH_CAPABILITY).timeout)
-
-
 def _graph_service_connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
-    """The connection to one graph service's address, with the run's wait as its read bound. A request is about to
-    go to ``service_id``, so this needs its serving lease."""
+    """The connection to one graph service's address, with that service's own wait as the run's read bound. A request
+    is about to go to ``service_id``, so this needs its serving lease."""
     _require_egress_lease(service_id)
+    wait = float(_graph_timeout(record))
     return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
-        connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
+        connect_s=10, first_byte_s=wait, total_s=wait))
 
 
 class _WorkflowRunPort:
@@ -27025,7 +27029,7 @@ class _WorkflowRunPort:
         if runner is not None:
             return await runner.run(ctx)
         from gateway.engine_protocol.media import GatewayAssetStore
-        engine = _workflow_engine(ctx.pin.envelope.binding_key)
+        engine = _workflow_engine(ctx.pin.envelope.binding_key, ctx.pin.envelope.service_id)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
         service_id, record, protocol, _ = engine
@@ -27041,7 +27045,7 @@ class _WorkflowRunPort:
 
         runtime_ = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
-            timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
+            timing=(2.0, connection().timeouts.total_s), jobs_path=media_jobs.DB_PATH,
             context=ResultContext(self.result_limits()))
         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
         # it. No operation of the protocol is picked by position.
@@ -27294,7 +27298,7 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         engine=_workflow_engine, identity=identity,
         problem=_graph_binding_problem,
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
-        max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+        control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
         headers=lambda ctx: configured_downstream_headers(ctx.caller, ctx.pin.envelope.service_id) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
         sources=run_sources,
@@ -27863,16 +27867,24 @@ def _video_wire_shape():
 
 async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
     """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
-    file stops being reachable there. A job the engine never took has none; a failure is not the caller's."""
+    file stops being reachable there. The engine asked is the service the job was pinned to, which holds that history even
+    after a priority change gave the videos family another winner. A job the engine never took, or that pinned no service,
+    has none; a service no longer configured cannot be asked; a failure is not the caller's."""
     job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
     kept = (job or {}).get("metadata") or {}
     prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
     if not prompt_id:
         return
     try:
-        headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
+        envelope = await asyncio.to_thread(definition_store.DefinitionStore(media_jobs.DB_PATH).envelope, job_id)
+        service_id = envelope.service_id if envelope is not None else ""
+        record = (config.get("backends") or {}).get(service_id)
+        if not service_id or not isinstance(record, Mapping):
+            return
+        headers = configured_downstream_headers(auth_context, service_id)
+        adapter = reviewed_adapters.adapter_for_backend(record, _VIDEO_GRAPH_CAPABILITY)
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
-            await _graph(client, "videos").delete_history([str(prompt_id)], headers=headers)
+            await adapter.attach(_graph_service_connection(service_id, record), client).delete_history([str(prompt_id)], headers=headers)
     except Exception:  # noqa: BLE001 - best effort
         pass
 

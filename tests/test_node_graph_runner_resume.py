@@ -55,11 +55,11 @@ def harvest(monkeypatch):
             compile=lambda op, request, edit=None: ({}, {}),
         )
         runtime = SimpleNamespace(
-            request=lambda op, body: SimpleNamespace(params={}), connection_for=lambda op: None,
+            request=lambda op, body: SimpleNamespace(params={}), connection_for=lambda op: None, wait_s=100.0,
         )
         host = GraphHost(
             engine=None, identity=None, problem=None, adapter=None, connection=None,
-            limits=lambda: limits, max_wait_s=lambda: 100, control_timeout=lambda: 1,
+            limits=lambda: limits, control_timeout=lambda: 1,
             headers=lambda ctx: {}, batching=lambda ctx, adapter: Batching() if batched else None, stages={},
         )
         runner = NodeGraphRunner("b", "a", host)

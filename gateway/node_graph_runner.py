@@ -147,13 +147,12 @@ class Variant:
 class GraphHost:
     """What the runner reads from the gateway. Tests inject fakes for each of them."""
 
-    engine: Callable[[str], tuple[str, Mapping[str, Any], Any, Any] | None]    # binding key -> (service, record, protocol, adapter)
+    engine: Callable[[str, str], tuple[str, Mapping[str, Any], Any, Any] | None]    # (binding key, pinned service id) -> (service, record, protocol, adapter)
     identity: Callable[[Any, str, Any], AdapterIdentity]
     problem: Callable[[Any], str | None]
     adapter: Callable[..., Any]                          # (record, protocol, ctx, sources) -> the adapter over the person's asset store
-    connection: Callable[[str, Mapping[str, Any]], Any]
+    connection: Callable[[str, Mapping[str, Any]], Any]    # (service id, record) -> its address and its wait bound
     limits: Callable[[], result_bundle.ResultLimits]
-    max_wait_s: Callable[[], float]
     control_timeout: Callable[[], Any]
     headers: Callable[[RunContext], Mapping[str, str]]
     batching: Callable[[RunContext, Any], Batching | None]
@@ -238,7 +237,7 @@ class NodeGraphRunner:
     # -- the run ----------------------------------------------------------------------------------------------------
 
     async def run(self, ctx: RunContext) -> None:
-        engine = self.host.engine(ctx.pin.envelope.binding_key)
+        engine = self.host.engine(ctx.pin.envelope.binding_key, ctx.pin.envelope.service_id)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
         service_id, record, protocol, _ = engine
@@ -246,7 +245,7 @@ class NodeGraphRunner:
         adapter = self.host.adapter(record, protocol, ctx, sources)
         runtime = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=lambda: self.host.connection(service_id, record),
-            timing=(2.0, float(self.host.max_wait_s())), jobs_path=media_jobs.DB_PATH,
+            timing=(2.0, float(self.host.connection(service_id, record).timeouts.total_s)), jobs_path=media_jobs.DB_PATH,
             context=ResultContext(self.host.limits()))
         op = str(ctx.pin.contract["intent"])
         body = {**dict(ctx.inputs), **dict(ctx.generated)}
@@ -392,7 +391,7 @@ class NodeGraphRunner:
             probe.start()
         try:
             result = await graph_round.run_round(
-                adapter, session, payload, headers, graph=graph, label=label, max_wait_s=float(host.max_wait_s()),
+                adapter, session, payload, headers, graph=graph, label=label, max_wait_s=runtime.wait_s,
                 control_timeout=host.control_timeout(), resume_prompt_id=resume, cancel_connection=lambda: runtime.connection_for(op),
                 is_disconnected=cancelled, binding=binding, contract_outputs=outputs, limits=limits, cadence=poll, say=host.say,
                 on_progress=ctx.record_progress if job_metadata().get(ENGINE_PROGRESS_FLAG) else (lambda _percent: None),
