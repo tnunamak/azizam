@@ -276,6 +276,65 @@ def test_listed_items_grant_only_those_items():
     assert evaluate(effective, PolicyRequest(intent="image.generate", workflow="sdxl")).denied
 
 
+# Literal oracle: do not derive expected record IDs from compatibility data.
+_VIDEO_WORKFLOW_IDS = [
+    ("video-ltx-2.5-t2v", "video.generate.ltx-2.5-t2v", "video.generate"),
+    ("video-ltx-2.5-i2v", "video.generate.ltx-2.5-i2v", "video.generate"),
+    ("video-ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes", "video.generate"),
+    ("video-ltx-2.5-keyframes-mid", "video.generate.ltx-2.5-keyframes-mid", "video.generate"),
+    ("video-ltx-2.5-long", "video.generate.ltx-2.5-long", "video.generate"),
+    ("video-minimax-h3-t2v", "video.generate.minimax-h3-t2v", "video.generate"),
+    ("video-minimax-h3-i2v", "video.generate.minimax-h3-i2v", "video.generate"),
+    ("video-minimax-h3-keyframes", "video.generate.minimax-h3-keyframes", "video.generate"),
+    ("video-minimax-h3-keyframes-mid", "video.generate.minimax-h3-keyframes-mid", "video.generate"),
+    ("video-minimax-h3-long", "video.generate.minimax-h3-long", "video.generate"),
+    ("video-scail-2-replace", "video.edit.scail-2-replace", "video.edit"),
+]
+
+
+def test_video_workflow_id_oracle_covers_every_shipped_key():
+    shipped = yaml.safe_load(
+        (ROOT / "registry" / "defaults" / "videos.yml").read_text(encoding="utf-8")
+    )["workflows"]
+    assert len(_VIDEO_WORKFLOW_IDS) == len({row[0] for row in _VIDEO_WORKFLOW_IDS}) == 11
+    assert {row[0] for row in _VIDEO_WORKFLOW_IDS} == set(shipped)
+
+
+@pytest.mark.parametrize("key,workflow_id,intent", _VIDEO_WORKFLOW_IDS)
+@pytest.mark.parametrize("matching", [True, False], ids=["listed", "different-record"])
+def test_video_record_id_is_the_access_plan_identity(key, workflow_id, intent, matching):
+    from gateway.video_limits import workflow_id_for_video_key
+
+    resolved = workflow_id_for_video_key(key)
+    assert resolved == workflow_id
+    other_id = next(row[1] for row in _VIDEO_WORKFLOW_IDS if row[1] != workflow_id)
+    listed_id = workflow_id if matching else other_id
+    listed = plan(can_use={"video": CapabilityGrant(workflows=frozenset({listed_id}))})
+    decision = evaluate(access(listed), PolicyRequest(intent=intent, workflow=resolved))
+    if matching:
+        assert decision.allowed
+    else:
+        assert decision.denied and decision.code == NOT_IN_ACCESS_PLAN
+
+
+@pytest.mark.parametrize("listed_id,allowed", [
+    ("video.generate.my-own", True),
+    ("my-own", False),
+    ("video.edit.my-own", False),
+])
+def test_owner_video_entry_uses_its_generate_record_id(listed_id, allowed):
+    from gateway.video_limits import workflow_id_for_video_key
+
+    resolved = workflow_id_for_video_key("my-own")
+    assert resolved == "video.generate.my-own"
+    listed = plan(can_use={"video": CapabilityGrant(workflows=frozenset({listed_id}))})
+    decision = evaluate(access(listed), PolicyRequest(intent="video.generate", workflow=resolved))
+    if allowed:
+        assert decision.allowed
+    else:
+        assert decision.denied and decision.code == NOT_IN_ACCESS_PLAN
+
+
 def test_unknown_intent_denies():
     assert evaluate(access(everything()), PolicyRequest(intent="teleport.now")).denied
 

@@ -272,13 +272,30 @@ def test_video_04_access_plan_refuses_before_engine(world):
     run(drive())
 
 
-def test_video_04b_a_plan_naming_the_catalog_workflow_id_runs_the_video_job(world):
+@pytest.mark.parametrize("model", [MODEL, "ltx-2.3-fast"], ids=["canonical", "alias"])
+def test_video_04b_a_plan_naming_the_catalog_workflow_id_runs_the_video_job(world, model):
     async def drive():
         plan = plan_for(caps=("video",), workflows=["video.generate.ltx-2.5-t2v"])
         with authenticated(identity(plan)):
-            submitted = await submit_job(world)
+            submitted = await submit_job(world, model=model)
             done = await terminal_job(world, submitted.json()["job_id"])
         assert done["status"] == "succeeded", done
+        assert prompt_posts(world) == [("POST", "/prompt")]
+    run(drive())
+
+
+def test_video_04c_a_plan_naming_a_different_workflow_refuses_before_engine(world):
+    async def drive():
+        plan = plan_for(caps=("video",), workflows=["video.generate.minimax-h3-t2v"])
+        with authenticated(identity(plan)):
+            response = await world.rig.call(
+                "POST", "/gateway/v1/media/jobs",
+                json_body={"intent": "video.generate", "request": CREATE},
+                unordered_json=True,
+            )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "not_in_access_plan"
+        assert world.engine.calls == []
     run(drive())
 
 
