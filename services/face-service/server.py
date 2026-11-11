@@ -25,7 +25,7 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
-from facecore import KNOWN_MODELS, analyze as analyze_faces
+from facecore import KNOWN_MODELS, ModelRootMissing, analyze as analyze_faces
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--host", default="127.0.0.1")
@@ -72,7 +72,11 @@ async def analyze(
         with _lock:
             return analyze_faces(model, frame, min_det_score)
 
-    faces = await run_in_threadpool(_run)
+    try:
+        faces = await run_in_threadpool(_run)
+    except ModelRootMissing as exc:
+        # A setup fault, not a bad request: say so instead of a bare 500.
+        raise HTTPException(503, str(exc)) from exc
     _last_used = time.monotonic()
     return {"width": width, "height": height, "model": model, "faces": faces}
 
