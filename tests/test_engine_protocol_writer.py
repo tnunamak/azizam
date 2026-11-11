@@ -289,5 +289,5 @@ def test_a_second_worker_sees_create_replace_and_delete_without_a_restart(env, m
         assert client.delete(f"{PATH}/tiny", headers={"If-Match": etag}).status_code == 200
         assert "tiny" not in seen()
     finally:
-        worker.kill()
-        worker.wait()
+        worker.stdin.close()
+        worker.wait(timeout=20)
