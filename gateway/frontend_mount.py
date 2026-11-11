@@ -27,7 +27,7 @@ import copy
 import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -104,6 +104,53 @@ def operation_mode(operation: Operation) -> str:
     return operation.auth
 
 
+# The request scope key under which the mount hands a handler the ``MatchedOperation`` of the row that matched.
+EXECUTION_INTENTS_SCOPE_KEY = "matched_operation"
+
+
+@dataclass(frozen=True)
+class ExecutionIntents:
+    """The intents a row's handler admits and receipts its work under; route policy keeps its own field.
+
+    Both are data of the row (``execution_intents: {admission: ..., receipt: ...}``). A handler reads the
+    role it needs and a row without it is a configuration error, never an unrestricted run.
+    """
+
+    admission: str | None = None
+    receipt: str | None = None
+
+    def require_admission(self) -> str:
+        if not self.admission:
+            raise FrontendMountError("this row declares no admission intent")
+        return self.admission
+
+    def require_receipt(self) -> str:
+        if not self.receipt:
+            raise FrontendMountError("this row declares no receipt intent")
+        return self.receipt
+
+
+@dataclass(frozen=True)
+class MatchedOperation:
+    """The operation a request matched and the execution intents its row declares."""
+
+    translator: str
+    intent: str
+    execution_intents: ExecutionIntents
+
+
+def matched_intents(scope: Mapping[str, Any], translator: str, intent: str) -> ExecutionIntents | None:
+    """The intents of the row this request matched, when it matched the operation ``translator``/``intent``.
+
+    A request that matched another operation (a handler that calls another handler with the same request)
+    answers None, so the caller never acts under a row it did not match.
+    """
+    matched = scope.get(EXECUTION_INTENTS_SCOPE_KEY)
+    if isinstance(matched, MatchedOperation) and (matched.translator, matched.intent) == (translator, intent):
+        return matched.execution_intents
+    return None
+
+
 @dataclass(frozen=True)
 class RouteRow:
     frontend: str
@@ -117,6 +164,8 @@ class RouteRow:
     body: str = JSON
     # The row comes from the builtin seed, which ships with the code; every other row is a package row.
     builtin: bool = False
+    # What the handler admits and receipts under, when the row declares it.
+    execution_intents: ExecutionIntents | None = None
 
 
 # Answers a request an exact frontend refuses. It authenticates the caller, writes the receipt and
@@ -217,6 +266,7 @@ def _rows_of(frontend: Mapping[str, Any]) -> list[RouteRow]:
             continue
         methods = frozenset(_methods(item.get("methods")))
         carries = _carries(frontend_id, item)
+        execution_intents = _execution_intents(frontend_id, item)
         body = item.get("body", JSON)
         if body not in BODIES:
             raise FrontendMountError(f"{frontend_id}: body must be one of {list(BODIES)}, not {body!r}")
@@ -232,6 +282,7 @@ def _rows_of(frontend: Mapping[str, Any]) -> list[RouteRow]:
                     carries=carries,
                     body=body,
                     builtin=builtin,
+                    execution_intents=execution_intents,
                 ))
     return rows
 
@@ -434,6 +485,7 @@ class PreparedMounts:
     owner: "FrontendMounts"
     routes: list[BaseRoute]
     status: list[dict[str, Any]]
+    rows: list[RouteRow] = field(default_factory=list)
 
     def commit(self) -> None:
         self.owner._commit(self)
@@ -465,6 +517,18 @@ class FrontendMounts:
         self.before = before
         self._routes: list[BaseRoute] = []
         self._status: list[dict[str, Any]] = []
+        self._rows: list[RouteRow] = []
+
+    def execution_intents(self, translator: str, intent: str) -> ExecutionIntents:
+        """The execution intents of the mounted row that a caller outside a request (a job runner) acts for.
+
+        Looked up by the row's operation (translator and intent), never by path. It raises when no mounted row
+        of that operation declares any, so a missing row stops the work instead of running it unlabelled.
+        """
+        for row in self._rows:
+            if row.translator == translator and row.intent == intent and row.execution_intents is not None:
+                return row.execution_intents
+        raise FrontendMountError(f"no mounted row of {translator}/{intent} declares execution intents")
 
     def status(self) -> list[dict[str, Any]]:
         """Every frontend with ``status`` mounted, broken or disabled, and the errors of a broken one."""
@@ -490,16 +554,18 @@ class FrontendMounts:
             default_response_class=self.app.router.default_response_class,
             generate_unique_id_function=self.app.router.generate_unique_id_function,
         )
+        mounted: list[RouteRow] = []
         for row, operation in planned:
             mark = len(router.routes)
             try:
                 _add_route(router, row, operation, refuse=self.refuse, authenticate=self.authenticate)
+                mounted.append(row)
             except Exception as error:  # noqa: BLE001 - the router refused this row; the others still mount
                 del router.routes[mark:]
                 problems.append(RowProblem(
                     row.frontend, row.path, tuple(sorted(row.methods)), f"{row.path} cannot be added to the router: {error}",
                 ))
-        return PreparedMounts(self, list(router.routes), _status_of(records, problems))
+        return PreparedMounts(self, list(router.routes), _status_of(records, problems), mounted)
 
     def _commit(self, prepared: PreparedMounts) -> None:
         before, own = list(self.app.router.routes), self._routes
@@ -510,6 +576,7 @@ class FrontendMounts:
             self._routes = own
             raise
         self._status = prepared.status
+        self._rows = prepared.rows
         self.app.openapi_schema = None
         for item in self._status:
             for error in item["errors"]:
@@ -583,6 +650,21 @@ def _carries(frontend_id: str, item: Mapping[str, Any]) -> frozenset[str] | None
     return frozenset(value)
 
 
+def _execution_intents(frontend_id: str, item: Mapping[str, Any]) -> ExecutionIntents | None:
+    if "execution_intents" not in item:
+        return None
+    value = item["execution_intents"]
+    roles = {"admission", "receipt"}
+    if (
+        not isinstance(value, Mapping) or not value or set(value) - roles
+        or not all(isinstance(intent, str) and intent.strip() for intent in value.values())
+    ):
+        raise FrontendMountError(
+            f"{frontend_id}: execution_intents must be a mapping of {sorted(roles)} to intent names"
+        )
+    return ExecutionIntents(**{role: str(intent).strip() for role, intent in value.items()})
+
+
 def _mounted_route_class(
     row: RouteRow,
     operation: Operation,
@@ -590,15 +672,18 @@ def _mounted_route_class(
     authenticate: Authenticate | None,
     refuse: Refuse | None,
 ) -> type[APIRoute] | None:
-    """A route class that authenticates the caller, and holds the row's request to what its translator carries.
+    """A route class that authenticates the caller, holds the row's request to what its translator carries,
+    and hands the handler the row's execution intents.
 
     None when the route needs no wrapper: the operation authenticates itself, the row declares no
-    ``carries``, and it is not a multipart row of a translator that could lose fields.
+    ``carries`` or execution intents, and it is not a multipart row of a translator that could lose fields.
+    The wrapper binds the intents after the mount's own caller check, so it never changes who is let in.
     """
     authenticating = checks_caller(operation)
     unchecked = row.body == MULTIPART and row.translator != IDENTITY
     carries = frontend_loss.Carries(row.carries) if row.carries is not None else None
-    if not authenticating and carries is None and not unchecked:
+    intents = row.execution_intents
+    if not authenticating and carries is None and not unchecked and intents is None:
         return None
 
     class MountedRoute(APIRoute):
@@ -611,6 +696,8 @@ def _mounted_route_class(
                     refusal = await authenticate(request)
                     if refusal is not None:
                         return refusal
+                if intents is not None:
+                    request.scope[EXECUTION_INTENTS_SCOPE_KEY] = MatchedOperation(row.translator, row.intent, intents)
                 if carries is not None:
                     return await _serve_checked(request, serve, row, carries, refuse)
                 if unchecked:
