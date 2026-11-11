@@ -303,6 +303,30 @@ class SqliteOperationStore:
     def current(self, domain: str) -> Optional[Operation]:
         return self._read("domain = ? AND state IN ('running', 'reconciling')", (domain,))
 
+    def current_with_generation(self, domain: str) -> Optional[tuple[Operation, int]]:
+        """Observe an unfinished operation and gate generation in one snapshot."""
+        rows = self._unfinished_observations("AND domain = ?", (domain,))
+        return rows[0] if rows else None
+
+    def unfinished_with_generation(self) -> Sequence[tuple[Operation, int]]:
+        """Versioned observations for delayed recovery holds."""
+        return self._unfinished_observations("", ())
+
+    def _unfinished_observations(self, extra: str, args: tuple[Any, ...]) -> list[tuple[Operation, int]]:
+        self._ensure()
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                f"SELECT {_COLUMNS}, (SELECT generation FROM transition_gate AS gate "
+                "WHERE gate.domain = transition_op.domain) FROM transition_op "
+                f"WHERE state IN ('running', 'reconciling') {extra} ORDER BY created, op_id",
+                args).fetchall()
+            if any(row[-1] is None for row in rows):
+                raise StaleOutcome("unfinished operation has no gate generation")
+            return [(_operation(row[:-1]), int(row[-1])) for row in rows]
+        finally:
+            connection.close()
+
     def _read(self, where: str, args: tuple[Any, ...]) -> Optional[Operation]:
         self._ensure()
         connection = self._connect()

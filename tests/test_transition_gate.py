@@ -227,6 +227,43 @@ def test_gate_store_force_holds_until_a_newer_publication(tmp_path, state: str, 
     assert store.state("d") == "open"
 
 
+@pytest.mark.parametrize("read_many", [False, True])
+def test_stale_unfinished_hold_cannot_replace_finished_generation(tmp_path, read_many) -> None:
+    from gateway.transition_store import SqliteOperationStore
+
+    gates = GateStore(tmp_path / "transition.db")
+    gates.load()
+    operations = SqliteOperationStore(gates)
+    operations.begin(domain="d", kind="select", idempotency_key="k",
+                     target="t", incarnation=None, config_revision=1)
+    observed = (operations.unfinished_with_generation()[0] if read_many
+                else operations.current_with_generation("d"))
+    operation, generation = observed
+    operations.finish(operation.op_id, "succeeded", "open")
+    assert gates._generations["d"] == generation + 1
+    gates.force(operation.domain, "reconciling", generation=generation)
+    assert gates.state("d") == "open"
+    assert gates._generations["d"] == generation + 1
+    gates.load()
+    assert gates.state("d") == "open"
+
+
+def test_matching_unfinished_hold_applies_and_new_commit_releases_it(tmp_path) -> None:
+    from gateway.transition_store import SqliteOperationStore
+
+    gates = GateStore(tmp_path / "transition.db")
+    gates.load()
+    operations = SqliteOperationStore(gates)
+    operations.begin(domain="d", kind="select", idempotency_key="k",
+                     target="t", incarnation=None, config_revision=1)
+    operation, generation = operations.current_with_generation("d")
+    gates.force(operation.domain, "reconciling", generation=generation)
+    assert gates.state("d") == "reconciling"
+    assert gates._generations["d"] == generation
+    operations.finish(operation.op_id, "succeeded", "open")
+    assert gates.state("d") == "open"
+
+
 # -- lease keying --------------------------------------------------------------
 
 

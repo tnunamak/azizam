@@ -533,14 +533,19 @@ class GateStore:
                 elif clears_park:
                     self._parked.pop(domain, None)
 
-    def force(self, domain: str, state: str) -> None:
-        """Hold at the current durable generation; a later commit may legitimately release the hold.
+    def force(self, domain: str, state: str, *, generation: Optional[int] = None) -> None:
+        """Ignore stale versioned holds, just as note_write ignores stale publications.
+
+        Delayed holds must pass a generation from a versioned unfinished observation.
+        Omission retains immediate unconditional local holds for existing callers.
 
         Only non-open gate states may be forced; opening requires a newer durable publication.
         """
         if state not in GATE_STATES or state == "open":
             raise ValueError(f"residency domain {domain!r} cannot force gate state {state!r}; expected a hold state")
         with self._lock:
+            if generation is not None and generation != self._generations.get(domain, 0):
+                return
             self._generations.setdefault(domain, 0)
             self._cache[domain] = state
 
