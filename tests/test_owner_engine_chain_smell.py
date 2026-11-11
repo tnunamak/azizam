@@ -219,11 +219,15 @@ def _public_documents(public, key) -> tuple[bytes, bytes, dict]:
     headers = {"authorization": f"Bearer {key}"}
     models = public.get("/v1/models", headers=headers)
     assert models.status_code == 200, models.text
+    # The loaded-model row stamps `created` with the time of the request; every other byte is the listing's.
+    listing = json.loads(models.content)
+    for row in listing["data"]:
+        row.pop("created", None)
     openapi = public.get("/openapi.json", headers=headers)
     assert openapi.status_code == 200, openapi.text
     refused = public.post("/gateway/v1/media/jobs", headers=headers, json={"intent": "smell.other", "model": "x", "input": {}})
     assert refused.status_code == 400, refused.text
-    return models.content, openapi.content, refused.json()["error"]["supported_intents"]
+    return json.dumps(listing, sort_keys=True).encode("utf-8"), openapi.content, refused.json()["error"]["supported_intents"]
 
 
 def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_changes_nothing(owner, gateway, fake_upstreams):  # noqa: F811
@@ -234,11 +238,7 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     none_models, none_openapi, none_intents = _public_documents(public, key)
     _install_description(overlay)
     # A description alone adds an engine to nothing: the documents are the bytes they were.
-    again = _public_documents(public, key)
-    import difflib
-    a, b = json.loads(none_models), json.loads(again[0])
-    assert [r for r in a["data"] if r not in b["data"]] == [r for r in b["data"] if r not in a["data"]], "DBG"
-    assert again == (none_models, none_openapi, none_intents)
+    assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
     _enabled_engine(client)
     models, openapi, intents = _public_documents(public, key)
     listed = {row["id"]: row for row in json.loads(models)["data"]}
