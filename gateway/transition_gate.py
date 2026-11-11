@@ -510,13 +510,13 @@ class GateStore:
             self._readable = True
 
     def note_write(self, domain: str, state: str, parked_by: Optional[str] = None, *, clears_park: bool = False,
-                   generation: Optional[int] = None) -> None:
+                   generation: int) -> None:
         """Refresh the cache after a committed gate write in this process (T1.2). Call after the commit.
 
         ``parked_by`` marks the domain parked by that operation; ``clears_park`` marks it not parked. A cache
         that was never read is loaded first, so a write never hides what the table holds.
-        Durable writers supply their committed generation. Equal generations are duplicates, including
-        after a conservative in-memory hold. The unversioned form retains the existing cache-only API.
+        ``generation`` is the one the writer committed with the row; every caller supplies it, so no write
+        can skip the fence. Equal generations are duplicates, including after a conservative in-memory hold.
         """
         with self._lock:
             readable = self._readable
@@ -524,10 +524,9 @@ class GateStore:
             self.load()
         with self._lock:
             if self._readable:
-                if generation is not None and generation <= self._generations.get(domain, -1):
+                if generation <= self._generations.get(domain, -1):
                     return
-                self._generations[domain] = (generation if generation is not None
-                                             else self._generations.get(domain, 0))
+                self._generations[domain] = generation
                 self._cache[domain] = state if state in GATE_STATES else "failed_closed"
                 if parked_by is not None:
                     self._parked[domain] = parked_by

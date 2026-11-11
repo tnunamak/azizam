@@ -71,7 +71,7 @@ def test_an_offering_that_needs_a_gateway_run_effect_is_refused_unsent_in_a_pass
 def test_a_closed_gate_refuses_the_protocol_dispatch_before_any_engine_call(engine, gated):
     store, drain, minted = gated
     with sqlite3.connect(store.path) as connection:
-        connection.execute("INSERT INTO transition_gate VALUES ('prism-domain', 'closed', NULL, 0)")
+        connection.execute("INSERT INTO transition_gate (domain, state, op_id, updated, generation) VALUES ('prism-domain', 'closed', NULL, 0, 1)")
     store.load()
     response = chat(engine)
     assert response.status_code == 503, response.text
