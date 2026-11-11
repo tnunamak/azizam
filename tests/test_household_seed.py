@@ -617,3 +617,14 @@ def test_household_cache_is_already_clean_so_no_background_migration_rewrites_it
     with sqlite3.connect(tmp_path / "prompt_metadata_migration.db") as conn:
         recorded = conn.execute("SELECT COUNT(*) FROM prompt_metadata_migration").fetchone()[0]
     assert recorded == result.scanned
+
+
+def test_graph_engine_record_declares_the_graph_capabilities():
+    """The gateway picks the graph service for images, videos and audio by capability, never by id."""
+    from gateway.service_priority import selected_service
+    from scripts.ui.household_seed import registry
+
+    services = {sid: record for sid, record in registry(18000)["services"].items()}
+    for capability in ("images", "videos", "audio.generate"):
+        selected = selected_service(services, capability)
+        assert selected is not None and selected[0] == "comfyui", capability

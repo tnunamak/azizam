@@ -60,6 +60,9 @@ FIXTURES = Path(__file__).parent / "fixtures" / "household"
 # capability's model). A picture-edit workflow keeps a form that takes a
 # picture in front of the sweep and the browser tests.
 PLAN_WORKFLOWS = ("qwen-image-2.1-edit",)
+# The families a node-graph engine record declares (registry/protocols/node-graph.yml `serves`): the gateway picks
+# the service for images, videos and audio by these, never by the record's id.
+GRAPH_CAPABILITIES = ("images", "videos", "audio.generate")
 # Engine and model knowledge is fixture DATA, authored through registry contracts.
 MODEL_GROUPS = {
     "household-chat": [
@@ -72,8 +75,7 @@ MODEL_GROUPS = {
         ("gemma-12b", "Gemma 3 12B", "chat"),
         ("mistral-small", "Mistral Small", "chat"),
     ],
-    # The image engine's id is "comfyui": the gateway's image route always
-    # runs on the backend of that name (proxy_graph_image_request), and the fake
+    # The image engine is the record that declares the graph capabilities (GRAPH_CAPABILITIES); the fake
     # engine answers its API, so Try's "Make a picture" finishes (D1.5b).
     "comfyui": [
         ("image", "Krea 2 Turbo", "image"),
@@ -243,7 +245,8 @@ def registry(engine_port: int, scenario: str = "default") -> dict:
             else "required",
             "capabilities": ["audio", "music", "sfx"]
             if sid == "household-voice"
-            else sorted({cap for _, _, cap in models}),
+            else sorted({cap for _, _, cap in models})
+            + (list(GRAPH_CAPABILITIES) if sid == "comfyui" else []),
             "config": config,
             "lifecycle": {"type": "external", "managed": False},
         }
