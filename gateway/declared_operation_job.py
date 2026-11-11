@@ -4,7 +4,9 @@ The static intent table (registry/media_job_intents.yml) names the intents the g
 of engine with a description alone; the operations it declares are then jobs too. An intent outside the table is such a
 job only when an enabled protocol engine's description declares it and the model names that engine's offering
 (``dispatch.resolve`` checks both, including that the offering lists the task). Declared operations never enter the
-table, so every published listing stays as it was.
+table. They are listed from the engine records on every read (``declared``): the public models listing, the OpenAPI
+document and a refusal's supported intents name them while an enabled engine declares them, and with no such engine
+those three are what the table alone gives.
 
 The job runs on the http-v1 job runner (``engine_protocol.jobs.run``). The fetched file becomes the job's one asset;
 the content route serves it as it is.
