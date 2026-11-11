@@ -13,11 +13,24 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from gateway import admin_store
 
 GENERATION_KEY = "protocol_descriptions"
+
+# Where the running gateway keeps its admin database. proxy.py registers its store here; a bare process (a script, a
+# second worker's loader before the app exists) reads the default path.
+_provider: Callable[[], Path] | None = None
+
+
+def use_path(provider: Callable[[], Path] | None) -> None:
+    global _provider
+    _provider = provider
+
+
+def db_path() -> Path:
+    return Path(_provider()) if _provider is not None else Path(admin_store.DB_PATH)
 
 
 class StoreConflict(Exception):
@@ -43,7 +56,7 @@ def _generation_in(conn: sqlite3.Connection) -> int:
 
 def generation(path: Path | None = None) -> int:
     """The counter of the stored descriptions; ``0`` when the database or the table does not exist yet."""
-    path = path or admin_store.DB_PATH
+    path = path or db_path()
     if not path.is_file():
         return 0
     try:
@@ -55,7 +68,7 @@ def generation(path: Path | None = None) -> int:
 
 def read_all(path: Path | None = None) -> tuple[int, list[Row]]:
     """The counter and every row from one snapshot."""
-    path = path or admin_store.DB_PATH
+    path = path or db_path()
     if not path.is_file():
         return 0, []
     try:
@@ -98,7 +111,7 @@ def put(protocol_id: str, text: str, *, expect: int | None, updated_by: str | No
 
     Raises ``StoreConflict``: ``exists`` when a create finds the row, ``missing`` when a replace finds none, ``stale``
     when the revision moved. The check and the write share one ``BEGIN IMMEDIATE`` transaction, so two writers cannot both win."""
-    with admin_store.transaction(path or admin_store.DB_PATH) as tx:
+    with admin_store.transaction(path or db_path()) as tx:
         conn = tx.conn
         current = conn.execute("SELECT revision FROM protocol_descriptions WHERE id=?", (protocol_id,)).fetchone()
         if expect is None and current is not None:
@@ -126,7 +139,7 @@ def _set_generation(conn: sqlite3.Connection, value: int) -> None:
 
 def delete(protocol_id: str, *, expect: int, path: Path | None = None) -> None:
     """Delete one row at its revision. ``referenced`` when an engine names it (``detail`` lists the engine ids)."""
-    with admin_store.transaction(path or admin_store.DB_PATH) as tx:
+    with admin_store.transaction(path or db_path()) as tx:
         conn = tx.conn
         current = conn.execute("SELECT revision FROM protocol_descriptions WHERE id=?", (protocol_id,)).fetchone()
         if current is None:

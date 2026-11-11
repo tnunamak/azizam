@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 import pytest
 import yaml
 
-from gateway import admin_store, egress, engine_protocol_admin
+from gateway import admin_store, egress, engine_protocol_admin, protocol_description_store
 from gateway.engine_protocol import description
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +45,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(description, "REGISTRY_DIR", seeds)
     monkeypatch.setenv("AZIZAM_PROTOCOLS_DIR", str(overlay))
     monkeypatch.setattr(admin_store, "DB_PATH", db)
+    monkeypatch.setattr(protocol_description_store, "_provider", None)  # a proxy import in this worker registered its own
     admin_store.init_db(db)
     return SimpleNamespace(seeds=seeds, overlay=overlay, db=db)
 

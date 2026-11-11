@@ -699,9 +699,9 @@ def owner_descriptions() -> tuple[dict[str, ProtocolDescription], dict[str, str]
     """The descriptions the owner installed through the admin route, and a problem per row that no longer parses.
 
     One counter read per call tells a worker whether another worker wrote; the rows are parsed again only then."""
-    from gateway import admin_store, protocol_description_store as store
+    from gateway import protocol_description_store as store
 
-    path = Path(admin_store.DB_PATH)
+    path = store.db_path()
     counter = store.generation(path)
     cached = _OWNER_MEMO.get(path)
     if cached is not None and cached[0] == counter:

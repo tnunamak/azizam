@@ -81,18 +81,18 @@ def _validate(protocol_id: str, text: str) -> JSONResponse | None:
     return None
 
 
-def _write(protocol_id: str, text: str, kind: str, expect: int | None, owner: str | None) -> JSONResponse:
+def _write(protocol_id: str, text: str, kind: str, expect: int | None, owner: str | None, path: Any) -> JSONResponse:
     try:
-        revision = store.put(protocol_id, text, expect=expect, updated_by=owner)
+        revision = store.put(protocol_id, text, expect=expect, updated_by=owner, path=path)
     except store.StoreConflict as conflict:
         return _refuse(412, "revision_mismatch", "The description changed or already exists. Read it again." if conflict.kind != "missing"
                        else "There is no description with this id to replace.")
     return _item(protocol_id, text, "user", _tag(revision), status_code=201 if kind == "create" else 200)
 
 
-def _remove(protocol_id: str, expect: int) -> JSONResponse:
+def _remove(protocol_id: str, expect: int, path: Any) -> JSONResponse:
     try:
-        store.delete(protocol_id, expect=expect)
+        store.delete(protocol_id, expect=expect, path=path)
     except store.StoreConflict as conflict:
         if conflict.kind == "referenced":
             return _refuse(409, "protocol_in_use", f"Engines still use this description: {conflict.detail}. Change them first.")
@@ -100,7 +100,12 @@ def _remove(protocol_id: str, expect: int) -> JSONResponse:
     return egress.plain_json_response({"deleted": True}, response_class="acknowledgement")
 
 
-def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Request], Any]) -> None:
+def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Request], Any],
+                                    db_path: Callable[[], Any] | None = None) -> None:
+    """``db_path`` names the admin database the descriptions are stored in; the default is the process's own."""
+    def where() -> Any:
+        return db_path() if db_path is not None else store.db_path()
+
     @router.get("/engine-protocols")
     async def engine_protocols(request: Request) -> JSONResponse:
         ctx = await asyncio.to_thread(guard, request)
@@ -114,7 +119,7 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
         ctx = await asyncio.to_thread(guard, request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        row = await asyncio.to_thread(store.get, protocol_id) if _ID.fullmatch(protocol_id) else None
+        row = await asyncio.to_thread(store.get, protocol_id, where()) if _ID.fullmatch(protocol_id) else None
         if row is not None:
             return _item(protocol_id, row.text, "user", _tag(row.revision))
         shipped = _shipped_text(protocol_id) if _ID.fullmatch(protocol_id) else None
@@ -147,7 +152,7 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
         if invalid is not None:
             return invalid
         kind, expect = condition
-        return await asyncio.to_thread(_write, protocol_id, text, kind, expect, getattr(ctx, "audit_actor_id", None))
+        return await asyncio.to_thread(_write, protocol_id, text, kind, expect, getattr(ctx, "audit_actor_id", None), where())
 
     @router.delete("/engine-protocols/{protocol_id}")
     async def delete_engine_protocol(protocol_id: str, request: Request) -> JSONResponse:
@@ -165,4 +170,4 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
             return condition
         if condition[0] != "match":
             return _refuse(428, "protocol_revision_required", "Send If-Match with the current ETag.")
-        return await asyncio.to_thread(_remove, protocol_id, condition[1])
+        return await asyncio.to_thread(_remove, protocol_id, condition[1], where())
