@@ -339,7 +339,8 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     assert listed["smell-1"]["azizam_operations"] == ["smell.infer"]
     assert "smell.infer" in intents
     submit = json.loads(openapi)["paths"]["/gateway/v1/media/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-    assert "smell.infer" in submit["properties"]["intent"]["enum"]
+    declared = [shape for shape in submit["oneOf"] if "input" in shape["properties"]]
+    assert [shape["properties"]["intent"]["enum"] for shape in declared] == [["smell.infer"]]
     off = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": False})
     assert off.status_code == 200, off.text
     assert _public_documents(public, key) == off_documents
