@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import Response
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.access import access_context  # noqa: E402
 from gateway import media_jobs
 from tests.support.fake_upstream import fake_upstreams, load_scenario, scenario_from_data  # noqa: F401
@@ -25,7 +26,7 @@ def video_state(monkeypatch):
     monkeypatch.setattr(proxy, "_video_records_restored", set())
     monkeypatch.setattr(proxy, "_video_progress_lock", asyncio.Lock())
     monkeypatch.setattr(proxy, "_persist_video_record", Mock())
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+    set_derived(monkeypatch, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *a: {})
     monkeypatch.setattr(proxy.prompt_memory, "delete_asset", Mock())
 
@@ -134,7 +135,7 @@ def test_reconcile_distinguishes_unavailable_active_terminal_and_orphan(
 
 def test_status_fallback_never_regresses_and_terminal_error_wins(video_state, monkeypatch, fake_upstreams):
     fake = fake_upstreams.asgi(load_scenario("comfyui/video-status-progression"))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     proxy._video_job_records["p"] = {
         "owner_key_hash": None, "deleted_at": None, "created_at": 1,
         "completed_at": None, "model": "sora-2", "size": "960x512", "seconds": "5"}
@@ -194,7 +195,7 @@ def _comfy_state_fake(fake_upstreams, monkeypatch, *, queue=None, history=None):
             {"id": "history", "repeat": True, "match": {"method": "GET", "path": "/history"}, "response": history or healthy_history},
         ],
     }))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     return fake
 
 
@@ -227,7 +228,7 @@ def test_direct_create_rejects_non_string_prompt_before_provider(video_state, is
             "response": {"json": {"prompt_id": "p"}},
         }],
     }))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "_dispatch_admission_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_begin_media_delivery", lambda *a: None)

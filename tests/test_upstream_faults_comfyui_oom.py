@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario  # noqa: F401
 from tests.support.graph_selectors import IMAGE_AT_NODE_1
 
@@ -25,7 +26,7 @@ WORKFLOW = {"1": {"class_type": "FkNode", "inputs": {"text": "a red fox"}}}
 
 def _generate(fakes: FakeUpstreams, monkeypatch, scenario: str):
     fake = fakes.asgi(load_scenario(f"comfyui/{scenario}"))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)  # known cost: no VRAM probe round
     monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
     monkeypatch.setattr(proxy, "_image_free_vram_on_exhaustion", lambda: True)
@@ -75,7 +76,7 @@ def test_a_refused_background_removal_round_is_retried_without_it_and_the_gatewa
     events: list[dict] = []
     monkeypatch.setattr(proxy.firehose_metrics, "record_event", lambda kind, message, **fields: events.append({"kind": kind, **fields}))
     fake = fake_upstreams.asgi(load_scenario("comfyui/image-rmbg-fails-then-completes"))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)
     monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
     monkeypatch.setattr(proxy, "_graph_result_source", lambda *_a, **_k: IMAGE_AT_NODE_1)  # the made-up workflow has no manifest

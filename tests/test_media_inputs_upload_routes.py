@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import media_fetch, media_inputs
 from tests.support.access import access, access_context, authenticated, identity, plan_for
 from tests.support.video_row_engine import declare_graph_engine
@@ -143,7 +144,7 @@ def edit_rig(rig):
     comfy = FakeComfy()
     stack = ExitStack()
     # The engine is declared as a deployment declares one: a service record that names its protocol, which the run core finds.
-    service = rig.registry["services"][proxy._GRAPH_BACKEND_ID]["config"]
+    service = rig.registry["services"][GRAPH_SERVICE_ID]["config"]
     service["connection"] = {"protocol": "node-graph", "base_url": service["base_url"]}
     service["enabled"] = True
     for p in comfy.patches():

@@ -181,6 +181,10 @@ class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        # The audio family selects its service by capability; the base config declares none for it.
+        engine = derived_patch("COMFY_ENABLED", True)
+        engine.__enter__()
+        self.addCleanup(engine.__exit__, None, None, None)
 
     async def submit(self, body: dict[str, Any]) -> str:
         with patch.object(proxy, "_schedule_audio_media_job", lambda _job_id: True):

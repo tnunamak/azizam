@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.video_rig import video_job_rows
 from tests.support.access import authenticated, everything, identity, plan_for
 from tests.support.adapter_differential_rig import GatewayRig
@@ -252,9 +253,10 @@ def test_video_3_37_input_reference_is_uploaded_to_the_engine_before_the_prompt(
             "prompt": (None, "waves"), "model": (None, "ltx-2.5-t2v"),
             "input_reference": ("ref.png", _png(), "image/png")})
         seen["status"] = response.status_code
+        seen["text"] = response.text
 
     rig = _run(tmp_path, "r3-37", setup, drive)
-    assert seen["status"] == 200
+    assert seen["status"] == 200, seen["text"]
     paths = _engine_paths(rig)
     assert "POST /upload/image" in paths
     assert paths.index("POST /upload/image") < paths.index("POST /prompt")
@@ -366,7 +368,7 @@ def test_video_1_01_capability_off_is_503_before_any_engine_call(tmp_path):
 
     def setup(rig):
         _comfy(rig)
-        rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
+        set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
         record = dict(proxy.config["backends"]["comfy"], enabled=False)       # the service record is off, as an operator turns it off
         rig.monkeypatch.setitem(proxy.config, "backends", {**proxy.config["backends"], "comfy": record})
 

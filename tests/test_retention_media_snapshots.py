@@ -5,6 +5,7 @@ import copy
 import pytest
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import media_jobs, receipt_store
 from gateway.retention_facts import ledger, revision
 from tests.support.adapter_differential_rig import GatewayRig
@@ -22,7 +23,7 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
                 if key not in {"revision", "stale", "stale_label", "source"}}
         fact["how_long"] = "before dispatch"
         expected = revision(fact)
-        registry = {"services": {proxy._GRAPH_BACKEND_ID: {"name": "Captured destination", "config": {
+        registry = {"services": {GRAPH_SERVICE_ID: {"name": "Captured destination", "config": {
             "connection": {"protocol": "node-graph", "base_url": "http://comfy.fk.test"},
             "retention_facts": [fact],
         }}}}
@@ -42,7 +43,7 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
         def graph(client, capability):
             # The adapter factory is reached at actual egress. An owner edit
             # here must not replace the request's earlier fact snapshot.
-            registry["services"][proxy._GRAPH_BACKEND_ID]["config"]["retention_facts"][0]["how_long"] = "edited during dispatch"
+            registry["services"][GRAPH_SERVICE_ID]["config"]["retention_facts"][0]["how_long"] = "edited during dispatch"
             return original_graph(client, capability)
 
         rig.set(proxy, "_graph", graph)
@@ -69,13 +70,13 @@ def test_media_dispatch_persists_exact_fact_snapshot(tmp_path, kind, background)
             work = [row for row in receipts if expected in row.get("retention_facts", [])]
             assert len(work) == 1, receipts
             receipt = work[0]
-            assert receipt["backend"] == proxy._GRAPH_BACKEND_ID
+            assert receipt["backend"] == GRAPH_SERVICE_ID
             assert receipt["intent"] == f"{kind}.generate"
             assert receipt["status"] == "succeeded"
             saved = media_jobs.fact_revisions_for_source("receipt", receipt["request_id"], path=rig.media_jobs_db)
-            assert saved[proxy._GRAPH_BACKEND_ID][0]["revision"] == expected
-            assert saved[proxy._GRAPH_BACKEND_ID][0]["how_long"] == "before dispatch"
-            assert media_jobs.fact_destinations_for_source("receipt", receipt["request_id"], path=rig.media_jobs_db)[proxy._GRAPH_BACKEND_ID]["name"] == "Captured destination"
+            assert saved[GRAPH_SERVICE_ID][0]["revision"] == expected
+            assert saved[GRAPH_SERVICE_ID][0]["how_long"] == "before dispatch"
+            assert media_jobs.fact_destinations_for_source("receipt", receipt["request_id"], path=rig.media_jobs_db)[GRAPH_SERVICE_ID]["name"] == "Captured destination"
 
         asyncio.run(drive())
 

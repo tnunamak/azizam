@@ -145,7 +145,7 @@ def test_class_b_a_registry_edit_moves_the_timeouts_the_default_model_the_direct
     assert proxy.DERIVED.COMFY_DEFAULT_MODEL == "graph-edited"
     assert proxy.DERIVED.COMFY_WORKFLOWS_DIR == tmp_path / "image-flows"
     assert proxy.DERIVED.COMFY_VIDEO_WORKFLOWS_DIR == (ROOT / "video-flows").resolve()
-    assert proxy.DERIVED._GRAPH_BINDING == proxy._graph_adapter().binding
+    assert proxy.DERIVED._GRAPH_BINDING == proxy._graph_adapter(proxy._GRAPH_CAPABILITY).binding
 
 
 def test_a_reader_inside_a_request_sees_the_snapshot_the_request_began_under(live, tmp_path):

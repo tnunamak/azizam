@@ -35,6 +35,7 @@ import yaml
 from PIL import Image
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from tests import test_adapter_differential as base
 from gateway import image_graph_roles
 from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, history_done
@@ -213,7 +214,7 @@ def observe(tmp_path: Path, scenario: str, name: str, run: int, roles: str = "re
         rig.monkeypatch.setattr(proxy, "_IMAGE_GRAPH_ROLES", release_graph_roles() if roles == "release" else {})
         if reload_reference_order:
             candidate = dict(proxy.config)
-            candidate["backends"] = {**candidate["backends"], proxy._GRAPH_BACKEND_ID: dict(candidate["backends"]["comfy"])}
+            candidate["backends"] = {**candidate["backends"], GRAPH_SERVICE_ID: dict(candidate["backends"]["comfy"])}
             candidate["images"] = yaml.safe_load((ROOT / "registry/defaults/images.yml").read_text())
             entry = candidate["images"]["graph_roles"][f"workflows/images/{name}.json"]
             entry["reference_order"].reverse()

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests import test_adapter_differential as base
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.adapter_differential import FIXTURE_DIR
@@ -291,7 +292,7 @@ def build(route: Route, outcome: str):
     elif outcome == "admission_refusal":
         def setup(rig):
             prepare(rig, "engine_down")
-            rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
+            set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
             # The run core reads the engine's own record: a video route's engine is disabled there too.
             rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
                 "enabled": False, "host": base.COMFY_HOST, "port": 80, "protocol": "node-graph"}})

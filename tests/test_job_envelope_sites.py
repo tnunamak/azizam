@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import media_jobs
 from gateway.definition_store import DefinitionStore
 
@@ -79,7 +80,7 @@ def test_a_manifest_workflow_pins_its_contract_binding_and_graph():
     assert template == json.loads((ROOT / "workflows/audio/tangoflux.json").read_text())
     binding = json.loads(built.blobs[1])
     assert binding["map"]["prompt"] and binding["workflow"] == "workflows/audio/tangoflux.json"
-    assert envelope.service_id == proxy._GRAPH_BACKEND_ID and envelope.interface_version == 2
+    assert envelope.service_id == GRAPH_SERVICE_ID and envelope.interface_version == 2
     assert envelope.adapter_id and envelope.protocol_id
     assert envelope.generated == {} and envelope.bundle is None
 

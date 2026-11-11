@@ -1007,6 +1007,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             auth_context = proxy.AuthContext(identity)
             allowed = proxy._workflow_target_policy_decision(
                 auth_context,
+                capability=proxy._GRAPH_CAPABILITY,
                 requested="sdxl-seamless-tile",
                 resolved="sdxl-seamless-tile",
             )
@@ -1018,6 +1019,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             auth_context = proxy.AuthContext(identity)
             denied = proxy._workflow_target_policy_decision(
                 auth_context,
+                capability=proxy._GRAPH_CAPABILITY,
                 requested="sdxl-seamless-tile",
                 resolved="sdxl-seamless-tile",
             )

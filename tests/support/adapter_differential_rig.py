@@ -20,6 +20,7 @@ import httpx
 import pytest
 
 from tests.support import adapter_differential as ad
+from tests.support import graph_service
 from tests.support.fake_upstream import (
     FakeUpstream, FakeUpstreams, HandlerTransport, StreamingASGITransport, scenario_from_data, verify,
 )
@@ -300,7 +301,7 @@ class GatewayRig:
         patch(proxy, "IMAGE_CACHE_DIR", self.cache)
         patch(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.tmp / "payloads")
         patch(proxy, "_image_url_signing_secret", b"adapter-differential-secret")
-        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+        graph_service.set_derived(self.monkeypatch, "COMFY_ENABLED", True)
         # The VRAM probe samples on a real-time timer; one sample before and one after a round is the
         # deterministic part (a round that outlasts the interval would add a timer-driven /system_stats).
         patch(proxy, "_VRAM_PROBE_INTERVAL_MIN_S", 3600.0)
@@ -340,7 +341,7 @@ class GatewayRig:
         unless the module also holds it as an attribute that readers take (the workflow alias tables)."""
         derived = getattr(target, "DERIVED", None)
         if derived is not None and not hasattr(target, name) and name in target.runtime().derived:
-            self.monkeypatch.setitem(target.runtime().derived, name, value)
+            graph_service.set_derived(self.monkeypatch, name, value)
         else:
             self.monkeypatch.setattr(target, name, value)
 

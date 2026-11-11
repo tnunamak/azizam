@@ -6,6 +6,7 @@ import pytest
 from fastapi import Response
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.access import access_context  # noqa: E402
 from gateway import media_jobs, receipt_store
 from gateway.receipts import RouteReceipt
@@ -223,7 +224,7 @@ def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, 
     monkeypatch.setattr(proxy.providers, "recover_provider_spend", Mock())
     monkeypatch.setattr(proxy.firehose_metrics, "replay_persisted", lambda: {})
     monkeypatch.setattr(proxy.loop_watchdog, "start", lambda *a: None)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
+    set_derived(monkeypatch, "COMFY_ENABLED", False)
     monkeypatch.setattr(proxy.metrics_sampler, "start_writer",
                         Mock(side_effect=RuntimeError("disabled test sampler")))
     monkeypatch.setattr(proxy.metrics_sampler, "close_writer", Mock())

@@ -24,6 +24,7 @@ import pytest
 from fastapi import Response
 
 import proxy
+from tests.support.graph_service import set_derived
 from gateway import generated_defaults, media_jobs, media_metadata, provenance, receipt_store, result_bundle
 from tests import test_adapter_differential as base
 from tests.support.access import authenticated, identity, plan_for
@@ -72,7 +73,7 @@ def _down(rig) -> None:
 
 
 def _disable(rig) -> None:
-    rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
+    set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
 
 
 def _rows(rig, path: Path, table: str, skip: tuple[str, ...] = ()) -> list[dict[str, Any]]:

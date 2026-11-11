@@ -1005,7 +1005,7 @@ def _safe_float(s: str) -> Optional[float]:
         return None
 
 
-_GRAPH_SERVICE_ID = "comfyui"  # the id of the graph engine's service record (proxy._GRAPH_BACKEND_ID)
+_GRAPH_SERVICE_ID = "comfyui"  # the id of the graph engine's service record; the gateway selects it by capability (proxy._graph_service), the status page does not yet
 
 
 async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:

@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.config_snapshot import derived_patch
 from gateway import admin_store, media_jobs, prompt_memory, receipt_store, settings_api
 from gateway.admin_api import AdminContext
@@ -614,7 +615,7 @@ class _MediaRoute(unittest.IsolatedAsyncioTestCase):
                 return body
 
         comfy = fakes.asgi(load_scenario("comfyui/image-complete-png", png_hex=_comfy_png_with(SENTINEL).hex()))
-        monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", comfy.base_url)
+        set_derived(monkeypatch, "COMFY_HOST", comfy.base_url)
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
         with patch.object(proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
                 proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)), patch.object(

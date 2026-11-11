@@ -19,6 +19,7 @@ import proxy  # noqa: E402
 from tests.support.config_snapshot import derived_patch
 from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs, request_source  # noqa: E402
+from tests.support.config_snapshot import derived_patch  # noqa: E402
 
 
 class _StubJsonRequest:
@@ -60,6 +61,10 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         for p in self.patches:
             p.start()
             self.addCleanup(p.stop)
+        # The audio family selects its service by capability; the base config declares none for it.
+        engine = derived_patch("COMFY_ENABLED", True)
+        engine.__enter__()
+        self.addCleanup(engine.__exit__, None, None, None)
 
     async def test_generic_submit_creates_audio_job_without_prompt_or_lyrics_metadata(self) -> None:
         body = {
