@@ -8132,19 +8132,9 @@ def store_image_bytes(content: bytes, *, owner_key_hash: str | None = None, suff
     )
 
 
-_ASSET_SUFFIXES_BY_KIND = {
-    "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
-    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"),
-    "vid": (".mp4", ".webm", ".mov", ".mkv"),
-    # Any other stored file: its suffix and media type are whatever was stored (gateway/asset_types.py).
-    "ast": (),
-}
-
-_ASSET_KIND_NAMES = {
-    "img": "image",
-    "aud": "audio",
-    "vid": "video",
-}
+# Stored-id prefix -> probe suffixes and kind name, from the asset kind rows (gateway/asset_types.py).
+_ASSET_SUFFIXES_BY_KIND = asset_types.asset_suffixes_by_prefix()
+_ASSET_KIND_NAMES = asset_types.asset_kind_names_by_prefix()
 
 
 def _parse_asset_id(asset_id: str) -> tuple[str, str] | None:

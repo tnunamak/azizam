@@ -158,6 +158,30 @@ def asset_prefix_for_media_type(media_type: str | None) -> str:
     return ASSET_PREFIX_BY_TOP_TYPE.get(kind_for_media_type(media_type), OTHER_ASSET_PREFIX)
 
 
+def asset_kind_names_by_prefix() -> dict[str, str]:
+    """Stored-id prefix -> kind name, e.g. ``{"img": "image"}``; kinds without a prefix are omitted."""
+    return {prefix: kind for kind, prefix in ASSET_PREFIX_BY_TOP_TYPE.items()}
+
+
+def asset_suffixes_by_prefix() -> dict[str, tuple[str, ...]]:
+    """Stored-id prefix -> the suffixes a stored file under it may have, in probe order.
+
+    Prefixes and suffixes both follow ``SUFFIX_MEDIA_TYPES`` order (the gateway's "one of" error lists the prefixes
+    in this order); a prefixed kind with no suffix row follows with none. The generic prefix holds any other stored
+    file, whatever its suffix, so it comes last and probes none.
+    """
+    by_prefix: dict[str, list[str]] = {}
+    for suffix, media_type in SUFFIX_MEDIA_TYPES.items():
+        prefix = ASSET_PREFIX_BY_TOP_TYPE.get(kind_for_media_type(media_type))
+        if prefix:
+            by_prefix.setdefault(prefix, []).append(suffix)
+    table = {prefix: tuple(suffixes) for prefix, suffixes in by_prefix.items()}
+    for prefix in ASSET_PREFIX_BY_TOP_TYPE.values():
+        table.setdefault(prefix, ())
+    table[OTHER_ASSET_PREFIX] = ()
+    return table
+
+
 @dataclass(frozen=True)
 class OutputInput:
     """One file a workflow was given, kept so the output can say what it was made from."""
