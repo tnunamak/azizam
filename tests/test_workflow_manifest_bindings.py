@@ -368,5 +368,68 @@ class TestBackendBindingResult(unittest.TestCase):
         self.assertEqual(mutated["31"]["inputs"]["denoise"], 0.5)
 
 
+class TestShippedWorkflowOutputMediaTypes(unittest.TestCase):
+    @staticmethod
+    def _writer_contracts():
+        # ComfyUI writer defaults; SaveVideo is fixed only for explicit mp4.
+        writer_media_types = {
+            "SaveImage": "image/png",
+            "SaveAudio": "audio/flac",
+            "SaveAudioMP3": "audio/mpeg",
+            "SaveAudioOpus": "audio/ogg",
+            "SaveVideo": "video/mp4",
+        }
+        manifest_root = ROOT / "manifests/workflows"
+        paths = sorted([*manifest_root.rglob("*.yml"),
+                        *manifest_root.rglob("*.yaml")])
+        if not paths:
+            raise AssertionError("no shipped workflow manifests found")
+        for path in paths:
+            manifest = load_workflow_manifest(path)
+            for binding_name, binding in manifest.get("bindings", {}).items():
+                if not binding.get("workflow"):
+                    continue
+                graph = json.loads(
+                    (ROOT / binding["workflow"]).read_text(encoding="utf-8")
+                )
+                for output_key, selector in binding.get("selectors", {}).items():
+                    if "node" not in selector:
+                        continue
+                    node = graph[str(selector["node"])]
+                    writer = node["class_type"]
+                    written_type = writer_media_types.get(writer)
+                    if writer == "SaveVideo" and node.get("inputs", {}).get("format") != "mp4":
+                        written_type = None
+                    yield (
+                        path.relative_to(manifest_root).as_posix(),
+                        binding_name,
+                        output_key,
+                        writer,
+                        manifest["outputs"][output_key]["media_type"],
+                        written_type,
+                    )
+
+    # Outputs whose writer fixes no media type: SaveVideo with format "auto" keeps the input container, and
+    # TangoFlux writes through its own node. A new unchecked writer must be added here on purpose.
+    UNCHECKED_WRITERS = {
+        ("tangoflux.yml", "TangoFluxVAEDecodeAndPlay"),
+        ("rife-interpolate.yml", "SaveVideo"),
+        ("video-mux.yml", "SaveVideo"),
+    }
+
+    def test_declared_output_media_types_match_known_writers(self) -> None:
+        checked = 0
+        unchecked = set()
+        for filename, binding, key, writer, declared, written in self._writer_contracts():
+            if written is None:
+                unchecked.add((filename, writer))
+                continue
+            checked += 1
+            with self.subTest(manifest=filename, binding=binding, output=key, writer=writer):
+                self.assertEqual(declared, written)
+        self.assertGreater(checked, 0, "no known output writers checked")
+        self.assertEqual(unchecked, self.UNCHECKED_WRITERS)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

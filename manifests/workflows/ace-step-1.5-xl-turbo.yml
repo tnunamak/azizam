@@ -92,7 +92,7 @@ inputs:
     type: string
 outputs:
   audio:
-    media_type: audio/wav
+    media_type: audio/flac
 bindings:
   comfyui:
     workflow: workflows/audio/ace-step-1.5-xl-turbo.json
