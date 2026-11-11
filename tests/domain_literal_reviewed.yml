@@ -135,6 +135,16 @@ sites:
     count: 1
     category: wire_enum
     reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
+  - file: gateway/local_capabilities.py
+    literal: "video.generate"
+    count: 1
+    category: wire_enum
+    reason: Names the video.generate intent word the local inventory exports as INTENT_VIDEO_GENERATE; published intent vocabulary, not a selection of workflow behavior.
+  - file: gateway/local_capabilities.py
+    literal: "audio.generate"
+    count: 1
+    category: wire_enum
+    reason: Names the audio.generate intent word the local inventory exports as INTENT_AUDIO_GENERATE; published intent vocabulary, not a selection of workflow behavior.
   - file: gateway/openai_media_schemas.py
     literal: audio
     count: 1
