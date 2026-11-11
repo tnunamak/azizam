@@ -959,7 +959,9 @@ def test_cancelled_executor_holds_only_the_observed_generation(tmp_path: Path, m
 
         monkeypatch.setattr(h.store, "get", lambda key: read(real_get, key))
         monkeypatch.setattr(h.store, "current_with_generation", lambda key: read(real_snapshot, key))
-        monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.02)
+        # Only the timeout case needs the deadline to expire; the others answer at once, and a short deadline on a
+        # loaded host can expire before the reader thread even starts (seen in a gate run).
+        monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.02 if observation == "timeout" else 5.0)
 
         async def cancelled(*args):
             raise asyncio.CancelledError
@@ -970,7 +972,8 @@ def test_cancelled_executor_holds_only_the_observed_generation(tmp_path: Path, m
         try:
             with pytest.raises(asyncio.CancelledError):
                 await h.executor._run(op, lock, None, None)
-            assert observed.is_set()
+            if observation != "timeout":
+                assert observed.is_set()
             assert h.gate() == ("open" if observation == "stale" else "reconciling")
             assert not lock.locked()
         finally:
