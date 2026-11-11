@@ -2279,6 +2279,9 @@ class _GatedMakeRuntime:
         self.canceled.add(job_id)
         return True
 
+    def workflow_id(self, intent: str, model: str) -> str:
+        return f"{intent}.{model}"
+
     def admission(self, intent: str):
         return self.refusal
 
@@ -2393,6 +2396,13 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertTrue(job["job_id"].startswith("mj_"), job)
         self.assertIsNotNone(media_jobs.get(job["job_id"], path=self.jobs_db))
         return response, job
+
+    def test_make_job_stores_the_workflow_id_the_runtime_resolves(self) -> None:
+        """The stored workflow is the runtime's answer for (intent, model), not ``intent.model``."""
+        self.runtime.workflow_id = lambda intent, model: f"{intent}.resolved-from-{model}"
+        _, job = self._submit_make("workflow-id-key", model="stem-name")
+        stored = media_jobs.get(job["job_id"], path=self.jobs_db)
+        self.assertEqual(stored["workflow"], "image.generate.resolved-from-stem-name")
 
     def _finished(self, job_id: str) -> dict:
         self.runtime.wait_idle()

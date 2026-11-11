@@ -23,6 +23,7 @@ from gateway.frontend_shapes.video_views import VideoViews
 from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
 from gateway import openai_model_families, registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
+from gateway.workflow_identity import find_workflow_record, other_intent_owns_stem
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
@@ -8132,19 +8133,9 @@ def store_image_bytes(content: bytes, *, owner_key_hash: str | None = None, suff
     )
 
 
-_ASSET_SUFFIXES_BY_KIND = {
-    "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
-    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"),
-    "vid": (".mp4", ".webm", ".mov", ".mkv"),
-    # Any other stored file: its suffix and media type are whatever was stored (gateway/asset_types.py).
-    "ast": (),
-}
-
-_ASSET_KIND_NAMES = {
-    "img": "image",
-    "aud": "audio",
-    "vid": "video",
-}
+# Stored-id prefix -> probe suffixes and kind name, from the asset kind rows (gateway/asset_types.py).
+_ASSET_SUFFIXES_BY_KIND = asset_types.asset_suffixes_by_prefix()
+_ASSET_KIND_NAMES = asset_types.asset_kind_names_by_prefix()
 
 
 def _parse_asset_id(asset_id: str) -> tuple[str, str] | None:
@@ -9271,6 +9262,9 @@ async def proxy_graph_image_request(
     _record_image_input(receipt, "prompt")
 
     manifest = _find_image_manifest("image.generate", str(model))
+    refusal = _generate_refusal_for_other_intent_stem(receipt, str(model), manifest)
+    if refusal is not None:
+        return refusal
     gateway_binding = _gateway_image_generate_binding(manifest)
     if gateway_binding is not None:
         # The description lists the roles and the role registry holds their code; a role missing from either never runs.
@@ -15965,6 +15959,9 @@ class _SessionMakeRuntime:
 
         task.add_done_callback(_done)
 
+    def workflow_id(self, intent: str, model: str) -> str:
+        return _image_job_workflow_id(intent, model)
+
     def admission(self, intent: str) -> Response | None:
         # The same operator admission regular media jobs meet at submit.
         return _media_job_admission_response(intent)
@@ -22320,18 +22317,27 @@ def _attach_image_manifest_if_available(
 
 def _image_workflow_record(intent: str, resolved_model: str) -> Any:
     """The registry record for ``resolved_model`` under ``intent``: what a route loads from and its job pins."""
-    candidate_ids = {
-        f"{intent}.{resolved_model}",
-        f"{intent}.{resolved_model.removesuffix('-edit')}",
-    }
-    for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        manifest = record.manifest
-        mid = str(manifest.get("id") or "")
-        if manifest.get("intent") != intent:
-            continue
-        if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
-            return record
-    return None
+    return find_workflow_record(GATEWAY_WORKFLOW_REGISTRY.records(), intent, resolved_model)
+
+
+def _generate_refusal_for_other_intent_stem(receipt: RouteReceipt | None, model: str, manifest: dict[str, Any] | None):
+    """A 404 when a generate request names another intent's workflow (an edit graph needs a source picture and its own
+    role map); None when the name is a generate workflow or no record claims it (an owner graph)."""
+    if manifest is not None or not other_intent_owns_stem(GATEWAY_WORKFLOW_REGISTRY.records(), "image.generate", model):
+        return None
+    _record_image_input(receipt, "model", rejected_reason="model_incompatible")
+    return model_compatibility_error(
+        ModelCompatibilityError(f"Model '{model}' is not available for image generation.", code="model_not_found")
+    )
+
+
+def _image_job_workflow_id(intent: str, model: str) -> str:
+    """The workflow id a job stores: the found record's id.
+
+    With no record (an owner graph with no manifest) it keeps the ``intent.model`` spelling.
+    """
+    record = _image_workflow_record(intent, model)
+    return str(record.manifest["id"]) if record is not None else f"{intent}.{model}"
 
 
 def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
@@ -26101,6 +26107,10 @@ async def gateway_image_generations_media_job(request: Request):
             )
         else:
             _attach_image_manifest_if_available(receipt, "image.generate", model)
+    refusal = _generate_refusal_for_other_intent_stem(receipt, model, manifest)
+    if refusal is not None:
+        await run_receipt_write(finish_image_route_receipt, receipt, refusal)
+        return refusal
     decision = _apply_image_route_policy(
         receipt,
         auth_context,
@@ -26135,7 +26145,7 @@ async def gateway_image_generations_media_job(request: Request):
 
     job = media_jobs.MediaJob(
         intent="image.generate",
-        workflow=f"image.generate.{model}",
+        workflow=_image_job_workflow_id("image.generate", model),
         backend=receipt.backend,
         request_id=request_id,
         app_profile=plan_ref(auth_context.identity),

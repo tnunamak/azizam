@@ -22,6 +22,8 @@ UNKNOWN_KIND = "file"
 # its own. A kind with no row is named from its own type, so a new media type needs no entry to list, filter and download.
 KIND_NAMES_PATH = Path(__file__).resolve().parent.parent / "registry" / "asset_kinds.yml"
 KIND_WORDS = ("label", "plural", "untitled", "input")
+# A stored file whose kind has no prefix of its own is stored under this one, so no kind row may claim it.
+OTHER_ASSET_PREFIX = "ast"
 
 
 def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
@@ -50,6 +52,8 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
                 raise ValueError(f"{path.name}: kind {kind!r} prefix must be 1-8 lowercase ASCII letters")
             if prefix in prefixes:
                 raise ValueError(f"{path.name}: kind {kind!r} has duplicate prefix {prefix!r}")
+            if prefix == OTHER_ASSET_PREFIX:
+                raise ValueError(f"{path.name}: kind {kind!r} prefix {prefix!r} is reserved for kinds with no prefix")
             prefixes.add(prefix)
             table[kind]["prefix"] = prefix
     return table
@@ -150,12 +154,35 @@ def asset_prefixes_by_top_type(kinds: dict[str, dict[str, str]]) -> dict[str, st
 
 # A kind without a configured prefix is stored under the generic prefix.
 ASSET_PREFIX_BY_TOP_TYPE: dict[str, str] = asset_prefixes_by_top_type(KIND_NAMES)
-OTHER_ASSET_PREFIX = "ast"
 
 
 def asset_prefix_for_media_type(media_type: str | None) -> str:
     """The asset id prefix a stored file of this media type gets."""
     return ASSET_PREFIX_BY_TOP_TYPE.get(kind_for_media_type(media_type), OTHER_ASSET_PREFIX)
+
+
+def asset_kind_names_by_prefix() -> dict[str, str]:
+    """Stored-id prefix -> kind name, e.g. ``{"img": "image"}``; kinds without a prefix are omitted."""
+    return {prefix: kind for kind, prefix in ASSET_PREFIX_BY_TOP_TYPE.items()}
+
+
+def asset_suffixes_by_prefix() -> dict[str, tuple[str, ...]]:
+    """Stored-id prefix -> the suffixes a stored file under it may have, in probe order.
+
+    Prefixes and suffixes both follow ``SUFFIX_MEDIA_TYPES`` order (the gateway's "one of" error lists the prefixes
+    in this order); a prefixed kind with no suffix row follows with none. The generic prefix holds any other stored
+    file, whatever its suffix, so it comes last and probes none.
+    """
+    by_prefix: dict[str, list[str]] = {}
+    for suffix, media_type in SUFFIX_MEDIA_TYPES.items():
+        prefix = ASSET_PREFIX_BY_TOP_TYPE.get(kind_for_media_type(media_type))
+        if prefix:
+            by_prefix.setdefault(prefix, []).append(suffix)
+    table = {prefix: tuple(suffixes) for prefix, suffixes in by_prefix.items()}
+    for prefix in ASSET_PREFIX_BY_TOP_TYPE.values():
+        table.setdefault(prefix, ())
+    table[OTHER_ASSET_PREFIX] = ()
+    return table
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,16 @@ def test_contract_refuses_unknown_duplicate_and_invalid_fields(tmp_path, name, l
         loader(path)
 
 
+def test_compatibility_refuses_two_workflows_sharing_one_limit_key(tmp_path):
+    document = yaml.safe_load((REGISTRY / "compatibility.yml").read_text())
+    key = document["limit_key_aliases"]["video.generate.ltx-2.5-t2v"]
+    document["limit_key_aliases"]["video.generate.other"] = key
+    path = tmp_path / "compatibility.yml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False))
+    with pytest.raises(ValueError, match="both name the key"):
+        load_compatibility(path)
+
+
 def test_storage_kind_contract_drives_validation_and_projection(tmp_path, monkeypatch):
     import importlib
     from pydantic import ValidationError

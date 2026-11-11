@@ -959,7 +959,9 @@ def test_cancelled_executor_holds_only_the_observed_generation(tmp_path: Path, m
 
         monkeypatch.setattr(h.store, "get", lambda key: read(real_get, key))
         monkeypatch.setattr(h.store, "current_with_generation", lambda key: read(real_snapshot, key))
-        monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.02)
+        # Only the timeout case needs the deadline to expire; the others answer at once, and a short deadline on a
+        # loaded host can expire before the reader thread even starts (seen in a gate run).
+        monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.02 if observation == "timeout" else 5.0)
 
         async def cancelled(*args):
             raise asyncio.CancelledError
@@ -970,11 +972,64 @@ def test_cancelled_executor_holds_only_the_observed_generation(tmp_path: Path, m
         try:
             with pytest.raises(asyncio.CancelledError):
                 await h.executor._run(op, lock, None, None)
-            assert observed.is_set()
+            if observation != "timeout":
+                assert observed.is_set()
             assert h.gate() == ("open" if observation == "stale" else "reconciling")
             assert not lock.locked()
         finally:
             release.set()
+
+    run(scenario)
+
+
+def test_interrupt_with_a_foreign_snapshot_does_not_hold_a_terminal_operation(tmp_path: Path, monkeypatch) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        op = _begun(h)
+        h.store.finish(op.op_id, "aborted", "open")
+        terminal = h.store.get(op.op_id)
+        foreign = _begun(h, key="next")
+        snapshot = h.store.current_with_generation(DOMAIN)
+        assert terminal is not None and terminal.state == "aborted"
+        assert snapshot is not None and snapshot[0].op_id == foreign.op_id != op.op_id
+        holds = []
+        monkeypatch.setattr(h.executor, "_versioned_gate_hold", True)
+        monkeypatch.setattr(h.executor, "_gate_hold", lambda *args, **kwargs: holds.append((args, kwargs)))
+
+        assert h.executor._observe_hold(op) == (terminal, None)
+        await h.executor._hold_after_interrupt(op)
+        assert holds == [], "a terminal fallback suppresses the hold despite another unfinished operation"
+
+    run(scenario)
+
+
+def test_interrupt_with_a_foreign_snapshot_and_missing_operation_holds_without_generation(tmp_path: Path, monkeypatch) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        op = _begun(h)
+        h.store.finish(op.op_id, "aborted", "open")
+        foreign = _begun(h, key="next")
+        snapshot = h.store.current_with_generation(DOMAIN)
+        assert snapshot is not None and snapshot[0].op_id == foreign.op_id != op.op_id
+        foreign_generation = snapshot[1]
+        reads = []
+        holds = []
+
+        def missing(key):
+            reads.append(key)
+            return None
+
+        monkeypatch.setattr(h.store, "get", missing)
+        monkeypatch.setattr(h.executor, "_versioned_gate_hold", True)
+        monkeypatch.setattr(h.executor, "_gate_hold", lambda *args, **kwargs: holds.append((args, kwargs)))
+
+        assert h.executor._observe_hold(op) == (None, None)
+        reads.clear()
+        await h.executor._hold_after_interrupt(op)
+        assert reads == [op.op_id], "the fallback must read A, not the foreign operation B"
+        assert holds == [((DOMAIN, "reconciling"), {})], "exactly one two-argument hold, with no generation"
+        assert all(kwargs.get("generation") != foreign_generation for _, kwargs in holds)
+        assert h.executor._recovery_pending
 
     run(scenario)
 

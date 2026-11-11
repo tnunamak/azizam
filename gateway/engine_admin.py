@@ -487,6 +487,20 @@ def capability_words(catalog: EngineCatalog, definition: Mapping[str, Any]) -> s
     return {word for cap_id in definition["capabilities"] for word in catalog.capability(cap_id)["record_capabilities"]}
 
 
+def described_operations(values: Mapping[str, Any]) -> set[str]:
+    """The operations an installed protocol description declares, when the draft dispatches by that description.
+
+    The description is owner data, validated and listed by the same loader as GET /admin/api/engine-protocols, so
+    its operations are tasks the engine may offer in addition to the definition's own capabilities.
+    """
+    if values.get("dispatch") != "protocol":
+        return set()
+    from gateway.engine_protocol import description
+
+    doc = description.load_registry().get(values.get("protocol_description"))
+    return set(doc.operations) if doc is not None and doc.executor == "http-v1" else set()
+
+
 def build_raw(
     catalog: EngineCatalog,
     definition: Mapping[str, Any],
@@ -506,12 +520,15 @@ def build_raw(
 ) -> dict[str, Any]:
     """The raw service record for ``service_from_backend_config``. ``keep`` holds config keys to carry over."""
     caps = list(dict.fromkeys(capabilities))
+    described = described_operations(values)
     for position, cap_id in enumerate(caps, start=1):
-        if cap_id not in definition["capabilities"]:
+        if cap_id not in definition["capabilities"] and cap_id not in described:
             raise DraftError(f"This kind of server does not offer the work at position {position}.", field="capabilities")
     record_caps: list[str] = []
     for cap_id in caps:
-        for value in catalog.capability(cap_id)["record_capabilities"]:
+        # A described operation is its own record capability; dispatch reads it as the offering's task.
+        words = [cap_id] if cap_id in described and cap_id not in definition["capabilities"] else catalog.capability(cap_id)["record_capabilities"]
+        for value in words:
             if value not in record_caps:
                 record_caps.append(value)
     record_caps += [value for value in extra_capabilities if value not in record_caps]
@@ -540,7 +557,7 @@ def build_raw(
         "definition_version": definition["definition_version"],
         "address": values["address"],
         "engine_check": dict(check),
-        "engine_capabilities": caps,
+        "engine_capabilities": [c for c in caps if c in definition["capabilities"]],
     })
     if "transforms" in has:
         transforms_value = values.get("transforms")

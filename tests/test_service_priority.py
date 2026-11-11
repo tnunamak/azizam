@@ -9,14 +9,14 @@ from gateway.service_priority import selected_service, service_priority
 
 @pytest.mark.parametrize("record, expected", [
     ({"priority": 0}, 0), ({"priority": 10}, 10), ({}, 100), ({"priority": None}, 100), ({"priority": ""}, 100),
-    ({"priority": "5"}, 5), ({"priority": 5.0}, 5), (None, 100),
+    ({"priority": "5"}, 5), ({"priority": " 5 "}, 5), ({"priority": 5.0}, 5), (None, 100),
 ])
 def test_a_records_priority(record, expected):
     assert service_priority(record) == expected
     assert type(service_priority(record)) is int
 
 
-@pytest.mark.parametrize("value", ["first", False, True, 5.7, [5], {"rank": 5}, (5,)])
+@pytest.mark.parametrize("value", ["first", "5.0", False, True, 5.7, [5], {"rank": 5}, (5,)])
 def test_a_priority_that_is_not_a_whole_number_is_refused(value):
     with pytest.raises(ValueError):
         service_priority({"priority": value})

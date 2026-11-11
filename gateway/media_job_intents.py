@@ -42,6 +42,18 @@ def parse_rows(document: Any) -> tuple[IntentRow, ...]:
     for name in names:
         if names.count(name) > 1:
             raise ValueError(f"{DATA_PATH.name}: duplicate intent {name!r}")
+    submittable = [r for r in rows if r.submittable]
+    if not submittable:
+        raise ValueError(f"{DATA_PATH.name}: no submittable intent; the OpenAPI request body needs at least one")
+    # The OpenAPI module keys request bodies by component, so one component must name one route and one route one
+    # component; otherwise one body would silently overwrite another.
+    route_of: dict[str, str] = {}
+    component_of: dict[str, str] = {}
+    for r in submittable:
+        if route_of.setdefault(r.component, r.route) != r.route:
+            raise ValueError(f"{DATA_PATH.name}: component {r.component} names two routes")
+        if component_of.setdefault(r.route, r.component) != r.component:
+            raise ValueError(f"{DATA_PATH.name}: route {r.route} names two components")
     return rows
 
 

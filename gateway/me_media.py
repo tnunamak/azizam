@@ -66,12 +66,7 @@ _CAPABILITY_BY_INTENT_PREFIX = {
 
 # Asset id prefixes. ``img``, ``aud`` and ``vid`` fix the suffixes they hold; ``ast`` holds any other stored file,
 # whatever its suffix, and its kind comes from the media type (gateway/asset_types.py).
-_ASSET_SUFFIXES_BY_KIND = {
-    "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
-    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"),
-    "vid": (".mp4", ".webm", ".mov", ".mkv"),
-    "ast": (),
-}
+_ASSET_SUFFIXES_BY_KIND = asset_types.asset_suffixes_by_prefix()
 
 
 @dataclass(frozen=True)

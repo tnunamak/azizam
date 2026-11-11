@@ -586,12 +586,9 @@ def _family_backend(
     section: Mapping[str, Any], family: str, backends: Mapping[str, Any], capability: str,
 ) -> str | None:
     if "backend" in section:
-        backend = section["backend"]
-        if not isinstance(backend, str) or not backend:
-            raise ValueError(
-                f"{family}.backend must be a non-empty string; got {backend!r}"
-            )
-        return backend
+        raise ValueError(
+            f"{family}.backend pin was removed; the service is chosen by capability, protocol and priority"
+        )
     # Generic backend rows only accept list-valued capability declarations.
     # Apply the same inventory boundary to graph selection without changing
     # selected_service's (shared with the gateway) iterable contract. When an adapter protocol serves the capability,

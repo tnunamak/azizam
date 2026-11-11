@@ -96,25 +96,38 @@ def test_edit_does_not_fall_back_to_generate_defaults(edit_default):
     }) == {"image.generate": "backend-model"}
 
 
-def test_explicit_backend_omitting_default_uses_compatibility_not_other_backend():
+def test_explicit_family_backend_pin_is_refused():
+    for family, capability in (("images", "images"), ("videos", "videos"), ("audio", "audio.generate"),
+                               ("owner-family", "custom.render")):
+        for pin in ("renderer", "", None, False):
+            with pytest.raises(ValueError, match="pin was removed; the service is chosen by capability, protocol and priority"):
+                local._family_backend({"backend": pin}, family, {}, capability)
+
+
+def test_lower_ranked_pin_is_refused_and_unpinned_family_uses_ranked_service():
     config = {
-        "images": {"backend": "renderer"},
+        "images": {"backend": "lower"},
         "backends": {
-            "comfyui": {"capabilities": ["images"], "default_model": "wrong"},
-            "renderer": {"workflows_dir": "/not-probed"},
+            "lower": {"capabilities": ["images"], "protocol": "node-graph",
+                      "priority": 100, "default_model": "wrong"},
+            "renderer": {"capabilities": ["images"], "protocol": "node-graph",
+                         "priority": 1, "workflows_dir": "/not-probed"},
         },
         "model_compatibility": {"defaults": {
             "images": "compat-model", "image_edits": "edit-model",
         }},
     }
+    with pytest.raises(ValueError, match="images.backend pin was removed"):
+        local.build_local_capabilities(config)
+    del config["images"]["backend"]
     caps = local.build_local_capabilities(config)
     assert [(cap.intent, cap.backend, cap.model, cap.caveats) for cap in caps] == [
         ("image.generate", "renderer", "compat-model", ()),
         ("image.edit", "renderer", "edit-model", ()),
     ]
-    # A declared but empty image backend remains ineligible.
+    # A service without capability declarations is ineligible, not a hard pin.
     config["backends"]["renderer"] = {}
-    assert local.build_local_capabilities(config) == []
+    assert {cap.backend for cap in local.build_local_capabilities(config)} == {"lower"}
 
 
 def test_shipped_image_and_workflow_defaults_are_literal():

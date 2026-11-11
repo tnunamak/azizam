@@ -477,3 +477,8 @@ framework = "pytest"
 case = "tests/test_adapter_differential_s7.py::test_s7_cell[ve-wait_timeout]"
 reason = "V5d: a create waits for the engine round before answering (it answers the engine's outcome, not the queued job)"
 
+
+[[xfail]]
+framework = "pytest"
+case = "tests/test_owner_engine_chain_smell.py::test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule"
+reason = "owner engine chain step 4: the public media job route does not yet run a description-declared operation (built on c2d/t52-step4)"

@@ -101,8 +101,8 @@ def test_new_workflow_family_uses_its_rows_flag_and_tier(tmp_path, monkeypatch):
     monkeypatch.setattr(local, "_WORKFLOW_FAMILIES", families)
     monkeypatch.setattr(local, "_WORKFLOW_DEFAULTS", defaults)
     config = {
-        "backends": {"renderer": {}},
-        "scenes": {"backend": "renderer", "workflows": {"scene-one": {"file": "scene.json"}}},
+        "backends": {"renderer": {"capabilities": ["custom.scene"], "protocol": "node-graph"}},
+        "scenes": {"workflows": {"scene-one": {"file": "scene.json"}}},
     }
     caps = local.build_local_capabilities(config)
     assert len(caps) == 1
@@ -218,8 +218,8 @@ def test_builders_do_not_reload_rows(monkeypatch):
         "chat": {"stable": [{"alias": "chat-default", "resolves_to": "model"}]},
     })) == 1
     assert len(local.build_local_capabilities({
-        "backends": {"renderer": {}},
-        "videos": {"backend": "renderer", "workflows": {"one": {"file": "one.json"}}},
+        "backends": {"renderer": {"capabilities": ["videos"], "protocol": "node-graph"}},
+        "videos": {"workflows": {"one": {"file": "one.json"}}},
     })) == 1
 
 

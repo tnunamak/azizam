@@ -350,6 +350,7 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, extra: x}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: '', input: smell}}\n",
     "kinds: {Smell: {label: Smell, plural: Smells, untitled: Smell, input: smell}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, prefix: ast}}\n",
     "other: 1\n",
 ])
 def test_a_malformed_kind_file_is_refused(tmp_path, text):
@@ -438,3 +439,18 @@ def test_a_prefix_added_only_in_the_kind_file_is_used(tmp_path, monkeypatch):
 ])
 def test_workflow_asset_prefixes_keep_the_empty_unknown_default(media_type, prefix):
     assert workflow_call.kind_for(media_type) == prefix
+
+
+def test_the_stored_id_tables_derive_from_the_asset_kind_rows():
+    # Literal oracle: the tables the gateway and the member media module hand-kept before they came from data.
+    suffixes = {
+        "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
+        "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"),
+        "vid": (".mp4", ".webm", ".mov", ".mkv"),
+        "ast": (),
+    }
+    assert asset_types.asset_suffixes_by_prefix() == suffixes
+    assert list(asset_types.asset_suffixes_by_prefix()) == list(suffixes)
+    assert asset_types.asset_kind_names_by_prefix() == {"img": "image", "aud": "audio", "vid": "video"}
+    assert proxy._ASSET_SUFFIXES_BY_KIND == me_media._ASSET_SUFFIXES_BY_KIND == suffixes
+    assert proxy._ASSET_KIND_NAMES == {"img": "image", "aud": "audio", "vid": "video"}
