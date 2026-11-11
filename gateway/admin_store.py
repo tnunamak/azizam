@@ -305,6 +305,16 @@ CREATE TABLE IF NOT EXISTS retention_fact_overrides (
   PRIMARY KEY(target_type, target_id)
 );
 
+-- Protocol descriptions the owner installed through the engine protocols route (gateway/protocol_description_store.py).
+-- The row revision comes from one counter, operator_settings_generations key 'protocol_descriptions', so it is never reused.
+CREATE TABLE IF NOT EXISTS protocol_descriptions (
+  id TEXT PRIMARY KEY,
+  document_text TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS prompt_memory_preferences (
   user_id TEXT NOT NULL,
   grp TEXT NOT NULL,

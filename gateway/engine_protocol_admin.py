@@ -2,19 +2,27 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import re
 from typing import Any, Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import egress
+from gateway import egress, protocol_description_store as store
+from gateway.engine_admin import _is_owner
 from gateway.engine_protocol import description
+
+_ID = re.compile(r"[a-z][a-z0-9-]{0,63}")
+_MAX_BYTES = 256 * 1024
+_REVISION = re.compile(r'"pd-(\d{1,18})"')
 
 
 def installed_protocols() -> dict[str, Any]:
     """Expose validation metadata, never source contents or parser error values."""
     loaded = description.load_registry()
     user_root = description.user_directory()
+    owned = description.owner_descriptions()[0]
     protocols = []
     for protocol_id, doc in sorted(loaded.items()):
         count = len(doc.operations)
@@ -23,11 +31,73 @@ def installed_protocols() -> dict[str, Any]:
             "title": doc.title or protocol_id,
             "executor": doc.executor,
             "operations": sorted(doc.operations),
-            "source": "user" if (user_root / f"{protocol_id}.yml").is_file() else "seed",
+            "source": "user" if protocol_id in owned or (user_root / f"{protocol_id}.yml").is_file() else "seed",
             "dispatch_supported": doc.executor == "http-v1",
             "validation": {"valid": True, "message": f"Valid description. {count} operation{'s' if count != 1 else ''}."},
         })
     return {"protocols": protocols, "problems": description.registry_problems()}
+
+
+def _tag(revision: int) -> str:
+    return f'"pd-{revision}"'
+
+
+def _shipped_text(protocol_id: str) -> str | None:
+    path = description.REGISTRY_DIR / f"{protocol_id}.yml"
+    return path.read_text(encoding="utf-8") if path.is_file() else None
+
+
+def _item(protocol_id: str, text: str, source: str, revision: str, *, status_code: int = 200) -> JSONResponse:
+    return egress.plain_json_response({"id": protocol_id, "source": source, "text": text}, response_class="engine_protocol",
+                                      status_code=status_code, headers={"ETag": revision, "Cache-Control": "no-store"})
+
+
+def _refuse(status_code: int, code: str, message: str, **extra: Any) -> JSONResponse:
+    return egress.safe_error_response(status_code, code, message, extra=extra)
+
+
+def _precondition(request: Request) -> tuple[str, int | None] | JSONResponse:
+    """``("create", None)``, ``("match", revision)`` or an error. A weak or unknown tag matches no revision (412)."""
+    if_match, if_none = request.headers.get("if-match"), request.headers.get("if-none-match")
+    if if_match is not None and if_none is not None:
+        return _refuse(400, "ambiguous_precondition", "Send If-Match or If-None-Match, not both.")
+    if if_none is not None:
+        if if_none.strip() != "*":
+            return _refuse(400, "invalid_precondition", "If-None-Match must be *.")
+        return "create", None
+    if if_match is None:
+        return _refuse(428, "revision_required", "Send If-None-Match: * to create, or If-Match with the current ETag.")
+    found = _REVISION.fullmatch(if_match.strip())
+    return ("match", int(found.group(1))) if found else ("match", -1)
+
+
+def _validate(protocol_id: str, text: str) -> JSONResponse | None:
+    try:
+        parsed = description.parse_description_text(text, source=protocol_id)
+    except description.DescriptionError as error:
+        return _refuse(422, "invalid_description", "; ".join(error.problems[:5])[:800])
+    if parsed.id != protocol_id:
+        return _refuse(422, "id_mismatch", "The id inside the description must equal the id in the address.")
+    return None
+
+
+def _write(protocol_id: str, text: str, kind: str, expect: int | None, owner: str | None) -> JSONResponse:
+    try:
+        revision = store.put(protocol_id, text, expect=expect, updated_by=owner)
+    except store.StoreConflict as conflict:
+        return _refuse(412, "revision_mismatch", "The description changed or already exists. Read it again." if conflict.kind != "missing"
+                       else "There is no description with this id to replace.")
+    return _item(protocol_id, text, "user", _tag(revision), status_code=201 if kind == "create" else 200)
+
+
+def _remove(protocol_id: str, expect: int) -> JSONResponse:
+    try:
+        store.delete(protocol_id, expect=expect)
+    except store.StoreConflict as conflict:
+        if conflict.kind == "referenced":
+            return _refuse(409, "protocol_in_use", f"Engines still use this description: {conflict.detail}. Change them first.")
+        return _refuse(412, "revision_mismatch", "The description changed or is gone. Read it again.")
+    return egress.plain_json_response({"deleted": True}, response_class="acknowledgement")
 
 
 def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Request], Any]) -> None:
@@ -37,3 +107,62 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
         if isinstance(ctx, JSONResponse):
             return ctx
         return egress.plain_json_response(await asyncio.to_thread(installed_protocols), response_class="engine_protocols")
+
+
+    @router.get("/engine-protocols/{protocol_id}")
+    async def engine_protocol(protocol_id: str, request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        row = await asyncio.to_thread(store.get, protocol_id) if _ID.fullmatch(protocol_id) else None
+        if row is not None:
+            return _item(protocol_id, row.text, "user", _tag(row.revision))
+        shipped = _shipped_text(protocol_id) if _ID.fullmatch(protocol_id) else None
+        if shipped is None:
+            return _refuse(404, "not_found", "There is no protocol description with this id.")
+        return _item(protocol_id, shipped, "seed", f'"seed-{hashlib.sha256(shipped.encode()).hexdigest()[:16]}"')
+
+    @router.put("/engine-protocols/{protocol_id}")
+    async def put_engine_protocol(protocol_id: str, request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if not _is_owner(ctx):
+            return _refuse(403, "owner_required", "Only the owner can install a protocol description.")
+        if not _ID.fullmatch(protocol_id):
+            return _refuse(422, "invalid_protocol_id", "A description id is lower case letters, digits and hyphens, starting with a letter.")
+        if _shipped_text(protocol_id) is not None:
+            return _refuse(409, "protocol_shipped", "This description ships with the release and cannot be changed. Use another id.")
+        condition = _precondition(request)
+        if isinstance(condition, JSONResponse):
+            return condition
+        raw = await request.body()
+        if len(raw) > _MAX_BYTES:
+            return _refuse(422, "description_too_large", "The description is too large.")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return _refuse(422, "invalid_description", "The description must be UTF-8 text.")
+        invalid = await asyncio.to_thread(_validate, protocol_id, text)
+        if invalid is not None:
+            return invalid
+        kind, expect = condition
+        return await asyncio.to_thread(_write, protocol_id, text, kind, expect, getattr(ctx, "audit_actor_id", None))
+
+    @router.delete("/engine-protocols/{protocol_id}")
+    async def delete_engine_protocol(protocol_id: str, request: Request) -> JSONResponse:
+        ctx = await asyncio.to_thread(guard, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if not _is_owner(ctx):
+            return _refuse(403, "owner_required", "Only the owner can remove a protocol description.")
+        if not _ID.fullmatch(protocol_id):
+            return _refuse(404, "not_found", "There is no protocol description with this id.")
+        if _shipped_text(protocol_id) is not None:
+            return _refuse(409, "protocol_shipped", "This description ships with the release and cannot be removed.")
+        condition = _precondition(request)
+        if isinstance(condition, JSONResponse):
+            return condition
+        if condition[0] != "match":
+            return _refuse(428, "revision_required", "Send If-Match with the current ETag.")
+        return await asyncio.to_thread(_remove, protocol_id, condition[1])

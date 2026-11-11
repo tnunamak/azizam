@@ -692,8 +692,41 @@ def user_directory() -> Path:
     return Path(os.environ.get("AZIZAM_PROTOCOLS_DIR") or admin_store.DB_PATH.parent / "protocols")
 
 
+_OWNER_MEMO: dict[Path, tuple[int, dict[str, ProtocolDescription], dict[str, str]]] = {}
+
+
+def owner_descriptions() -> tuple[dict[str, ProtocolDescription], dict[str, str]]:
+    """The descriptions the owner installed through the admin route, and a problem per row that no longer parses.
+
+    One counter read per call tells a worker whether another worker wrote; the rows are parsed again only then."""
+    from gateway import admin_store, protocol_description_store as store
+
+    path = Path(admin_store.DB_PATH)
+    counter = store.generation(path)
+    cached = _OWNER_MEMO.get(path)
+    if cached is not None and cached[0] == counter:
+        return dict(cached[1]), dict(cached[2])
+    counter, rows = store.read_all(path)
+    loaded: dict[str, ProtocolDescription] = {}
+    problems: dict[str, str] = {}
+    for row in rows:
+        try:
+            parsed = parse_description_text(row.text, source=row.id)
+            if parsed.id != row.id:
+                raise DescriptionError(row.id, ["The stored id must equal the description id."])
+            loaded[row.id] = parsed
+        except DescriptionError as error:
+            _LOG.warning("Cannot load owner protocol description %s: %s", row.id, error)
+            problems[f"{row.id} (owner)"] = "The description is invalid. Replace or delete it."
+    _OWNER_MEMO.clear()
+    _OWNER_MEMO[path] = (counter, loaded, problems)
+    return dict(loaded), dict(problems)
+
+
 def registry_problems() -> list[dict[str, str]]:
-    return [{"file": name, "reason": reason} for _, _, issues in tuple(_MEMO.values()) for name, reason in issues.items()]
+    owner_problems = owner_descriptions()[1]
+    return [{"file": name, "reason": reason} for name, reason in owner_problems.items()] + [
+        {"file": name, "reason": reason} for _, _, issues in tuple(_MEMO.values()) for name, reason in issues.items()]
 
 
 def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], dict[str, str]]:
@@ -722,7 +755,8 @@ def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], di
 
 
 def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescription]:
-    """Load valid files independently. User files replace seeds, including invalid overrides."""
+    """Load valid files independently, then the owner's stored descriptions. User files replace seeds, including invalid
+    overrides; an owner row replaces a file of the same id (the write route refuses a shipped id)."""
     if directory is not None:
         return _load_directory(Path(directory))[0]
     directories = [REGISTRY_DIR, user_directory()]
@@ -736,6 +770,7 @@ def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescriptio
         for file in issues:
             loaded.pop(Path(file).stem, None)
         loaded.update(records)
+    loaded.update(owner_descriptions()[0])
     return loaded
 
 
