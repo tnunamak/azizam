@@ -35,7 +35,6 @@ class Role:
     renamed_id: str
     host_key: str
     enabled_key: str
-    defaults_bucket: str
     health_function: str
     values: tuple[Value, ...]
     # Canonical, differently cased canonical, token list, cased token list.
@@ -50,7 +49,6 @@ ROLES = (
         renamed_id="voice-one",
         host_key="TTS_HOST",
         enabled_key="TTS_ENABLED",
-        defaults_bucket="tts",
         health_function="check_tts_health",
         values=(Value("timeout", "TTS_TIMEOUT", 45, 99, int),),
         declarations=(
@@ -67,7 +65,6 @@ ROLES = (
         renamed_id="ears-one",
         host_key="STT_HOST",
         enabled_key="STT_ENABLED",
-        defaults_bucket="stt",
         health_function="check_stt_health",
         values=(Value("timeout", "STT_TIMEOUT", 45, 99, int),),
         declarations=(
@@ -84,7 +81,6 @@ ROLES = (
         renamed_id="vectors-one",
         host_key="EMBEDDINGS_HOST",
         enabled_key="EMBEDDINGS_ENABLED",
-        defaults_bucket="embeddings",
         health_function="check_embeddings_health",
         values=(
             Value("timeout", "EMBEDDINGS_TIMEOUT", 45, 99, int),
@@ -155,7 +151,7 @@ def _expected(
         role.enabled_key: True,
     }
     defaults = (
-        engine_record_defaults.release_defaults()[role.defaults_bucket]
+        engine_record_defaults.release_defaults()[role.capability]  # the defaults are keyed by capability
         if sparse else {}
     )
     expected.update({
