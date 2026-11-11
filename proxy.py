@@ -25952,8 +25952,8 @@ async def _submit_video_media_job(
     return _image_media_job_response(created.to_dict("internal"), request, status_code=202)
 
 
-def _unsupported_gateway_media_job_response(intent: str) -> Response:
-    supported_intents = list(media_job_intents.SUBMITTABLE_INTENTS)
+def _unsupported_gateway_media_job_response(intent: str, *, declared: Iterable[str] = ()) -> Response:
+    supported_intents = [*media_job_intents.SUBMITTABLE_INTENTS, *declared]
     return Response(
         content=json.dumps({
             "error": {
@@ -26052,7 +26052,10 @@ async def _dispatch_gateway_media_job_submission(
         if intent == "image.generate":
             return None
         declared = await _submit_declared_operation_job(request=request, payload=payload, intent=intent)
-        return declared if declared is not None else _unsupported_gateway_media_job_response(intent)
+        if declared is not None:
+            return declared
+        offered = await asyncio.to_thread(lambda: declared_operation_job.intents(ADMIN_STORE.get_service_registry()))
+        return _unsupported_gateway_media_job_response(intent, declared=offered)
     headers = _safe_image_job_headers(request)
     idempotency_key = request.headers.get("idempotency-key")
     if idempotency_key:
@@ -29924,6 +29927,8 @@ async def list_models(request: Request):
         protocol_models = await _protocol_models_payload(auth_context)
     except ProtocolError as error:
         return _protocol_failure(error)
+    protocol_models = _with_declared_operations(
+        protocol_models, await asyncio.to_thread(lambda: declared_operation_job.model_rows(ADMIN_STORE.get_service_registry())))
     if protocol_models:
         upstream_payload["data"] = [*(upstream_payload.get("data") or []), *protocol_models]
 
@@ -34041,6 +34046,20 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     return response
 
 
+def _with_declared_operations(listed: list[dict], declared_rows: list[dict]) -> list[dict]:
+    """The protocol engines' listed models, each offering that serves a declared operation naming it (a new row when
+    the engine's own list does not carry the offering)."""
+    rows = [dict(row) for row in listed]
+    by_id = {row.get("id"): row for row in rows}
+    for declared_row in declared_rows:
+        existing = by_id.get(declared_row["id"])
+        if existing is None:
+            rows.append(declared_row)
+        else:
+            existing["azizam_operations"] = declared_row["azizam_operations"]
+    return rows
+
+
 async def _protocol_models_payload(auth_context):
     from gateway.engine_protocol import inventory
     registry = await asyncio.to_thread(ADMIN_STORE.get_service_registry)
@@ -35687,7 +35706,9 @@ def _gateway_openapi() -> dict[str, Any]:
     aliases = _gateway_aliases_provider()
     limits = video_limits(config.get("videos"))
     registry_view = GATEWAY_REGISTRY_PROVIDER.current()
-    inputs = json.dumps([aliases, limits, registry_view.digest], sort_keys=True, default=str)
+    # An operation an enabled engine declares is a submit intent too, so the engine records are an input of the document.
+    declared_intents = declared_operation_job.intents(ADMIN_STORE.get_service_registry())
+    inputs = json.dumps([aliases, limits, registry_view.digest, declared_intents], sort_keys=True, default=str)
     if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
     app.openapi_schema = None
@@ -35697,6 +35718,7 @@ def _gateway_openapi() -> dict[str, Any]:
         SnapshotRegistry(registry_view, published_only=True).records(),
         aliases=aliases,
         video_limits=limits,
+        declared_intents=declared_intents,
     )
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)

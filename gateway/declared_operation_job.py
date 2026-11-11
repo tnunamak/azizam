@@ -14,8 +14,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from gateway import media_jobs
-from gateway.engine_protocol import dispatch
+from gateway import media_job_intents, media_jobs
+from gateway.engine_contract_view import connection_config
+from gateway.engine_protocol import description, dispatch
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError, UnknownOperation
 
@@ -37,6 +38,50 @@ def resolve(registry: Mapping[str, Any], intent: str, model: Any) -> dispatch.Ta
     if target is None or target.description.operations[intent].job is None:
         return None
     return target
+
+
+def declared(registry: Mapping[str, Any]) -> list[tuple[str, str, str]]:
+    """Every declared job operation an enabled engine serves, as ``(engine id, offering id, operation)``.
+
+    Read from the engine records and the installed descriptions, per call, so an engine turned on or off elsewhere shows
+    at once. An operation the static table already names is not listed here; ``resolve`` decides each triple, so this
+    list and the job route agree. With no enabled protocol engine the result is empty."""
+    found: list[tuple[str, str, str]] = []
+    docs: dict[str, description.ProtocolDescription] | None = None
+    for engine_id, service in (registry.get("services") or {}).items():
+        if not dispatch.opted_in(service) or service.get("enabled", True) is False:
+            continue
+        if docs is None:
+            docs = description.load_registry()
+        doc = docs.get(connection_config(service).get("protocol"))
+        if doc is None:
+            continue
+        for offering in dispatch.offerings_of(str(engine_id), service):
+            for operation in doc.operations:
+                if operation in media_job_intents.SUBMITTABLE_INTENTS:
+                    continue
+                try:
+                    target = resolve(registry, operation, offering.get("id"))
+                except ProtocolError:
+                    continue  # an ambiguous or refused record is not offered; the job route refuses it the same way
+                if target is not None and target.engine_id == str(engine_id):
+                    found.append((str(engine_id), str(offering["id"]), operation))
+    return found
+
+
+def intents(registry: Mapping[str, Any]) -> list[str]:
+    """The declared operations as submit intents, sorted and without repeats."""
+    return sorted({operation for _engine, _model, operation in declared(registry)})
+
+
+def model_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One public models-listing row per offering that serves a declared operation."""
+    rows: dict[str, dict[str, Any]] = {}
+    for engine_id, model, operation in declared(registry):
+        row = rows.setdefault(model, {"id": model, "object": "model", "created": 0, "owned_by": engine_id,
+                                      "azizam_operations": []})
+        row["azizam_operations"].append(operation)
+    return [{**row, "azizam_operations": sorted(row["azizam_operations"])} for row in rows.values()]
 
 
 async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *, job_id: str) -> None:

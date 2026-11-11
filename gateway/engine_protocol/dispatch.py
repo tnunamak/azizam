@@ -38,6 +38,19 @@ def opted_in(service: Mapping[str, Any]) -> bool:
     return connection_config(service).get('dispatch') == 'protocol'
 
 
+def offerings_of(engine_id: str, service: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The offerings an opted-in record serves: its declared ones, else its legacy model rows projected."""
+    offerings = offerings_config(service)
+    if not offerings and (service.get("config") or {}).get("models"):
+        # Legacy engine editors store model rows. An explicit protocol opt-in
+        # uses their existing request-field projection without copying state.
+        from gateway.service_registry import normalize_service_record, service_record_v2
+
+        normalized = normalize_service_record(engine_id, service)
+        offerings = service_record_v2(normalized, public=False)["offerings"]
+    return list(offerings)
+
+
 def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
     """Resolve an offering id (or engine/id); existing records never enter here."""
     if not isinstance(model, str):
@@ -46,15 +59,7 @@ def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
     for engine_id, service in (registry.get('services') or {}).items():
         if not opted_in(service):
             continue
-        offerings = offerings_config(service)
-        if not offerings and (service.get("config") or {}).get("models"):
-            # Legacy engine editors store model rows. An explicit protocol opt-in
-            # uses their existing request-field projection without copying state.
-            from gateway.service_registry import normalize_service_record, service_record_v2
-
-            normalized = normalize_service_record(str(engine_id), service)
-            offerings = service_record_v2(normalized, public=False)["offerings"]
-        for offering in offerings:
+        for offering in offerings_of(str(engine_id), service):
             if model in {offering.get('id'), f"{engine_id}/{offering.get('id')}"}:
                 matches.append((engine_id, service, offering))
     if not matches:
