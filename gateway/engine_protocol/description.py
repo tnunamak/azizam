@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -702,11 +703,17 @@ def owner_descriptions() -> tuple[dict[str, ProtocolDescription], dict[str, str]
     from gateway import protocol_description_store as store
 
     path = store.db_path()
-    counter = store.generation(path)
     cached = _OWNER_MEMO.get(path)
-    if cached is not None and cached[0] == counter:
-        return dict(cached[1]), dict(cached[2])
-    counter, rows = store.read_all(path)
+    try:
+        counter = store.generation(path)
+        if cached is not None and cached[0] == counter:
+            return dict(cached[1]), dict(cached[2])
+        counter, rows = store.read_all(path)
+    except sqlite3.Error as error:
+        # A read that failed is not "nothing installed": keep the last good snapshot and say the store could not be read.
+        _LOG.warning("Cannot read the stored protocol descriptions: %s", type(error).__name__)
+        unreadable = {"stored descriptions": "The stored descriptions cannot be read now. The last good copy stays in use."}
+        return (dict(cached[1]), {**cached[2], **unreadable}) if cached is not None else ({}, unreadable)
     loaded: dict[str, ProtocolDescription] = {}
     problems: dict[str, str] = {}
     for row in rows:
@@ -756,7 +763,8 @@ def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], di
 
 def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescription]:
     """Load valid files independently, then the owner's stored descriptions. User files replace seeds, including invalid
-    overrides; an owner row replaces a file of the same id (the write route refuses a shipped id)."""
+    overrides; an owner row replaces a file of the same id, so an owner row wins over a shipped file of the same id until
+    the owner deletes it (the write route refuses a new write of a shipped id)."""
     if directory is not None:
         return _load_directory(Path(directory))[0]
     directories = [REGISTRY_DIR, user_directory()]
