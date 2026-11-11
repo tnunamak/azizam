@@ -321,4 +321,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # 30f9e05266fff448eb90a25b494ab5181e4001237b87a96ac0c65ca62d379232.
     # Re-captured 2026-11-10 for train 45 (the com.azizam.video extension controls on the two video create paths and
     # VideoGenerationRequest). Before it the frozen digest was 5d4a53fd5340c2a5a40263eaf1cdc6268f2e1a5cb23d06dd5cc3dea3010d86c0.
+    # Re-captured 2026-11-11: ace-step-1.5-xl-turbo declares audio/flac (its SaveAudio writer writes FLAC); only its
+    # output entry moved. Before it the frozen digest was 90a6a005c57d01b1092479448f948571aecf0ccc7bfd1c4a90c17136367069d3.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

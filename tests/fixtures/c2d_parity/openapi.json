@@ -1434,7 +1434,7 @@
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
-      "bytes": 7661,
+      "bytes": 7662,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1637,7 +1637,7 @@
           "intent": "audio.generate",
           "outputs": [
             {
-              "media_type": "audio/wav",
+              "media_type": "audio/flac",
               "name": "audio"
             }
           ],
@@ -1743,7 +1743,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo",
         "run_path": null
       },
-      "sha256": "084cb86835c775a036eed78cd161b391a577b15bb7164f80daad34d7fba78894"
+      "sha256": "565ebb778b418668028be8f4ffce15f5d783e4cfb4ff8344986b2fc7ba80b3ee"
     },
     "audio.generate.sa3-small-sfx": {
       "bytes": 3367,
