@@ -12,7 +12,7 @@ from gateway import local_capabilities as local
 ROWS = Path(__file__).resolve().parents[1] / "registry" / "local_capability_rows.yml"
 IMAGE_DEFAULTS = {
     "section": "images", "enabled_flag": "images", "section_required": False,
-    "backend_presence": "nonempty_mapping", "default_backend": "comfyui",
+    "backend_presence": "nonempty_mapping", "backend_capability": "images",
     "output_modalities": ("image",), "execution": "job", "streaming": False,
     "resource_tier": "batch", "gpu_required": True,
 }
@@ -24,7 +24,7 @@ IMAGE_ROWS = (
 )
 WORKFLOW_DEFAULTS = {
     "section_required": True, "backend_presence": "declared",
-    "default_backend": "comfyui", "execution": "job",
+    "backend_capabilities": {"videos": "videos", "audio": "audio.generate"}, "execution": "job",
     "streaming": False, "gpu_required": True,
 }
 
@@ -32,7 +32,8 @@ WORKFLOW_DEFAULTS = {
 def document():
     # Lists are the serialized format; the expected loaded values above are immutable.
     return {
-        "schema_version": 1, "alias_operations": [], "workflow_families": [],
+        "schema_version": 1, "alias_operations": [],
+        "workflow_families": yaml.safe_load(ROWS.read_text(encoding="utf-8"))["workflow_families"],
         "image_defaults": {**IMAGE_DEFAULTS, "output_modalities": ["image"]},
         "image_rows": [
             {**row, "input_modalities": list(row["input_modalities"]),
@@ -74,7 +75,7 @@ def models(config, **options):
 ])
 def test_first_truthy_generate_then_string_check_and_independent_edit(backend_default, generate):
     config = {
-        "backends": {"comfyui": {"default_model": backend_default}},
+        "backends": {"comfyui": {"capabilities": ["images"], "default_model": backend_default}},
         "model_compatibility": {"defaults": {
             "images": "compat-model", "image_edits": "edit-model",
         }},
@@ -88,7 +89,7 @@ def test_first_truthy_generate_then_string_check_and_independent_edit(backend_de
 @pytest.mark.parametrize("edit_default", [None, "", 7, ["not-a-model"]])
 def test_edit_does_not_fall_back_to_generate_defaults(edit_default):
     assert models({
-        "backends": {"comfyui": {"default_model": "backend-model"}},
+        "backends": {"comfyui": {"capabilities": ["images"], "default_model": "backend-model"}},
         "model_compatibility": {"defaults": {
             "images": "compat-model", "image_edits": edit_default,
         }},
@@ -99,7 +100,7 @@ def test_explicit_backend_omitting_default_uses_compatibility_not_other_backend(
     config = {
         "images": {"backend": "renderer"},
         "backends": {
-            "comfyui": {"default_model": "wrong"},
+            "comfyui": {"capabilities": ["images"], "default_model": "wrong"},
             "renderer": {"workflows_dir": "/not-probed"},
         },
         "model_compatibility": {"defaults": {
@@ -134,7 +135,7 @@ def test_new_image_intent_and_ordered_model_sources_need_only_rows(tmp_path, mon
     })
     install_rows(monkeypatch, write_rows(tmp_path, data))
     caps = local.build_local_capabilities({
-        "backends": {"comfyui": {"default_model": "backend-model"}},
+        "backends": {"comfyui": {"capabilities": ["images"], "default_model": "backend-model"}},
         "custom": {"upscale": "upscale-model"},
     })
     assert [(cap.intent, cap.model) for cap in caps] == [
@@ -146,7 +147,7 @@ def test_new_image_intent_and_ordered_model_sources_need_only_rows(tmp_path, mon
         added.execution, added.streaming, added.resource_tier, added.resources.gpu_required,
     ) == ("comfyui", ("image",), ("image",), "job", False, "batch", True)
     assert models({
-        "backends": {"comfyui": {"default_model": "backend-model"}},
+        "backends": {"comfyui": {"capabilities": ["images"], "default_model": "backend-model"}},
         "custom": {"upscale": False},
     })["image.upscale"] == "backend-model"
 
@@ -155,14 +156,14 @@ def test_image_defaults_drive_section_flag_backend_and_resources(tmp_path, monke
     data = document()
     data["image_defaults"].update({
         "section": "pictures", "enabled_flag": "pictures_enabled",
-        "section_required": True, "default_backend": "renderer",
+        "section_required": True, "backend_capability": "custom.render",
         "backend_presence": "declared", "output_modalities": ["audio"],
         "execution": "sync", "streaming": True, "resource_tier": "expensive",
         "gpu_required": False,
     })
     install_rows(monkeypatch, write_rows(tmp_path, data))
     config = {
-        "backends": {"renderer": {}},
+        "backends": {"renderer": {"capabilities": ["custom.render"]}},
         "model_compatibility": {"defaults": {"images": "compat-model"}},
     }
     assert local.build_local_capabilities(config) == []
@@ -178,13 +179,14 @@ def test_image_defaults_drive_section_flag_backend_and_resources(tmp_path, monke
 def test_workflow_defaults_drive_presence_backend_and_resources(tmp_path, monkeypatch):
     data = document()
     data["workflow_defaults"].update({
-        "default_backend": "renderer", "backend_presence": "nonempty_mapping",
+        "backend_capabilities": {"videos": "custom.render", "audio": "custom.audio"},
+        "backend_presence": "nonempty_mapping",
         "execution": "sync", "streaming": True, "gpu_required": False,
     })
     install_rows(monkeypatch, write_rows(tmp_path, data))
     config = {"backends": {"renderer": {}}, "videos": {"workflows": {"clip": {}}}}
     assert local.build_local_capabilities(config) == []
-    config["backends"]["renderer"] = {"name": "Local"}
+    config["backends"]["renderer"] = {"name": "Local", "capabilities": ["custom.render"]}
     cap, = local.build_local_capabilities(config)
     assert (
         cap.intent, cap.backend, cap.workflow, cap.execution, cap.streaming,
@@ -200,7 +202,7 @@ def test_workflow_defaults_drive_presence_backend_and_resources(tmp_path, monkey
     ("image_defaults", "streaming", "false", "streaming"),
     ("image_defaults", "gpu_required", None, "gpu_required"),
     ("image_defaults", "backend_presence", "truthy", "backend_presence"),
-    ("image_defaults", "default_backend", "", "default_backend"),
+    ("image_defaults", "backend_capability", "", "backend_capability"),
     ("image_defaults", "output_modalities", [], "output_modalities"),
     ("image_rows", "extra", True, "unknown fields"),
     ("image_rows", "intent", "", "intent"),
@@ -230,7 +232,7 @@ def test_bad_image_rows_name_file_and_logical_row(tmp_path, table, field, value,
 @pytest.mark.parametrize("table, field", [
     ("image_defaults", "section"), ("image_defaults", "execution"),
     ("image_rows", "intent"), ("image_rows", "model_sources"),
-    ("workflow_defaults", "default_backend"), ("workflow_defaults", "execution"),
+    ("workflow_defaults", "backend_capabilities"), ("workflow_defaults", "execution"),
 ])
 def test_missing_image_row_field_names_file_and_row(tmp_path, table, field):
     data = document()
@@ -273,7 +275,10 @@ def test_loaded_media_rows_are_deeply_read_only(tmp_path):
     with pytest.raises(TypeError):
         rows[0]["input_modalities"][0] = "changed"
     with pytest.raises(TypeError):
-        workflows["default_backend"] = "changed"
+        workflows["backend_capabilities"] = {}
+    assert isinstance(workflows["backend_capabilities"], MappingProxyType)
+    with pytest.raises(TypeError):
+        workflows["backend_capabilities"]["videos"] = "changed"
 
 
 def test_image_and_workflow_builders_do_not_reload_rows(monkeypatch):
@@ -281,7 +286,7 @@ def test_image_and_workflow_builders_do_not_reload_rows(monkeypatch):
         raise AssertionError("builder read rows again")
     monkeypatch.setattr(Path, "read_text", unexpected_read)
     caps = local.build_local_capabilities({
-        "backends": {"comfyui": {"default_model": "backend-model"}},
+        "backends": {"comfyui": {"capabilities": ["images", "videos"], "default_model": "backend-model"}},
         "videos": {"workflows": {"clip": {}}},
     })
     assert [cap.intent for cap in caps] == ["image.generate", "video.generate"]

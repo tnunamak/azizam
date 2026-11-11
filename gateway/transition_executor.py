@@ -67,6 +67,8 @@ DEFAULTS: dict[str, float] = {
 
 
 DEFAULT_FRESH_WITHIN_S = 2.0
+# How long a cancelled operation reads its row before it holds the gate anyway: the store's SQLite busy timeout.
+CANCEL_READ_DEADLINE_S = 5.0
 """How old evidence may be when the reviewed profile does not say. It is not an owner setting."""
 
 
@@ -582,9 +584,19 @@ class Executor:
         try:
             await self._drive(operation, trigger, after)
         except asyncio.CancelledError:
-            # Shutdown: the next admission in this process must reconcile the still-running durable row, too.
-            self._recovery_pending = True
-            self._gate_hold(operation.domain, "reconciling")
+            # A cancelled to_thread await does not stop finish: its commit may already be durable.
+            current = None
+            try:
+                # A stalled read must not keep the cancelled task and its domain lock alive; it holds instead.
+                current = await asyncio.wait_for(asyncio.to_thread(self.store.get, operation.op_id),
+                                                 CANCEL_READ_DEADLINE_S)
+            except Exception:  # noqa: BLE001 - an unreadable or late row still needs the conservative shutdown hold
+                pass
+            finally:
+                # Preserve a terminal row's gate. An unfinished or unreadable row must reconcile before admission.
+                if current is None or current.state not in FINISHED_STATES:
+                    self._recovery_pending = True
+                    self._gate_hold(operation.domain, "reconciling")
             raise
         except Exception as exc:  # noqa: BLE001
             print(f"[transition-gate] operation {operation.op_id} stopped by {log_scrub.describe_error(exc)}", flush=True)

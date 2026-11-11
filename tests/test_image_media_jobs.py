@@ -75,12 +75,12 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         idle = FakeClient(False)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
-            self.assertTrue(asyncio.run(proxy._free_graph_models_if_idle(idle)))
+            self.assertTrue(asyncio.run(proxy._free_graph_models_if_idle(idle, proxy._GRAPH_CAPABILITY)))
         self.assertEqual(len(idle.posts), 1)
         self.assertEqual(idle.posts[0][1], {"unload_models": True, "free_memory": True})
 
         busy = FakeClient(True)
-        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(busy)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(busy, proxy._GRAPH_CAPABILITY)))
         self.assertEqual(busy.posts, [])
 
         class PendingClient(FakeClient):
@@ -88,7 +88,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
                 return FakeResponse({"queue_running": [], "queue_pending": [1]})
 
         pending = PendingClient(False)
-        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(pending)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(pending, proxy._GRAPH_CAPABILITY)))
         self.assertEqual(pending.posts, [])
 
         class UnknownQueueClient(FakeClient):
@@ -96,7 +96,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
                 return FakeResponse({"queue_running": []})
 
         unknown = UnknownQueueClient(False)
-        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(unknown)))
+        self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(unknown, proxy._GRAPH_CAPABILITY)))
         self.assertEqual(unknown.posts, [])
 
         class DroppedClient(FakeClient):
@@ -108,7 +108,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed):
-            self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(DroppedClient(False))))
+            self.assertFalse(asyncio.run(proxy._free_graph_models_if_idle(DroppedClient(False), proxy._GRAPH_CAPABILITY)))
         # The log line names the httpx error, as it did before the call moved behind the adapter.
         self.assertIn("model unload failed: ReadTimeout", printed.getvalue())
 

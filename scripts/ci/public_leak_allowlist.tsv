@@ -86,4 +86,5 @@ web/src/app/engines/record/more-options.spec.tsx	lan-address	synthetic LAN engin
 web/src/lib/account-api.spec.ts	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
 web/src/lib/private-address.spec.ts	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
 web/src/lib/private-address.ts	lan-address	comment shows an IPv4-mapped address form
+web/tests/helpers/host-path.spec.ts	home-path	tests that the no-host-path pattern finds home paths
 web/tests/try-workflow-input-meta.spec.ts	lan-address	synthetic LAN engine or client address in test data

@@ -625,8 +625,22 @@ def test_a_hold_written_in_the_previous_format_re_reads_the_clean_check(tmp_path
     assert len(cleans) == 1, "the clean check was read once, not skipped"
 
 
-def test_cancelling_after_a_successful_finish_reholds_only_the_gate_cache(tmp_path, monkeypatch) -> None:
-    """Pin the current shutdown defect after both the successful commit and its cache publication."""
+def test_cancelling_after_a_successful_finish_keeps_the_gate_open(tmp_path, monkeypatch) -> None:
+    """Cancellation after the durable success and cache publication cannot re-hold the gate."""
+    _cancel_at_finish(tmp_path, monkeypatch, finished=True)
+
+
+def test_cancelling_before_finish_reholds_the_gate(tmp_path, monkeypatch) -> None:
+    """Cancellation before the finish commit must still hold the running operation for recovery."""
+    _cancel_at_finish(tmp_path, monkeypatch, finished=False)
+
+
+def test_a_stalled_cancellation_read_still_holds_the_gate_and_releases_the_lock(tmp_path, monkeypatch) -> None:
+    """The cancellation reads the row to keep a finished gate open; a read that does not return in time holds instead."""
+    _cancel_at_finish(tmp_path, monkeypatch, finished=False, stall_read=True)
+
+
+def _cancel_at_finish(tmp_path, monkeypatch, *, finished: bool, stall_read: bool = False) -> None:
     gates, engine, runtime, store = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
     engine.clean, engine.resident = True, "alpha"
     executor = runtime.executor()
@@ -641,43 +655,63 @@ def test_cancelling_after_a_successful_finish_reholds_only_the_gate_cache(tmp_pa
 
     async def go() -> None:
         loop = asyncio.get_running_loop()
-        published = asyncio.Event()
+        paused = asyncio.Event()
         worker_returned = asyncio.Event()
         release_worker = threading.Event()
         real_finish = executor.store.finish
         task = None
 
         def finish(op: str, state: str, gate: str) -> Any:
-            done = real_finish(op, state, gate)
-            if (op, state, gate) == (op_id, "succeeded", "open"):
-                # Signal after the real commit AND note_write, while the executor still awaits this worker.
-                loop.call_soon_threadsafe(published.set)
-                try:
-                    assert release_worker.wait(timeout=10.0), "the finish worker was not released"
-                finally:
-                    loop.call_soon_threadsafe(worker_returned.set)
-            return done
+            if (op, state, gate) != (op_id, "succeeded", "open"):
+                return real_finish(op, state, gate)
+            try:
+                if finished:
+                    done = real_finish(op, state, gate)
+                # Stop either before the commit or after the real commit AND note_write.
+                loop.call_soon_threadsafe(paused.set)
+                assert release_worker.wait(timeout=10.0), "the finish worker was not released"
+                return done if finished else real_finish(op, state, gate)
+            finally:
+                loop.call_soon_threadsafe(worker_returned.set)
+
+        real_get = executor.store.get
+        stalled = threading.Event()  # set after the cancel: the handler's read then blocks until released
+
+        def get(op: str) -> Any:
+            if stalled.is_set() and op == op_id:
+                assert release_worker.wait(timeout=10.0), "the stalled read was not released"
+            return real_get(op)
 
         monkeypatch.setattr(executor.store, "finish", finish)
+        if stall_read:
+            monkeypatch.setattr("gateway.transition_executor.CANCEL_READ_DEADLINE_S", 0.2)
+            monkeypatch.setattr(executor.store, "get", get)
         try:
             await asyncio.wait_for(executor.reconcile_startup(), timeout=10.0)
             task = executor._tasks[op_id]
-            await asyncio.wait_for(published.wait(), timeout=10.0)
+            await asyncio.wait_for(paused.wait(), timeout=10.0)
             before = await asyncio.to_thread(executor.store.get, op_id)
             assert before is not None
-            assert (before.state, gates.state("dom")) == ("succeeded", "open")
+            expected_before = ("succeeded", "open") if finished else ("running", "closed")
+            assert (before.state, gates.state("dom")) == expected_before
             assert not task.done(), "the finish worker must still be blocked"
+            if stall_read:
+                stalled.set()
             assert task.cancel(), "cancel the captured executor task, not the observer"
-            release_worker.set()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
-            await asyncio.wait_for(worker_returned.wait(), timeout=10.0)
-            after = await asyncio.to_thread(executor.store.get, op_id)
+                await asyncio.wait_for(asyncio.shield(task), timeout=2.0 if stall_read else 10.0)
+            after = await asyncio.to_thread(real_get, op_id)
             assert after is not None
-            # Current behavior: _run's cancellation handler forces an in-memory hold over a finished row.
-            assert (after.state, gates.state("dom")) == ("succeeded", "reconciling")
-            assert executor._recovery_pending
+            expected_after = ("succeeded", "open") if finished else ("running", "reconciling")
+            assert (after.state, gates.state("dom")) == expected_after
+            assert executor._recovery_pending is (not finished)
             assert not executor._lock_for("dom").locked()
+            # Inspect the cancellation result before allowing the worker to commit or return.
+            release_worker.set()
+            await asyncio.wait_for(worker_returned.wait(), timeout=10.0)
+            settled = await asyncio.to_thread(executor.store.get, op_id)
+            assert settled is not None
+            assert (settled.state, gates.state("dom")) == ("succeeded", "open")
         finally:
             # A failed assertion/watchdog must not strand a worker or let loop shutdown do the cancellation.
             release_worker.set()
@@ -732,3 +766,446 @@ def test_a_finish_that_fails_twice_leaves_no_wedged_domain_after_storage_recover
         await executor.resolve(op_id, step="release", outcome="unknown", evidence_ref="owner")  # accepted, not StaleOutcome
 
     run(go())
+
+
+# -- committed publications are ordered, including cancelled finish workers ------------------------------------------
+
+
+def _durable_gate(gates: Any, domain: str = "dom") -> tuple[Any, ...]:
+    import sqlite3
+
+    with sqlite3.connect(gates.path) as connection:
+        return connection.execute(
+            "SELECT state, op_id, generation FROM transition_gate WHERE domain = ?", (domain,)).fetchone()
+
+
+class _FinishPublicationBarrier:
+    """Pause one finish both before its real transaction and after COMMIT, before note_write."""
+
+    def __init__(self, monkeypatch: Any, store: Any, *, state: str, gate: str,
+                 op_id: Any = None, allow_commit: bool = False) -> None:
+        self.precommit = asyncio.Event()
+        self.committed = asyncio.Event()
+        self.returned = asyncio.Event()
+        self.entered = threading.Event()
+        self.allow_commit = threading.Event()
+        self.allow_publish = threading.Event()
+        self.errors: list[BaseException] = []
+        if allow_commit:
+            self.allow_commit.set()
+        loop = asyncio.get_running_loop()
+        selected = threading.local()
+        real_finish, real_transaction = store.finish, store._transaction
+
+        def finish(op: str, final: str, held: str) -> Any:
+            if (final, held) != (state, gate) or (op_id is not None and op != op_id):
+                return real_finish(op, final, held)
+            selected.active = True
+            self.entered.set()
+            try:
+                return real_finish(op, final, held)
+            except BaseException as exc:
+                self.errors.append(exc)
+                raise
+            finally:
+                selected.active = False
+                loop.call_soon_threadsafe(self.returned.set)
+
+        def transaction(work: Any) -> Any:
+            if not getattr(selected, "active", False):
+                return real_transaction(work)
+            loop.call_soon_threadsafe(self.precommit.set)
+            assert self.allow_commit.wait(10), "finish did not get its commit release"
+            done = real_transaction(work)
+            loop.call_soon_threadsafe(self.committed.set)
+            assert self.allow_publish.wait(10), "finish did not get its publication release"
+            return done
+
+        monkeypatch.setattr(store, "finish", finish)
+        monkeypatch.setattr(store, "_transaction", transaction)
+
+    async def wait(self, event: asyncio.Event) -> None:
+        await asyncio.wait_for(event.wait(), timeout=10)
+
+    async def drain(self, executor: Any) -> None:
+        self.allow_commit.set()
+        self.allow_publish.set()
+        tasks = list(executor._tasks.values())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10)
+        if self.entered.is_set():
+            await self.wait(self.returned)
+        assert not self.errors, self.errors
+
+
+async def _cancel_publication_task(executor: Any, task: Any) -> None:
+    assert task.cancel(), "cancel the executor task, not its observer"
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=10)
+    assert not executor._lock_for("dom").locked()
+
+
+class _PublicationVerdictStep:
+    def __init__(self, outcome: str, verdict: str) -> None:
+        self.outcome, self.verdict = outcome, verdict
+
+    def applies(self, operation: Any, adapter: Any) -> bool:
+        return True
+
+    async def run(self, ctx: Any) -> str:
+        op = ctx.operation
+        step = StepIntent(step="release", effect_key=f"{op.op_id}:release",
+                          expected_incarnation=op.incarnation)
+        held = EffectResult(outcome="unknown") if self.outcome == "unknown" else None
+        await asyncio.to_thread(ctx.store.write_intent, op.op_id, step, held)
+        if held is None:
+            await asyncio.to_thread(ctx.store.write_outcome, op.op_id, "release",
+                                    EffectResult(outcome=self.outcome))
+        return self.verdict
+
+
+def _publication_wake(executor: Any) -> str:
+    begun = executor.store.begin(domain="dom", kind="wake", idempotency_key="publication-a", target="alpha",
+                                 incarnation="inc-1", config_revision=1)
+    op_id = begun.operation.op_id
+    executor.store.write_intent(
+        op_id, StepIntent(step="restore", effect_key=f"{op_id}:restore:revalidate", expected_incarnation="inc-1"),
+        EffectResult(outcome="unknown", evidence_ref="revalidate:restore:failed:state_not_known_clean"))
+    executor.store.finish(op_id, "reconciling", "reconciling")
+    return op_id
+
+
+def test_cancel_before_finish_reopens_only_after_commit(tmp_path, monkeypatch) -> None:
+    _successful_publication_window(tmp_path, monkeypatch, before_commit=True, newer_hold=False)
+
+
+def test_cancel_between_commit_and_publish_preserves_terminal_row(tmp_path, monkeypatch) -> None:
+    _successful_publication_window(tmp_path, monkeypatch, before_commit=False, newer_hold=False)
+
+
+def test_old_finish_publication_cannot_open_over_newer_reconciling_operation(tmp_path, monkeypatch) -> None:
+    _successful_publication_window(tmp_path, monkeypatch, before_commit=False, newer_hold=True)
+
+
+def _successful_publication_window(tmp_path: Any, monkeypatch: Any, *,
+                                   before_commit: bool, newer_hold: bool) -> None:
+    from gateway.transition_gate import TransitionPolicy, TransitionUnavailable, admit
+
+    gates, engine, runtime, _ = wire(tmp_path, monkeypatch, verify=True, reset="no_change")
+    engine.clean, engine.resident = True, "alpha"
+    executor = runtime.executor()
+    a_id = _publication_wake(executor)
+    real_get = executor.store.get
+
+    async def go() -> None:
+        barrier = _FinishPublicationBarrier(monkeypatch, executor.store, op_id=a_id,
+                                            state="succeeded", gate="open", allow_commit=not before_commit)
+        try:
+            await asyncio.wait_for(executor.reconcile_startup(), timeout=10)
+            task = executor._tasks[a_id]
+            await barrier.wait(barrier.precommit if before_commit else barrier.committed)
+            a = await asyncio.to_thread(real_get, a_id)
+            assert a.state == ("running" if before_commit else "succeeded")
+            assert _durable_gate(gates)[:2] == (("closed" if before_commit else "open"), a_id)
+            assert gates.state("dom") == "closed"
+            assert executor._lock_for("dom").locked()
+            assert not task.done()
+            await _cancel_publication_task(executor, task)
+            assert executor._recovery_pending is before_commit
+            assert (await asyncio.to_thread(real_get, a_id)).state == a.state
+            assert _durable_gate(gates)[:2] == (("closed" if before_commit else "open"), a_id)
+            assert gates.state("dom") == ("reconciling" if before_commit else "closed")
+            if before_commit:
+                barrier.allow_commit.set()
+                await barrier.wait(barrier.committed)
+                assert (await asyncio.to_thread(real_get, a_id)).state == "succeeded"
+                assert _durable_gate(gates)[:2] == ("open", a_id)
+                assert gates.state("dom") == "reconciling"
+            assert not barrier.returned.is_set()
+            b_id = None
+            if newer_hold:
+                monkeypatch.setattr(executor, "_steps", {"release": _PublicationVerdictStep("unknown", "reconcile")})
+                begun = await executor.submit(domain="dom", kind="select", idempotency_key="publication-b", target="beta")
+                b_id = begun.operation.op_id
+                b = await asyncio.wait_for(executor.wait(b_id), timeout=10)
+                assert (b.state, b.step_outcome) == ("reconciling", "unknown")
+                assert _durable_gate(gates)[:2] == ("reconciling", b_id)
+                assert gates.state("dom") == "reconciling" and gates.parked("dom") is None
+                assert not executor._lock_for("dom").locked()
+                assert not executor._recovery_pending
+                with pytest.raises(TransitionUnavailable) as refused:
+                    admit(TransitionPolicy(domain="dom", enabled=True), gates.state("dom"), {}, parked=False)
+                assert refused.value.reason == "gate_reconciling"
+            durable = _durable_gate(gates)
+            barrier.allow_publish.set()
+            await barrier.wait(barrier.returned)
+            assert not barrier.errors
+            assert (await asyncio.to_thread(real_get, a_id)).state == "succeeded"
+            assert _durable_gate(gates) == durable
+            assert gates.state("dom") == ("reconciling" if newer_hold else "open")
+            assert gates.parked("dom") is None
+            assert not executor._lock_for("dom").locked()
+            if newer_hold:
+                b = await asyncio.to_thread(real_get, b_id)
+                assert (b.state, b.step_outcome) == ("reconciling", "unknown")
+                assert executor.reconciled()
+                with pytest.raises(TransitionUnavailable) as refused:
+                    admit(TransitionPolicy(domain="dom", enabled=True), gates.state("dom"), {}, parked=False)
+                assert refused.value.reason == "gate_reconciling"
+            await executor.ensure_reconciled()
+            await asyncio.to_thread(gates.refresh_if_due)
+            assert gates.state("dom") == ("reconciling" if newer_hold else "open")
+            assert not executor._recovery_pending
+        finally:
+            await barrier.drain(executor)
+
+    run(go())
+
+
+def test_old_closed_publication_cannot_reclose_newer_success(tmp_path, monkeypatch) -> None:
+    from gateway.transition_gate import TransitionPolicy, admit
+
+    gates, engine, runtime, _ = wire(tmp_path, monkeypatch)
+    executor = runtime.executor()
+
+    async def go() -> None:
+        await executor.reconcile_startup()
+        original_steps = executor._steps
+        monkeypatch.setattr(executor, "_steps", {"release": _PublicationVerdictStep("partial", "fail_closed")})
+        barrier = _FinishPublicationBarrier(monkeypatch, executor.store, state="failed_closed",
+                                            gate="failed_closed", allow_commit=True)
+        try:
+            begun = await executor.submit(domain="dom", kind="select", idempotency_key="closed-a", target="beta")
+            a_id = begun.operation.op_id
+            task = executor._tasks[a_id]
+            await barrier.wait(barrier.committed)
+            assert (await asyncio.to_thread(executor.store.get, a_id)).state == "failed_closed"
+            assert _durable_gate(gates)[:2] == ("failed_closed", a_id)
+            assert gates.state("dom") == "closed"
+            await _cancel_publication_task(executor, task)
+            assert not executor._recovery_pending
+            monkeypatch.setattr(executor, "_steps", original_steps)
+            begun = await executor.submit(domain="dom", kind="select", idempotency_key="open-b", target="beta")
+            b_id = begun.operation.op_id
+            b = await asyncio.wait_for(executor.wait(b_id), timeout=10)
+            assert b.state == "succeeded"
+            durable = _durable_gate(gates)
+            assert durable[:2] == ("open", b_id)
+            assert gates.state("dom") == "open" and gates.parked("dom") is None
+            assert not executor._lock_for("dom").locked()
+            assert not executor._recovery_pending
+            barrier.allow_publish.set()
+            await barrier.wait(barrier.returned)
+            assert not barrier.errors
+            assert (await asyncio.to_thread(executor.store.get, a_id)).state == "failed_closed"
+            assert (await asyncio.to_thread(executor.store.get, b_id)).state == "succeeded"
+            assert _durable_gate(gates) == durable
+            assert gates.state("dom") == "open" and gates.parked("dom") is None
+            assert not executor._lock_for("dom").locked()
+            admit(TransitionPolicy(domain="dom", enabled=True), gates.state("dom"), {}, parked=False)
+            await executor.ensure_reconciled()
+            await asyncio.to_thread(gates.refresh_if_due)
+            assert gates.state("dom") == "open"
+        finally:
+            await barrier.drain(executor)
+
+    run(go())
+
+
+def _publication_record(store: Any, key: str, *, kind: str = "select") -> Any:
+    return store.begin(domain="dom", kind=kind, idempotency_key=key, target="alpha",
+                       incarnation="inc-1", config_revision=1).operation
+
+
+def test_gate_generations_cover_begin_resume_finish_and_duplicate_holds(tmp_path, monkeypatch) -> None:
+    gates, _, runtime, _ = wire(tmp_path, monkeypatch)
+    store = runtime.executor().store
+    a = _publication_record(store, "generation-a")
+    assert _durable_gate(gates) == ("closed", a.op_id, 1)
+    store.write_intent(a.op_id, StepIntent(step="release", effect_key=f"{a.op_id}:release",
+                                         expected_incarnation=a.incarnation),
+                       EffectResult(outcome="unknown"))
+    store.finish(a.op_id, "reconciling", "reconciling")
+    assert _durable_gate(gates) == ("reconciling", a.op_id, 2)
+    store.write_outcome(a.op_id, "release", EffectResult(outcome="success"))
+    store.resume(a.op_id)
+    assert _durable_gate(gates) == ("closed", a.op_id, 3)
+    store.finish(a.op_id, "succeeded", "open")
+    assert _durable_gate(gates) == ("open", a.op_id, 4)
+    gates.force("dom", "reconciling")
+    gates.note_write("dom", "open", clears_park=True, generation=4)
+    gates.load()
+    assert gates.state("dom") == "reconciling", "neither duplicate nor equal-version load removes a hold"
+    b = _publication_record(store, "generation-b")
+    assert _durable_gate(gates) == ("closed", b.op_id, 5)
+    gates.note_write("dom", "reconciling", generation=2)
+    gates.note_write("dom", "closed", generation=3)
+    gates.note_write("dom", "open", clears_park=True, generation=4)
+    assert gates.state("dom") == "closed"
+    store.finish(b.op_id, "succeeded", "open")
+    assert _durable_gate(gates) == ("open", b.op_id, 6)
+    assert gates.state("dom") == "open"
+
+
+@pytest.mark.parametrize("generation", [4, 5])
+@pytest.mark.parametrize("clear", [False, True])
+def test_rejected_publications_preserve_state_and_park_metadata(tmp_path, monkeypatch, generation, clear) -> None:
+    gates, _, _, _ = wire(tmp_path, monkeypatch)
+    gates.note_write("dom", "open", "newer-park", generation=5)
+    gates.force("dom", "reconciling")
+    gates.note_write("dom", "open", None if clear else "older-park",
+                     clears_park=clear, generation=generation)
+    assert (gates.state("dom"), gates.parked("dom")) == ("reconciling", "newer-park")
+
+
+def test_newer_begin_carries_the_park_from_an_unpublished_finish(tmp_path, monkeypatch) -> None:
+    gates, _, runtime, _ = wire(tmp_path, monkeypatch)
+    store = runtime.executor().store
+    a = _publication_record(store, "park-a", kind="park")
+    real_note = gates.note_write
+    delayed: list[tuple[Any, Any]] = []
+
+    def note(*args: Any, **kwargs: Any) -> None:
+        if kwargs["generation"] == 2:
+            delayed.append((args, kwargs))
+        else:
+            real_note(*args, **kwargs)
+
+    monkeypatch.setattr(gates, "note_write", note)
+    store.finish(a.op_id, "succeeded", "open")
+    assert gates.parked("dom") is None
+    b = _publication_record(store, "park-b")
+    assert _durable_gate(gates) == ("closed", b.op_id, 3)
+    assert (gates.state("dom"), gates.parked("dom")) == ("closed", a.op_id)
+    assert len(delayed) == 1
+    args, kwargs = delayed[0]
+    real_note(*args, **kwargs)
+    assert (gates.state("dom"), gates.parked("dom")) == ("closed", a.op_id)
+
+
+def test_existing_gate_database_migrates_generation_without_reopening(tmp_path) -> None:
+    import sqlite3
+    from gateway.transition_gate import GateStore
+    from gateway.transition_store import SqliteOperationStore
+
+    path = tmp_path / "legacy-transition.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE transition_gate (domain TEXT PRIMARY KEY, state TEXT NOT NULL, "
+                           "op_id TEXT, updated REAL NOT NULL)")
+        connection.execute("INSERT INTO transition_gate VALUES ('dom', 'failed_closed', NULL, 0)")
+    gates = GateStore(path)
+    gates.load()
+    assert gates.readable() and gates.state("dom") == "failed_closed"
+    assert _durable_gate(gates) == ("failed_closed", None, 0)
+    store = SqliteOperationStore(gates)
+    a = _publication_record(store, "after-migration")
+    assert _durable_gate(gates) == ("closed", a.op_id, 1)
+    store.finish(a.op_id, "succeeded", "open")
+    assert _durable_gate(gates) == ("open", a.op_id, 2)
+    gates.load()
+    assert gates.state("dom") == "open"
+
+
+def _pause_gate_snapshot(monkeypatch: Any, gates: Any) -> tuple[Any, Any, Any]:
+    """Stop after reading gate rows but before reading park rows in that same load."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    read = threading.Event()
+    release = threading.Event()
+    real_connect = gates._connect
+
+    class Cursor:
+        def __init__(self, cursor: Any) -> None:
+            self.cursor = cursor
+
+        def fetchall(self) -> Any:
+            rows = self.cursor.fetchall()
+            read.set()
+            assert release.wait(10), "load snapshot was not released"
+            return rows
+
+    class Connection:
+        def __init__(self) -> None:
+            self.connection = real_connect()
+
+        def __enter__(self) -> Any:
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> Any:
+            try:
+                return self.connection.__exit__(*args)
+            finally:
+                self.connection.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.connection, name)
+
+        def execute(self, sql: str, *args: Any) -> Any:
+            cursor = self.connection.execute(sql, *args)
+            if sql == "SELECT domain, state, generation FROM transition_gate":
+                return Cursor(cursor)
+            return cursor
+
+    monkeypatch.setattr(gates, "_connect", Connection)
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(gates.load)
+    return read, release, (pool, future)
+
+
+@pytest.mark.parametrize("prior_kind", [None, "select", "park"])
+def test_delayed_load_cannot_replace_newer_publication_or_park(tmp_path, monkeypatch, prior_kind) -> None:
+    gates, _, runtime, _ = wire(tmp_path, monkeypatch)
+    store = runtime.executor().store
+    gates.load()
+    if prior_kind is not None:
+        a = _publication_record(store, "load-a", kind=prior_kind)
+        store.finish(a.op_id, "succeeded", "open")
+    read, release, (pool, future) = _pause_gate_snapshot(monkeypatch, gates)
+    try:
+        assert read.wait(10), "load did not reach its snapshot barrier"
+        b = _publication_record(store, "load-b", kind="park" if prior_kind != "park" else "select")
+        store.finish(b.op_id, "succeeded", "open")
+        expected_park = None if prior_kind == "park" else b.op_id
+        durable = _durable_gate(gates)
+        assert (gates.state("dom"), gates.parked("dom")) == ("open", expected_park)
+        release.set()
+        future.result(timeout=10)
+        assert _durable_gate(gates) == durable
+        assert (gates.state("dom"), gates.parked("dom")) == ("open", expected_park)
+    finally:
+        release.set()
+        try:
+            future.result(timeout=10)
+        finally:
+            pool.shutdown(wait=True)
+
+
+def test_load_reads_gate_and_park_from_one_snapshot(tmp_path, monkeypatch) -> None:
+    from gateway.transition_gate import GateStore
+
+    gates, _, runtime, _ = wire(tmp_path, monkeypatch)
+    store = runtime.executor().store
+    a = _publication_record(store, "snapshot-a", kind="park")
+    store.finish(a.op_id, "succeeded", "open")
+    reader = GateStore(gates.path)
+    read, release, (pool, future) = _pause_gate_snapshot(monkeypatch, reader)
+    try:
+        assert read.wait(10), "reader did not reach its snapshot barrier"
+        b = _publication_record(store, "snapshot-b")
+        store.finish(b.op_id, "succeeded", "open")
+        release.set()
+        future.result(timeout=10)
+        assert (reader.state("dom"), reader.parked("dom")) == ("open", a.op_id)
+        assert (gates.state("dom"), gates.parked("dom")) == ("open", None)
+        reader.load()
+        assert (reader.state("dom"), reader.parked("dom")) == ("open", None)
+    finally:
+        release.set()
+        try:
+            future.result(timeout=10)
+        finally:
+            pool.shutdown(wait=True)

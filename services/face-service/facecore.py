@@ -26,6 +26,10 @@ NMS_IOU = 0.4
 
 _analyzers: dict[str, FaceAnalysis] = {}
 
+
+class ModelRootMissing(RuntimeError):
+    """FACE_MODEL_ROOT is unset, so no model can load; the server answers 503 with this message."""
+
 # onnxruntime sizes its thread pool to every core by default. The host is shared
 # with the LLM and Daisy, so cap it; override with FACE_ORT_THREADS.
 _THREADS = int(os.environ.get("FACE_ORT_THREADS", "4"))
@@ -48,7 +52,7 @@ def analyzer(model: str) -> FaceAnalysis:
         raise ValueError(f"model must be one of {', '.join(KNOWN_MODELS)}")
     if model not in _analyzers:
         if not MODEL_ROOT:
-            raise RuntimeError("FACE_MODEL_ROOT must name the parent insightface directory")
+            raise ModelRootMissing("FACE_MODEL_ROOT must name the parent insightface directory")
         fa = FaceAnalysis(
             name=model,
             root=MODEL_ROOT,

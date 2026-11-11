@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import proxy
+from tests.support.graph_service import set_derived
 import pytest
 from fastapi import FastAPI
 from gateway import identity_api
@@ -40,8 +41,8 @@ def image_round(monkeypatch, fake_upstreams):
         'compute_max_batch': Mock(return_value=1),
     }.items():
         monkeypatch.setattr(proxy, name, value)
-    monkeypatch.setitem(proxy.runtime().derived, 'COMFY_HOST', fake.base_url)
-    monkeypatch.setitem(proxy.runtime().derived, 'COMFY_ENABLED', True)
+    set_derived(monkeypatch, 'COMFY_HOST', fake.base_url)
+    set_derived(monkeypatch, 'COMFY_ENABLED', True)
     monkeypatch.setattr(proxy.media_delivery, 'current', lambda: None)
     monkeypatch.setattr(proxy.random, 'randint', lambda *args: 41)
     monkeypatch.setattr(proxy, '_build_image_response_payload',

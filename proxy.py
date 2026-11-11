@@ -1208,36 +1208,64 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
 # model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
 # edit reaches every reader without a restart. Video workflows live separately from image workflows so they are
 # version-controlled next to proxy.py rather than inside the ComfyUI directory (``DERIVED.COMFY_VIDEO_WORKFLOWS_DIR``).
-_GRAPH_BACKEND_ID = "comfyui"
-# The capability that selects the graph backend's adapter and protocol description (``_graph_adapter``), by route family.
+# The graph engine's service is selected per route family by the capability that family needs (``_graph_service``), never
+# by a fixed id: an install may name it anything, and the three families may be served by three different records. The
+# adapter and protocol description come from the selected record and the family's capability; the manifest binding key
+# (``DERIVED._GRAPH_BINDING``) is protocol data; the release defaults are keyed by capability (``_record_default``).
 _GRAPH_CAPABILITY = "images"
 _VIDEO_GRAPH_CAPABILITY = "videos"
 _AUDIO_GRAPH_CAPABILITY = "audio.generate"
+_GRAPH_FAMILIES = (_GRAPH_CAPABILITY, _VIDEO_GRAPH_CAPABILITY, _AUDIO_GRAPH_CAPABILITY)
 # What a finished prompt names, read by the adapter that knows the engine's answers.
 _queue_prompt_ids = node_graph.queue_prompt_ids
 
 
-def _graph_adapter(capability: str = "images"):
-    """The reviewed adapter the graph backend's record selects (contract v2.1 section 4); core never branches on what it is."""
-    return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(_GRAPH_BACKEND_ID) or {}, capability)
+@dataclass(frozen=True)
+class GraphService:
+    """The service one graph family selected, as the snapshot derived it: its record id ("" when none declares the
+    family's capability), the record, the address it names ("" when none), whether it serves, and its request timeout."""
+
+    service_id: str
+    record: Mapping[str, Any]
+    host: str
+    enabled: bool
+    timeout: int
+
+
+def _graph_service(capability: str) -> GraphService:
+    """The service the snapshot selected for graph family *capability* (``_GRAPH_FAMILIES``)."""
+    return DERIVED.GRAPH_SERVICES[capability]
+
+
+def _graph_service_id(capability: str) -> str:
+    """The id of the service selected for family *capability* ("" when none declares it)."""
+    return _graph_service(capability).service_id
+
+
+def _graph_adapter(capability: str):
+    """The reviewed adapter the family's selected record selects (contract v2.1 section 4); core never branches on what it is."""
+    return reviewed_adapters.adapter_for_backend(_graph_service(capability).record, capability)
 
 
 # The key under a workflow manifest's ``bindings`` that holds the graph engine's artifact is protocol data: the snapshot
-# derives it from the graph backend's record (``DERIVED._GRAPH_BINDING``; catalog listings read it per workflow record).
+# derives it from the images family's record (``DERIVED._GRAPH_BINDING``; catalog listings read it per workflow record).
 
 
-def _graph_connection(first_byte_s: float | None = None, *, probe: bool = False) -> AdapterConnection:
-    """The graph engine's connection. A request send needs a serving lease for its residency domain;
-    ``probe=True`` is for a health read, a metadata read, or an address that is only named in a message."""
+def _graph_connection(first_byte_s: float | None = None, *, capability: str, probe: bool = False) -> AdapterConnection:
+    """The connection to the engine selected for family *capability*. A request send needs a serving lease for its
+    residency domain; ``probe=True`` is for a health read, a metadata read, or an address that is only named in a message."""
+    service = _graph_service(capability)
     if not probe:
-        _require_egress_lease(_GRAPH_BACKEND_ID)
-    return AdapterConnection(address=DERIVED.COMFY_HOST, timeouts=AdapterTimeouts(
-        connect_s=10, first_byte_s=first_byte_s or DERIVED.COMFY_TIMEOUT, total_s=first_byte_s or DERIVED.COMFY_TIMEOUT))
+        if not service.service_id:
+            raise RuntimeError(f"no service is selected for {capability}")
+        _require_egress_lease(service.service_id)
+    return AdapterConnection(address=service.host, timeouts=AdapterTimeouts(
+        connect_s=10, first_byte_s=first_byte_s or service.timeout, total_s=first_byte_s or service.timeout))
 
 
-def _graph(client: Any, capability: str = "images", *, probe: bool = False):
+def _graph(client: Any, capability: str, *, probe: bool = False):
     """``client`` as a session of the graph adapter: its requests are the adapter's, over the caller's connection."""
-    return _graph_adapter(capability).attach(_graph_connection(probe=probe), client)
+    return _graph_adapter(capability).attach(_graph_connection(capability=capability, probe=probe), client)
 
 # Image cache + adaptive-batching config (Fix 1 + Fix 2: honest `n`, real URLs).
 # The storage roots and the URL signing secret are startup settings: the images section does not carry them
@@ -1491,6 +1519,27 @@ def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
     return engine_record_defaults.record_value(_EMBEDDINGS_CAPABILITY, record, "model_id")
 
 
+def _graph_timeout(record: Mapping[str, Any]) -> int:
+    """The longest a request to the graph service *record* waits on it, queue time included: its own ``timeout``, else
+    the release default."""
+    return int(_record_default(_GRAPH_CAPABILITY, record, "timeout"))
+
+
+def _graph_services_of(backends: Mapping[str, Any]) -> dict[str, GraphService]:
+    """The service each graph family selects in *backends*, family by family. A family no record declares is the empty
+    service: no id, no address, off. A selected record that is disabled or names no address stays the selection."""
+    views: dict[str, GraphService] = {}
+    for capability in _GRAPH_FAMILIES:
+        service_id, record = _selected_service(backends, capability) or ("", {})
+        host = service_registry.engine_base_address(record)
+        views[capability] = GraphService(
+            service_id=service_id, record=record, host=host,
+            enabled=bool(service_id) and bool_from_config(record.get("enabled"), True) and bool(host),
+            timeout=_graph_timeout(record),
+        )
+    return views
+
+
 def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
     """Derive every registry-derived value (class A and B of docs/design/CONFIG_HOMES.md, 1.2) from *effective_cfg*.
 
@@ -1503,7 +1552,8 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     tts_c = (_selected_service(backends, _SPEECH_CAPABILITY) or ("", {}))[1]
     stt_c = (_selected_service(backends, _TRANSCRIPTION_CAPABILITY) or ("", {}))[1]
     emb_c = (_selected_service(backends, _EMBEDDINGS_CAPABILITY) or ("", {}))[1]
-    cfy_c = backends.get(_GRAPH_BACKEND_ID) or {}
+    graph = _graph_services_of(backends)
+    images, videos = graph[_GRAPH_CAPABILITY], graph[_VIDEO_GRAPH_CAPABILITY]
     protocol_registry = registry or service_registry.release_registry()
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
@@ -1512,12 +1562,13 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "TTS_HOST": service_registry.engine_base_address(tts_c),
         "STT_HOST": service_registry.engine_base_address(stt_c),
         "EMBEDDINGS_HOST": service_registry.engine_base_address(emb_c),
-        "COMFY_HOST": service_registry.engine_base_address(cfy_c),
+        "GRAPH_SERVICES": graph,
+        "COMFY_HOST": images.host,
         "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
         "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
         "STT_TIMEOUT": int(_record_default(_TRANSCRIPTION_CAPABILITY, stt_c, "timeout")),
         "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
-        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True) and bool(service_registry.engine_base_address(cfy_c)),
+        "COMFY_ENABLED": images.enabled,
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
@@ -1525,12 +1576,12 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "EMBEDDINGS_HEALTH_ENDPOINT": _record_default(_EMBEDDINGS_CAPABILITY, emb_c, "health_endpoint"),
         "EMBEDDINGS_TIMEOUT": int(_record_default(_EMBEDDINGS_CAPABILITY, emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": int(_record_default(_GRAPH_CAPABILITY, cfy_c, "timeout")),
-        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, cfy_c, "default_model"),
-        "COMFY_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, cfy_c, "video_timeout")),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, cfy_c, "workflows_dir")),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, cfy_c, "video_workflows_dir")),
-        "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(cfy_c, "images").binding,
+        "COMFY_TIMEOUT": images.timeout,
+        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, images.record, "default_model"),
+        "COMFY_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_timeout")),
+        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, images.record, "workflows_dir")),
+        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_workflows_dir")),
+        "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(images.record, _GRAPH_CAPABILITY).binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
         "CANONICAL_PROTOCOL_ROUTE_ALIASES": route_registry.canonical_protocol_route_aliases(**route_args),
@@ -6348,11 +6399,13 @@ def _load_ui_workflow(api_path: Path) -> Optional[dict]:
         return None
 
 
-def _build_graph_submit_payload(workflow: dict, **extra: Any) -> dict:
-    """The JSON body of a prompt, with the UI-format graph embedded in its output metadata when one is known."""
-    payload = node_graph.build_submit_payload(workflow, _derive_ui_workflow, **extra)
+def _build_graph_submit_payload(workflow: dict, capability: str, **extra: Any) -> dict:
+    """The JSON body of a prompt for the engine selected for family *capability*, with the UI-format graph embedded in
+    its output metadata when one is known."""
+    address = _graph_service(capability).host
+    payload = node_graph.build_submit_payload(workflow, lambda api: _derive_ui_workflow(api, address), **extra)
     if "extra_data" not in payload:
-        engine = _graph_adapter().label
+        engine = _graph_adapter(capability).label
         print(f"[proxy] WARNING: submitting a {engine} prompt without an embedded workflow "
               f"(derivation failed, no UI twin); dragging its output into {engine} will not "
               "reopen the generation", flush=True)
@@ -6399,22 +6452,17 @@ def _load_graph_workflow_outcome(model_name: str, intent: str | None) -> tuple[O
 
 
 
-def _graph_node_info(class_type: str) -> Optional[dict]:
-    """A node type's slot definitions from ComfyUI /object_info (cached), or None."""
-    return node_info.lookup(_graph_connection(probe=True).address, class_type)
-
-
-def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
+def _derive_ui_workflow(api: Mapping[str, Any], address: str) -> Optional[dict]:
     """Derive a UI-format ComfyUI graph from an API-format workflow.
 
     So generated media embed the 'workflow' chunk/tag (re-openable in the
     ComfyUI frontend). Uses /object_info for each node's slot ordering; see
     ``gateway.engine_protocol.node_ui_graph``. Best-effort: None if ComfyUI is unreachable or
     any node type is unknown, in which case the caller falls back to a
-    hand-authored twin or omits the chunk.
+    hand-authored twin or omits the chunk. ``address`` is the engine the graph is for: its node types come from there.
     """
     try:
-        return node_ui_graph.derive_ui_workflow(api, _graph_node_info)
+        return node_ui_graph.derive_ui_workflow(api, lambda class_type: node_info.lookup(address, class_type))
     except Exception as exc:  # noqa: BLE001 - never fail a render over metadata
         print(f"[proxy] UI workflow derivation failed: {log_scrub.describe_error(exc)}", flush=True)
         return None
@@ -6426,7 +6474,7 @@ def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     errors = validate_workflow_graph(workflow)
     if errors:
         print(
-            f"[proxy] invalid {_graph_adapter().label} workflow {workflow_path}: {'; '.join(errors)}",
+            f"[proxy] invalid {_graph_adapter(_GRAPH_CAPABILITY).label} workflow {workflow_path}: {'; '.join(errors)}",
             flush=True,
         )
         return None
@@ -6513,14 +6561,16 @@ def _graph_job_envelope(
     """What a graph-backed job pins: the definitions it compiles from, never the caller's request (CODE_TO_DATA_S2 D1).
 
     Recording is alongside today's flow, so any failure (an unreadable graph file, a refused grammar) is logged and the
-    job is created without an envelope, as it was before. ``capability`` selects the adapter and protocol
+    job is created without an envelope, as it was before. ``capability`` selects the service, adapter and protocol
     description, the same way ``_graph_adapter`` does. ``record`` is the workflow's registry record, so a graph path
     relative to its package resolves as it does when the job runs. ``generated`` is the job's generated-input block
     (``gateway/generated_defaults.py``), kept with the pins.
     """
     try:
-        backend = (config.get("backends") or {}).get(_GRAPH_BACKEND_ID) or {}
-        protocol = reviewed_adapters.protocol_for_backend(backend, capability)
+        service = _graph_service(capability)
+        if not service.service_id:
+            raise ValueError(f"no service is selected for {capability}")
+        protocol = reviewed_adapters.protocol_for_backend(service.record, capability)
         template = None
         if isinstance(artifact, str) and artifact:
             template = _resolve_workflow_artifact_path(record, artifact).read_bytes()
@@ -6528,7 +6578,7 @@ def _graph_job_envelope(
             source_kind="workflow", source_id=source_id, contract=contract, binding=binding, template=template,
             protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=protocol.adapter_id or "",
             interface_version=_graph_adapter(capability).interface_version,
-            service_id=_GRAPH_BACKEND_ID, origin=_graph_connection().address, generated=generated,
+            service_id=service.service_id, origin=service.host, generated=generated,
         )
     except Exception as exc:  # noqa: BLE001
         _MEDIA_JOB_LOG.warning("no envelope for %s: %s", source_id, log_scrub.describe_error(exc))
@@ -6639,11 +6689,13 @@ def _manifest_job_envelope(
     )
 
 
-async def check_comfy_health() -> bool:
-    """Check if ComfyUI backend is healthy."""
-    if not DERIVED.COMFY_ENABLED:
+async def check_comfy_health(capability: str) -> bool:
+    """Check if the graph service selected for family *capability* is healthy: false when none is selected, it is
+    disabled or it names no address, without a probe."""
+    service = _graph_service(capability)
+    if not service.enabled:
         return False
-    return await check_service_health(_GRAPH_BACKEND_ID)
+    return await check_service_health(service.service_id)
 
 
 def parse_size(size_str: str) -> tuple[int, int]:
@@ -6950,10 +7002,11 @@ def record_vram_estimate(
 
 async def graph_vram_snapshot(
     client: httpx.AsyncClient,
+    capability: str,
 ) -> tuple[Optional[int], Optional[int]]:
-    """Return (free, total) VRAM bytes on GPU0 from the engine's system stats."""
+    """Return (free, total) VRAM bytes on GPU0 from the system stats of the engine selected for family *capability*."""
     try:
-        reply = await _graph(client, probe=True).stats(timeout=HEALTH_CHECK_TIMEOUT)
+        reply = await _graph(client, capability, probe=True).stats(timeout=HEALTH_CHECK_TIMEOUT)
         if reply.status != 200:
             return None, None
         payload = reply.json()
@@ -6971,16 +7024,16 @@ async def graph_vram_snapshot(
         return None, None
 
 
-async def graph_free_vram_bytes(client: httpx.AsyncClient) -> Optional[int]:
+async def graph_free_vram_bytes(client: httpx.AsyncClient, capability: str) -> Optional[int]:
     """Backward-compatible: just the free-VRAM read."""
-    free, _ = await graph_vram_snapshot(client)
+    free, _ = await graph_vram_snapshot(client, capability)
     return free
 
 
-async def _free_graph_models_if_idle(client: httpx.AsyncClient) -> bool:
-    """Unload the engine's models only when its queue has no running execution."""
+async def _free_graph_models_if_idle(client: httpx.AsyncClient, capability: str) -> bool:
+    """Unload the models of the engine selected for family *capability* only when its queue has no running execution."""
     try:
-        graph = _graph(client)
+        graph = _graph(client, capability)
         response = await graph.queue(timeout=HEALTH_CHECK_TIMEOUT)
         if response.status != 200:
             return False
@@ -6994,11 +7047,11 @@ async def _free_graph_models_if_idle(client: httpx.AsyncClient) -> bool:
         response = await graph.free({"unload_models": True, "free_memory": True}, timeout=HEALTH_CHECK_TIMEOUT)
         if response.status != 200:
             return False
-        print(f"[proxy] {_graph_adapter().label} idle models unloaded after VRAM exhaustion", flush=True)
+        print(f"[proxy] {_graph_adapter(capability).label} idle models unloaded after VRAM exhaustion", flush=True)
         await asyncio.sleep(1.0)
         return True
     except (TransportFailure, ValueError, TypeError) as exc:
-        print(f"[proxy] {_graph_adapter().label} model unload failed: {type(exc.__cause__ or exc).__name__}", flush=True)
+        print(f"[proxy] {_graph_adapter(capability).label} model unload failed: {type(exc.__cause__ or exc).__name__}", flush=True)
         return False
 
 
@@ -7182,9 +7235,11 @@ class _VramProbe:
     def __init__(
         self,
         client: httpx.AsyncClient,
+        capability: str,
         interval: float = _VRAM_PROBE_INTERVAL_S,
     ) -> None:
         self._client = client
+        self._capability = capability
         self._interval = max(_VRAM_PROBE_INTERVAL_MIN_S, float(interval))
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
@@ -7207,7 +7262,7 @@ class _VramProbe:
         # Whole-GPU side: keep populating min_free / total via ComfyUI's
         # /system_stats. Cheap, async, and feeds the legacy "system pressure"
         # metric (NOT used by the batcher).
-        free, total = await graph_vram_snapshot(self._client)
+        free, total = await graph_vram_snapshot(self._client, self._capability)
         if isinstance(total, int) and self.total is None:
             self.total = total
         if isinstance(free, int):
@@ -8246,12 +8301,12 @@ def has_vision_content(messages) -> bool:
 _says_out_of_memory = graph_round.says_out_of_memory
 
 
-def _graph_error_message(job: Mapping[str, Any] | None, graph: Mapping[str, Any] | None = None) -> str | None:
+def _graph_error_message(job: Mapping[str, Any] | None, graph: Mapping[str, Any] | None = None, *, capability: str) -> str | None:
     """A short summary of an execution error in a history entry, or None.
 
     ``graph`` is the prompt the gateway submitted: a node is named only when the engine's node id is in it, by the
     graph's own label (decision D45b). Without it the sentence names no node."""
-    return node_graph.execution_error_message(job, _graph_adapter().label, graph)
+    return node_graph.execution_error_message(job, _graph_adapter(capability).label, graph)
 
 
 def _video_job_warnings(record: Mapping[str, Any] | None, job: Mapping[str, Any] | None) -> list[str]:
@@ -8293,49 +8348,7 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     return error
 
 
-async def _graph_queue_position(
-    client: httpx.AsyncClient,
-    prompt_id: str,
-    headers: Mapping[str, str],
-) -> Optional[int]:
-    try:
-        reply = await _graph(client).queue(headers=dict(headers), timeout=HEALTH_CHECK_TIMEOUT)
-    except Exception:
-        return None
-    if reply.status != 200:
-        return None
-    try:
-        queue = reply.json()
-    except Exception:
-        return None
-    if not isinstance(queue, Mapping):
-        return None
-    return node_graph.queue_position(queue, prompt_id)
-
-
-async def _graph_cancel(
-    client: httpx.AsyncClient,
-    prompt_id: str,
-    headers: Mapping[str, str],
-    *,
-    reason: str,
-) -> bool:
-    adapter = _graph_adapter()
-    try:
-        await adapter.cancel(_graph_connection(), JobRef("graph.submit", prompt_id), headers=dict(headers),
-                             session=_graph(client), timeout=HEALTH_CHECK_TIMEOUT)
-    except ProtocolUpstreamError as e:
-        print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: HTTP {e.status}", flush=True)
-        return False
-    except Exception as e:
-        print(f"[proxy] {adapter.label} cancel failed for {prompt_id} after {reason}: {log_scrub.describe_error(e)}", flush=True)
-        return False
-    print(f"[proxy] {adapter.label} prompt cancelled after {reason}: {prompt_id}", flush=True)
-    return True
-
-
-def _image_generation_timeout_response(queue_position: Optional[int]) -> Response:
-    engine = _graph_adapter().label
+def _image_generation_timeout_response(queue_position: Optional[int], engine: str) -> Response:
     error: dict[str, Any] = {
         "message": f"Image generation timed out before {engine} returned an image",
         "type": "api_error",
@@ -8369,14 +8382,14 @@ def _image_client_disconnected_response(prompt_id: str) -> Response:
     )
 
 
-def _graph_failure_response(error: Exception) -> Response | None:
-    """The answer for a graph engine that timed out or could not be reached, else ``None``.
+def _graph_failure_response(error: Exception, capability: str) -> Response | None:
+    """The answer for the graph engine selected for family *capability* that timed out or could not be reached, else ``None``.
 
     The adapter raises ``TransportFailure``; other calls in an image handler's ``try`` (not to the engine) still raise
     httpx errors, which have always read the same to the caller.
     """
     kind = error.kind if isinstance(error, TransportFailure) else None
-    adapter = _graph_adapter()
+    adapter = _graph_adapter(capability)
     if kind == "timeout" or isinstance(error, httpx.TimeoutException):
         return Response(
             content=json.dumps({"error": {"message": f"{adapter.label} request timeout", "type": "api_error"}}),
@@ -8385,7 +8398,7 @@ def _graph_failure_response(error: Exception) -> Response | None:
         )
     if kind == "unreachable" or isinstance(error, httpx.ConnectError):
         return Response(
-            content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(probe=True)), "type": "api_error"}}),
+            content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(capability=capability, probe=True)), "type": "api_error"}}),
             status_code=502,
             media_type="application/json",
         )
@@ -8407,7 +8420,7 @@ class _SelectedImages(list):
     result_name: str | None = None
 
 
-def _graph_result_source(manifest: Mapping[str, Any] | None, capability: str = "images") -> dict[str, Any]:
+def _graph_result_source(manifest: Mapping[str, Any] | None, capability: str) -> dict[str, Any]:
     """What a round reads its results by: the graph binding of the workflow's manifest, and the contract's outputs.
 
     A workflow with no manifest, or a binding with no selectors, has nothing to read its results by: the round is
@@ -8472,10 +8485,11 @@ async def _graph_run_round(
     binding: Mapping[str, Any] | None = None,
     contract_outputs: Mapping[str, Any] | None = None,
     intent: str | None = None,
+    capability: str,
 ) -> tuple[Optional[Response], list[bytes]]:
-    """Submit a single prompt to the graph engine and harvest the resulting image bytes.
+    """Submit a single prompt to the graph engine selected for family *capability* and harvest the resulting image bytes.
 
-    ``max_wait_s`` replaces DERIVED.COMFY_TIMEOUT as the wall-clock limit (queue wait included);
+    ``max_wait_s`` replaces that engine's request timeout as the wall-clock limit (queue wait included);
     async jobs pass a long value so a prompt queued behind a video render is not cancelled.
 
     Returns (error_response, image_bytes_list). On success error_response is None.
@@ -8497,14 +8511,14 @@ async def _graph_run_round(
             except Exception as e:
                 print(f"[proxy] VRAM probe stop error: {e}", flush=True)
 
-    adapter = _graph_adapter()
-    graph = _graph(client)
+    adapter = _graph_adapter(capability)
+    graph = _graph(client, capability)
     engine = adapter.label
     try:
         result = await graph_round.run_round(
-            adapter, graph, _build_graph_submit_payload(workflow), headers,
-            graph=workflow, label=label, max_wait_s=float(max_wait_s or DERIVED.COMFY_TIMEOUT),
-            control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=_graph_connection,
+            adapter, graph, _build_graph_submit_payload(workflow, capability), headers,
+            graph=workflow, label=label, max_wait_s=float(max_wait_s or _graph_service(capability).timeout),
+            control_timeout=HEALTH_CHECK_TIMEOUT, cancel_connection=lambda: _graph_connection(capability=capability),
             is_disconnected=lambda: _request_is_disconnected(request),
             binding=binding or {}, contract_outputs=contract_outputs or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
@@ -8548,7 +8562,7 @@ def _round_failure_response(failed: "graph_round.RoundFailure", adapter: Any, gr
     if kind == graph_round.EXECUTION_FAILED:
         return plain(failed.detail, 502)
     if kind == graph_round.WAIT_EXCEEDED:
-        return _image_generation_timeout_response(failed.queue_position)
+        return _image_generation_timeout_response(failed.queue_position, engine)
     if kind == graph_round.DISCONNECTED:
         return _image_client_disconnected_response(failed.prompt_id or "")
     return _result_refusal_response(failed.code, _refused_result_status(failed.code))
@@ -8766,7 +8780,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
     model_state = "unknown"
     comfy_baseline = 0
     samples_count = probe.samples if probe is not None else 0
-    free_after, _ = await graph_vram_snapshot(client)
+    free_after, _ = await graph_vram_snapshot(client, _GRAPH_CAPABILITY)
     if probe is not None and probe.trustworthy():
         marginal, model_state = probe.marginal_and_state()
         if isinstance(marginal, int) and marginal > 0:
@@ -8844,7 +8858,7 @@ async def _generate_images_with_adaptive_batching(
         return _image_workflow_configuration_error(manifest, workflow_name)
     batch_limit = ((manifest or {}).get("inputs") or {}).get("batch_size", {}).get("maximum")
     estimate = get_vram_estimate(workflow_name, width, height)
-    free_before = await graph_free_vram_bytes(client)
+    free_before = await graph_free_vram_bytes(client, _GRAPH_CAPABILITY)
     warnings: list[str] = []
     response_headers: dict[str, str] = {}
     models_freed = False
@@ -8874,7 +8888,7 @@ async def _generate_images_with_adaptive_batching(
 
     while images_remaining > 0 and rounds_run < max_rounds:
         rounds_run += 1
-        free_now = await graph_free_vram_bytes(client)
+        free_now = await graph_free_vram_bytes(client, _GRAPH_CAPABILITY)
 
         # Sizing model:
         #   - Probe round (rounds_run==1, no estimate): batch_size=1 so we can
@@ -8888,9 +8902,9 @@ async def _generate_images_with_adaptive_batching(
         elif estimate is not None:
             cap = compute_max_batch(free_now, estimate)
             if cap == 0 and _image_free_vram_on_exhaustion() and not models_freed:
-                models_freed = await _free_graph_models_if_idle(client)
+                models_freed = await _free_graph_models_if_idle(client, _GRAPH_CAPABILITY)
                 if models_freed:
-                    free_now = await graph_free_vram_bytes(client)
+                    free_now = await graph_free_vram_bytes(client, _GRAPH_CAPABILITY)
                     cap = compute_max_batch(free_now, estimate)
             # The estimate sizes batches > 1 only. It is measured as the
             # marginal ComfyUI VRAM of a probe run (cold model loads
@@ -8943,7 +8957,7 @@ async def _generate_images_with_adaptive_batching(
         # skip the probe overhead.
         probe: Optional[_VramProbe] = None
         if estimate is None:
-            probe = _VramProbe(client)
+            probe = _VramProbe(client, _GRAPH_CAPABILITY)
 
         err, round_images = await _graph_run_round(
             client,
@@ -8952,7 +8966,8 @@ async def _generate_images_with_adaptive_batching(
             label=f"image round {rounds_run}/{max_rounds} (target={batch_target})",
             vram_probe=probe,
             request=request,
-            **_graph_result_source(manifest),
+            capability=_GRAPH_CAPABILITY,
+            **_graph_result_source(manifest, _GRAPH_CAPABILITY),
         )
         if err is not None and not models_freed and _image_free_vram_on_exhaustion():
             try:
@@ -8961,7 +8976,7 @@ async def _generate_images_with_adaptive_batching(
             except Exception:
                 error_text = ""
             if getattr(err, "out_of_memory", False) or _says_out_of_memory(error_text):
-                models_freed = await _free_graph_models_if_idle(client)
+                models_freed = await _free_graph_models_if_idle(client, _GRAPH_CAPABILITY)
                 if models_freed:
                     round_workflow = copy.deepcopy(base_workflow)
                     if manifest is None:
@@ -8977,7 +8992,8 @@ async def _generate_images_with_adaptive_batching(
                         client, round_workflow, headers,
                         label=f"image round {rounds_run}/{max_rounds} after model unload",
                         request=request,
-                        **_graph_result_source(manifest),
+                        capability=_GRAPH_CAPABILITY,
+                        **_graph_result_source(manifest, _GRAPH_CAPABILITY),
                     )
         if models_freed:
             response_headers["X-ComfyUI-Models-Freed"] = "true"
@@ -9049,7 +9065,7 @@ async def _generate_images_with_adaptive_batching(
             # Avoid infinite loops if the backend silently returns nothing.
             if rounds_run >= 2 and not images_collected:
                 return Response(
-                    content=json.dumps({"error": {"message": f"{_graph_adapter().label} returned no images", "type": "api_error"}}),
+                    content=json.dumps({"error": {"message": f"{_graph_adapter(_GRAPH_CAPABILITY).label} returned no images", "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json",
                 )
@@ -9107,7 +9123,7 @@ async def _generate_images_with_adaptive_batching(
             response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
-        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{images_total} image(s) "
+        f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} generated {len(images_collected)}/{images_total} image(s) "
         f"across {rounds_run} round(s)",
         flush=True,
     )
@@ -9146,13 +9162,13 @@ async def proxy_graph_image_request(
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'image.generate', auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
         return Response(
@@ -9160,8 +9176,8 @@ async def proxy_graph_image_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
-        service_label=_graph_adapter().label,))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_GRAPH_CAPABILITY),
+        service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -9234,7 +9250,7 @@ async def proxy_graph_image_request(
         _record_image_input(receipt, "response_format", rejected_reason="unsupported_value")
         return _gateway_input_error("response_format must be 'b64_json' or 'url'")
     _record_image_input(receipt, "response_format")
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_GRAPH_CAPABILITY))
     try:
         model_resolution = resolve_model_for_operation("images", model)
     except ModelCompatibilityError as e:
@@ -9303,6 +9319,7 @@ async def proxy_graph_image_request(
             return _policy_denied_response(decision)
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_GRAPH_CAPABILITY,
         requested=str(model) if model is not None else None,
         resolved=workflow_name,
         manifest=manifest,
@@ -9393,10 +9410,10 @@ async def proxy_graph_image_request(
         workflow_name_for_batching = workflow_name
 
     try:
-        async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(_graph_service(_GRAPH_CAPABILITY).timeout, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "image.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                "image.generate", auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+                service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
@@ -9431,10 +9448,10 @@ async def proxy_graph_image_request(
                 output_size=effective_size,
             )
     except Exception as e:
-        failure = _graph_failure_response(e)
+        failure = _graph_failure_response(e, _GRAPH_CAPABILITY)
         if failure is not None:
             return failure
-        return client_errors.client_error(502, "proxy_error", error_type="api_error", subject=_graph_adapter().label)
+        return client_errors.client_error(502, "proxy_error", error_type="api_error", subject=_graph_adapter(_GRAPH_CAPABILITY).label)
 
 
 # Multipart field names OpenAI clients use for edit reference image(s). The
@@ -9529,13 +9546,13 @@ async def proxy_graph_image_edit_request(
 ) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'image.edit', auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
         return Response(
@@ -9543,8 +9560,8 @@ async def proxy_graph_image_edit_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
-        service_label=_graph_adapter().label,))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_GRAPH_CAPABILITY),
+        service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -9678,7 +9695,7 @@ async def proxy_graph_image_edit_request(
             media_type="application/json",
         )
     _record_image_input(receipt, "response_format")
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_GRAPH_CAPABILITY))
     try:
         model_resolution = resolve_model_for_operation("image_edits", model)
     except ModelCompatibilityError as e:
@@ -9812,6 +9829,7 @@ async def proxy_graph_image_edit_request(
             return _policy_denied_response(decision)
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_GRAPH_CAPABILITY,
         requested=str(model) if model is not None else None,
         resolved=workflow_name,
         manifest=manifest,
@@ -9824,7 +9842,7 @@ async def proxy_graph_image_edit_request(
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
     try:
-        async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(_graph_service(_GRAPH_CAPABILITY).timeout, connect=10)) as client:
             # Every reference image is read and checked before the first one goes to the engine: a refused one leaves
             # no upload behind for the others. The check is the resolver's (disclosure, size, measured type), with no
             # store write and no lease: this route already keeps each image as a source of its result, and a second
@@ -9833,7 +9851,7 @@ async def proxy_graph_image_edit_request(
             for extra_file in image_files[1:]:
                 uploaded_contents.append(await extra_file.read())
             resolver = _media_input_resolver()
-            edit_destination = _media_input_destination(_GRAPH_BACKEND_ID)
+            edit_destination = _media_input_destination(_graph_service_id(_GRAPH_CAPABILITY))
             try:
                 for part_accepts, content in zip(_edit_part_accepts(manifest, len(uploaded_contents)), uploaded_contents):
                     await asyncio.to_thread(
@@ -9862,7 +9880,7 @@ async def proxy_graph_image_edit_request(
                 image_content = _apply_edit_mask_as_source_alpha(mask_context)
 
             files = {"image": (image_file.filename or "input.png", image_content, "image/png")}
-            graph = _graph(client)
+            graph = _graph(client, _GRAPH_CAPABILITY)
             upload_resp = await graph.upload(files, headers=headers)
 
             if upload_resp.status != 200:
@@ -10053,8 +10071,8 @@ async def proxy_graph_image_edit_request(
                 workflow_name_for_batching = workflow_name
 
             admission = _dispatch_admission_response(
-                "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                "image.edit", auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+                service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
@@ -10093,10 +10111,10 @@ async def proxy_graph_image_edit_request(
             )
 
     except Exception as e:
-        failure = _graph_failure_response(e)
+        failure = _graph_failure_response(e, _GRAPH_CAPABILITY)
         if failure is not None:
             return failure
-        return client_errors.client_error(502, "proxy_error", error_type="api_error", subject=_graph_adapter().label)
+        return client_errors.client_error(502, "proxy_error", error_type="api_error", subject=_graph_adapter(_GRAPH_CAPABILITY).label)
 
 
 # OpenAI's variations request has no prompt (unlike edits); there is no local
@@ -10151,13 +10169,13 @@ async def proxy_graph_image_variations_request(
     pipeline rather than duplicating it.
     """
     admission = _dispatch_admission_response(
-        'image.variation', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'image.variation', auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
         return Response(
@@ -10165,8 +10183,8 @@ async def proxy_graph_image_variations_request(
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
-        service_label=_graph_adapter().label,))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_GRAPH_CAPABILITY),
+        service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_operator_mode")
@@ -10699,7 +10717,7 @@ async def _record_event(event: dict) -> None:
             entry["ended_at"] = time.time()
         elif etype == "execution_error":
             entry["status"] = "failed"
-            entry["error"] = _graph_error_message({"status": {"messages": [["execution_error", data]]}}, wf)
+            entry["error"] = _graph_error_message({"status": {"messages": [["execution_error", data]]}}, wf, capability=_VIDEO_GRAPH_CAPABILITY)
             entry["ended_at"] = time.time()
 
         entry["updated_at"] = time.time()
@@ -10753,7 +10771,7 @@ _VIDEO_RECONCILE_HISTORY_LIMIT = 200
 
 def _graph_history_state(job: dict, graph: Mapping[str, Any] | None = None) -> tuple[str, Optional[str]]:
     """``(terminal_status, error_text)`` for a history entry: ``failed``, ``running`` or ``succeeded``."""
-    return node_graph.history_state(job, _graph_adapter().label, graph)
+    return node_graph.history_state(job, _graph_adapter(_VIDEO_GRAPH_CAPABILITY).label, graph)
 
 
 async def _fetch_graph_state() -> tuple[Optional[set[str]], Optional[dict]]:
@@ -10905,7 +10923,7 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
     global _graph_ws_connected
     adapter = _graph_adapter("videos")
     engine = adapter.label
-    conn = _graph_connection(probe=True)  # a push subscription: the engine's events come in, no request payload goes out
+    conn = _graph_connection(capability=_VIDEO_GRAPH_CAPABILITY, probe=True)  # a push subscription: the engine's events come in, no request payload goes out
     backoff = 1.0
     last_gc = time.time()
 
@@ -11098,7 +11116,7 @@ async def _graph_queue_status(client: httpx.AsyncClient, prompt_id: str, headers
 def _graph_video_unavailable_response() -> Response:
     """502 for a video route whose engine could not be reached; the engine's name is the adapter's label."""
     return Response(
-        content=json.dumps({"error": {"message": _graph_adapter("videos").unavailable_message(_graph_connection(probe=True)),
+        content=json.dumps({"error": {"message": _graph_adapter("videos").unavailable_message(_graph_connection(capability=_VIDEO_GRAPH_CAPABILITY, probe=True)),
                                       "type": "api_error"}}),
         status_code=502,
         media_type="application/json"
@@ -11108,7 +11126,7 @@ def _graph_video_unavailable_response() -> Response:
 
 def _job_status_from_history(job: dict) -> tuple[str, int]:
     """Translate a ComfyUI history entry to (sora_status, progress_0_to_100)."""
-    if _graph_error_message(job):
+    if _graph_error_message(job, capability=_VIDEO_GRAPH_CAPABILITY):
         return "failed", 100
 
     status_block = (job or {}).get("status", {}) or {}
@@ -11298,7 +11316,7 @@ def _resolve_reference_upload(
     """Bytes the caller sent as an input_reference (a data: URI, base64 or an uploaded part), through the resolver."""
     try:
         return _media_input_resolver().resolve_upload(
-            auth_context, data, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
+            auth_context, data, holder=holder, destination=_media_input_destination(_graph_service_id(_VIDEO_GRAPH_CAPABILITY)),
             accepts=accepts,
         ).data
     except media_inputs.MediaInputError as exc:
@@ -11382,7 +11400,7 @@ async def _resolve_input_reference(
 
         try:
             resolved = await _media_input_resolver(fetch=fetch).resolve_url(
-                auth_context, s, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
+                auth_context, s, holder=holder, destination=_media_input_destination(_graph_service_id(_VIDEO_GRAPH_CAPABILITY)),
                 accepts=accepts,
             )
         except media_inputs.MediaInputError as exc:
@@ -11563,7 +11581,7 @@ async def _load_completed_video_bytes(
         return data, f"{video_id}.mp4"
     if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
         job = await _graph_history(client, prompt_id, headers)
         if job is None:
@@ -11753,7 +11771,7 @@ async def _upload_video_workflow_assets(
     updated = dict(body)
     extensions = dict(updated.get("extensions") or {})
     block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
             graph = _graph(client, "videos")
@@ -11798,18 +11816,18 @@ async def _submit_video_graph(
     add fields to the stored record and to the response. `progress_units` names
     the per-segment sampler/decode nodes so progress spans the whole chain.
     """
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "video.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                "video.generate", auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+                service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
             # client_id routes ws events for this submission to our listener.
             resp = await _graph(client, "videos").submit(
-                _build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID), headers=headers,
+                _build_graph_submit_payload(workflow, _VIDEO_GRAPH_CAPABILITY, client_id=COMFY_CLIENT_ID), headers=headers,
             )
             if resp.status != 200:
                 # Do NOT record _video_progress here: no prompt_id means there
@@ -11926,7 +11944,7 @@ async def _submit_video_graph(
                             requested_model=public_model,
                             resolved_model=workflow_name,
                             workflow_id=f"video.generate.{workflow_name}",
-                            backend=_GRAPH_BACKEND_ID,
+                            backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
                             seed=seed_val,
                             parameters={
                                 **(media_delivery.current().parameters if media_delivery.current() else {}),
@@ -12044,20 +12062,20 @@ async def _proxy_graph_video_create(
         return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
     admission = _dispatch_admission_response(
-        'video.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'video.generate', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
-        service_label=_graph_adapter().label,))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         return service_response
 
@@ -12189,7 +12207,7 @@ async def _proxy_graph_video_create(
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend=_GRAPH_BACKEND_ID,
+            backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -12200,6 +12218,7 @@ async def _proxy_graph_video_create(
         return _policy_denied_response(policy_decision)
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=str(workflow_name),
         extra_ids=(f"video.generate.{workflow_name}",),
@@ -12215,7 +12234,7 @@ async def _proxy_graph_video_create(
             media_type="application/json"
         )
 
-    receipt.backend = _GRAPH_BACKEND_ID
+    receipt.backend = _graph_service_id(_VIDEO_GRAPH_CAPABILITY)
     _capture_retention_facts(receipt)
 
     # Video-conditioned workflows (remix, character replace) take a source video
@@ -12558,7 +12577,7 @@ async def _proxy_graph_video_create(
             )
 
         # Upload to the engine's input cache (same upload used by image-edit).
-        upload_headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+        upload_headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
         try:
             async with engine_egress.async_client(timeout=httpx.Timeout(60, connect=10)) as upload_client:
                 files = {"image": (image_filename, image_bytes, "image/png")}
@@ -12750,7 +12769,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend=_GRAPH_BACKEND_ID,
+            backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -12761,6 +12780,7 @@ def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workfl
         return _policy_denied_response(decision)
     target = _workflow_target_policy_decision(
         auth_context,
+        capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=str(workflow_name),
         extra_ids=(f"video.generate.{workflow_name}",),
@@ -12863,7 +12883,7 @@ def _parse_chain_shots(body: Mapping[str, Any], *, default_seconds: float, min_s
 
 async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_context: AuthContext) -> str:
     """Upload bytes to the graph engine's input dir. Return the stored file name."""
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     engine = _graph_adapter("videos").label
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
@@ -12918,7 +12938,7 @@ async def _submit_video_chain(
         return denial
 
     if receipt is not None:
-        receipt.backend = _GRAPH_BACKEND_ID
+        receipt.backend = _graph_service_id(_VIDEO_GRAPH_CAPABILITY)
         _capture_retention_facts(receipt)
 
     # Source video: resolve, probe, then upload to ComfyUI only after validation.
@@ -13082,15 +13102,15 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
 
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.extend', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'video.extend', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
     if not _video_extend_workflow():
@@ -13148,7 +13168,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
 async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> Response:
     """GET /v1/videos/{video_id} — poll status."""
     await _warm_video_owner_keys(auth_context)
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -13173,7 +13193,7 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
@@ -13250,7 +13270,7 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
             if sora_status == "failed":
                 payload["error"] = _chain_failure_error(
                     _video_job_records.get(prompt_id), job,
-                    _graph_error_message(job, _video_workflows.get(prompt_id)) or f"{_graph_adapter('videos').label} execution_error",
+                    _graph_error_message(job, _video_workflows.get(prompt_id), capability=_VIDEO_GRAPH_CAPABILITY) or f"{_graph_adapter('videos').label} execution_error",
                 )
             return Response(
                 content=json.dumps(payload),
@@ -13279,7 +13299,7 @@ async def proxy_graph_video_content(
     Cached asset bytes are stripped before storage.
     """
     await _warm_video_owner_keys(auth_context)
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -13300,7 +13320,7 @@ async def proxy_graph_video_content(
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(60, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
@@ -13511,13 +13531,13 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
     through the separate `/gateway/v1/media/jobs` durable job store.
     """
     await _warm_video_owner_keys(auth_context)
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
 
@@ -13580,7 +13600,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
     page = [(hit.raw_id, dict(hit.record)) if isinstance(hit, LegacyHit) else hit for hit in listed.items]
     has_more = listed.has_more
 
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     data: list[dict[str, Any]] = []
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
@@ -13611,7 +13631,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
                             if fresh is not None:
                                 entry["completed_at"] = fresh.get("completed_at")
                     if status == "failed":
-                        entry["error"] = _graph_error_message(job, _video_workflows.get(prompt_id)) or f"{_graph_adapter('videos').label} execution_error"
+                        entry["error"] = _graph_error_message(job, _video_workflows.get(prompt_id), capability=_VIDEO_GRAPH_CAPABILITY) or f"{_graph_adapter('videos').label} execution_error"
                 else:
                     live = _video_progress_snapshot(prompt_id)
                     if live and live.get("status") in ("queued", "running"):
@@ -13651,13 +13671,13 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
     source of truth for every read route.
     """
     await _warm_video_owner_keys(auth_context)
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
 
@@ -13686,7 +13706,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
             media_type="application/json"
         )
 
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
@@ -13887,19 +13907,19 @@ async def proxy_graph_video_remix(
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.remix', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'video.remix', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
             media_type="application/json"
         )
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
 
@@ -13946,15 +13966,15 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
     """
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
-        'video.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'video.edit', auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
+        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_VIDEO_GRAPH_CAPABILITY), service_label=_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label))
     if service_response is not None:
         return service_response
     try:
@@ -14237,7 +14257,7 @@ async def _serve(app: FastAPI):
     comfy_ws_task = None
     video_reconcile_stop = asyncio.Event()
     video_reconcile_task = None
-    if DERIVED.COMFY_ENABLED:
+    if _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         comfy_ws_task = asyncio.create_task(_graph_ws_listener(comfy_ws_stop))
         print(f"[proxy] ComfyUI ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
 
@@ -14637,10 +14657,12 @@ def _target_activation(auth_context: AuthContext) -> str:
     return "may_activate" if _access_for_auth_context(auth_context).can_load_models else "existing_only"
 
 
-def _graph_target_available() -> bool:
-    if not DERIVED.COMFY_ENABLED:
+def _graph_target_available(capability: str) -> bool:
+    """Whether the service selected for family *capability* is on and not held out by the operator."""
+    service = _graph_service(capability)
+    if not service.enabled:
         return False
-    override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
+    override = _operator_service_availability_overrides().get(service.service_id, {})
     state = str((override or {}).get("state") or "available").strip().lower()
     return state not in {"disabled", "maintenance", "draining"}
 
@@ -14707,6 +14729,7 @@ def _workflow_target_ids(
 def _workflow_target_policy_decision(
     auth_context: AuthContext,
     *,
+    capability: str,
     requested: str | None,
     resolved: str | None = None,
     manifest: Mapping[str, Any] | None = None,
@@ -14719,7 +14742,7 @@ def _workflow_target_policy_decision(
             manifest=manifest,
             extra_ids=extra_ids,
         )
-        if _graph_target_available()
+        if _graph_target_available(capability)
         else set()
     )
     return _target_activation_policy_decision(
@@ -15084,9 +15107,9 @@ def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
                 runtime().config.get("backends") or {}, _EMBEDDINGS_CAPABILITY) is not None,
             "tts": DERIVED.TTS_ENABLED,
             "stt": DERIVED.STT_ENABLED,
-            "images": DERIVED.COMFY_ENABLED,
-            "videos": DERIVED.COMFY_ENABLED,
-            "audio": DERIVED.COMFY_ENABLED,
+            "images": _graph_service(_GRAPH_CAPABILITY).enabled,
+            "videos": _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled,
+            "audio": _graph_service(_AUDIO_GRAPH_CAPABILITY).enabled,
         },
         backends=_live_backends,
     ))
@@ -16816,7 +16839,6 @@ async def _live_probe_evidence() -> dict[str, dict[str, Any]]:
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_MODEL_ID = "image-identity"
 IDENTITY_MANIFEST_ID = "image.edit.image-identity"
-_IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": _GRAPH_BACKEND_ID}
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
@@ -16898,11 +16920,11 @@ def _identity_job_envelope() -> job_envelope.JobEnvelope | None:
 
 
 async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any], uploads: dict[str, bytes]) -> bytes:
-    engine = _graph_adapter().label
-    if not DERIVED.COMFY_ENABLED:
+    engine = _graph_adapter(_GRAPH_CAPABILITY).label
+    if not _graph_service(_GRAPH_CAPABILITY).enabled:
         raise RuntimeError(f"{engine} media backend is disabled")
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_GRAPH_CAPABILITY))
+    async with engine_egress.async_client(timeout=httpx.Timeout(_graph_service(_GRAPH_CAPABILITY).timeout, connect=10)) as client:
         for node_id, content in uploads.items():
             try:
                 name, upload_error = await _upload_graph_image_bytes(
@@ -16916,8 +16938,8 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
                 raise RuntimeError(f"{engine} image upload failed")
             graph[node_id]["inputs"]["image"] = name
         admission = _dispatch_admission_response(
-            "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-            service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            "image.edit", auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+            service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
@@ -16928,6 +16950,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             # The result is the file its manifest's selector names (CODE_TO_DATA_S2, D5).
             binding=_identity_template()[1],
             contract_outputs=identity_record.manifest.get("outputs") if identity_record else None,
+            capability=_GRAPH_CAPABILITY,
         )
     if error is not None:
         try:
@@ -16965,7 +16988,7 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
         kind="image",
         workflow_id=IDENTITY_MANIFEST_ID,
         resolved_model=IDENTITY_MODEL_ID,
-        backend=_GRAPH_BACKEND_ID,
+        backend=_graph_service_id(_GRAPH_CAPABILITY),
         parameters=delivery.parameters or None,
     )
     content = media_delivery.attach_provenance(content, ".png", record)
@@ -17014,7 +17037,7 @@ async def _identity_submit_job(
     job = media_jobs.MediaJob(
         intent=_IDENTITY_JOB_INTENT,
         workflow=IDENTITY_MANIFEST_ID,
-        backend=_GRAPH_BACKEND_ID,
+        backend=_graph_service_id(_GRAPH_CAPABILITY),
         request_id=f"identity-{uuid.uuid4().hex}",
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
@@ -17147,12 +17170,12 @@ def _identity_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _identity_admission(auth: AuthContext, path: str) -> Response | None:
-    denied = _enforce_runtime_route_policy(auth, path, policy=_IDENTITY_ROUTE_POLICY)
+    denied = _enforce_runtime_route_policy(auth, path, policy={"protocol": "openai.images", "intent": "image.edit", "backend": _graph_service_id(_GRAPH_CAPABILITY)})
     if denied is not None:
         return denied
     return _dispatch_admission_response(
-        "image.edit", auth_context=auth, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+        "image.edit", auth_context=auth, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
 
 
@@ -21232,7 +21255,7 @@ def start_image_route_receipt(
         protocol="openai.images",
         path=path,
         intent=intent,
-        backend=_GRAPH_BACKEND_ID,
+        backend=_graph_service_id(_GRAPH_CAPABILITY),
         api_key_name=key_name,
         app_id=app_id,
         owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
@@ -21589,7 +21612,7 @@ async def _upload_graph_image_bytes(
     media_type: str = "image/png",
 ) -> tuple[str | None, Response | None]:
     files = {"image": (filename, content, media_type)}
-    upload_resp = await _graph(client).upload(files, headers=dict(headers))
+    upload_resp = await _graph(client, _GRAPH_CAPABILITY).upload(files, headers=dict(headers))
     if upload_resp.status != 200:
         return None, client_errors.client_error(502, "upload_failed", error_type="api_error")
 
@@ -21803,7 +21826,8 @@ async def _run_single_graph_image(
         dict(headers),
         label,
         request=request,
-        **_graph_result_source(manifest),
+        capability=_GRAPH_CAPABILITY,
+        **_graph_result_source(manifest, _GRAPH_CAPABILITY),
     )
     if err is not None:
         return err, None
@@ -21811,7 +21835,7 @@ async def _run_single_graph_image(
         return Response(
             content=json.dumps({
                 "error": {
-                    "message": f"{_graph_adapter().label} returned no images",
+                    "message": f"{_graph_adapter(_GRAPH_CAPABILITY).label} returned no images",
                     "type": "api_error",
                 }
             }),
@@ -22022,7 +22046,7 @@ async def _proxy_offset_inpaint_tile_request(
     rounds = 0
 
     try:
-        async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(_graph_service(_GRAPH_CAPABILITY).timeout, connect=10)) as client:
             for index in range(n):
                 base_seed = (
                     fixed_seed_int + (index * 2)
@@ -22117,7 +22141,7 @@ async def _proxy_offset_inpaint_tile_request(
                     )
                 )
     except Exception as e:
-        failure = _graph_failure_response(e)
+        failure = _graph_failure_response(e, _GRAPH_CAPABILITY)
         if failure is not None:
             return failure
         return client_errors.client_error(502, "proxy_error", error_type="api_error")
@@ -22621,7 +22645,7 @@ def _resolve_image_extension_asset(
         raise _InputReferenceError("asset_id must reference a cached image asset")
     try:
         resolved = _media_input_resolver().resolve_asset(
-            auth_context, asset_id, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
+            auth_context, asset_id, holder=holder, destination=_media_input_destination(_graph_service_id(_GRAPH_CAPABILITY)),
             accepts=accepts,
         )
     except media_inputs.MediaInputError as exc:
@@ -22738,7 +22762,7 @@ async def _upload_image_workflow_extension_assets(
                     made_upload = True
                     content = (await asyncio.to_thread(
                         _media_input_resolver().resolve_upload, auth_context, content, holder=holder,
-                        destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts_of(spec))).data
+                        destination=_media_input_destination(_graph_service_id(_GRAPH_CAPABILITY)), accepts=accepts_of(spec))).data
                 except media_inputs.MediaInputError as exc:
                     return updated, _image_extension_error_response(receipt, exc.message, param=field_name)
                 filename = getattr(upload, "filename", None) or f"{field_name}.png"
@@ -24455,7 +24479,7 @@ def _resume_pending_image_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not _image_media_job_resume_on_start() or (not opted_in(service) and not DERIVED.COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not _graph_service(_GRAPH_CAPABILITY).enabled):
             _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24504,14 +24528,19 @@ _ADMISSION_WORKER: contextvars.ContextVar[bool] = contextvars.ContextVar("admiss
 _MEDIA_JOB_QUEUE_KEY = "comfyui-media"
 # Every intent the gateway runs as a media job, and its admission resource
 # class. Jobs with these intents count toward the media queue depth.
+# The resource classes of media job, each served by one graph family.
+_RESOURCE_IMAGE, _RESOURCE_VIDEO, _RESOURCE_AUDIO = "image", "video", "audio"
+_GRAPH_FAMILY_BY_RESOURCE_CLASS = {
+    _RESOURCE_IMAGE: _GRAPH_CAPABILITY, _RESOURCE_VIDEO: _VIDEO_GRAPH_CAPABILITY, _RESOURCE_AUDIO: _AUDIO_GRAPH_CAPABILITY,
+}
 _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = {
-    "image.generate": "image",
-    "image.edit": "image",
-    _IDENTITY_JOB_INTENT: "image",
-    "audio.generate": "audio",
-    "music.generate": "audio",
-    "sfx.generate": "audio",
-    INTENT_VIDEO_GENERATE: "video",
+    "image.generate": _RESOURCE_IMAGE,
+    "image.edit": _RESOURCE_IMAGE,
+    _IDENTITY_JOB_INTENT: _RESOURCE_IMAGE,
+    "audio.generate": _RESOURCE_AUDIO,
+    "music.generate": _RESOURCE_AUDIO,
+    "sfx.generate": _RESOURCE_AUDIO,
+    INTENT_VIDEO_GENERATE: _RESOURCE_VIDEO,
 }
 # Every intent that counts toward the queue depth and an App's concurrency: the modality jobs above, and workflow runs
 # (whose resource class is the workflow's own fact, so it is not in the table).
@@ -24701,18 +24730,21 @@ def _media_job_admission_response(
     # A workflow run names its own adapter, so the graph service's switch and operator state do not gate it; the run's
     # binding is checked by the core (``entry_problems``) before admission.
     graph_gated = intent != workflow_run.RUN_INTENT
-    service_override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {}) if graph_gated else {}
+    resource_class = resource_class or _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
+    # The service that serves the intent's family: an intent no family serves has none, and its work is refused.
+    graph = _graph_service(_GRAPH_FAMILY_BY_RESOURCE_CLASS[resource_class]) if resource_class in _GRAPH_FAMILY_BY_RESOURCE_CLASS else None
+    service_override = _operator_service_availability_overrides().get(graph.service_id if graph else "", {}) if graph_gated else {}
     override_state = str(service_override.get("state") or "available")
     service_blocked = override_state in {"disabled", "maintenance", "draining"}
     service_degraded = override_state == "degraded"
-    resource_class = resource_class or _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
     service_reasons_list: list[str] = []
-    graph_enabled = DERIVED.COMFY_ENABLED or not graph_gated
+    graph_enabled = (graph is not None and graph.enabled) or not graph_gated
+    engine = _graph_adapter(_GRAPH_FAMILY_BY_RESOURCE_CLASS[resource_class]).label if graph is not None else "graph"
     if not graph_enabled:
-        service_reasons_list.append(f"{_graph_adapter().label} media backend disabled")
+        service_reasons_list.append(f"{engine} media backend disabled")
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
-        service_reasons_list.append(reason or f"{_graph_adapter().label} operator mode: {override_state}")
+        service_reasons_list.append(reason or f"{engine} operator mode: {override_state}")
     max_queue_depth = _optional_int_config(admission_cfg, "max_queue_depth") if count_queue else None
     service_retry_after = (
         _optional_int_config(service_override, "retry_after_seconds")
@@ -25121,7 +25153,7 @@ def _resume_pending_audio_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not _image_media_job_resume_on_start() or (not opted_in(service) and not DERIVED.COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not _graph_service(_AUDIO_GRAPH_CAPABILITY).enabled):
             _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -25170,7 +25202,7 @@ async def _submit_audio_media_job(
             intent=intent,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"audio.generate.{workflow_name}",
-            backend=_GRAPH_BACKEND_ID,
+            backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="batch",
@@ -25183,6 +25215,7 @@ async def _submit_audio_media_job(
         return admission_response
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_AUDIO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=workflow_name,
         manifest=manifest,
@@ -25194,7 +25227,7 @@ async def _submit_audio_media_job(
         body,
         request_id=request_id,
         workflow=f"audio.generate.{workflow_name}",
-        backend=_GRAPH_BACKEND_ID,
+        backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         parent_request_id=request_id,
@@ -25764,7 +25797,7 @@ def _resume_pending_video_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not _image_media_job_resume_on_start() or (not opted_in(service) and not DERIVED.COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled):
             _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -25787,7 +25820,7 @@ def _video_job_policy_decision(auth_context: AuthContext, requested_model: Any, 
             intent=INTENT_VIDEO_GENERATE,
             model=str(requested_model) if requested_model is not None else None,
             workflow=f"video.generate.{workflow_name}",
-            backend=_GRAPH_BACKEND_ID,
+            backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="expensive",
@@ -25815,6 +25848,7 @@ def _video_media_job_step_auth(
         return _media_job_failure(_policy_denied_response(decision))
     target = _workflow_target_policy_decision(
         auth_context,
+        capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model),
         resolved=workflow_name,
         extra_ids=(f"video.generate.{workflow_name}",),
@@ -25852,6 +25886,7 @@ async def _submit_video_media_job(
         return admission_response
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_VIDEO_GRAPH_CAPABILITY,
         requested=str(requested_model) if requested_model is not None else None,
         resolved=workflow_name,
         extra_ids=(f"video.generate.{workflow_name}",),
@@ -25864,7 +25899,7 @@ async def _submit_video_media_job(
         body,
         video_media_job_http.VideoRequestContext(
             workflow=workflow_name,
-            backend=_GRAPH_BACKEND_ID,
+            backend=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
             request_id=request_id,
             idempotency_key=request.headers.get("idempotency-key"),
             app_profile=plan_ref(auth_context.identity),
@@ -26095,6 +26130,7 @@ async def gateway_image_generations_media_job(request: Request):
         return admission_response
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_GRAPH_CAPABILITY,
         requested=model,
         resolved=receipt.resolved_workflow if receipt is not None else None,
         manifest=manifest,
@@ -26790,10 +26826,10 @@ def _backend_address(record: Mapping[str, Any]) -> str | None:
     return service_registry.engine_base_address(record) or None
 
 
-def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
+def _workflow_engine(binding_key: str | None, service_id: str | None = None) -> tuple[str, Mapping[str, Any], Any, Any] | None:
     """The configured service whose reviewed protocol holds the bindings under ``binding_key``: (service id, record,
     protocol, adapter). Found by data (the protocol description's ``binding`` key and the record's protocol), never by
-    an engine name."""
+    an engine name. With ``service_id`` only that service is considered: a job runs on the service it was pinned to."""
     from gateway.engine_protocol import description as protocol_description
     from gateway.engine_protocol import reviewed
     from gateway.engine_protocol.errors import ProtocolError
@@ -26803,20 +26839,22 @@ def _workflow_engine(binding_key: str | None) -> tuple[str, Mapping[str, Any], A
         # A record is the engine for this binding when it names the protocol itself, or when its service id is the
         # binding key. A record that merely could serve a capability is not: that would pick any service with an address.
         candidates = []
-        for service_id, record in (config.get("backends") or {}).items():
+        for candidate_id, record in (config.get("backends") or {}).items():
+            if service_id is not None and candidate_id != service_id:
+                continue
             if not isinstance(record, Mapping) or _backend_address(record) is None:
                 continue
             connection = record.get("connection")
             named = next((str(source["protocol"]).strip() for source in (connection if isinstance(connection, Mapping) else {}, record)
                           if isinstance(source.get("protocol"), str) and source["protocol"].strip()), None)
-            if named == doc.id or service_id == binding_key:
-                candidates.append((named != doc.id, service_id, record))
-        for _, service_id, record in sorted(candidates, key=lambda item: item[0]):
+            if named == doc.id or candidate_id == binding_key:
+                candidates.append((named != doc.id, candidate_id, record))
+        for _, candidate_id, record in sorted(candidates, key=lambda item: item[0]):
             for capability in (*doc.serves, ""):
                 try:
                     if reviewed.protocol_for_backend(record, capability).id != doc.id:
                         continue
-                    return service_id, record, doc, reviewed.adapter_for_backend(record, capability)
+                    return candidate_id, record, doc, reviewed.adapter_for_backend(record, capability)
                 except ProtocolError:
                     continue
     return None
@@ -26861,17 +26899,13 @@ def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDeci
         available_label="available workflow ids", empty_label="no available workflow was reported")
 
 
-def _graph_wait_s() -> float:
-    """The longest a run waits on the graph engine: queue time included."""
-    return float(DERIVED.COMFY_TIMEOUT)
-
-
 def _graph_service_connection(service_id: str, record: Mapping[str, Any]) -> AdapterConnection:
-    """The connection to one graph service's address, with the run's wait as its read bound. A request is about to
-    go to ``service_id``, so this needs its serving lease."""
+    """The connection to one graph service's address, with that service's own wait as the run's read bound. A request
+    is about to go to ``service_id``, so this needs its serving lease."""
     _require_egress_lease(service_id)
+    wait = float(_graph_timeout(record))
     return AdapterConnection(address=_backend_address(record) or "", timeouts=AdapterTimeouts(
-        connect_s=10, first_byte_s=_graph_wait_s(), total_s=_graph_wait_s()))
+        connect_s=10, first_byte_s=wait, total_s=wait))
 
 
 class _WorkflowRunPort:
@@ -26995,7 +27029,7 @@ class _WorkflowRunPort:
         if runner is not None:
             return await runner.run(ctx)
         from gateway.engine_protocol.media import GatewayAssetStore
-        engine = _workflow_engine(ctx.pin.envelope.binding_key)
+        engine = _workflow_engine(ctx.pin.envelope.binding_key, ctx.pin.envelope.service_id)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
         service_id, record, protocol, _ = engine
@@ -27011,7 +27045,7 @@ class _WorkflowRunPort:
 
         runtime_ = pinned_runtime.PinnedRuntime(
             job_id=ctx.job_id, adapter=adapter, protocol=protocol, connection=connection,
-            timing=(2.0, _graph_wait_s()), jobs_path=media_jobs.DB_PATH,
+            timing=(2.0, connection().timeouts.total_s), jobs_path=media_jobs.DB_PATH,
             context=ResultContext(self.result_limits()))
         # The operation is the pinned contract's own intent: the adapter compiles the pinned manifest and template for
         # it. No operation of the protocol is picked by position.
@@ -27130,21 +27164,21 @@ class _AdaptiveBatching:
             warnings.append(f"n={n} x batch_size={per_prompt} exceeds the {MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}")
         name = str(contract.get("id") or "")
         state = self._State(key=(name, width, height), estimate=get_vram_estimate(name, width, height),
-                            free_before=await graph_free_vram_bytes(session.client),
+                            free_before=await graph_free_vram_bytes(session.client, _GRAPH_CAPABILITY),
                             batch_limit=(spec.get("batch_size") or {}).get("maximum"), counts="batch_size" in spec)
         return node_graph_runner.Plan(total=total, max_rounds=max(1, total + 2), warnings=warnings, state=state)
 
     async def target(self, plan, session, round_no, remaining):
         state, client = plan.state, session.client
-        free_now = await graph_free_vram_bytes(client)
+        free_now = await graph_free_vram_bytes(client, _GRAPH_CAPABILITY)
         if round_no == 1 and state.estimate is None:
             target = 1
         elif state.estimate is not None:
             cap = compute_max_batch(free_now, state.estimate)
             if cap == 0 and _image_free_vram_on_exhaustion() and not state.models_freed:
-                state.models_freed = await _free_graph_models_if_idle(client)
+                state.models_freed = await _free_graph_models_if_idle(client, _GRAPH_CAPABILITY)
                 if state.models_freed:
-                    free_now = await graph_free_vram_bytes(client)
+                    free_now = await graph_free_vram_bytes(client, _GRAPH_CAPABILITY)
                     cap = compute_max_batch(free_now, state.estimate)
             target = min(max(cap, 1), remaining)
         else:
@@ -27158,13 +27192,13 @@ class _AdaptiveBatching:
         return {"batch_size": max(1, int(target))} if plan.state.counts else {}
 
     def probe(self, plan, session, round_no):
-        return _VramProbe(session.client) if plan.state.estimate is None else None
+        return _VramProbe(session.client, _GRAPH_CAPABILITY) if plan.state.estimate is None else None
 
     async def free_after_refusal(self, plan, session):
         state = plan.state
         if state.models_freed or not _image_free_vram_on_exhaustion():
             return False
-        state.models_freed = await _free_graph_models_if_idle(session.client)
+        state.models_freed = await _free_graph_models_if_idle(session.client, _GRAPH_CAPABILITY)
         return state.models_freed
 
     async def measured(self, plan, session, round_no, target, probe):
@@ -27225,7 +27259,8 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         embed = getattr(built, "embed_workflow_with", None)
         if embed is not None:       # the output carries the graph that made it, as the first-party routes' outputs do
             twin = _binding_ui_twin(ctx.pin.binding)
-            embed(lambda graph: _derive_ui_workflow(graph) or twin)
+            address = _backend_address(record) or ""
+            embed(lambda graph: _derive_ui_workflow(graph, address) or twin)
         return built
 
     async def run_sources(ctx: workflow_run.RunContext) -> list[dict[str, str]]:
@@ -27263,8 +27298,8 @@ def _graph_runner_host() -> node_graph_runner.GraphHost:
         engine=_workflow_engine, identity=identity,
         problem=_graph_binding_problem,
         adapter=adapter, connection=connection, limits=lambda: result_bundle.limits_from_config(runtime().config),
-        max_wait_s=_graph_wait_s, control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
-        headers=lambda ctx: configured_downstream_headers(ctx.caller, _GRAPH_BACKEND_ID) if ctx.caller is not None else {},
+        control_timeout=lambda: HEALTH_CHECK_TIMEOUT,
+        headers=lambda ctx: configured_downstream_headers(ctx.caller, ctx.pin.envelope.service_id) if ctx.caller is not None else {},
         batching=_graph_runner_batching, stages=_RESULT_STAGES, variant=lambda ctx: _graph_variant(ctx), say=lambda text: print(f"[proxy] {text}", flush=True),
         sources=run_sources,
         stage_media=lambda ctx, adapter_, connect: _WORKFLOW_RUN_PORT._stage_media(ctx, adapter_, connect),
@@ -27641,7 +27676,7 @@ class _DeploymentVideoHooks(frontend_wire_shapes.VideoHooks):
         try:
             accepts = _input_accepts({"inputs": contract.get("inputs")}, input_name)
             _media_input_resolver().check_upload(
-                caller, data, destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts)
+                caller, data, destination=_media_input_destination(_graph_service_id(_VIDEO_GRAPH_CAPABILITY)), accepts=accepts)
         except _InputReferenceError as error:
             message = str(error)
         except media_inputs.MediaInputError as error:
@@ -27832,16 +27867,24 @@ def _video_wire_shape():
 
 async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
     """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
-    file stops being reachable there. A job the engine never took has none; a failure is not the caller's."""
+    file stops being reachable there. The engine asked is the service the job was pinned to, which holds that history even
+    after a priority change gave the videos family another winner. A job the engine never took, or that pinned no service,
+    has none; a service no longer configured cannot be asked; a failure is not the caller's."""
     job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
     kept = (job or {}).get("metadata") or {}
     prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
     if not prompt_id:
         return
     try:
-        headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+        envelope = await asyncio.to_thread(definition_store.DefinitionStore(media_jobs.DB_PATH).envelope, job_id)
+        service_id = envelope.service_id if envelope is not None else ""
+        record = (config.get("backends") or {}).get(service_id)
+        if not service_id or not isinstance(record, Mapping):
+            return
+        headers = configured_downstream_headers(auth_context, service_id)
+        adapter = reviewed_adapters.adapter_for_backend(record, _VIDEO_GRAPH_CAPABILITY)
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
-            await _graph(client, "videos").delete_history([str(prompt_id)], headers=headers)
+            await adapter.attach(_graph_service_connection(service_id, record), client).delete_history([str(prompt_id)], headers=headers)
     except Exception:  # noqa: BLE001 - best effort
         pass
 
@@ -28269,20 +28312,20 @@ async def proxy_audio_generate(
     workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
     """
     admission = _dispatch_admission_response(
-        'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=DERIVED.COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        'audio.generate', auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+        service_available=_graph_service(_AUDIO_GRAPH_CAPABILITY).enabled, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not DERIVED.COMFY_ENABLED:
+    if not _graph_service(_AUDIO_GRAPH_CAPABILITY).enabled:
         return Response(
             content=json.dumps({"error": {"message": "Audio generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
             media_type="application/json"
         )
     adapter = _graph_adapter(_AUDIO_GRAPH_CAPABILITY)
-    service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID,
+    service_response = (await asyncio.to_thread(_service_availability_response, _graph_service_id(_AUDIO_GRAPH_CAPABILITY),
         service_label=adapter.label,))
     if service_response is not None:
         return service_response
@@ -28381,7 +28424,7 @@ async def proxy_audio_generate(
             intent=INTENT_AUDIO_GENERATE,
             model=str(model) if model is not None else None,
             workflow=workflow_id,
-            backend=_GRAPH_BACKEND_ID,
+            backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
             capability_resource_tier="batch",
@@ -28392,6 +28435,7 @@ async def proxy_audio_generate(
         return _policy_denied_response(policy_decision)
     target_decision = _workflow_target_policy_decision(
         auth_context,
+        capability=_AUDIO_GRAPH_CAPABILITY,
         requested=str(model) if model is not None else None,
         resolved=str(workflow_name),
         manifest=manifest,
@@ -28411,20 +28455,20 @@ async def proxy_audio_generate(
                                      status_code=500, error_type="api_error")
 
     if receipt is not None:
-        receipt.backend = _GRAPH_BACKEND_ID
+        receipt.backend = _graph_service_id(_AUDIO_GRAPH_CAPABILITY)
         _capture_retention_facts(receipt)
-    headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
+    headers = configured_downstream_headers(auth_context, _graph_service_id(_AUDIO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
-                "audio.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=DERIVED.COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                "audio.generate", auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+                service_available=_graph_service(_AUDIO_GRAPH_CAPABILITY).enabled, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
             resp = await graph.submit(
-                _build_graph_submit_payload(workflow, client_id=COMFY_CLIENT_ID),
+                _build_graph_submit_payload(workflow, _AUDIO_GRAPH_CAPABILITY, client_id=COMFY_CLIENT_ID),
                 headers=headers,
             )
             if resp.status != 200:
@@ -28507,7 +28551,7 @@ async def proxy_audio_generate(
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
                                             workflow_id=workflow_id,
-                                            backend=_GRAPH_BACKEND_ID,
+                                            backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
                                             seed=seed_val,
                                             parameters={
                                                 **media_delivery.current().parameters,
@@ -28541,7 +28585,7 @@ async def proxy_audio_generate(
                     err_msg = f"{adapter.label} generation failed"
                     for tag, payload in (status_obj.get("messages") or []):
                         if tag == "execution_error" and isinstance(payload, dict):
-                            err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}}, workflow) or err_msg
+                            err_msg = _graph_error_message({"status": {"messages": [["execution_error", payload]]}}, workflow, capability=_AUDIO_GRAPH_CAPABILITY) or err_msg
                             break
                     return Response(
                         content=json.dumps({"error": {"message": err_msg, "type": "api_error"}}),
@@ -28563,7 +28607,7 @@ async def proxy_audio_generate(
             )
         if e.kind == "unreachable":
             return Response(
-                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(probe=True)), "type": "api_error"}}),
+                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(capability=_AUDIO_GRAPH_CAPABILITY, probe=True)), "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json"
             )

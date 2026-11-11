@@ -408,7 +408,7 @@ def test_executor_url_keeps_base_query():
 
 def test_startup_banner_prints_no_userinfo_or_query(monkeypatch, capsys):
     secret_url = "https://u:pw@example.com:9/p?token=abc"
-    cfg = {"backends": {k: {"base_url": secret_url} for k in ("tts", "stt", "comfyui")}}
+    cfg = {"backends": declared({k: {"base_url": secret_url} for k in ("tts", "stt", "comfyui")})}
     derived = proxy._derive_backend_constants(cfg)
     lines = proxy._backend_banner_lines(derived)
     text = "\n".join(lines)

@@ -316,6 +316,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
             {"45": {"class_type": "Image Seamless Texture"}},
             {},
             "test error",
+            capability=proxy._GRAPH_CAPABILITY,
         )
 
         self.assertEqual(images, [])
@@ -370,6 +371,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                 {},
                 {},
                 "test timeout",
+                capability=proxy._GRAPH_CAPABILITY,
             )
 
         self.assertEqual(images, [])
@@ -418,6 +420,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                 {},
                 {},
                 "test disconnect",
+                capability=proxy._GRAPH_CAPABILITY,
                 request=_Request(),  # type: ignore[arg-type]
             )
 
@@ -466,6 +469,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                     {},
                     {},
                     "test task cancellation",
+                    capability=proxy._GRAPH_CAPABILITY,
                 )
 
         self.assertEqual(client.cancelled, ["prompt-cancelled"])
@@ -494,7 +498,7 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
 
         graph = {"45": {"class_type": "Image Seamless Texture"}}
         self.assertEqual(
-            proxy._graph_error_message(job, graph),
+            proxy._graph_error_message(job, graph, capability=proxy._GRAPH_CAPABILITY),
             "ComfyUI Image Seamless Texture node 45: execution failed",
         )
         self.assertEqual(
@@ -502,9 +506,9 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
             ("failed", "ComfyUI Image Seamless Texture node 45: execution failed"),
         )
         # without the graph the gateway submitted, the engine's node name is not repeated
-        self.assertEqual(proxy._graph_error_message(job), "ComfyUI execution error: execution failed")
+        self.assertEqual(proxy._graph_error_message(job, capability=proxy._GRAPH_CAPABILITY), "ComfyUI execution error: execution failed")
         self.assertEqual(proxy._job_status_from_history(job), ("failed", 100))
-        for summary in (proxy._graph_error_message(job, graph), proxy._graph_history_state(job, graph)[1]):
+        for summary in (proxy._graph_error_message(job, graph, capability=proxy._GRAPH_CAPABILITY), proxy._graph_history_state(job, graph)[1]):
             self.assertNotIn("0.7", summary)
             self.assertNotIn(raw_exception, summary)
             self.assertNotIn(private_prompt, summary)
@@ -519,7 +523,7 @@ class TestComfyExecutionErrorParsing(unittest.TestCase):
             "outputs": {},
         }
 
-        self.assertEqual(proxy._graph_error_message(job), "ComfyUI execution failed")
+        self.assertEqual(proxy._graph_error_message(job, capability=proxy._GRAPH_CAPABILITY), "ComfyUI execution failed")
         self.assertEqual(proxy._graph_history_state(job), ("failed", "ComfyUI execution failed"))
 
 

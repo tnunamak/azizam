@@ -57,8 +57,8 @@ def domains(monkeypatch, tmp_path):
 # or URL for a send; it must refuse before it returns anything.
 STT = SimpleNamespace(service_id="stt-a", host="http://127.0.0.1:9", timeout_seconds=5.0)
 FACTORIES = {
-    "graph_connection": ("comfyui", lambda: proxy._graph_connection()),
-    "graph_session": ("comfyui", lambda: proxy._graph(object())),
+    "graph_connection": ("comfyui", lambda: proxy._graph_connection(capability=proxy._GRAPH_CAPABILITY)),
+    "graph_session": ("comfyui", lambda: proxy._graph(object(), proxy._GRAPH_CAPABILITY)),
     "tts_connection": ("tts-a", lambda: proxy._tts_connection("http://127.0.0.1:9", service_id="tts-a")),
     "stt_connection": ("stt-a", lambda: proxy._stt_connection(STT)),
     "identity_face_client": ("faces", lambda: proxy._identity_face_client()),
@@ -112,8 +112,8 @@ def test_a_domain_that_is_not_enabled_is_never_refused(domains, name) -> None:
 
 def test_a_probe_connection_to_an_enabled_domain_is_not_refused(domains) -> None:
     """A health read, a metadata read and a message-only address are exempt: they carry no request bytes."""
-    proxy._graph_connection(probe=True)
-    proxy._graph(object(), probe=True)
+    proxy._graph_connection(capability=proxy._GRAPH_CAPABILITY, probe=True)
+    proxy._graph(object(), proxy._GRAPH_CAPABILITY, probe=True)
 
 
 def test_a_lease_does_not_leak_to_a_task_that_started_before_it(domains) -> None:
@@ -121,7 +121,7 @@ def test_a_lease_does_not_leak_to_a_task_that_started_before_it(domains) -> None
         before = asyncio.create_task(asyncio.sleep(0, result="x"))
         lease = domains.drain.lease("comfyui")
         try:
-            proxy._graph_connection()
+            proxy._graph_connection(capability=proxy._GRAPH_CAPABILITY)
             async def later() -> None:
                 with pytest.raises(TransitionUnavailable):
                     proxy._tts_connection("http://127.0.0.1:9", service_id="tts-a")
@@ -200,7 +200,7 @@ def test_the_protocol_job_loop_checks_before_any_engine_call(domains) -> None:
 
 _SOURCE = Path(proxy.__file__).read_text()
 _GUARD_CALLS = {"_require_egress_lease", "require_egress_lease", "_egress_refusal_response", "_inference_connection",
-                "_graph_connection", "_graph", "_tts_connection", "_stt_connection", "_identity_face_client",
+                "_graph_connection", "_graph_service_connection", "_graph", "_tts_connection", "_stt_connection", "_identity_face_client",
                 "_native_engine_base"}
 _BUILDERS = {"AdapterConnection", "engine_egress.async_client", "engine_egress.client", "httpx.AsyncClient", "httpx.Client", "websockets.connect",
              "aiohttp.ClientSession", "urllib.request.urlopen"}

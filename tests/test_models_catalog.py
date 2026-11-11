@@ -1252,14 +1252,14 @@ def test_registered_graph_service_cannot_bind_concrete_image_intermediate(fixed_
     intermediate = build_local_capabilities({}, backends={
         backend_id: models_catalog.runtime_backend_from_service(services["services"][backend_id]),
     })
-    expected_intermediate = [generic]
-    if backend_id == "comfyui":
-        expected_intermediate.append(Capability(
-            intent="image.generate", backend=backend_id, model="concrete-image-model",
-            input_modalities=("text",), output_modalities=("image",),
-            execution="job", streaming=False, resource_tier="batch",
-            resources=ResourceEstimate(gpu_required=True),
-        ))
+    # The image family is selected by the images capability, not by the id comfyui,
+    # so every registered graph service yields the concrete row in the intermediate.
+    expected_intermediate = [generic, Capability(
+        intent="image.generate", backend=backend_id, model="concrete-image-model",
+        input_modalities=("text",), output_modalities=("image",),
+        execution="job", streaming=False, resource_tier="batch",
+        resources=ResourceEstimate(gpu_required=True),
+    )]
     assert [dataclasses.asdict(cap) for cap in intermediate] == [
         dataclasses.asdict(cap) for cap in expected_intermediate
     ]

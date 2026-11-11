@@ -42,7 +42,7 @@ def served(monkeypatch, tmp_path):
     stub_protocol = SimpleNamespace(id="proto", revision=1, adapter_identity="adapter")
     stub_adapter = SimpleNamespace(interface_version=1)
     engine = ("svc", {"host": "engine.test", "port": 1}, stub_protocol, stub_adapter)
-    monkeypatch.setattr(proxy, "_workflow_engine", lambda adapter_id: engine)
+    monkeypatch.setattr(proxy, "_workflow_engine", lambda adapter_id, service_id=None: engine)
     state = SimpleNamespace(engine_calls=0, gate=None)
 
     async def run_adapter(ctx):

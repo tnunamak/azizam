@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.config_snapshot import derived_patch
 from tests.support.graph_selectors import IMAGE_AT_NODE_1
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario, read_deadline  # noqa: F401
@@ -37,7 +38,7 @@ class _Round:
 def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False, hold_deadline: bool = False) -> _Round:
     scenario = load_scenario(f"comfyui/{name}", text="poll test")
     fake = fakes.loopback(scenario) if wire else fakes.asgi(scenario, host="comfy.fk.test")
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     deadline = read_deadline(monkeypatch, fakes.clock) if hold_deadline else None
     sleeps: list[float] = []
 
@@ -47,7 +48,7 @@ def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = Fal
     async def call():
         timeout = httpx.Timeout(HANG_BOUND_SECONDS, read=60.0)
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=timeout) as client:
-            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2, **IMAGE_AT_NODE_1)
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2, capability=proxy._GRAPH_CAPABILITY, **IMAGE_AT_NODE_1)
 
     with patch.object(proxy.asyncio, "sleep", sleep), derived_patch("COMFY_TIMEOUT", 100):
         error, images = asyncio.run(call())
@@ -96,11 +97,11 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         refused = f"http://127.0.0.1:{probe.getsockname()[1]}"
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", refused)
+    set_derived(monkeypatch, "COMFY_HOST", refused)
 
     async def call():
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
-            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "refused", max_wait_s=2, **IMAGE_AT_NODE_1)
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "refused", max_wait_s=2, capability=proxy._GRAPH_CAPABILITY, **IMAGE_AT_NODE_1)
 
     error, images = asyncio.run(call())
 

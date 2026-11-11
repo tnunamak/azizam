@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.config_snapshot import derived_patch
 from tests.support.access import auth_identity  # noqa: E402
 import pytest
@@ -80,7 +81,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
                 return body
 
         comfy = self.fakes.asgi(load_scenario("comfyui/image-complete-png", png_hex=_comfy_png_with(SENTINEL).hex()))
-        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", comfy.base_url)
+        set_derived(self.monkeypatch, "COMFY_HOST", comfy.base_url)
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
         with patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(

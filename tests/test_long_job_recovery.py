@@ -7,6 +7,7 @@ import pytest
 from fastapi import Response
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.access import access_context  # noqa: E402
 from gateway import media_jobs, me_make
 
@@ -27,7 +28,7 @@ def store(tmp_path, monkeypatch):
 def test_restart_recovers_or_explains_every_job(store, monkeypatch, kind, intent, status, enabled, payload):
     job = media_jobs.MediaJob(intent=intent, status=status, metadata={"mode": f"async_{kind}_generation"})
     media_jobs.create(job, path=store)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+    set_derived(monkeypatch, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "_image_media_job_resume_on_start", lambda: enabled)
     monkeypatch.setattr(proxy, "_has_image_media_job_payload", lambda _: payload)
     scheduled = Mock(return_value=True)

@@ -339,6 +339,7 @@ def main(argv: list[str]) -> int:
     with GatewayRig("fresh-no-egress", scratch) as rig:
         for key in (*hosts, *flags):
             rig.monkeypatch.setitem(proxy.runtime().derived, key, empty[key])
+        rig.monkeypatch.setitem(proxy.runtime().derived, "GRAPH_SERVICES", empty["GRAPH_SERVICES"])
         # A fresh gateway holds no engine records: the rig's extra speech and transcription engines are not fresh state.
         rig.monkeypatch.setitem(proxy.config, "backends", {k: v for k, v in proxy.config["backends"].items() if k == "litellm"})
         for method, path, body in requests:

@@ -52,7 +52,7 @@ def test_sampler_recovers_and_retries_before_clean_cancellation(monkeypatch):
     assert disk.call_count == 3
     assert get_writer.call_count == 2
     assert fast.call_args_list == [call(writer, 3600), call(writer, 3610)]
-    assert fast_async.await_args_list == [call(writer, 3600), call(writer, 3610)]
+    assert fast_async.await_args_list == [call(writer, 3600, config), call(writer, 3610, config)]
     assert slow.call_args_list == [call(writer, 3600, config)]
     assert writer.maintain.call_args_list == [
         call("minute", 3600), call("hour", 3600),

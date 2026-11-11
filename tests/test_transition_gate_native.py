@@ -96,7 +96,7 @@ def test_an_enabled_native_call_holds_one_domain_lease_to_the_end(fake_upstreams
 def test_a_closed_gate_refuses_the_native_call_before_the_engine(fake_upstreams, leases, monkeypatch):
     store, drain, minted = leases.store, leases.drain, leases.minted
     with sqlite3.connect(store.path) as connection:
-        connection.execute("INSERT INTO transition_gate VALUES ('garage-domain', 'closed', NULL, 0)")
+        connection.execute("INSERT INTO transition_gate (domain, state, op_id, updated, generation) VALUES ('garage-domain', 'closed', NULL, 0, 1)")
     store.load()
     written: list[str] = []
     real_write = proxy.run_receipt_write

@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-ROLE_CAPABILITIES = {"tts": ["audio", "speech"], "stt": ["audio", "transcriptions"], "embeddings": ["openai", "embeddings"]}
+ROLE_CAPABILITIES = {"tts": ["audio", "speech"], "stt": ["audio", "transcriptions"], "embeddings": ["openai", "embeddings"],
+                   "comfyui": ["images", "generations", "videos", "audio.generate"]}
 
 
 def declared(backends: Mapping[str, Any]) -> dict[str, Any]:
-    """*backends* with the ``tts``, ``stt`` and ``embeddings`` records declaring their capability."""
+    """*backends* with the ``tts``, ``stt``, ``embeddings`` and ``comfyui`` records declaring their capability."""
     out = {}
     for service_id, record in backends.items():
         record = dict(record)

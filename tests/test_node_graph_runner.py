@@ -183,7 +183,7 @@ def test_an_orphaned_round_is_the_old_upstream_failure_with_the_old_text():
 
 
 def runner(wire_id=None) -> NodeGraphRunner:
-    host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None, max_wait_s=None,
+    host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None,
                      control_timeout=None, headers=None, batching=None, stages={}, wire_id=wire_id)
     return NodeGraphRunner("b", "a", host)
 

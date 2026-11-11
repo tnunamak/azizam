@@ -154,7 +154,9 @@ def test_a_cancelled_waiter_never_holds_the_lock() -> None:
 
 def _write_gate(path, domain: str, state: str) -> None:
     with sqlite3.connect(path) as connection:
-        connection.execute("INSERT OR REPLACE INTO transition_gate VALUES (?, ?, NULL, 0)", (domain, state))
+        connection.execute(
+            "INSERT INTO transition_gate (domain, state, op_id, updated, generation) VALUES (?, ?, NULL, 0, 1) "
+            "ON CONFLICT(domain) DO UPDATE SET state = excluded.state, generation = generation + 1", (domain, state))
 
 
 def test_gate_store_reads_rows_and_a_missing_row_is_open(tmp_path) -> None:

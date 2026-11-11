@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 import pytest
 
 import proxy
+from tests.support.graph_service import set_derived
 from gateway import admin_store, media_jobs, prompt_memory, receipt_store, request_history, request_history_capture
 from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
@@ -298,8 +299,8 @@ def image_gateway(fake_upstreams, monkeypatch, tmp_path):
          AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
     ):
         monkeypatch.setattr(target, name, value)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", comfy.base_url)
+    set_derived(monkeypatch, "COMFY_ENABLED", True)
+    set_derived(monkeypatch, "COMFY_HOST", comfy.base_url)
     return tmp_path, media
 
 

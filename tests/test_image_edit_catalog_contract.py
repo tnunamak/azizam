@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 import proxy
+from tests.support.graph_service import set_derived
 from gateway import workflows_catalog
 from gateway.workflow_openapi import _execution
 from gateway.workflow_call import build_request
@@ -114,7 +115,7 @@ def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fak
             "response": {"json": {"name": f"uploaded-{index}.png", "subfolder": "", "type": "input"}},
         } for index in range(len(parts))],
     }))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     items = list(example["form"].items())
     colors = {}
     for index, (name, field) in enumerate(parts):

@@ -4,8 +4,8 @@
 # over it) wins over the value here. The gateway holds no timeout, default model, health path or workflow directory of
 # its own. An engine address is never a default: a record that names none is not configured.
 #
-# Keys are the capabilities a service is selected for, not engine ids: an engine of any name takes the defaults of the
-# capability being derived, so a record that serves two (speech and transcription) takes each one's value in turn.
+# Keys are capability role keys, not selected deployment ids: a service of any name takes the defaults of the
+# role being derived, so a record that serves two (speech and transcription) takes each one's value in turn.
 # timeout / video_timeout: seconds a request to the engine may take.
 # health_endpoint: the path that the readiness probe reads, when the record names none.
 # model_id: the model that the engine serves, when the record names none.

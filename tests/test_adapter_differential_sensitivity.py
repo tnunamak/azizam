@@ -59,7 +59,7 @@ def test_an_extra_field_in_the_engine_request_body_is_caught(tmp_path):
     real = proxy._build_graph_submit_payload
 
     def change(rig):
-        rig.set(proxy, "_build_graph_submit_payload", lambda workflow, **kw: {**real(workflow, **kw), "front": True})
+        rig.set(proxy, "_build_graph_submit_payload", lambda workflow, *a, **kw: {**real(workflow, *a, **kw), "front": True})
 
     message = replay_with(tmp_path, change)
     assert "engine_requests" in message and ".body.text" in message
@@ -74,7 +74,7 @@ def test_a_different_engine_request_header_is_caught(tmp_path):
 
 
 def test_one_engine_request_more_or_fewer_is_caught(tmp_path):
-    async def no_stats(_client):
+    async def no_stats(_client, _capability):
         return None
 
     message = replay_with(tmp_path, lambda rig: rig.set(proxy, "graph_free_vram_bytes", no_stats))

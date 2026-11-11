@@ -11,13 +11,14 @@ from typing import Any, Callable
 from unittest.mock import patch
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 
 ENGINE_URL = "http://engine.test:1"
 
 
 def declare_graph_engine(registry: dict[str, Any]) -> dict[str, Any]:
     """Make the graph engine's record in ``registry`` one the run core finds. Returns the record's config."""
-    config = registry["services"][proxy._GRAPH_BACKEND_ID]["config"]
+    config = registry["services"][GRAPH_SERVICE_ID]["config"]
     config["connection"] = {"protocol": "node-graph", "base_url": config["base_url"]}
     config["enabled"] = True
     return config
@@ -26,7 +27,7 @@ def declare_graph_engine(registry: dict[str, Any]) -> dict[str, Any]:
 def use_graph_engine(stack: ExitStack) -> dict[str, Any]:
     """Serve a registry with only the graph engine, declared for the run core. Returns the registry."""
     registry = {"schema_version": 2, "services": {
-        proxy._GRAPH_BACKEND_ID: {"id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": ENGINE_URL}}}}
+        GRAPH_SERVICE_ID: {"id": GRAPH_SERVICE_ID, "config": {"base_url": ENGINE_URL}}}}
     declare_graph_engine(registry)
     stack.enter_context(patch.object(proxy.ADMIN_STORE, "get_service_registry", lambda: registry))
     return registry

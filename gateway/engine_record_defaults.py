@@ -27,12 +27,12 @@ def _read(path: Path, schema_path: Path, modified_ns: int) -> dict[str, dict[str
 
 
 def release_defaults(path: Path = BUNDLED_PATH) -> dict[str, dict[str, Any]]:
-    """Every capability's defaults, checked against the schema."""
+    """Defaults by capability role key, not selected deployment id, checked against the schema."""
     return _read(path, SCHEMA_PATH, path.stat().st_mtime_ns)
 
 
 def record_value(capability: str, record: Mapping[str, Any] | None, key: str) -> Any:
-    """The record's own value for *key*, else the release default of *capability*; ``KeyError`` when neither names one."""
+    """The record's value, else the default of the *capability* role key (not a deployment id); ``KeyError`` if absent."""
     record = record or {}
     if record.get(key) is not None:
         return record[key]

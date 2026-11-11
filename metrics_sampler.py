@@ -288,10 +288,11 @@ def _emit_fast(writer, now: int) -> None:
             print(f"[metrics_sampler] recording NVKMS counts failed: {e}", flush=True)
 
 
-async def _emit_fast_async(writer, now: int) -> None:
-    """ComfyUI queue depth (async) + llama slots."""
+async def _emit_fast_async(writer, now: int, config: Optional[Mapping[str, Any]] = None) -> None:
+    """ComfyUI queue depth (async) + llama slots. `config` names the services the probes reach; none means no backends."""
+    config = config if config is not None else {}
     try:
-        queue, _stats = await status_endpoint._comfy_queue_and_stats()
+        queue, _stats = await status_endpoint._comfy_queue_and_stats(config)
         if isinstance(queue, dict):
             running = int(queue.get("running") or 0)
             pending = int(queue.get("pending") or 0)
@@ -301,7 +302,7 @@ async def _emit_fast_async(writer, now: int) -> None:
         print(f"[metrics_sampler] comfy queue probe failed: {e}", flush=True)
 
     try:
-        _props, slots = await status_endpoint._llama_props_and_slots()
+        _props, slots = await status_endpoint._llama_props_and_slots(config)
         if isinstance(slots, list):
             active = sum(1 for s in slots if isinstance(s, dict) and s.get("is_processing"))
             writer.record_sample(now, "llama_slots_active", float(active))
@@ -426,7 +427,7 @@ async def sampler_loop(get_config: Optional[Callable[[], Mapping[str, Any]]] = N
                     # Fast tier (synchronous probes).
                     await asyncio.to_thread(_emit_fast, writer, now_int)
                     # Fast tier (async probes).
-                    await _emit_fast_async(writer, now_int)
+                    await _emit_fast_async(writer, now_int, get_config() if get_config else None)
 
                     # Slow tier piggybacked at the top of each minute.
                     if (now_int % 60) < 10:

@@ -94,7 +94,9 @@ def gate(engine, monkeypatch, tmp_path):
 
 def _set_gate(store: GateStore, domain: str, state: str) -> None:
     with sqlite3.connect(store.path) as connection:
-        connection.execute("INSERT OR REPLACE INTO transition_gate VALUES (?, ?, NULL, 0)", (domain, state))
+        connection.execute(
+            "INSERT INTO transition_gate (domain, state, op_id, updated, generation) VALUES (?, ?, NULL, 0, 1) "
+            "ON CONFLICT(domain) DO UPDATE SET state = excluded.state, generation = generation + 1", (domain, state))
     store.load()
 
 

@@ -12,6 +12,7 @@ from unittest import mock
 import pytest
 
 import proxy
+from tests.support import graph_service
 
 
 def publish_config(monkeypatch: pytest.MonkeyPatch, config: Mapping[str, Any]) -> None:
@@ -88,12 +89,21 @@ class derived_patch:
         self.value = value
         self._patch: Any = None
         self._patched: Any = None
-        self._original: Any = self._ABSENT
+        self._original: dict[str, Any] = {}
+        self._set: dict[str, Any] = {}
+
+    def _values(self, derived: Mapping[str, Any]) -> dict[str, Any]:
+        """What the patch sets: the value, and for one of the engine's (``GRAPH_MIRROR``) the family views that carry it."""
+        values = {self.name: self.value}
+        if self.name in graph_service.GRAPH_MIRROR:
+            values["GRAPH_SERVICES"] = graph_service.mirror(derived["GRAPH_SERVICES"], self.name, self.value)
+        return values
 
     def start(self) -> None:
         self._patched = proxy.runtime().derived
-        self._original = self._patched.get(self.name, self._ABSENT)
-        self._patch = mock.patch.dict(self._patched, {self.name: self.value})
+        self._original = {name: self._patched.get(name, self._ABSENT) for name in self._values(self._patched)}
+        self._set = self._values(self._patched)
+        self._patch = mock.patch.dict(self._patched, self._set)
         self._patch.start()
 
     def stop(self) -> None:
@@ -104,11 +114,13 @@ class derived_patch:
         # publish_section carries the running derived values into the snapshot it publishes, so a snapshot published
         # inside this block holds the patched value too. Put the value back there as well.
         current = proxy.runtime().derived
-        if current is not self._patched and current.get(self.name, self._ABSENT) == self.value:
-            if self._original is self._ABSENT:
-                current.pop(self.name, None)
-            else:
-                current[self.name] = self._original
+        if current is not self._patched:
+            for name, value in self._set.items():
+                if current.get(name, self._ABSENT) == value:
+                    if self._original[name] is self._ABSENT:
+                        current.pop(name, None)
+                    else:
+                        current[name] = self._original[name]
         self._patched = None
 
     def __enter__(self) -> "derived_patch":

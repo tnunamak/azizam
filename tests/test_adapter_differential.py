@@ -75,9 +75,11 @@ def _long_mp4() -> bytes:
 def _comfy(rig, exchanges, name="comfy"):
     fake = rig.engine(name, scenario("comfyui", f"{rig.name}-comfy", exchanges), host=COMFY_HOST)
     rig.set(proxy, "COMFY_HOST", fake.base_url)
-    # The engine is declared as a deployment declares one: a service record the run core finds by its protocol.
+    # The engine is declared as a deployment declares one: a service record the run core finds by its protocol, with the
+    # wait the scenario set (a run waits as long as the record it was pinned to says).
     rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), name: {
-        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph"}})
+        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph",
+        "timeout": proxy.runtime().derived["COMFY_TIMEOUT"]}})
     return fake
 
 
@@ -86,7 +88,8 @@ def _comfy_down(rig, error=None, name="comfy"):
     rig.down_engine(COMFY_HOST, error)
     # The engine is declared as `_comfy` declares it: down is an engine the run core finds and cannot reach.
     rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), name: {
-        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph"}})
+        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph",
+        "timeout": proxy.runtime().derived["COMFY_TIMEOUT"]}})
 
 
 def _capture_scheduling(rig) -> None:

@@ -17,8 +17,10 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from tests.support.config_snapshot import derived_patch
+from tests.support.graph_service import graph_record
 from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs, request_source  # noqa: E402
+from tests.support.config_snapshot import derived_patch  # noqa: E402
 
 
 class _StubJsonRequest:
@@ -60,6 +62,10 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         for p in self.patches:
             p.start()
             self.addCleanup(p.stop)
+        # The audio family selects its service by capability: the base config's graph record declares it.
+        engine = derived_patch("COMFY_ENABLED", True)
+        engine.__enter__()
+        self.addCleanup(engine.__exit__, None, None, None)
 
     async def test_generic_submit_creates_audio_job_without_prompt_or_lyrics_metadata(self) -> None:
         body = {
@@ -136,6 +142,27 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             payload["error"]["code"],
             "resource_admission_denied",
         )
+        self.assertEqual(media_jobs.recent(path=self.db), [])
+
+    async def test_a_graph_record_that_does_not_declare_audio_refuses_the_audio_routes_without_a_job(self) -> None:
+        body = {"model": "tangoflux", "prompt": "private prompt", "duration": 8}
+        record = graph_record(host="203.0.113.7", port=7001, capabilities=["images", "generations", "videos"])
+        derived = proxy._derive_backend_constants({"backends": {"pictures": record}})
+        self.assertEqual(derived["GRAPH_SERVICES"]["audio.generate"].service_id, "")
+        with patch.dict(proxy.runtime().derived, {"GRAPH_SERVICES": derived["GRAPH_SERVICES"]}):
+            submitted = await proxy._submit_audio_media_job(
+                request=_StubJsonRequest(body),  # type: ignore[arg-type]
+                intent="audio.generate",
+                body=body,
+            )
+            direct = await proxy.proxy_audio_generate(
+                _StubJsonRequest(body),  # type: ignore[arg-type]
+                access_context(),
+            )
+
+        for response in (submitted, direct):
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("error", json.loads(response.body.decode("utf-8")))
         self.assertEqual(media_jobs.recent(path=self.db), [])
 
     async def test_direct_audio_submit_uses_media_job_admission_overrides(self) -> None:

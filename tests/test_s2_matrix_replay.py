@@ -21,6 +21,7 @@ from typing import Any, Callable
 import pytest
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import directory_index, media_input_assets, media_input_leases, media_jobs, receipt_store
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol import jobs as protocol_jobs
@@ -621,7 +622,7 @@ def media_rig(db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Medi
     monkeypatch.setattr(proxy, "_media_input_ledgers", {})
     directory_index.forget()
     registry = {"schema_version": 2, "services": {
-        proxy._GRAPH_BACKEND_ID: {"id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": ORIGIN}}}}
+        GRAPH_SERVICE_ID: {"id": GRAPH_SERVICE_ID, "config": {"base_url": ORIGIN}}}}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     receipts = tmp_path / "receipts.db"
     receipt_store.init_db(receipts)
