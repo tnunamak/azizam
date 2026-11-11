@@ -9262,12 +9262,9 @@ async def proxy_graph_image_request(
     _record_image_input(receipt, "prompt")
 
     manifest = _find_image_manifest("image.generate", str(model))
-    if manifest is None and other_intent_owns_stem(GATEWAY_WORKFLOW_REGISTRY.records(), "image.generate", str(model)):
-        # An edit workflow's name: its graph needs a source picture and its own role map, so a generate request refuses it.
-        _record_image_input(receipt, "model", rejected_reason="model_incompatible")
-        return model_compatibility_error(
-            ModelCompatibilityError(f"Model '{model}' is not available for image generation.", code="model_not_found")
-        )
+    refusal = _generate_refusal_for_other_intent_stem(receipt, str(model), manifest)
+    if refusal is not None:
+        return refusal
     gateway_binding = _gateway_image_generate_binding(manifest)
     if gateway_binding is not None:
         # The description lists the roles and the role registry holds their code; a role missing from either never runs.
@@ -22323,6 +22320,17 @@ def _image_workflow_record(intent: str, resolved_model: str) -> Any:
     return find_workflow_record(GATEWAY_WORKFLOW_REGISTRY.records(), intent, resolved_model)
 
 
+def _generate_refusal_for_other_intent_stem(receipt: RouteReceipt | None, model: str, manifest: dict[str, Any] | None):
+    """A 404 when a generate request names another intent's workflow (an edit graph needs a source picture and its own
+    role map); None when the name is a generate workflow or no record claims it (an owner graph)."""
+    if manifest is not None or not other_intent_owns_stem(GATEWAY_WORKFLOW_REGISTRY.records(), "image.generate", model):
+        return None
+    _record_image_input(receipt, "model", rejected_reason="model_incompatible")
+    return model_compatibility_error(
+        ModelCompatibilityError(f"Model '{model}' is not available for image generation.", code="model_not_found")
+    )
+
+
 def _image_job_workflow_id(intent: str, model: str) -> str:
     """The workflow id a job stores: the found record's id.
 
@@ -26099,6 +26107,10 @@ async def gateway_image_generations_media_job(request: Request):
             )
         else:
             _attach_image_manifest_if_available(receipt, "image.generate", model)
+    refusal = _generate_refusal_for_other_intent_stem(receipt, model, manifest)
+    if refusal is not None:
+        await run_receipt_write(finish_image_route_receipt, receipt, refusal)
+        return refusal
     decision = _apply_image_route_policy(
         receipt,
         auth_context,

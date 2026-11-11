@@ -15,7 +15,7 @@ from tests.support.access import authenticated, identity, plan_for
 from tests.support.s7_parity_images_rig import observe
 from tests import test_adapter_differential as base
 from tests.support.adapter_differential_rig import comfy_exchanges, history_done
-from tests.test_s7_parity_images import EDIT, GEN, body, form, ok
+from tests.test_s7_parity_images import EDIT, GEN, JOB, body, form, job_body, job_setup, media_jobs, ok
 
 GEN_INTENT, EDIT_INTENT = "image.generate", "image.edit"
 
@@ -136,3 +136,19 @@ def test_generating_with_an_edit_model_is_a_clean_refusal(tmp_path, model):
     assert '"code": "model_not_found"' in obs.body["text"]
     assert "not available for image generation" in obs.body["text"]
     assert not [e for e in obs.engine if e[1] == "/prompt"]
+
+
+@pytest.mark.parametrize("model", ["flux2-klein-4b-edit", "flux2-klein-edit"])
+def test_an_image_job_naming_an_edit_model_is_refused_at_submit(tmp_path, model):
+    """The async job route used to accept an edit model, store a made-up generate workflow and fail later when the job
+    ran. It now refuses at submit like the sync route: 404 ``model_not_found``, no job row, no engine call."""
+    obs = observe(tmp_path, JOB, job_body(model=model), job_setup(), row=False, name="refuse-job")
+    assert obs.status == 404, obs.body
+    assert '"code": "model_not_found"' in obs.body["text"]
+    assert not [e for e in obs.engine if e[1] == "/prompt"]
+    assert not media_jobs(obs)
+
+
+def test_an_image_job_naming_a_generate_model_is_still_accepted(tmp_path):
+    obs = observe(tmp_path, JOB, job_body(model="flux2-klein-4b"), job_setup(), row=False, name="accept-job")
+    assert obs.status == 202, obs.body
