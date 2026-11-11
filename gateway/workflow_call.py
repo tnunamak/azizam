@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from gateway import asset_types
 from gateway.public_failure import describe
 from gateway.workflow_openapi import WORKFLOW_EXTENSION_NAMESPACE
 
@@ -130,7 +131,7 @@ def sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
 
 
 def kind_for(media_type: str) -> str:
-    return {"image": "img", "audio": "aud", "video": "vid"}.get(media_type.split("/")[0], "")
+    return asset_types.ASSET_PREFIX_BY_TOP_TYPE.get(media_type.split("/")[0], "")
 
 
 def asset_id_in(value: str) -> str | None:
