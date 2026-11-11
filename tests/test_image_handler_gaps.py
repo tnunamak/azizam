@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.config_snapshot import derived_patch
 import pytest
 from gateway import generated_defaults
@@ -32,7 +33,7 @@ def serve_comfy(fake_upstreams, monkeypatch):
     def serve(name, *, wire=False, **values):
         scenario = load_scenario(f"comfyui/{name}", **values)
         fake = fake_upstreams.loopback(scenario) if wire else fake_upstreams.asgi(scenario)
-        monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+        set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
         return fake
 
     serve.fakes = fake_upstreams
@@ -45,7 +46,7 @@ def _refused_comfy_host(monkeypatch):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         host = f"http://127.0.0.1:{probe.getsockname()[1]}"
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", host)
+    set_derived(monkeypatch, "COMFY_HOST", host)
 
 
 class ImageHandlerGapTests(IsolatedAsyncioTestCase):
@@ -455,10 +456,10 @@ class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):
         fake = self.serve("round-client-disconnect")
         probe = SimpleNamespace(start=Mock(), stop=AsyncMock())
         request = SimpleNamespace(is_disconnected=AsyncMock(return_value=True))
-        with patch.object(proxy, "_build_graph_submit_payload", side_effect=lambda w: {"prompt": w}):
+        with patch.object(proxy, "_build_graph_submit_payload", side_effect=lambda w, *_a, **_k: {"prompt": w}):
             async with httpx.AsyncClient() as client:
                 error, images = await asyncio.wait_for(proxy._graph_run_round(
-                    client, {}, {}, "disconnect", request=request, vram_probe=probe,
+                    client, {}, {}, "disconnect", request=request, vram_probe=probe, capability=proxy._GRAPH_CAPABILITY,
                 ), timeout=HANG_BOUND_SECONDS)
         self.assertEqual(error.status_code, 499)
         self.assertEqual(json.loads(error.body)["error"]["code"], "image_client_disconnected")
@@ -472,10 +473,10 @@ class ImageRoundCancellationGapTests(IsolatedAsyncioTestCase):
             with self.subTest(cancel_status=cancel_status):
                 fake = self.serve("round-task-cancelled", cancel_status=cancel_status)
                 probe = SimpleNamespace(start=Mock(), stop=AsyncMock())
-                with patch.object(proxy, "_build_graph_submit_payload", side_effect=lambda w: {"prompt": w}):
+                with patch.object(proxy, "_build_graph_submit_payload", side_effect=lambda w, *_a, **_k: {"prompt": w}):
                     async with httpx.AsyncClient() as client:
                         task = asyncio.create_task(proxy._graph_run_round(
-                            client, {}, {}, "cancel", vram_probe=probe,
+                            client, {}, {}, "cancel", vram_probe=probe, capability=proxy._GRAPH_CAPABILITY,
                         ))
                         try:
                             # The fake holds the history answer: the round is waiting on it.
@@ -495,24 +496,24 @@ def test_graph_failure_response_maps_transport_failures_and_httpx_errors(monkeyp
     """Adapter transport failures and the httpx errors of other calls in the same try read the same to the caller."""
     from gateway.engine_protocol.errors import TransportFailure
 
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", "http://graph.test:1")
+    set_derived(monkeypatch, "COMFY_HOST", "http://graph.test:1")
     for error, status, message in (
         (TransportFailure("timeout", "read"), 504, "ComfyUI request timeout"),
         (httpx.ReadTimeout("read"), 504, "ComfyUI request timeout"),
         (TransportFailure("unreachable", "refused"), 502, "ComfyUI unavailable at http://graph.test:1"),
         (httpx.ConnectError("refused"), 502, "ComfyUI unavailable at http://graph.test:1"),
     ):
-        response = proxy._graph_failure_response(error)
+        response = proxy._graph_failure_response(error, proxy._GRAPH_CAPABILITY)
         assert (response.status_code, response.media_type, response.body) == (
             status, "application/json", json.dumps({"error": {"message": message, "type": "api_error"}}).encode())
     for other in (TransportFailure("aborted", "dropped"), httpx.RemoteProtocolError("dropped"), ValueError("x")):
-        assert proxy._graph_failure_response(other) is None
+        assert proxy._graph_failure_response(other, proxy._GRAPH_CAPABILITY) is None
 
 
 def test_identity_upload_refusal_still_raises_the_httpx_error(monkeypatch):
     """The identity routes catch httpx.HTTPError: an upload that cannot connect keeps raising the error they handle."""
     _refused_comfy_host(monkeypatch)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+    set_derived(monkeypatch, "COMFY_ENABLED", True)
     with pytest.raises(httpx.ConnectError):
         asyncio.run(asyncio.wait_for(
             proxy._identity_run_workflow(proxy.NO_AUTH_CONTEXT, {"1": {"inputs": {}}}, {"1": _png_bytes((0, 0, 0, 255))}),

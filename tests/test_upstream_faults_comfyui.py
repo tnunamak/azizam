@@ -17,6 +17,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401
 from tests.support.graph_selectors import IMAGE_AT_NODE_1
 
@@ -28,7 +29,7 @@ HANG_BOUND_SECONDS = 10
 def _serve(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False) -> FakeUpstream:
     scenario = load_scenario(f"comfyui/{name}", text="a red fox")
     fake = fakes.loopback(scenario) if wire else fakes.asgi(scenario, host="comfy.fk.test")
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
     return fake
 
 
@@ -42,7 +43,7 @@ async def _round(fakes: FakeUpstreams, *, release_waits: int = 0, read_budget: f
 
     async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(HANG_BOUND_SECONDS, read=read_budget)) as client:
         releaser = asyncio.create_task(pump())
-        result = await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2, **IMAGE_AT_NODE_1)
+        result = await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2, capability=proxy._GRAPH_CAPABILITY, **IMAGE_AT_NODE_1)
         await releaser
         return result
 

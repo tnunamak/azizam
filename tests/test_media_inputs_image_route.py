@@ -16,6 +16,7 @@ import pytest
 from PIL import Image
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import directory_index, media_jobs
 from tests.support.access import access, access_context, plan_for
 from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
@@ -39,7 +40,7 @@ def rig(monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, "_media_input_ledgers", {})
     directory_index.forget()
     registry = {"schema_version": 2, "services": {
-        proxy._GRAPH_BACKEND_ID: {"id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://engine.test:1"}},
+        GRAPH_SERVICE_ID: {"id": GRAPH_SERVICE_ID, "config": {"base_url": "http://engine.test:1"}},
     }}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     uploads: list[tuple] = []
@@ -153,7 +154,7 @@ def test_a_stored_file_that_is_not_an_image_is_refused_whatever_its_id_says(rig)
 
 
 def make_engine_remote(rig):
-    rig.registry["services"][proxy._GRAPH_BACKEND_ID]["config"]["provider_type"] = "paid-remote"
+    rig.registry["services"][GRAPH_SERVICE_ID]["config"]["provider_type"] = "paid-remote"
 
 
 # Revert: the disclosure check in ``resolve_asset``.
@@ -168,7 +169,7 @@ def test_a_remote_engine_the_plan_does_not_list_receives_nothing(rig):
 def test_a_remote_engine_the_plan_lists_receives_the_input(rig):
     make_engine_remote(rig)
     asset_id = stored(image_bytes("PNG"))
-    _, error = run_extension(asset_id, plan_or_access=access(plan_for(paid=[proxy._GRAPH_BACKEND_ID])))
+    _, error = run_extension(asset_id, plan_or_access=access(plan_for(paid=[GRAPH_SERVICE_ID])))
     assert error is None and len(rig.uploads) == 1
 
 

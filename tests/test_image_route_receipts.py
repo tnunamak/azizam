@@ -312,7 +312,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         free_iter = iter(free_seq)
         last = {"v": free_seq[-1]}
 
-        async def fake_free(_client):
+        async def fake_free(_client, _capability):
             last["v"] = next(free_iter, last["v"])
             return last["v"]
 

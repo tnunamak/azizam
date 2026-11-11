@@ -12,6 +12,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
 import proxy
+from tests.support.graph_service import set_derived
 from gateway import generated_defaults
 from tests.support.config_snapshot import derived_patch
 import pytest
@@ -24,7 +25,7 @@ NAMESPACE = "com.azizam.workflow"
 @pytest.fixture
 def _serve_upload(fake_upstreams, monkeypatch):
     fake = fake_upstreams.asgi(load_scenario("comfyui/upload-ok-any"))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
 
 
 class KleinNineBParityTests(IsolatedAsyncioTestCase):

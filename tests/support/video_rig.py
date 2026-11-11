@@ -19,6 +19,7 @@ from typing import Any, Literal
 import httpx
 
 import proxy
+from tests.support.graph_service import set_derived
 from gateway import media_jobs, workflow_run
 from gateway.workflow_runtime_types import RunJobView
 from tests.media_test_bytes import mp4_bytes
@@ -311,7 +312,7 @@ def run(tmp_path: Path, exercise) -> None:
             "enabled": True, "host": HOST, "port": 80, "protocol": "node-graph"}})
         # The rig's sleeps cost no time, so a runner polling an engine the test has not driven yet would spend its whole wait in
         # no real time. The wait is made so long that only a state the test sets ends a run.
-        rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_TIMEOUT", 10 ** 9)
+        set_derived(rig.monkeypatch, "COMFY_TIMEOUT", 10 ** 9)
         # A delete waits for the run to stop for the row's ``cancel_wait_s``; a run the engine cannot cancel never stops, so
         # the wait is cut to a moment and the 409 comes at once.
         row = proxy._video_row()

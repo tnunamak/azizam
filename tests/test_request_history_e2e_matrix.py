@@ -26,6 +26,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID, set_derived
 import responses_store
 from gateway import (
     admin_store, browser_sessions, media_jobs, prompt_memory, receipt_store,
@@ -244,13 +245,13 @@ def world(fake_upstreams, monkeypatch, tmp_path):
               "chunking": {"enabled": False, "spool_dir": str(tmp_path / "spool")}}
     registry["services"]["matrix-speech"] = service_from_backend_config("matrix-speech", speech, source="ui")
     # A media input may go only to a service the registry knows (the image edit upload is checked against it).
-    registry["services"].setdefault(proxy._GRAPH_BACKEND_ID, {
-        "id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://matrix-graph.fk.test"}})
+    registry["services"].setdefault(GRAPH_SERVICE_ID, {
+        "id": GRAPH_SERVICE_ID, "config": {"base_url": "http://matrix-graph.fk.test"}})
     write_service_registry_for_test(registry, path=db)
     cfg = copy.deepcopy(proxy.config)
     graph_engine = {"name": "Matrix graph engine", "host": "matrix-graph.fk.test", "port": 80, "enabled": True,
                     "protocol": "node-graph", "capabilities": ["images", "videos"]}
-    cfg["backends"] = {"matrix-speech": speech, proxy._GRAPH_BACKEND_ID: graph_engine}
+    cfg["backends"] = {"matrix-speech": speech, GRAPH_SERVICE_ID: graph_engine}
     cfg["model_aliases"]["transcriptions"] = {
         "engines": {"matrix-speech": {"service": "matrix-speech", "model": "matrix-speech"}},
         "stable": {},
@@ -264,8 +265,8 @@ def world(fake_upstreams, monkeypatch, tmp_path):
         "resolve_image_background_decision": AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
     }.items():
         monkeypatch.setattr(proxy, name, value)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", "http://matrix-graph.fk.test")
+    set_derived(monkeypatch, "COMFY_ENABLED", True)
+    set_derived(monkeypatch, "COMFY_HOST", "http://matrix-graph.fk.test")
     # Metadata encoding is outside retention; keep this video fixture independent of ffmpeg.
     monkeypatch.setattr(proxy.media_delivery, "deliver_bytes", lambda data, *_a, **_kw: data)
     monkeypatch.setattr(proxy.media_delivery, "attach_provenance", lambda data, *_a, **_kw: data)

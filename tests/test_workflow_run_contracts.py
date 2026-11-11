@@ -18,6 +18,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import workflow_run, discovery, media_jobs, receipt_store, request_spool, service_registry
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol.node_graph import compile_workflow
@@ -69,7 +70,7 @@ class FakeGraphEngine:
 
 def publish(db, workflows: dict) -> None:
     """The registry the gateway serves: the engine as a service record, and the given owner workflows. Reloaded live."""
-    registry = {"services": {proxy._GRAPH_BACKEND_ID: {"name": "Engine", "config": {
+    registry = {"services": {GRAPH_SERVICE_ID: {"name": "Engine", "config": {
         "host": ENGINE_HOST, "port": ENGINE_PORT}}},
         "workflows": workflows}
     write_service_registry_for_test(service_registry.normalize_service_registry(registry), path=db)

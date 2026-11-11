@@ -48,7 +48,7 @@ def _manifest(name: str) -> dict[str, Any]:
     return load_workflow_manifest(ROOT / "manifests" / "workflows" / f"{name}.yml")
 
 
-def _ui_twin(api: Mapping[str, Any]) -> dict[str, Any]:
+def _ui_twin(api: Mapping[str, Any], _address: str = "") -> dict[str, Any]:
     """A stand-in UI graph: derived from the submitted graph, so a difference in the graph shows here too."""
     return {"nodes": sorted(api), "classes": sorted(str(node.get("class_type")) for node in api.values())}
 
@@ -89,7 +89,7 @@ def _proxy_submission(model: str, body: dict[str, Any], *, with_ui: bool, fake_u
             derived_patch("COMFY_HOST", f"http://{ORACLE_HOST}"), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_load_audio_workflow_manifest", new=lambda _name: copy.deepcopy(manifest)), \
-            patch.object(proxy, "_derive_ui_workflow", new=(_ui_twin if with_ui else (lambda _api: None))), \
+            patch.object(proxy, "_derive_ui_workflow", new=(_ui_twin if with_ui else (lambda _api, _address="": None))), \
             patch.object(proxy, "configured_downstream_headers", new=lambda *_a, **_k: {}):
         asyncio.run(route())
     assert len(sink) == 1, f"the route submitted {len(sink)} prompts"

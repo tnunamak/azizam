@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID
 from gateway import admin_store, media_jobs, receipt_store, request_source
 from gateway.admin_oidc import AdminSession
 from gateway.api import create_gateway_router
@@ -267,7 +268,7 @@ def test_member_cannot_forge_job_ownership_with_raw_creation(people):
 def test_member_cannot_mint_another_members_asset_url_or_reuse_asset_input(people, monkeypatch):
     # The engine the input would go to is one this gateway knows (a media input is refused toward an unknown one).
     registry = {"schema_version": 2, "services": {
-        proxy._GRAPH_BACKEND_ID: {"id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://engine.test:1"}}}}
+        GRAPH_SERVICE_ID: {"id": GRAPH_SERVICE_ID, "config": {"base_url": "http://engine.test:1"}}}}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
     own = people.client.get(f"/gateway/v1/assets/{people.alice.asset_id}", headers=people.alice.bearer)
     assert own.status_code == 200, own.text

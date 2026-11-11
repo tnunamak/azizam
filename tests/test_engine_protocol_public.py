@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.graph_service import set_derived
 from gateway import media_jobs, receipt_store
 from gateway.engine_protocol import description, transport, executor
 from tests.support.access import authenticated, identity, plan_for
@@ -426,7 +427,7 @@ def test_unmapped_multiline_sse_retains_every_data_line(engine,monkeypatch):
 def test_queued_protocol_image_jobs_do_not_depend_on_other_engine_enablement(engine,monkeypatch):
     from unittest.mock import Mock
     job=media_jobs.create(media_jobs.MediaJob(intent='image.generate',backend='prism-local',metadata={'mode':'async_image_generation'}),path=media_jobs.DB_PATH)
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
+    set_derived(monkeypatch, "COMFY_ENABLED", False)
     monkeypatch.setattr(proxy,"_image_media_job_resume_on_start",lambda: True)
     monkeypatch.setattr(proxy,'_has_image_media_job_payload',lambda _:True)
     scheduled=Mock(return_value=True)

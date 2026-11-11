@@ -22,6 +22,7 @@ import pytest
 from PIL import Image
 
 import proxy
+from tests.support.graph_service import GRAPH_SERVICE_ID, set_derived
 from gateway import media_jobs as store_jobs
 from tests import test_adapter_differential as base
 from tests import test_adapter_differential_s7 as s7
@@ -104,9 +105,9 @@ def variation_ok(rig):
 def disabled(rig):
     """The image service is off, and the engine would refuse any call."""
     base._comfy_down(rig)
-    rig.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
+    set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
     for service_id, record in (proxy.config.get("backends") or {}).items():
-        if isinstance(record, dict) and (record.get("protocol") == "node-graph" or service_id == proxy._GRAPH_BACKEND_ID):
+        if isinstance(record, dict) and (record.get("protocol") == "node-graph" or service_id == GRAPH_SERVICE_ID):
             rig.monkeypatch.setitem(record, "enabled", False)       # the service record is where an operator switches it off
 
 
@@ -139,7 +140,7 @@ def _also_switch_off(setup):
     def both(rig):
         setup(rig)
         for service_id, record in (proxy.config.get("backends") or {}).items():
-            if isinstance(record, dict) and service_id == proxy._GRAPH_BACKEND_ID:
+            if isinstance(record, dict) and service_id == GRAPH_SERVICE_ID:
                 rig.monkeypatch.setitem(record, "enabled", False)
     return both
 

@@ -401,7 +401,7 @@ class TestReadSiteLiveness(unittest.TestCase):
             "kobold": _kobold_backend(),
             "comfyui": {
                 "enabled": True,
-                "capabilities": ["image"],
+                "capabilities": ["images"],
                 "host": "127.0.0.1",
                 "port": 8765,
             },
@@ -543,7 +543,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
                 "tts": {"enabled": True, "host": "10.1.0.3", "port": 8880, "capabilities": ["audio", "speech"]},
                 "stt": {"enabled": True, "host": "10.1.0.4", "port": 5092, "timeout": 321, "capabilities": ["audio", "transcriptions"]},
                 "embeddings": {"enabled": True, "host": "10.1.0.5", "port": 5061, "capabilities": ["openai", "embeddings"]},
-                "comfyui": {"enabled": True, "host": "10.1.0.6", "port": 7890},
+                "comfyui": {"enabled": True, "host": "10.1.0.6", "port": 7890, "capabilities": ["images"]},
             }
         }
         result = proxy._derive_backend_constants(cfg)
@@ -597,7 +597,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
     def test_comfy_enabled_flag_propagated(self):
         cfg = {
             "backends": {
-                "comfyui": {"enabled": True, "host": "127.0.0.1", "port": 7890},
+                "comfyui": {"enabled": True, "host": "127.0.0.1", "port": 7890, "capabilities": ["images"]},
             }
         }
         result = proxy._derive_backend_constants(cfg)

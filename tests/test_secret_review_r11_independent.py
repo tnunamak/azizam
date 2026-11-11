@@ -20,6 +20,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.graph_service import set_derived
 from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401 - fixture
 from tests.test_secret_review_r10_composed_messages import GRAPH, _status, video_state  # noqa: F401 - fixture
 
@@ -40,7 +41,7 @@ def _history(fake_upstreams, monkeypatch, in_history):
         "exchanges": [{"id": "history", "match": {"method": "GET", "path": "/history/p"},
                        "response": {"json": {"p": job} if in_history else {}}}],
     }))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
 
 
 # --- the node of a video status ---------------------------------------------------------------------------------------------

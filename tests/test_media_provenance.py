@@ -1050,8 +1050,8 @@ class UiGraphSubmitTests(unittest.TestCase):
             "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "THIS REQUEST", "clip": ["1", 1]}},
             "__ui_workflow__": {"nodes": [], "stale": True},
         }
-        with patch.object(proxy, "_graph_node_info", lambda ct: self.OBJECT_INFO.get(ct)):
-            payload = proxy._build_graph_submit_payload(graph)
+        with patch.object(proxy.node_info, "lookup", lambda _address, ct: self.OBJECT_INFO.get(ct)):
+            payload = proxy._build_graph_submit_payload(graph, proxy._GRAPH_CAPABILITY)
         ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
         self.assertNotIn("stale", ui)
         self.assertEqual(sorted(n["id"] for n in ui["nodes"]), [1, 2])
@@ -1065,8 +1065,8 @@ class UiGraphSubmitTests(unittest.TestCase):
             "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a"}},
             "__ui_workflow__": {"nodes": [], "twin": True},
         }
-        with patch.object(proxy, "_graph_node_info", lambda ct: None):
-            payload = proxy._build_graph_submit_payload(graph)
+        with patch.object(proxy.node_info, "lookup", lambda _address, ct: None):
+            payload = proxy._build_graph_submit_payload(graph, proxy._GRAPH_CAPABILITY)
         self.assertTrue(payload["extra_data"]["extra_pnginfo"]["workflow"]["twin"])
 
 
