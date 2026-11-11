@@ -979,6 +979,58 @@ def test_cancelled_executor_holds_only_the_observed_generation(tmp_path: Path, m
     run(scenario)
 
 
+def test_interrupt_with_a_foreign_snapshot_does_not_hold_a_terminal_operation(tmp_path: Path, monkeypatch) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        op = _begun(h)
+        h.store.finish(op.op_id, "aborted", "open")
+        terminal = h.store.get(op.op_id)
+        foreign = _begun(h, key="next")
+        snapshot = h.store.current_with_generation(DOMAIN)
+        assert terminal is not None and terminal.state == "aborted"
+        assert snapshot is not None and snapshot[0].op_id == foreign.op_id != op.op_id
+        holds = []
+        monkeypatch.setattr(h.executor, "_versioned_gate_hold", True)
+        monkeypatch.setattr(h.executor, "_gate_hold", lambda *args, **kwargs: holds.append((args, kwargs)))
+
+        assert h.executor._observe_hold(op) == (terminal, None)
+        await h.executor._hold_after_interrupt(op)
+        assert holds == [], "a terminal fallback suppresses the hold despite another unfinished operation"
+
+    run(scenario)
+
+
+def test_interrupt_with_a_foreign_snapshot_and_missing_operation_holds_without_generation(tmp_path: Path, monkeypatch) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        op = _begun(h)
+        h.store.finish(op.op_id, "aborted", "open")
+        foreign = _begun(h, key="next")
+        snapshot = h.store.current_with_generation(DOMAIN)
+        assert snapshot is not None and snapshot[0].op_id == foreign.op_id != op.op_id
+        foreign_generation = snapshot[1]
+        reads = []
+        holds = []
+
+        def missing(key):
+            reads.append(key)
+            return None
+
+        monkeypatch.setattr(h.store, "get", missing)
+        monkeypatch.setattr(h.executor, "_versioned_gate_hold", True)
+        monkeypatch.setattr(h.executor, "_gate_hold", lambda *args, **kwargs: holds.append((args, kwargs)))
+
+        assert h.executor._observe_hold(op) == (None, None)
+        reads.clear()
+        await h.executor._hold_after_interrupt(op)
+        assert reads == [op.op_id], "the fallback must read A, not the foreign operation B"
+        assert holds == [((DOMAIN, "reconciling"), {})], "exactly one two-argument hold, with no generation"
+        assert all(kwargs.get("generation") != foreign_generation for _, kwargs in holds)
+        assert h.executor._recovery_pending
+
+    run(scenario)
+
+
 def test_policy_retry_after_comes_from_the_declared_transition() -> None:
     services = {"svc": {"residency": {"domain": DOMAIN, "transition": {"enabled": True, "retry_after_s": 7, "profile": "p"}}}}
     policy = policy_for("svc", services)
