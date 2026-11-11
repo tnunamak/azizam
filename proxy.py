@@ -14971,7 +14971,7 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
         elif intent == INTENT_AUDIO_GENERATE:
             name, _ = _resolve_audio_workflow(target)
             if name:
-                workflow = f"audio.generate.{name}"
+                workflow = _audio_workflow_id(name) or workflow
     protocol = str(entry.get("azizam_protocol") or _protocol_for_intent(intent))
     # One request, built the way the request route builds it: the model the
     # name resolves to, plus the name the client sent. A plan may grant either;
@@ -25262,13 +25262,21 @@ async def _submit_audio_media_job(
         )
     requested_model = body.get("model", _audio_default_workflow())
     manifest = _load_audio_workflow_manifest(workflow_name)
+    workflow_id = _audio_workflow_id(workflow_name)
+    if workflow_id is None:
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{requested_model}' is not available for audio generation.",
+                code="model_not_found",
+            )
+        )
     policy_decision = evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
             protocol="openai.audio",
             intent=intent,
             model=str(requested_model) if requested_model is not None else None,
-            workflow=f"audio.generate.{workflow_name}",
+            workflow=workflow_id,
             backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
             capability_exposure="default",
             capability_trust_tier="stable",
@@ -25286,14 +25294,14 @@ async def _submit_audio_media_job(
         requested=str(requested_model) if requested_model is not None else None,
         resolved=workflow_name,
         manifest=manifest,
-        extra_ids=(f"audio.generate.{workflow_name}",),
+        extra_ids=(workflow_id,),
     )
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
     job = audio_media_jobs.audio_job_from_request(
         body,
         request_id=request_id,
-        workflow=f"audio.generate.{workflow_name}",
+        workflow=workflow_id,
         backend=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
         app_profile=plan_ref(auth_context.identity),
         api_key_name=auth_context.identity.name if auth_context.identity else None,
@@ -28454,7 +28462,13 @@ def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: s
 
 def _audio_workflow_records() -> Iterator[Any]:
     """The registry's records of the audio family (speech-free generation: audio, music, effects)."""
-    return (record for record in GATEWAY_WORKFLOW_REGISTRY.records() if record.intent.startswith(("audio.", "music.", "sfx.")))
+    return (record for record in GATEWAY_WORKFLOW_REGISTRY.records() if record.intent in media_job_intents.AUDIO_INTENTS)
+
+
+def _audio_workflow_id(workflow_name: str) -> str | None:
+    """The registry id of the audio record a resolved workflow name names; ``None`` when no record does."""
+    manifest = _load_audio_workflow_manifest(workflow_name)
+    return str(manifest["id"]) if manifest and manifest.get("id") else None
 
 
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
@@ -28494,10 +28508,7 @@ async def proxy_audio_generate(
     registry or the workflow file; without it (the synchronous route) they are read live. ``pinned_workflow`` is the
     workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
     """
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
-        service_available=_graph_service(_AUDIO_GRAPH_CAPABILITY).enabled, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
-    )
+    admission = _graph_media_admission(intents.require_admission(), auth_context=auth_context)
     if admission is not None:
         return admission
 
@@ -28545,12 +28556,12 @@ async def proxy_audio_generate(
                 code="model_not_found",
             )
         )
-    workflow_id = f"audio.generate.{workflow_name}"
     if pinned is not None:
         try:
             manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
-            if pinned_workflow != workflow_id:
+            workflow_id = str(manifest.get("id") or "")
+            if pinned_workflow != workflow_id or not (workflow_id == workflow_name or workflow_id.endswith(f".{workflow_name}")):
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:
@@ -28563,6 +28574,14 @@ async def proxy_audio_generate(
             )
     else:
         manifest = _load_audio_workflow_manifest(workflow_name)
+        workflow_id = str(manifest.get("id") or "") if manifest else ""
+        if not workflow_id:
+            return model_compatibility_error(
+                ModelCompatibilityError(
+                    f"Model '{model}' is not available for audio generation.",
+                    code="model_not_found",
+                )
+            )
     if manifest is None:
         return Response(
             content=json.dumps({"error": {"message": f"Workflow manifest missing for {workflow_name}", "type": "api_error"}}),
@@ -28644,10 +28663,7 @@ async def proxy_audio_generate(
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             graph = _graph(client, "audio.generate")
-            admission = _dispatch_admission_response(
-                intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
-                service_available=_graph_service(_AUDIO_GRAPH_CAPABILITY).enabled, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
-            )
+            admission = _graph_media_admission(intents.require_admission(), auth_context=auth_context)
             if admission is not None:
                 return admission
             resp = await graph.submit(
@@ -28822,9 +28838,10 @@ def _audio_models_for_caller(auth_context: AuthContext) -> list[dict[str, Any]]:
     """Audio workflows this caller may see; runs category reads, so call it off the loop."""
     models = []
     for name, cfg in _audio_workflow_table().items():
-        if not discovery_allows(auth_context.identity, make_policy_request(
+        workflow_id = _audio_workflow_id(name)
+        if workflow_id is None or not discovery_allows(auth_context.identity, make_policy_request(
             protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
-            model=name, workflow=f"audio.generate.{name}",
+            model=name, workflow=workflow_id,
         )):
             continue
         models.append({

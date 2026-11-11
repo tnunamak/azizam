@@ -160,7 +160,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "c669621a07b169ace0eb23cb84a9eb1b3183e9a91e0602d3a11f210b3a9f6217",
+      "source_sha256": "a42bdd081d2a8c8a20c967bd0032ef2c51f48d9ca6c13229a7a31b6bb63be97a",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
