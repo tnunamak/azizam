@@ -8,8 +8,8 @@ table. They are listed from the engine records on every read (``declared``): the
 document and a refusal's supported intents name them while an enabled engine declares them, and with no such engine
 those three are what the table alone gives.
 
-The job runs on the http-v1 job runner (``engine_protocol.jobs.run``). The fetched file becomes the job's one asset;
-the content route serves it as it is.
+The job runs on the versioned job runner (``engine_protocol.jobs.run``). The wrapper publishes a version 1 runner's
+single fetched file; version 2 bundles and terminal replays already belong to the runner's completion transaction.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from gateway.engine_contract_view import connection_config
 from gateway.engine_protocol import description, dispatch
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError, UnknownOperation
+from gateway.engine_protocol.types import ResultBundle
 
 MODE = "declared_operation"
 
@@ -29,6 +30,8 @@ def resolve(registry: Mapping[str, Any], intent: str, model: Any) -> dispatch.Ta
     """The target for a declared operation, or None when no enabled engine declares it for this model.
 
     Only a job operation counts: the runner needs the description's submit, poll and fetch steps."""
+    if any(row.intent == intent for row in media_job_intents.load_rows()):
+        return None
     try:
         target = dispatch.resolve(registry, model, intent)
     except UnknownOperation:
@@ -90,7 +93,10 @@ async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *
     """Run the job and keep the fetched file as its asset. ``body`` is the caller's input object; the description's
     submit map decides which of its fields reach the engine."""
     refs = await protocol_jobs.run(runtime, intent, body, job_id=job_id)
-    if len(refs or ()) != 1:
+    if refs is None or isinstance(refs, ResultBundle):
+        # A terminal replay or a committed bundle has no second completion owner.
+        return
+    if len(refs) != 1:
         raise ProtocolError("The engine must return exactly one result file.", code="malformed_response")
     ref = refs[0]
     media_jobs.update_status(
