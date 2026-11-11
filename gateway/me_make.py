@@ -101,6 +101,13 @@ class MakeRuntime(Protocol):
         """Whether this process has scheduled or executing work for the job."""
         ...
 
+    def workflow_id(self, intent: str, model: str) -> str:
+        """The id of the workflow record ``model`` names under ``intent``.
+
+        With no record (an owner graph with no manifest) it is ``intent.model``.
+        """
+        ...
+
     def admission(self, intent: str) -> Response | None:
         """Return the operator's refusal for new work of ``intent``, or None.
 
@@ -414,7 +421,7 @@ def _submit(
     owner = ownership.principal_key("app", app_id)
     job = media_jobs.MediaJob(
         intent=intent,
-        workflow=f"{intent}.{model}"[:200],
+        workflow=runtime.workflow_id(intent, model)[:200],
         request_id=request_id,
         app_id=app_id,
         owner_key_hash=owner,
