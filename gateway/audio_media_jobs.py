@@ -13,12 +13,12 @@ import binascii
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Protocol
 
-from gateway import compatibility, media_jobs
+from gateway import compatibility, media_job_intents, media_jobs
 
 AUDIO_ASSET_KIND = "aud"
 DEFAULT_AUDIO_MEDIA_TYPE = "audio/wav"
 DEFAULT_AUDIO_SUFFIX = ".wav"
-_AUDIO_INTENTS = frozenset({"audio.generate", "music.generate", "sfx.generate"})
+_AUDIO_INTENTS = media_job_intents.AUDIO_INTENTS
 _AUDIO_RESPONSE_FORMAT_SUFFIXES = {
     "wav": ".wav",
     "mp3": ".mp3",

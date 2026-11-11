@@ -39,7 +39,7 @@ from typing import Any, Iterable, Mapping
 from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
-from gateway import compatibility, workflow_request_maps
+from gateway import compatibility, media_job_intents, workflow_request_maps
 from gateway.manifests import media_bearing
 from gateway.video_limits import limits_for_workflow
 
@@ -760,11 +760,7 @@ def augment_openapi(
     # job's `request` is the body of the matching sync route, so type it with
     # the (already extension-typed) route bodies.
     request_refs = []
-    for component, path in (
-        ("ImageGenerationRequest", "/v1/images/generations"),
-        ("AudioGenerationRequest", "/v1/audio/generate"),
-        ("VideoGenerationRequest", "/v1/videos"),
-    ):
+    for component, path, _intents in media_job_intents.submit_routes():
         body = _route_json_schema(paths, path)
         if body is not None:
             components[component] = copy.deepcopy(body)
@@ -775,16 +771,10 @@ def augment_openapi(
         "properties": {
             "intent": {
                 "type": "string",
-                "enum": ["image.generate", "audio.generate", "music.generate",
-                         "sfx.generate", "video.generate"],
+                "enum": list(media_job_intents.SUBMITTABLE_INTENTS),
             },
             "request": {
-                "description": (
-                    "The body you would send to the matching sync route: "
-                    "`/v1/images/generations` (image.generate), `/v1/audio/generate` "
-                    "(audio.generate, music.generate, sfx.generate) or `/v1/videos` "
-                    "(video.generate)."
-                ),
+                "description": media_job_intents.request_description(),
                 **({"anyOf": request_refs} if request_refs
                    else {"type": "object", "additionalProperties": True}),
             },
