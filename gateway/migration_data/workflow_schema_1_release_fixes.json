@@ -1,10 +1,13 @@
 {
-  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there. I2 (the image edit workflows): the post-composite result stage of the two Klein edit workflows, and the removed feather default of the inpaint workflow. The video-mux description gained its length rule.",
+  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there. I2 (the image edit workflows): the post-composite result stage of the two Klein edit workflows, and the removed feather default of the inpaint workflow. The video-mux description gained its length rule. The ace-step output declares the FLAC its SaveAudio writer produces, not WAV.",
   "fixes": {
     "audio.generate.ace-step-1.5-xl-turbo": {
       "remove": [
         ["inputs", "prompt"],
         ["bindings", "comfyui", "map", "prompt"]
+      ],
+      "set": [
+        {"path": ["outputs", "audio", "media_type"], "value": "audio/flac", "was": "audio/wav"}
       ]
     },
     "image.edit.flux2-klein": {
