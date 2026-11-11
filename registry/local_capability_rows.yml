@@ -1,6 +1,7 @@
 schema_version: 1
 alias_operations:
   - name: chat
+    shared_operations: [completions]
     intent: chat.completions
     input_modalities: [text]
     output_modalities: [text]
@@ -26,12 +27,15 @@ alias_operations:
     output_modalities: [video]
     execution: job
   - name: speech
+    engine_operation: true
     intent: speech.synthesis
     input_modalities: [text]
     output_modalities: [audio]
     execution: sync
     capability: speech
   - name: transcriptions
+    shared_operations: [translations]
+    engine_operation: true
     intent: speech.transcription
     input_modalities: [audio]
     output_modalities: [text]
@@ -41,6 +45,20 @@ alias_operations:
     input_modalities: [text]
     output_modalities: [audio]
     execution: job
+  - name: rerank
+    intent: null
+    input_modalities: null
+    output_modalities: null
+    execution: null
+    publish_capability: false
+    engine_operation: true
+  - name: decisions
+    intent: decision.systemone
+    input_modalities: null
+    output_modalities: null
+    execution: null
+    publish_capability: false
+    engine_operation: true
 workflow_families:
   - section: videos
     enabled_flag: videos
