@@ -184,6 +184,14 @@ def test_step6_the_job_leaves_a_receipt_and_shows_in_the_owner_activity(owner, s
     assert "CCO" not in json.dumps(records.json())  # the receipt names the work, not its input or its result
 
 
+def _heard(process) -> dict:
+    """The next message of the second gateway; its own boot lines carry no prefix."""
+    for line in process.stdout:
+        if line.startswith("SECOND "):
+            return json.loads(line.removeprefix("SECOND "))
+    raise AssertionError("the second gateway ended without answering")
+
+
 def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_without_a_restart(owner, gateway):
     client, overlay, owner_id, plan_id = owner
     _install_description(overlay)
@@ -193,16 +201,16 @@ def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_wit
         [sys.executable, "-m", "tests.support.second_gateway_smell", str(gateway.path)], cwd=ROOT,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     try:
-        ready = json.loads(second.stdout.readline())
+        ready = _heard(second)
         assert ready == {"event": "ready", "knows_engine": False}
         _enabled_engine(client)  # the first gateway enables it; the second is not told
         key = _app_key(client, owner_id, plan_id)
         second.stdin.write(json.dumps({"key": key}) + "\n")
         second.stdin.flush()
-        done = json.loads(second.stdout.readline())
+        done = _heard(second)
     finally:
-        second.kill()
-        second.wait(timeout=10)
+        second.stdin.close()  # a second gateway still waiting for its key ends on this
+        second.wait(timeout=30)
     assert done["status"] == "succeeded" and done["content"] == MOLECULE.decode()
     assert done["posts"] == [{"input": {"vector": [0.25, -1.5, 3.0, 0.0]}}]
     # Its receipt is in the owner's Activity, which the first gateway reads from the shared database.

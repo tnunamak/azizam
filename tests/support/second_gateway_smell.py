@@ -5,7 +5,8 @@ variables the parent test has (so the receipts, the jobs and the asset cache are
 ``proxy`` app and points it at the parent's admin database, as the ``gateway`` fixture does, then serves the one
 smell job that the parent asks for. It never runs the lifespan, so it holds no instance lock and starts no sampler.
 
-Protocol on stdin/stdout, one JSON object per line:
+Protocol: the gateway prints boot lines of its own on stdout, so the child's messages carry the prefix ``SECOND `` and
+the parent ignores every other line. One JSON object per line:
   child  -> {"event": "ready", "knows_engine": false}   the app is built; its own config has no smell engine
   parent -> {"key": "<app key>"}                          the parent has enabled the engine in the shared database
   child  -> {"event": "done", "status": ..., "content": ..., "posts": [...], "job_id": ...}
@@ -26,7 +27,7 @@ from tests.test_owner_engine_chain_smell import HOST, SmellEngine
 
 
 def _say(**line) -> None:
-    print(json.dumps(line), flush=True)
+    print("SECOND " + json.dumps(line), flush=True)
 
 
 async def _job(proxy, key: str) -> dict:
