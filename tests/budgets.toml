@@ -823,7 +823,7 @@ pytest = 27475  # 27427 -> 27475: the local inventory selects the graph service 
 # Home media slots (2026-11-09): +17 cases in web/src/app/_home (home-model, home-page, handoff specs); measured 4000 (vitest list --json --root web).
 # Home media slots round 2 (2026-11-09): +3 cases in home-page.spec.tsx (chip is the change control, chip order, slot icons); measured 4003 (vitest list --json --root web).
 # Try named hand-off (2026-11-09): +8 cases (handoff-files +7, Home handoff +1); measured 4011 (vitest list --json --root web).
-vitest = 4042  # train 38 e2e fixes: +1 in web/src/app/_home/home-model-new-capability.spec.ts (picture kept when another intent's row shares its legacy kind); dot 2270: +7 in web/tests/try-workflow-media.spec.ts (generic failure reason); Home media slots and the other train branches: measured 4041 with vitest list --json --root web after all merges
+vitest = 4055  # 4042 -> 4055: the host-path pattern finds any home user name and mount roots, and leaves gateway media addresses alone (+13). train 38 e2e fixes: +1 in web/src/app/_home/home-model-new-capability.spec.ts (picture kept when another intent's row shares its legacy kind); dot 2270: +7 in web/tests/try-workflow-media.spec.ts (generic failure reason); Home media slots and the other train branches: measured 4041 with vitest list --json --root web after all merges
 # Builder E2 (2026-11-08): +45 cases in web/src/app/workflows/owner-view.spec.tsx; measured 3983 (vitest run).
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
