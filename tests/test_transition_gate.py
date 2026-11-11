@@ -14,6 +14,7 @@ from gateway import service_registry
 from gateway.litellm_substrate import reaches_engine_directly
 from gateway.swap_drain import SwapDrain, SwapDrainSettings, SwapDeferred
 from gateway.transition_gate import (
+    GATE_STATES,
     GateStore,
     TransitionPolicy,
     TransitionUnavailable,
@@ -180,6 +181,50 @@ def test_gate_store_refuses_an_unknown_state_and_fails_closed_when_unreadable(tm
     assert unreadable.state("any") == "reconciling", "never loaded: closed"
     unreadable.load()
     assert unreadable.state("any") == "reconciling"
+
+
+@pytest.mark.parametrize("state", ["open", "half-open"])
+def test_gate_store_force_refuses_non_hold_states_without_changing_cache(tmp_path, state: str) -> None:
+    store = GateStore(tmp_path / "transition.db")
+    store.load()
+    _write_gate(store.path, "held-domain", "closed")
+    store.load()
+    cache, generations = dict(store._cache), dict(store._generations)
+    before = store.snapshot()
+
+    for domain in ("held-domain", "missing-domain"):
+        with pytest.raises(ValueError, match=domain):
+            store.force(domain, state)
+        assert store._cache == cache
+        assert store._generations == generations
+        assert store.snapshot() == before
+
+
+@pytest.mark.parametrize("state", [state for state in GATE_STATES if state != "open"])
+@pytest.mark.parametrize("published", [False, True])
+def test_gate_store_force_holds_until_a_newer_publication(tmp_path, state: str, published: bool) -> None:
+    store = GateStore(tmp_path / "transition.db")
+    store.load()
+    if published:
+        _write_gate(store.path, "d", "open")
+        store.load()
+    generation = 1 if published else 0
+
+    store.force("d", state)
+    assert store.state("d") == state
+    assert store._generations["d"] == generation
+    store.note_write("d", "open", generation=generation)
+    assert store.state("d") == state, "an equal-generation publication cannot release a hold"
+    store.load()
+    assert store.state("d") == state, "a missing or equal-generation durable row cannot release a hold"
+    assert store._generations["d"] == generation
+
+    _write_gate(store.path, "d", "open")
+    store.note_write("d", "open", generation=generation + 1)
+    assert store.state("d") == "open"
+    assert store._generations["d"] == generation + 1
+    store.load()
+    assert store.state("d") == "open"
 
 
 # -- lease keying --------------------------------------------------------------
