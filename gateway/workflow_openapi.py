@@ -785,14 +785,20 @@ def augment_openapi(
         },
     }
     if declared_intents:
-        # A declared operation takes its input object and a model, not the body of a sync route.
-        submit_body["properties"]["intent"]["enum"] = [*media_job_intents.SUBMITTABLE_INTENTS, *declared_intents]
-        submit_body["properties"]["model"] = {"type": "string", "description": "The offering that serves a declared intent."}
-        submit_body["properties"]["input"] = {
-            "type": "object", "additionalProperties": True,
-            "description": "The input object of a declared intent; the engine's description decides which fields it uses."}
-        submit_body["anyOf"] = [{"required": ["intent", "request"]}, {"required": ["intent", "model", "input"]}]
-        del submit_body["required"]
+        # A declared operation takes its input object and a model, not the body of a sync route. Each shape names its
+        # own intents, so a shipped intent cannot be sent with the declared shape or the other way round.
+        declared_body = {
+            "type": "object",
+            "required": ["intent", "model", "input"],
+            "properties": {
+                "intent": {"type": "string", "enum": list(declared_intents)},
+                "model": {"type": "string", "description": "The offering that serves a declared intent."},
+                "input": {
+                    "type": "object", "additionalProperties": True,
+                    "description": "The input object of a declared intent; the engine's description decides which fields it uses."},
+            },
+        }
+        submit_body = {"oneOf": [submit_body, declared_body]}
     job_ok = {"description": "Job accepted. Poll `poll_url`.",
               "content": {_JSON: {"schema": _ref("MediaJob")}}}
     if JOBS_SUBMIT in paths and "post" in paths[JOBS_SUBMIT]:
