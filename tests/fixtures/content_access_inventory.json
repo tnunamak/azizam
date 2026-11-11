@@ -272,7 +272,7 @@
     {
       "path": "gateway/declared_operation_job.py",
       "function": "run",
-      "source_sha256": "97d20155f35a28dfcde7de113355db3a78bf18db366b46549ee2469011d6c81b",
+      "source_sha256": "89259a8b5889af59c470b8370c411b3b42196dd9c9af5c189525624b18910668",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
