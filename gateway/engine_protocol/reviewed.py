@@ -115,6 +115,14 @@ def _candidates(record: Mapping[str, Any], capability: str) -> list[description.
     return found
 
 
+def adapter_serves(capability: str) -> bool:
+    """Whether any reviewed adapter description (active registry, then the shipped floor) lists ``capability`` in ``serves``."""
+    return any(
+        doc.adapter_id is not None and capability in doc.serves
+        for directory in (None, description.REGISTRY_DIR) for doc in _documents(directory).values()
+    )
+
+
 def speaks_serving_adapter(record: Mapping[str, Any], capability: str) -> bool:
     """Whether ``record`` speaks a reviewed adapter protocol that serves ``capability``.
 
