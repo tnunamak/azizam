@@ -26004,6 +26004,15 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
         api_key_name=caller.name if caller else None, app_profile=plan_ref(caller),
         metadata={"mode": declared_operation_job.MODE, "model": str(model)})
     created = media_jobs.create(job, input_data=dict(body), path=media_jobs.DB_PATH)
+    # The receipt is the Activity row: opened here under the job's request id (so a restart closes it with the job),
+    # closed by the task that runs the job. It names the work and the engine, never the input or the result.
+    receipt = RouteReceipt(
+        protocol="gateway.media", intent=intent, path="/gateway/v1/media/jobs", request_id=request_id, job_id=created.job_id,
+        backend=target.engine_id, api_key_name=caller.name if caller else None, app_id=caller.app_id if caller else None,
+        owner_key_hash=_asset_owner_key(auth_context), app_profile=plan_ref(caller),
+        visibility=_access_for_auth_context(auth_context).receipt_detail)
+    receipt.set_policy_decision("allowed", reason="route_authorized", source="runtime_route_policy")
+    receipt_owner = ReceiptLifecycleOwner(receipt).handoff()
     store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
 
     async def work() -> None:
@@ -26014,10 +26023,13 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
                                      path=media_jobs.DB_PATH)
             await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
+            receipt_owner.report(status="succeeded", reason="completed")
+            await receipt_owner.settle()
         except BaseException as exc:  # noqa: BLE001 - the job records how it ended, then the task ends
             canceled = isinstance(exc, (asyncio.CancelledError, media_jobs.CancellationPending))
             media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED if canceled else media_jobs.STATUS_FAILED,
                                      error=None if canceled else "The engine job failed", path=media_jobs.DB_PATH)
+            await receipt_owner.settle(asyncio.CancelledError() if canceled else exc)
             if isinstance(exc, asyncio.CancelledError):
                 raise
 
