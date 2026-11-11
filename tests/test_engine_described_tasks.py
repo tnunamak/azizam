@@ -55,3 +55,12 @@ def test_an_edit_that_names_the_described_task_keeps_it(owner, gateway):
     edited = _edit(client, {"capabilities": _view(client)["capabilities"], "models": SMELL_MODELS, "disabled": True})
     assert edited.status_code == 200, edited.text
     assert "smell.infer" in _stored(gateway)["capabilities"] and "smell.infer" in _view(client)["capabilities"]
+
+
+def test_a_task_alone_with_no_model_row_is_stored_for_an_engine_kept_off(owner, gateway):
+    # The add-engine dialog sends the ticked described tasks with the engine turned off; models are added later.
+    client, *_ = owner
+    assert _install_description(client).status_code == 201
+    created = _add_engine(client, capabilities=["smell.infer"])
+    assert created.status_code == 201, created.text
+    assert _stored(gateway)["capabilities"] == ["smell.infer"] and "smell.infer" in _view(client)["capabilities"]
