@@ -557,41 +557,22 @@ def test_workflow_family_without_a_selected_service_has_no_capabilities(family, 
 
 
 @pytest.mark.parametrize(
-    ("family", "intent"),
-    [("videos", "video.generate"), ("audio", "audio.generate")],
+    ("family", "intent", "capability"),
+    [("videos", "video.generate", "videos"), ("audio", "audio.generate", "audio.generate")],
 )
-def test_workflow_family_uses_configured_backend(family, intent):
+def test_workflow_family_uses_the_service_that_declares_its_capability(family, intent, capability):
     config = {
         "backends": {
             "comfyui": {"name": "ComfyUI"},
-            "other": {"name": "Another workflow backend"},
+            "other": {"name": "Another workflow backend", "capabilities": [capability]},
         },
-        family: {
-            "backend": "other",
-            "workflows": {"sample": {"file": "sample.json"}},
-        },
+        family: {"workflows": {"sample": {"file": "sample.json"}}},
     }
 
     caps = _by_intent(build_local_capabilities(config), intent)
     assert len(caps) == 1
     assert caps[0].workflow == "sample"
     assert caps[0].backend == "other"
-
-
-@pytest.mark.parametrize(
-    ("family", "intent"),
-    [("videos", "video.generate"), ("audio", "audio.generate")],
-)
-def test_workflow_family_configured_backend_must_be_present(family, intent):
-    config = {
-        "backends": {"comfyui": {"name": "ComfyUI"}},
-        family: {
-            "backend": "missing",
-            "workflows": {"sample": {"file": "sample.json"}},
-        },
-    }
-
-    assert _by_intent(build_local_capabilities(config), intent) == []
 
 
 @pytest.mark.parametrize(
@@ -634,8 +615,8 @@ def test_image_family_requires_a_selected_service_control():
 
 
 @pytest.mark.parametrize("family", ["videos", "audio", "images"])
-@pytest.mark.parametrize("backend", [None, "", ["other"]])
-def test_family_backend_rejects_malformed_declared_value(family, backend):
+@pytest.mark.parametrize("backend", [None, "", ["other"], "comfyui"])
+def test_a_family_backend_pin_is_refused(family, backend):
     config = {
         "backends": {"comfyui": {"capabilities": ["images", "videos", "audio.generate"], "default_model": "image-model"}},
         family: {
@@ -648,14 +629,13 @@ def test_family_backend_rejects_malformed_declared_value(family, backend):
         build_local_capabilities(config)
 
     assert str(error.value) == (
-        f"{family}.backend must be a non-empty string; got {backend!r}"
+        f"{family}.backend pin was removed; the service is chosen by capability, protocol and priority"
     )
 
 
-def test_image_family_uses_declared_backend_and_model_defaults():
+def test_image_family_uses_the_declaring_service_and_model_defaults():
     config = {
-        "backends": {"other": {"name": "Other workflow backend"}},
-        "images": {"backend": "other"},
+        "backends": {"other": {"name": "Other workflow backend", "capabilities": ["images"]}},
         "model_compatibility": {
             "defaults": {"images": "image-model", "image_edits": "edit-model"},
         },
@@ -676,9 +656,9 @@ def test_image_family_reads_metadata_from_selected_backend():
             "other": {
                 "default_model": "selected-model",
                 "workflows_dir": "./selected-workflows",
+                "capabilities": ["images"],
             },
         },
-        "images": {"backend": "other"},
         "model_compatibility": {
             "defaults": {"images": "fallback-model", "image_edits": "edit-model"},
         },
@@ -724,27 +704,16 @@ def test_image_family_selected_backend_preserves_rows():
     assert _by_intent(build_local_capabilities(config), "image.edit") == []
 
 
-def test_image_family_missing_declared_backend_does_not_fall_back():
-    config = json.loads(json.dumps(REPRESENTATIVE_CONFIG))
-    config["images"] = {"backend": "missing"}
-
-    caps = build_local_capabilities(config)
-
-    assert _by_intent(caps, "image.generate") == []
-    assert _by_intent(caps, "image.edit") == []
-
-
-def test_image_family_uses_effective_backend_override():
+def test_image_family_uses_the_service_from_the_effective_backend_map():
     config = {
         "backends": {"other": {"default_model": "frozen-model"}},
-        "images": {"backend": "other"},
         "model_compatibility": {
             "defaults": {"images": "image-model", "image_edits": "edit-model"},
         },
     }
 
     caps = build_local_capabilities(
-        config, backends={"other": {"name": "Live workflow backend"}}
+        config, backends={"other": {"name": "Live workflow backend", "capabilities": ["images"]}}
     )
 
     assert [(cap.intent, cap.backend, cap.model) for cap in caps] == [
@@ -1039,32 +1008,6 @@ def test_graph_inventory_keeps_the_selected_winner_without_falling_through(winne
     assert build_local_capabilities(
         config, enabled_flags={"images": False, "videos": False, "audio": False},
     ) == []
-
-
-@pytest.mark.parametrize("family, intent", [
-    ("images", "image.generate"), ("videos", "video.generate"), ("audio", "audio.generate"),
-])
-@pytest.mark.parametrize("pin_state", ["declared", "empty", "missing"])
-def test_explicit_graph_family_pin_keeps_presence_and_no_fallthrough(family, intent, pin_state):
-    backends = {
-        "candidate": {"capabilities": ["images", "videos", "audio.generate"],
-                      "default_model": "wrong-model", "priority": 0},
-    }
-    if pin_state != "missing":
-        backends["pinned"] = {"default_model": "pinned-model"} if pin_state == "declared" else {}
-    config = {
-        "backends": backends,
-        family: {"backend": "pinned", "workflows": {"sample": {"file": "sample.json"}}},
-        "model_compatibility": {"defaults": {"images": "compat-model"}},
-    }
-    flags = {key: key == family for key in ("images", "videos", "audio")}
-    caps = build_local_capabilities(config, enabled_flags=flags)
-    if pin_state == "missing" or (family == "images" and pin_state == "empty"):
-        assert caps == []
-    else:
-        assert len(caps) == 1
-        assert (caps[0].intent, caps[0].backend) == (intent, "pinned")
-        assert caps[0].model == ("pinned-model" if family == "images" else None)
 
 
 @pytest.mark.parametrize("table, change, key, value, message", [
