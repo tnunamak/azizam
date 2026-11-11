@@ -1,7 +1,7 @@
 """Owner-installed protocol descriptions: rows in the admin database, one revision counter for all of them.
 
 A description the owner installs through the engine protocols route is stored here as the raw document. The dispatch
-loader (``gateway/engine_protocol/description.py``) merges these rows with the shipped files and the overlay folder. A
+loader (``gateway/engine_protocol/description.py``) merges these rows with the shipped files and the overlay folder. The
 gateway's single process invalidates its dispatch cache after each committed write. Standalone readers still check the
 stored counter, so administrative scripts do not keep stale snapshots. The counter never goes down, so a row revision
 is never reused, not even after a delete and a create.
@@ -26,6 +26,7 @@ _cache_revisions: dict[Path, int] = {}
 
 
 def use_path(provider: Callable[[], Path] | None) -> None:
+    """Register the single gateway instance; its description writes all use this store and invalidate after commit."""
     global _provider
     _provider = provider
 
