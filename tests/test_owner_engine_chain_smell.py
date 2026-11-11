@@ -9,6 +9,8 @@ marked as an expected failure, with the missing piece named in its reason.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -180,6 +182,33 @@ def test_step6_the_job_leaves_a_receipt_and_shows_in_the_owner_activity(owner, s
     assert receipt["status"] == "succeeded" and receipt["backend"] == "smell-box" and receipt["intent"] == "smell.infer"
     assert receipt["path"] == "/gateway/v1/media/jobs"
     assert "CCO" not in json.dumps(records.json())  # the receipt names the work, not its input or its result
+
+
+def test_step7_a_second_gateway_runs_the_job_for_an_engine_the_first_enabled_without_a_restart(owner, gateway):
+    client, overlay, owner_id, plan_id = owner
+    _install_description(overlay)
+    # The second gateway is a separate process over the same admin database (as a second worker would be). It starts
+    # before the engine exists, so nothing in its own configuration can know the engine.
+    second = subprocess.Popen(
+        [sys.executable, "-m", "tests.support.second_gateway_smell", str(gateway.path)], cwd=ROOT,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        ready = json.loads(second.stdout.readline())
+        assert ready == {"event": "ready", "knows_engine": False}
+        _enabled_engine(client)  # the first gateway enables it; the second is not told
+        key = _app_key(client, owner_id, plan_id)
+        second.stdin.write(json.dumps({"key": key}) + "\n")
+        second.stdin.flush()
+        done = json.loads(second.stdout.readline())
+    finally:
+        second.kill()
+        second.wait(timeout=10)
+    assert done["status"] == "succeeded" and done["content"] == MOLECULE.decode()
+    assert done["posts"] == [{"input": {"vector": [0.25, -1.5, 3.0, 0.0]}}]
+    # Its receipt is in the owner's Activity, which the first gateway reads from the shared database.
+    receipts = [r["receipt"] for r in client.get("/admin/api/activity/requests").json()["records"]
+                if r["receipt"].get("job_id") == done["job_id"]]
+    assert [r["status"] for r in receipts] == ["succeeded"]
 
 
 def _submit_and_read(public, key, smell_engine) -> dict:
