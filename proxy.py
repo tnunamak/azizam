@@ -33,6 +33,7 @@ from gateway.public_failure import PublicFailure
 log_egress.install()
 
 import inspect
+import functools
 import asyncio
 import shutil
 import base64
@@ -9140,6 +9141,34 @@ async def _generate_images_with_adaptive_batching(
     return delivered
 
 
+# The wire operation of POST /v1/audio/generate (the key of its operation table entry), named once for its two handlers.
+_AUDIO_GENERATE_OPERATION = "audio.generate"
+
+
+def _acts_for(translator: str, operation: str):
+    """Hand a handler the execution intents of the frontend row of its wire operation, as ``intents``.
+
+    The handler admits and receipts under what the row declares (``execution_intents`` in
+    registry/protocol_frontends.yml) and spells no intent of its own. A request the mount matched to this
+    operation carries its row; any other caller (a job runner, another handler) gets the row the mount
+    holds for the operation. A caller may pass ``intents`` itself. Route policy keeps its own field.
+    """
+    def decorate(handler):
+        @functools.wraps(handler)
+        async def acting(request, *args, intents=None, **kwargs):
+            if intents is None:
+                intents = frontend_mount.matched_intents(getattr(request, "scope", None) or {}, translator, operation)
+            if intents is None:
+                intents = FRONTEND_MOUNTS.execution_intents(translator, operation)
+            return await handler(request, *args, intents=intents, **kwargs)
+
+        parameters = [value for name, value in inspect.signature(handler).parameters.items() if name != "intents"]
+        acting.__signature__ = inspect.signature(handler).replace(parameters=parameters)  # type: ignore[attr-defined]
+        return acting
+
+    return decorate
+
+
 async def proxy_image_request(request, auth_context, receipt=None):
     """Dispatch image requests through their declared engine protocol."""
     response = await _try_protocol_request(request, auth_context, "images", receipt=receipt)
@@ -9148,14 +9177,17 @@ async def proxy_image_request(request, auth_context, receipt=None):
     return await proxy_graph_image_request(request, auth_context, receipt=receipt)
 
 
+@_acts_for("identity", "images.generate")
 async def proxy_graph_image_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
+    *,
+    intents: frontend_mount.ExecutionIntents,
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.generate', auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
         service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -9408,7 +9440,7 @@ async def proxy_graph_image_request(
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(_graph_service(_GRAPH_CAPABILITY).timeout, connect=10)) as client:
             admission = _dispatch_admission_response(
-                "image.generate", auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+                intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
                 service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -9535,14 +9567,17 @@ def _refuse_edit_image(receipt: RouteReceipt | None, exc: media_inputs.MediaInpu
     return openai_error_response(exc.message, param="image[]", code=exc.code)
 
 
+@_acts_for("identity", "images.edit")
 async def proxy_graph_image_edit_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
+    *,
+    intents: frontend_mount.ExecutionIntents,
 ) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     admission = _dispatch_admission_response(
-        'image.edit', auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
         service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -10067,7 +10102,7 @@ async def proxy_graph_image_edit_request(
                 workflow_name_for_batching = workflow_name
 
             admission = _dispatch_admission_response(
-                "image.edit", auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+                intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
                 service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -10149,10 +10184,13 @@ class _OverlayFormRequest:
         return self._form
 
 
+@_acts_for("identity", "images.variations")
 async def proxy_graph_image_variations_request(
     request: Request,
     auth_context: AuthContext,
     receipt: RouteReceipt | None = None,
+    *,
+    intents: frontend_mount.ExecutionIntents,
 ) -> Response:
     """Handle OpenAI-compatible /v1/images/variations.
 
@@ -10165,7 +10203,7 @@ async def proxy_graph_image_variations_request(
     pipeline rather than duplicating it.
     """
     admission = _dispatch_admission_response(
-        'image.variation', auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
         service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -28323,8 +28361,10 @@ def _audio_extension_error_response(message: str, *, param: str = "extensions") 
     )
 
 
+@_acts_for("identity", _AUDIO_GENERATE_OPERATION)
 async def proxy_audio_generate(
-    request: Request, auth_context, *, store_full: bool = False, receipt: RouteReceipt | None = None,
+    request: Request, auth_context, *, intents: frontend_mount.ExecutionIntents, store_full: bool = False,
+    receipt: RouteReceipt | None = None,
     pinned: pinned_definitions.PinnedDefinitions | None = None, pinned_workflow: str | None = None,
 ):
     """POST /v1/audio/generate — submit audio generation via ComfyUI.
@@ -28336,7 +28376,7 @@ async def proxy_audio_generate(
     workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
     """
     admission = _dispatch_admission_response(
-        'audio.generate', auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
         service_available=_graph_service(_AUDIO_GRAPH_CAPABILITY).enabled, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
@@ -28486,7 +28526,7 @@ async def proxy_audio_generate(
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
-                "audio.generate", auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
+                intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_AUDIO_GRAPH_CAPABILITY),
                 service_available=_graph_service(_AUDIO_GRAPH_CAPABILITY).enabled, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
@@ -28640,7 +28680,8 @@ async def proxy_audio_generate(
         return client_errors.client_error(502, "audio_failed", error_type="api_error")
 
 
-async def audio_generate(request: Request):
+@_acts_for("identity", _AUDIO_GENERATE_OPERATION)
+async def audio_generate(request: Request, *, intents: frontend_mount.ExecutionIntents):
     """OpenAI-compatible audio generation endpoint."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/audio/generate"))
     if isinstance(auth_context, Response):
@@ -28649,7 +28690,7 @@ async def audio_generate(request: Request):
     if policy_response is not None:
         return policy_response
     from gateway import media_ingestion
-    receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate")
+    receipt = await media_ingestion.start_receipt(request, auth_context, intent=intents.require_receipt())
     try:
         response = await proxy_audio_generate(request, auth_context, receipt=receipt)
     except BaseException as error:
