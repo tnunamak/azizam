@@ -369,66 +369,67 @@ class TestBackendBindingResult(unittest.TestCase):
 
 
 class TestShippedWorkflowOutputMediaTypes(unittest.TestCase):
-    @staticmethod
-    def _writer_contracts():
-        # ComfyUI writer defaults; SaveVideo is fixed only for explicit mp4.
-        writer_media_types = {
-            "SaveImage": "image/png",
-            "SaveAudio": "audio/flac",
-            "SaveAudioMP3": "audio/mpeg",
-            "SaveAudioOpus": "audio/ogg",
-            "SaveVideo": "video/mp4",
-        }
+    # ComfyUI writer defaults; SaveVideo fixes its container only when its format is mp4.
+    WRITER_MEDIA_TYPES = {
+        "SaveImage": "image/png",
+        "SaveAudio": "audio/flac",
+        "SaveAudioMP3": "audio/mpeg",
+        "SaveAudioOpus": "audio/ogg",
+        "SaveVideo": "video/mp4",
+    }
+
+    @classmethod
+    def _output_rows(cls):
+        """One row per (manifest, binding, output): every declared output of every binding, never skipped silently.
+
+        A row is (manifest file, binding, output, writer or why there is none, declared type, written type or None)."""
         manifest_root = ROOT / "manifests/workflows"
-        paths = sorted([*manifest_root.rglob("*.yml"),
-                        *manifest_root.rglob("*.yaml")])
+        paths = sorted([*manifest_root.rglob("*.yml"), *manifest_root.rglob("*.yaml")])
         if not paths:
             raise AssertionError("no shipped workflow manifests found")
         for path in paths:
             manifest = load_workflow_manifest(path)
+            filename = path.relative_to(manifest_root).as_posix()
             for binding_name, binding in manifest.get("bindings", {}).items():
-                if not binding.get("workflow"):
-                    continue
-                graph = json.loads(
-                    (ROOT / binding["workflow"]).read_text(encoding="utf-8")
-                )
-                for output_key, selector in binding.get("selectors", {}).items():
-                    if "node" not in selector:
-                        continue
-                    node = graph[str(selector["node"])]
-                    writer = node["class_type"]
-                    written_type = writer_media_types.get(writer)
-                    if writer == "SaveVideo" and node.get("inputs", {}).get("format") != "mp4":
-                        written_type = None
-                    yield (
-                        path.relative_to(manifest_root).as_posix(),
-                        binding_name,
-                        output_key,
-                        writer,
-                        manifest["outputs"][output_key]["media_type"],
-                        written_type,
-                    )
+                graph = json.loads((ROOT / binding["workflow"]).read_text(encoding="utf-8")) if binding.get("workflow") else None
+                selectors = binding.get("selectors", {})
+                for output_key, output in manifest["outputs"].items():
+                    selector = selectors.get(output_key)
+                    if graph is None:
+                        writer = "<no graph workflow>"
+                    elif selector is None or "node" not in selector:
+                        writer = "<no node selector>"
+                    else:
+                        writer = graph[str(selector["node"])]["class_type"]
+                    written = cls.WRITER_MEDIA_TYPES.get(writer)
+                    if writer == "SaveVideo" and graph[str(selector["node"])].get("inputs", {}).get("format") != "mp4":
+                        written = None
+                    yield filename, binding_name, output_key, writer, output["media_type"], written
 
-    # Outputs whose writer fixes no media type: SaveVideo with format "auto" keeps the input container, and
-    # TangoFlux writes through its own node. A new unchecked writer must be added here on purpose.
-    UNCHECKED_WRITERS = {
-        ("tangoflux.yml", "TangoFluxVAEDecodeAndPlay"),
-        ("rife-interpolate.yml", "SaveVideo"),
-        ("video-mux.yml", "SaveVideo"),
+    # Every output the check cannot compare, named one by one: a writer that fixes no media type (SaveVideo with
+    # format "auto" keeps its input container; TangoFlux writes through its own node), or a binding with no graph
+    # writer at all (the gateway or an HTTP engine makes the output). A new unchecked output fails until it is added here.
+    UNCHECKED_OUTPUTS = {
+        ("face-likeness.yml", "gateway", "report", "<no graph workflow>"),
+        ("flux2-klein-4b-seamless-tile.yml", "gateway", "image", "<no graph workflow>"),
+        ("mesh.generate.trellis-2.yml", "http-multipart", "mesh", "<no graph workflow>"),
+        ("rife-interpolate.yml", "comfyui", "video", "SaveVideo"),
+        ("tangoflux.yml", "comfyui", "audio", "TangoFluxVAEDecodeAndPlay"),
+        ("video-mux.yml", "comfyui", "video", "SaveVideo"),
     }
 
     def test_declared_output_media_types_match_known_writers(self) -> None:
         checked = 0
         unchecked = set()
-        for filename, binding, key, writer, declared, written in self._writer_contracts():
+        for filename, binding, key, writer, declared, written in self._output_rows():
             if written is None:
-                unchecked.add((filename, writer))
+                unchecked.add((filename, binding, key, writer))
                 continue
             checked += 1
             with self.subTest(manifest=filename, binding=binding, output=key, writer=writer):
                 self.assertEqual(declared, written)
-        self.assertGreater(checked, 0, "no known output writers checked")
-        self.assertEqual(unchecked, self.UNCHECKED_WRITERS)
+        self.assertGreaterEqual(checked, 30, "fewer known output writers checked than shipped")
+        self.assertEqual(unchecked, self.UNCHECKED_OUTPUTS)
 
 
 if __name__ == "__main__":

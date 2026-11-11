@@ -346,7 +346,7 @@ async def _to_run_request(shape: OpenAIVideoCreate, request: Request, row: Front
         "length_frames": length, "frame_rate": frame_rate,
         "provenance": provenance.build_provenance_record(
             receipt=context.receipt if context else None,
-            kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=f"{chosen.contract.get('intent')}.{name}",
+            kind=shape.wire_name, requested_model=public_model, resolved_model=name, workflow_id=chosen.id,
             backend=next((r.runtime_policy.get("backend") for r in row.routes if r.runtime_policy.get("backend")), None),
             seed=seed, parameters=parameters, created_at=now)}
     if seed is not None:
