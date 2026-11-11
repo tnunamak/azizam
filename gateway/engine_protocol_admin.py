@@ -66,7 +66,7 @@ def _precondition(request: Request) -> tuple[str, int | None] | JSONResponse:
             return _refuse(400, "invalid_precondition", "If-None-Match must be *.")
         return "create", None
     if if_match is None:
-        return _refuse(428, "revision_required", "Send If-None-Match: * to create, or If-Match with the current ETag.")
+        return _refuse(428, "protocol_revision_required", "Send If-None-Match: * to create, or If-Match with the current ETag.")
     found = _REVISION.fullmatch(if_match.strip())
     return ("match", int(found.group(1))) if found else ("match", -1)
 
@@ -119,7 +119,7 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
             return _item(protocol_id, row.text, "user", _tag(row.revision))
         shipped = _shipped_text(protocol_id) if _ID.fullmatch(protocol_id) else None
         if shipped is None:
-            return _refuse(404, "not_found", "There is no protocol description with this id.")
+            return _refuse(404, "protocol_not_found", "There is no protocol description with this id.")
         return _item(protocol_id, shipped, "seed", f'"seed-{hashlib.sha256(shipped.encode()).hexdigest()[:16]}"')
 
     @router.put("/engine-protocols/{protocol_id}")
@@ -157,12 +157,12 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
         if not _is_owner(ctx):
             return _refuse(403, "owner_required", "Only the owner can remove a protocol description.")
         if not _ID.fullmatch(protocol_id):
-            return _refuse(404, "not_found", "There is no protocol description with this id.")
+            return _refuse(404, "protocol_not_found", "There is no protocol description with this id.")
         if _shipped_text(protocol_id) is not None:
             return _refuse(409, "protocol_shipped", "This description ships with the release and cannot be removed.")
         condition = _precondition(request)
         if isinstance(condition, JSONResponse):
             return condition
         if condition[0] != "match":
-            return _refuse(428, "revision_required", "Send If-Match with the current ETag.")
+            return _refuse(428, "protocol_revision_required", "Send If-Match with the current ETag.")
         return await asyncio.to_thread(_remove, protocol_id, condition[1])

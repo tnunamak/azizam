@@ -268,10 +268,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-11: ace-step-1.5-xl-turbo declares audio/flac, the type its SaveAudio writer produces, so its
         # one output entry in the workflow list moved; nothing else did (tests/fixtures/headless_openapi.json shows the same
         # one change). Before it the digest was 34e4f7b03ab2d187d99edd673cdfb691721b7e74b90ccf2eebbeace866762e7c.
-                # Re-captured 2026-11-11 for GET, PUT and DELETE /admin/api/engine-protocols/{protocol_id} (see ADDED_PATHS): only that
+        # Re-captured 2026-11-11 for GET, PUT and DELETE /admin/api/engine-protocols/{protocol_id} (see ADDED_PATHS): only that
         # path is new (tests/fixtures/headless_openapi.json shows the same addition and nothing else). Before it the digest was
         # 145ba35107145b77c73cebbfd8cc0beb3b79dad245b19e7a0f3fbfbc67032d06.
-assert route_graph.openapi_digest(proxy.app) == "49d96932a9d710ff5f20a2b833fbe5449901f4c455c41161918e75c8fca63587"
+        assert route_graph.openapi_digest(proxy.app) == "49d96932a9d710ff5f20a2b833fbe5449901f4c455c41161918e75c8fca63587"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
