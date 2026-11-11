@@ -60,6 +60,16 @@ def smell_engine(fake_upstreams, monkeypatch):  # noqa: F811 - fixture
     return engine
 
 
+class EmptyModelCatalog:
+    """The LLM substrate's model list, empty: the gateway asks it for one when an engine is enabled."""
+
+    async def __call__(self, scope, receive, send):
+        body = b'{"object": "list", "data": []}'
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+
 @pytest.fixture
 def owner(gateway, smell_engine, tmp_path, monkeypatch):  # noqa: F811 - fixture
     """A signed-in owner on a fresh gateway whose protocol overlay directory is empty and under the test's state."""
@@ -216,10 +226,11 @@ def _public_documents(public, key) -> tuple[bytes, bytes, dict]:
     return models.content, openapi.content, refused.json()["error"]["supported_intents"]
 
 
-def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_changes_nothing(owner, gateway):
+def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_changes_nothing(owner, gateway, fake_upstreams):  # noqa: F811
     client, overlay, owner_id, plan_id = owner
     key = _app_key(client, owner_id, plan_id)
     public = gateway.client()  # no lifespan: nothing here runs a background job
+    fake_upstreams.router.add("127.0.0.1:4011", EmptyModelCatalog())
     none_models, none_openapi, none_intents = _public_documents(public, key)
     _install_description(overlay)
     # A description alone adds an engine to nothing: the documents are the bytes they were.
