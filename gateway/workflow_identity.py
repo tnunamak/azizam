@@ -30,8 +30,9 @@ def _binding_stems(manifest: Mapping[str, Any]) -> set[str]:
 def find_workflow_record(records: Iterable[Any], intent: str, name: str) -> Any:
     """The record of ``intent`` whose binding file stem is ``name``; else the one whose id is ``intent.name``.
 
-    Returns None when neither exists. Raises ``AmbiguousWorkflowStem`` when two records of the intent
-    share the stem, so a pick never depends on registry order.
+    When several records of the intent share the stem, the one among them whose id is ``intent.name`` wins; with no
+    such record it raises ``AmbiguousWorkflowStem``, so a pick never depends on registry order. Returns None when
+    neither exists.
     """
     by_stem = []
     by_id = None
@@ -43,6 +44,9 @@ def find_workflow_record(records: Iterable[Any], intent: str, name: str) -> Any:
             by_stem.append(record)
         if manifest.get("id") == f"{intent}.{name}":
             by_id = record
+    if len(by_stem) > 1 and by_id in by_stem:
+        # Two packages may ship graphs with one file name; the record whose id is the name is the one it names.
+        return by_id
     if len(by_stem) > 1:
         ids = sorted(str(r.manifest.get("id")) for r in by_stem)
         raise AmbiguousWorkflowStem(f"{intent} records {ids} share the graph file stem {name!r}")

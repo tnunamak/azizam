@@ -80,6 +80,12 @@ def test_two_records_of_one_intent_sharing_a_stem_raise(order):
         find_workflow_record(records[::1 - 2 * order], EDIT_INTENT, "shared")
 
 
+@pytest.mark.parametrize("order", [0, 1])
+def test_a_shared_stem_names_the_record_whose_id_is_the_name(order):
+    records = [_record("image.generate.alpha", GEN_INTENT, "shadowed"), _record("image.generate.shadowed", GEN_INTENT, "shadowed")]
+    assert find_workflow_record(records[::1 - 2 * order], GEN_INTENT, "shadowed").manifest["id"] == "image.generate.shadowed"
+
+
 def test_the_same_stem_under_two_intents_is_not_ambiguous():
     records = [_record("image.edit.x", EDIT_INTENT, "shared"), _record("image.generate.x", GEN_INTENT, "shared")]
     assert find_workflow_record(records, GEN_INTENT, "shared") is records[1]

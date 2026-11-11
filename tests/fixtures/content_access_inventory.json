@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "655c448fc32be90afae27c0941d825171d64e647f46fe598266d9bcaafce179c",
+      "source_sha256": "8b8fe7db8d12cfdbf471cc78aab6d67b791cf3d3eca68016ba7cfba3647c082b",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "f45921ca94aeb4f498120ba1feab052ff8005748e98a88d0cf59d53ae6b6cddf",
+      "source_sha256": "aa205d8b9057a04ea80cbe2f0515693577b56e157a9a3ad72ace764ce755a2ec",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
