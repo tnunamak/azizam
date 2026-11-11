@@ -22,6 +22,8 @@ UNKNOWN_KIND = "file"
 # its own. A kind with no row is named from its own type, so a new media type needs no entry to list, filter and download.
 KIND_NAMES_PATH = Path(__file__).resolve().parent.parent / "registry" / "asset_kinds.yml"
 KIND_WORDS = ("label", "plural", "untitled", "input")
+# A stored file whose kind has no prefix of its own is stored under this one, so no kind row may claim it.
+OTHER_ASSET_PREFIX = "ast"
 
 
 def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
@@ -50,6 +52,8 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
                 raise ValueError(f"{path.name}: kind {kind!r} prefix must be 1-8 lowercase ASCII letters")
             if prefix in prefixes:
                 raise ValueError(f"{path.name}: kind {kind!r} has duplicate prefix {prefix!r}")
+            if prefix == OTHER_ASSET_PREFIX:
+                raise ValueError(f"{path.name}: kind {kind!r} prefix {prefix!r} is reserved for kinds with no prefix")
             prefixes.add(prefix)
             table[kind]["prefix"] = prefix
     return table
@@ -150,7 +154,6 @@ def asset_prefixes_by_top_type(kinds: dict[str, dict[str, str]]) -> dict[str, st
 
 # A kind without a configured prefix is stored under the generic prefix.
 ASSET_PREFIX_BY_TOP_TYPE: dict[str, str] = asset_prefixes_by_top_type(KIND_NAMES)
-OTHER_ASSET_PREFIX = "ast"
 
 
 def asset_prefix_for_media_type(media_type: str | None) -> str:

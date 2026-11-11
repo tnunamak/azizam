@@ -104,6 +104,13 @@ def test_row_that_is_not_submittable_with_a_route_is_refused():
         media_job_intents.parse_rows(doc)
 
 
+def test_row_that_is_not_submittable_with_a_component_is_refused():
+    doc = _doc()
+    doc["intents"][1]["component"] = "VideoGenerationRequest"
+    with pytest.raises(ValueError):
+        media_job_intents.parse_rows(doc)
+
+
 def test_a_table_with_no_submittable_intent_is_refused():
     doc = {"intents": [{"intent": "image.edit", "modality": "image", "submittable": False}]}
     with pytest.raises(ValueError, match="no submittable"):

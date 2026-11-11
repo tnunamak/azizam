@@ -350,6 +350,7 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, extra: x}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: '', input: smell}}\n",
     "kinds: {Smell: {label: Smell, plural: Smells, untitled: Smell, input: smell}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, prefix: ast}}\n",
     "other: 1\n",
 ])
 def test_a_malformed_kind_file_is_refused(tmp_path, text):
