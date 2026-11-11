@@ -201,10 +201,13 @@ def capture_models_catalog() -> dict[str, Any]:
     paths = {intent: models_catalog._path_for_capability(_cap(intent)) for intent in INTENTS_FOR_EXAMPLES}
     empty = {"examples_empty": models_catalog._examples("row-id", []), "operation_of_none": models_catalog._capabilities_for_operation(None, "chat")}
 
+    # The input the models_catalog golden was captured with. The video alias deliberately names no shipped workflow
+    # (video.generate.ltx-2.5-t2v is the real id), so the catalog keeps that workflow as a model row and the alias out;
+    # changing it moves the golden, which only tests/fixtures/c2d_parity/capture.py may rewrite.
     alias_views = {
         "images": {"stable": [{"alias": "image-fast", "resolves_to": "image.generate.flux2-klein-4b"}]},
         "image_edits": {"stable": [{"alias": "image-edit-fast", "resolves_to": "image.edit.flux2-klein-4b"}]},
-        "videos": {"stable": [{"alias": "video-default", "resolves_to": "video.generate.ltx-2.5-t2v"}]},
+        "videos": {"stable": [{"alias": "video-default", "resolves_to": "video.generate.video-ltx-2.5-t2v"}]},
         "chat": {"stable": [{"alias": "chat-default", "resolves_to": "default"}]},
     }
     catalog = models_catalog.build_models_catalog(capabilities=caps, alias_views=alias_views)
