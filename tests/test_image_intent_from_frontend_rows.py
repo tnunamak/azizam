@@ -94,7 +94,7 @@ def test_handler_loads_its_workflow_under_the_intent_it_holds() -> None:
             asyncio.run(proxy.proxy_graph_image_request(Request(), access_context(), intents=intents))
         except Exception:  # noqa: BLE001 - only the lookup's intent matters; the request shim may stop earlier
             pass
-    assert set(asked) <= {"still.synthesize"}
+    assert asked and set(asked) == {"still.synthesize"}
 
 
 def test_unknown_route_raises_a_named_error() -> None:
