@@ -1352,6 +1352,24 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.engine_protocol",
+      "method": "GET",
+      "path": "/admin/api/engine-protocols/{protocol_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.put_engine_protocol",
+      "method": "PUT",
+      "path": "/admin/api/engine-protocols/{protocol_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.delete_engine_protocol",
+      "method": "DELETE",
+      "path": "/admin/api/engine-protocols/{protocol_id}",
+      "access": "operational"
+    },
+    {
       "handler": "gateway.transition_admin.register_transition_routes.<locals>.start_transition",
       "method": "POST",
       "path": "/admin/api/engines/domains/{domain}/transitions",
