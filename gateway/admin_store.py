@@ -305,6 +305,16 @@ CREATE TABLE IF NOT EXISTS retention_fact_overrides (
   PRIMARY KEY(target_type, target_id)
 );
 
+-- Protocol descriptions the owner installed through the engine protocols route (gateway/protocol_description_store.py).
+-- The row revision comes from one counter, operator_settings_generations key 'protocol_descriptions', so it is never reused.
+CREATE TABLE IF NOT EXISTS protocol_descriptions (
+  id TEXT PRIMARY KEY,
+  document_text TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS prompt_memory_preferences (
   user_id TEXT NOT NULL,
   grp TEXT NOT NULL,
@@ -4488,6 +4498,10 @@ def write_service_registry_in_transaction(
         and service_registry.is_litellm_service_record(record_id, record),
     )
     after_effective = registry_layers.layer(value, release)
+    # Every engine write runs here under the writer lock, so a description delete cannot slip between this check and the
+    # write: an engine that now names a protocol description needs the description to exist.
+    from gateway import protocol_description_store
+    protocol_description_store.require_new_references(conn, registry_layers.layer(before, release), after_effective)
     # The one name check every write of the registry document runs (CODE_TO_DATA_S4_S8, 3.0): a write may not give one
     # name to two owners. A clash the registry already held does not stop an unrelated write.
     service_registry.refuse_new_name_clashes(registry_layers.layer(before, release), after_effective)

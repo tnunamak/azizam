@@ -1843,6 +1843,7 @@ def create_admin_router(
     from gateway.retention_fact_api import register_routes as register_retention_fact_routes
     register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)
     from gateway.engine_protocol_admin import register_engine_protocol_routes
+    # The routes, the listing and the dispatch loader read the one store protocol_description_store.db_path() names (proxy.py registers it).
     register_engine_protocol_routes(router, guard=_guard)
     if stt_measurements is not None:
         from gateway.stt_measurement_api import register_routes as register_stt_measurement_routes

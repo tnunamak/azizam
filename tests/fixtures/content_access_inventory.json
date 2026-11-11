@@ -160,7 +160,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "c669621a07b169ace0eb23cb84a9eb1b3183e9a91e0602d3a11f210b3a9f6217",
+      "source_sha256": "a42bdd081d2a8c8a20c967bd0032ef2c51f48d9ca6c13229a7a31b6bb63be97a",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "aa205d8b9057a04ea80cbe2f0515693577b56e157a9a3ad72ace764ce755a2ec",
+      "source_sha256": "cf9b2049febe28a690d241a4c68c1a00a1129a84edb70e3fd316c62263ff2fbb",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -265,6 +265,14 @@
       "path": "gateway/workflow_run.py",
       "function": "_run",
       "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
+      "call": "append_event",
+      "event": "'succeeded'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/declared_operation_job.py",
+      "function": "run",
+      "source_sha256": "89259a8b5889af59c470b8370c411b3b42196dd9c9af5c189525624b18910668",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -1349,6 +1357,24 @@
       "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.engine_protocols",
       "method": "GET",
       "path": "/admin/api/engine-protocols",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.engine_protocol",
+      "method": "GET",
+      "path": "/admin/api/engine-protocols/{protocol_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.put_engine_protocol",
+      "method": "PUT",
+      "path": "/admin/api/engine-protocols/{protocol_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.engine_protocol_admin.register_engine_protocol_routes.<locals>.delete_engine_protocol",
+      "method": "DELETE",
+      "path": "/admin/api/engine-protocols/{protocol_id}",
       "access": "operational"
     },
     {

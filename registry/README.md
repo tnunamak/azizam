@@ -222,6 +222,21 @@ media-jobs image-generations frontend. They remain in the named
 `_RESIDUAL_EXTENSION_ROUTES` tuple at orders 50 and 90 respectively; no registry
 rows are invented for them. Every other extension route fact belongs on its
 serving registered row.
+## Execution intents on a serving row
+
+A `registered_routes` row may declare `execution_intents`, a mapping with the keys `admission` and `receipt`
+(at least one; each a nonempty intent name). It is what the row's handler admits its work under and starts its
+receipt under. It is separate from `runtime_policy.intent` (which route policy reads) and from `workflow_targets`
+(discovery). The mount binds the matched row to the request after its caller check, so a handler spells no
+intent of its own; a caller outside a request (a job runner) gets the mounted row of the handler's operation
+(translator and intent). A handler whose row lacks the role it needs stops with a configuration error.
+Today `images.generate`, `images.edit`, `images.variations`, `audio.generate`, `videos.remix`, `videos.edit` and
+`videos.extend` declare it; the values are the ones their handlers admitted and receipted before the field existed.
+The three roles stay separate: `videos.edit` has route policy `video.remix` and admits `video.edit`; `videos.extend`
+has route policy `video.generate` and admits and receipts `video.extend`. `videos.create` does not declare it yet:
+its registered row has no translator (the `videos-create` wire-shape frontend serves the route), so the mount holds
+no row of that operation for a caller outside a request to read. Its handler still spells `video.generate`.
+
 ## Local capability rows
 
 `local_capability_rows.yml` is schema-version-1 package data for

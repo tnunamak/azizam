@@ -315,9 +315,11 @@ def _check_plan(
     elif intent is not None and intent not in DISCOVERY_INTENTS and intent not in UNSUPPORTED_INTENTS:
         capability = capability_for_intent(intent)
         grant = plan.effective_can_use.get(capability) if capability else None
-        if grant is None:
+        # An intent no capability names is a kind of work an owner's engine added: only a plan that grants every type
+        # of work, including ones added later, admits it.
+        if grant is None and not (capability is None and plan.all_work_types):
             return refuse(RULE_CAPABILITY_NOT_GRANTED, _item_label(request, capability), capability)
-        if not grant.allows(model=request.model, workflow=request.workflow, requested=request.requested_model):
+        if grant is not None and not grant.allows(model=request.model, workflow=request.workflow, requested=request.requested_model):
             return refuse(RULE_ITEM_NOT_LISTED, _item_label(request, capability),
                           request.workflow or request.requested_model or request.model)
     if request.remote_provider is not None:

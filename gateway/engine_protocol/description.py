@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -692,8 +693,48 @@ def user_directory() -> Path:
     return Path(os.environ.get("AZIZAM_PROTOCOLS_DIR") or admin_store.DB_PATH.parent / "protocols")
 
 
+_OWNER_MEMO: dict[Path, tuple[int, dict[str, ProtocolDescription], dict[str, str]]] = {}
+
+
+def owner_descriptions() -> tuple[dict[str, ProtocolDescription], dict[str, str]]:
+    """The descriptions the owner installed through the admin route, and a problem per row that no longer parses.
+
+    The running gateway checks an in-process revision invalidated by committed writes; standalone readers check SQLite."""
+    from gateway import protocol_description_store as store
+
+    path = store.db_path()
+    cached = _OWNER_MEMO.get(path)
+    try:
+        counter = store.cache_revision(path)
+        if cached is not None and cached[0] == counter:
+            return dict(cached[1]), dict(cached[2])
+        _, rows = store.read_all(path)
+    except sqlite3.Error as error:
+        # A read that failed is not "nothing installed": keep the last good snapshot and say the store could not be read.
+        _LOG.warning("Cannot read the stored protocol descriptions: %s", type(error).__name__)
+        unreadable = {"stored descriptions": "The stored descriptions cannot be read now. The last good copy stays in use."}
+        return (dict(cached[1]), {**cached[2], **unreadable}) if cached is not None else ({}, unreadable)
+    loaded: dict[str, ProtocolDescription] = {}
+    problems: dict[str, str] = {}
+    for row in rows:
+        description_id = row.id
+        try:
+            parsed = parse_description_text(row.text, source=description_id)
+            if parsed.id != row.id:
+                raise DescriptionError(row.id, ["The stored id must equal the description id."])
+            loaded[row.id] = parsed
+        except DescriptionError as error:
+            _LOG.warning("Cannot load owner protocol description %s: %s", description_id, error)
+            problems[f"{row.id} (owner)"] = "The description is invalid. Replace or delete it."
+    _OWNER_MEMO.clear()
+    _OWNER_MEMO[path] = (counter, loaded, problems)
+    return dict(loaded), dict(problems)
+
+
 def registry_problems() -> list[dict[str, str]]:
-    return [{"file": name, "reason": reason} for _, _, issues in tuple(_MEMO.values()) for name, reason in issues.items()]
+    owner_problems = owner_descriptions()[1]
+    return [{"file": name, "reason": reason} for name, reason in owner_problems.items()] + [
+        {"file": name, "reason": reason} for _, _, issues in tuple(_MEMO.values()) for name, reason in issues.items()]
 
 
 def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], dict[str, str]]:
@@ -722,7 +763,9 @@ def _load_directory(directory: Path) -> tuple[dict[str, ProtocolDescription], di
 
 
 def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescription]:
-    """Load valid files independently. User files replace seeds, including invalid overrides."""
+    """Load valid files independently, then the owner's stored descriptions. User files replace seeds, including invalid
+    overrides; an owner row replaces a file of the same id, so an owner row wins over a shipped file of the same id until
+    the owner deletes it (the write route refuses a new write of a shipped id)."""
     if directory is not None:
         return _load_directory(Path(directory))[0]
     directories = [REGISTRY_DIR, user_directory()]
@@ -736,6 +779,7 @@ def load_registry(directory: Path | None = None) -> dict[str, ProtocolDescriptio
         for file in issues:
             loaded.pop(Path(file).stem, None)
         loaded.update(records)
+    loaded.update(owner_descriptions()[0])
     return loaded
 
 

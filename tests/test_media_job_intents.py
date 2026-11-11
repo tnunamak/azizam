@@ -17,10 +17,14 @@ ORACLE_RESOURCE_CLASS = {
     "image.generate": "image",
     "image.edit": "image",
     "image.identity": "image",
+    "image.variation": "image",
     "audio.generate": "audio",
     "music.generate": "audio",
     "sfx.generate": "audio",
     "video.generate": "video",
+    "video.extend": "video",
+    "video.remix": "video",
+    "video.edit": "video",
 }
 ORACLE_PROSE = (
     "The body you would send to the matching sync route: "
@@ -61,7 +65,7 @@ def test_prose_and_components_match():
 
 def test_non_submittable_rows_are_not_published():
     names = {r.intent for r in media_job_intents.ROWS if not r.submittable}
-    assert names == {"image.edit", "image.identity"}
+    assert names == {"image.edit", "image.identity", "image.variation", "video.extend", "video.remix", "video.edit"}
 
 
 def _doc():

@@ -553,14 +553,17 @@ def test_video_8_70_content_of_an_unfinished_video_is_not_ready(tmp_path):
     seen = {}
 
     def setup(rig):
-        _comfy(rig, running_polls=5)
+        # The rig skips poll sleeps: a finite five-poll fake can finish while the GET authenticates.
+        # Keep the engine busy through the content request, as in the unfinished-video cancel cases.
+        _comfy(rig, running_polls=10 ** 6)
 
     async def drive(rig):
         created = await rig.call("POST", "/v1/videos", json_body=_created())
-        seen["status"] = (await rig.call("GET", f"/v1/videos/{created.json()['id']}/content")).status_code
+        content = await rig.call("GET", f"/v1/videos/{created.json()['id']}/content")
+        seen["status"], seen["code"] = content.status_code, content.json()["error"]["code"]
 
     _run(tmp_path, "r8-70", setup, drive)
-    assert seen["status"] != 200
+    assert seen == {"status": 404, "code": "video_not_ready"}
 
 
 def test_video_8_74_content_of_a_finished_video_is_mp4_bytes(tmp_path):

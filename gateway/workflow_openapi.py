@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
@@ -709,8 +709,12 @@ def augment_openapi(
     records: Iterable[WorkflowRecord],
     aliases: Mapping[str, Any] | None = None,
     video_limits: Mapping[str, Mapping[str, Any]] | None = None,
+    declared_intents: Sequence[str] = (),
 ) -> dict[str, Any]:
-    """Add the typed native surface to a FastAPI OpenAPI document, in place."""
+    """Add the typed native surface to a FastAPI OpenAPI document, in place.
+
+    ``declared_intents`` are the operations enabled engines declare (declared_operation_job.intents); with none, the
+    document is the one the static intent table alone gives."""
     records = sorted(records, key=lambda r: r.id)
     workflow_request_maps.validate_execution_records(records)
     info = spec.setdefault("info", {})
@@ -780,6 +784,21 @@ def augment_openapi(
             },
         },
     }
+    if declared_intents:
+        # A declared operation takes its input object and a model, not the body of a sync route. Each shape names its
+        # own intents, so a shipped intent cannot be sent with the declared shape or the other way round.
+        declared_body = {
+            "type": "object",
+            "required": ["intent", "model", "input"],
+            "properties": {
+                "intent": {"type": "string", "enum": list(declared_intents)},
+                "model": {"type": "string", "description": "The offering that serves a declared intent."},
+                "input": {
+                    "type": "object", "additionalProperties": True,
+                    "description": "The input object of a declared intent; the engine's description decides which fields it uses."},
+            },
+        }
+        submit_body = {"oneOf": [submit_body, declared_body]}
     job_ok = {"description": "Job accepted. Poll `poll_url`.",
               "content": {_JSON: {"schema": _ref("MediaJob")}}}
     if JOBS_SUBMIT in paths and "post" in paths[JOBS_SUBMIT]:

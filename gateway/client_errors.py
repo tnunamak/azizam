@@ -103,6 +103,7 @@ CODE_REASONS: dict[str, str] = {
     "invalid_image": "The image could not be read.",
     "invalid_image_format": "The image format is not supported.",
     "invalid_image_url": "The image address could not be used.",
+    "invalid_media_job_input": "The media job input must be a JSON object.",
     "invalid_prompt": "The prompt was refused.",
     "invalid_json": "The request body is not valid JSON.",
     "json_validate_failed": "The model's reply did not match the requested format.",

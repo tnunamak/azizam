@@ -13,6 +13,11 @@ the fake upstream in `tests/support/protocol_upstream.py`.
    Files there survive an image rebuild. Bundled descriptions in
    `registry/protocols` load first; a user file with the same id replaces its seed.
    An invalid override disables that id instead of falling back silently.
+   The owner can also install a description without a file: `PUT /admin/api/engine-protocols/<id>` with the raw YAML or
+   JSON, `If-None-Match: *` to create and `If-Match: <ETag>` to replace or delete (`GET` reads one, `DELETE` removes it).
+   The description is stored in `admin.db`, checked by the same parser, and every gateway worker sees it on its next
+   request. A shipped id refuses writes (409), and so does deleting a description an engine names. The add-engine dialog
+   then offers the operations it declares as tasks. A stored description replaces a file of the same id.
 2. Validate the file before enabling it:
 
    ```sh

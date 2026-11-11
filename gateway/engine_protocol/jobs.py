@@ -81,6 +81,35 @@ async def _pause(wake: asyncio.Event, interval_s: float) -> None:
     wake.clear()
 
 
+_CLEANUP_UNKNOWN = 'Cleanup is unknown; the upstream may still run.'
+
+
+def _consume_cancel_result(task: asyncio.Future) -> None:
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        task.result()
+
+
+async def _cancel_with_deadline(adapter, conn, ref, max_wait_s: float) -> bool:
+    """Try cleanup within the runtime's wait budget, without waiting for a cancelled adapter to acknowledge it."""
+    task = asyncio.ensure_future(adapter.cancel(conn, ref))
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=max_wait_s)
+        if task not in done:
+            return False
+        try:
+            task.result()
+        except (asyncio.CancelledError, Exception):
+            return False
+        return True
+    except asyncio.CancelledError as exc:
+        raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from exc
+    finally:
+        if not task.done():
+            task.cancel()
+            # An adapter may suppress cancellation; observe a later failure without holding terminal accounting.
+            task.add_done_callback(_consume_cancel_result)
+
+
 def _saved_state(value) -> JobState | None:
     """The job state a previous run saved, or ``None`` when there is none or it is not a known state."""
     try:
@@ -216,11 +245,19 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
                         raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
                 await _pause(wake, interval_s)
     except TimeoutError:
-        await adapter.cancel(conn, ref)
-        raise BudgetExceeded('max_wait_s', 'The upstream job exceeded its wait limit.' + (f' Last poll failure: {last_error}' if last_error else '')) from None
+        cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+        detail = 'The upstream job exceeded its wait limit.'
+        if not cleaned:
+            detail += f' {_CLEANUP_UNKNOWN}'
+        raise BudgetExceeded('max_wait_s', detail + (f' Last poll failure: {last_error}' if last_error else '')) from None
     except asyncio.CancelledError:
-        # A disconnected caller does not leave an untracked upstream running.
-        await asyncio.shield(adapter.cancel(conn, ref))
+        # A disconnected caller gets a bounded cleanup attempt, never an assertion that upstream stopped.
+        try:
+            cleaned = await asyncio.shield(_cancel_with_deadline(adapter, conn, ref, max_wait_s))
+        except asyncio.CancelledError as exc:
+            raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from exc
+        if not cleaned:
+            raise asyncio.CancelledError(_CLEANUP_UNKNOWN) from None
         raise
     finally:
         if follower is not None:

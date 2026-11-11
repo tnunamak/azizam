@@ -12,6 +12,7 @@ import sqlite3
 import pytest
 
 from gateway import category_enforcement
+from gateway.access_plans import AccessPlan
 from gateway.capabilities import Capability, capability_with_policy_view
 from gateway.policy import APP_SIDE, PERSON_SIDE, PolicyRequest, evaluate
 from gateway.runtime_auth import evaluate_and_apply, make_policy_request
@@ -35,6 +36,35 @@ def test_a_capability_the_plan_does_not_include():
     rule = decision.rule
     assert (rule.code, rule.kind, rule.id, rule.side, rule.subject) == (
         "plan.capability_not_granted", "plan", "plan_kids", PERSON_SIDE, "video")
+
+
+def test_an_intent_no_capability_names_needs_a_plan_that_grants_every_type_of_work():
+    # An owner's engine can declare a kind of work no capability names; only an all-work-types plan admits it.
+    assert not _ask(AccessPlan(id="plan_all", name="all", all_work_types=True), intent="smell.infer", model="smell-1").denied
+    decision = _ask(KIDS, intent="smell.infer", model="smell-1")
+    assert decision.denied
+    assert decision.rule.code == "plan.capability_not_granted"
+
+
+@pytest.mark.parametrize(("person", "app", "code", "side"), [
+    # Every capability that exists today is not every type of work: a kind added later needs all_work_types.
+    (plan_for("plan_every_cap"), "same", "plan.capability_not_granted", PERSON_SIDE),
+    (plan_for("plan_no_types", caps=()), "same", "plan.capability_not_granted", PERSON_SIDE),
+    (None, AccessPlan(id="plan_all", name="all", all_work_types=True), "plan.none", PERSON_SIDE),
+    (AccessPlan(id="plan_all", name="all", all_work_types=True), None, "plan.none", APP_SIDE),
+    (AccessPlan(id="plan_all", name="all", all_work_types=True), KIDS, "plan.capability_not_granted", APP_SIDE),
+    (KIDS, AccessPlan(id="plan_all", name="all", all_work_types=True), "plan.capability_not_granted", PERSON_SIDE),
+])
+def test_an_intent_no_capability_names_needs_all_work_types_on_both_sides(person, app, code, side):
+    decision = _ask(access(person, app), intent="smell.infer", model="smell-1")
+    assert decision.denied
+    assert (decision.rule.code, decision.rule.side) == (code, side)
+
+
+def test_an_intent_no_capability_names_is_admitted_when_both_sides_grant_every_type_of_work():
+    everything = AccessPlan(id="plan_all", name="all", all_work_types=True)
+    assert not _ask(access(everything, AccessPlan(id="plan_app_all", name="app", all_work_types=True)),
+                    intent="smell.infer", model="smell-1").denied
 
 
 def test_an_item_the_plan_does_not_list():

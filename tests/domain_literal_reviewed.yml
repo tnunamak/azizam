@@ -180,3 +180,53 @@ sites:
     count: 1
     category: wire_enum
     reason: The 200 response description in _OPENAI_COMPAT_JSON_BODY_OPENAPI, published in /openapi.json for the OpenAI-compatible JSON routes; it selects no workflow, model, engine or intent.
+  - file: gateway/a1111_api.py
+    literal: "upscaling is not supported by this adapter; use the seedvr2-upscale workflow"
+    count: 2
+    category: wire_enum
+    reason: "Names the seedvr2-upscale workflow as a recommendation inside the adapter's published unsupported-route error message table; it does not select that workflow."
+  - file: gateway/mcp_server.py
+    literal: "Filter by intent, e.g. image.generate, video.generate, audio.generate."
+    count: 1
+    category: wire_enum
+    reason: "Example text in the MCP tool inputSchema description of the intent property (published discovery contract); it is documentation, not an allowlist or dispatch."
+  - file: gateway/mcp_server.py
+    literal: "audio"
+    count: 1
+    category: wire_enum
+    reason: "Output name in the published MCP workflow-detail outputs[].name list, beside the fixed audio/mpeg type; it is not a MIME type."
+  - file: gateway/mcp_server.py
+    literal: "audio.speech"
+    count: 2
+    category: wire_enum
+    reason: "Emitted gateway MCP workflow-discovery detail.intent value, the published introspection vocabulary; it is not OpenAI's request intent field."
+  - file: gateway/mcp_server.py
+    literal: "image"
+    count: 2
+    category: wire_enum
+    reason: "MCP ImageContent type discriminator paired with base64 data and mimeType, the MCP content-block contract; not an engine or workflow choice."
+  - file: gateway/providers.py
+    literal: "audio"
+    count: 2
+    category: wire_enum
+    reason: "Body-field name of the OpenAI Chat Completions assistant audio field checked by the unbounded-media payload guard (same-field contract at tests/domain_literal_reviewed.yml:68-72)."
+  - file: gateway/redaction.py
+    literal: "image"
+    count: 1
+    category: wire_enum
+    reason: "Payload key in the redaction-name set that corresponds to the OpenAI Images edit/variation image field (same field as tests/domain_literal_reviewed.yml:58-67)."
+  - file: gateway/service_registry.py
+    literal: ": protocol must be a plain name such as 'openai-compatible'"
+    count: 1
+    category: wire_enum
+    reason: "Text of the validation error for the connection protocol field; the predicate is a plain-name regex, and the literal is an illustrative protocol name."
+  - file: gateway/setup_render.py
+    literal: "Or set env for OpenAI-compatible SDKs"
+    count: 1
+    category: wire_enum
+    reason: "Published setup-page copy naming SDK compatibility above the env block; it does not select an SDK or engine."
+  - file: proxy.py
+    literal: "audio.generation"
+    count: 1
+    category: wire_enum
+    reason: "Emitted object discriminator of the gateway audio-generation response (created, job_id, data), the gateway extension's response object contract, not a claimed OpenAI discriminator."

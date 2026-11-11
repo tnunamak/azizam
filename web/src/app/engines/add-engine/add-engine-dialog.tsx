@@ -143,6 +143,7 @@ function Wizard({
   const [query, setQuery] = useState("");
   const [conn, setConn] = useState<ConnectionDraft>({ address: "", key: "", envOpen: false, envName: "" });
   const [protocol, setProtocol] = useState<ProtocolDraft>({ dispatch: "", protocol: "" });
+  const [tasks, setTasks] = useState<string[]>([]);
   const [protocolError, setProtocolError] = useState<string | null>(null);
   const { data: protocolCatalog, isFetching: protocolCatalogFetching, isError: protocolCatalogError } = useQuery({ queryKey: ["engineProtocolDescriptions"], queryFn: protocolDescriptionsApi.list, enabled: protocol.dispatch === "protocol" });
   const validProtocol = !protocolCatalogFetching && !protocolCatalogError && protocolCatalog?.protocols.some((row) => row.id === protocol.protocol && row.dispatch_supported) === true;
@@ -349,6 +350,7 @@ function Wizard({
     let body: CreateEngineBody;
     if (options.keepOff) {
       body = { definition: def.definition, name: finalName, values: connectionValues(), disabled: true };
+      if (protocol.dispatch === "protocol" && tasks.length) body.capabilities = tasks;
       if (options.needKey) body.keep_off_reason = "needkey";
     } else {
       body = { definition: def.definition, name: finalName, values: allValues() };
@@ -595,7 +597,9 @@ function Wizard({
           onRecheck={() => runCheck()}
           protocolDispatch={protocol.dispatch === "protocol"}
         />
-        <ProtocolChoice value={protocol} disabled={checking} onChange={(value) => {
+        <ProtocolChoice value={protocol} disabled={checking} tasks={{ picked: tasks, onChange: setTasks }} onChange={(value) => {
+          // Tasks belong to the description they were read from.
+          if (value.protocol !== protocol.protocol || value.dispatch !== protocol.dispatch) setTasks([]);
           setProtocol(value);
           setProtocolError(null);
           setFinding(null);

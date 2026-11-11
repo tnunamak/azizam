@@ -693,11 +693,9 @@ class TestStartImageRouteReceipt(unittest.TestCase):
         self.assertEqual(receipt.api_key_name, "test-app")
         self.assertEqual(receipt.policy_decision, "allowed")
 
-    def test_unknown_path_defaults_to_image_generate(self) -> None:
-        receipt = proxy.start_image_route_receipt(
-            "/v1/images/unknown", OWNER_CONTEXT
-        )
-        self.assertEqual(receipt.intent, "image.generate")
+    def test_unknown_path_is_refused_not_defaulted(self) -> None:
+        with self.assertRaises(proxy.ImageRouteIntentError):
+            proxy.start_image_route_receipt("/v1/images/unknown", OWNER_CONTEXT)
 
 
 class TestFinishImageRouteReceipt(unittest.TestCase):

@@ -39,6 +39,7 @@ ALLOWED: dict[str, str] = {
     "gateway/engine_protocol/graph_round.py::run_round": "the engine's refusal text goes into RoundFailure's `excerpt`, which no str, repr "
                                                          "or log line shows; callers read it only to test for out of memory "
                                                          "(proxy._round_failure_response, node_graph_runner) and answer with client_errors codes",
+    "gateway/engine_protocol/description.py::owner_descriptions": "`row` is a row of the owner's own stored descriptions table (protocol_description_store.read_all), not an upstream reply; the error names the stored id, which the owner route validated, and its problems never reach a caller (the caller sees a fixed sentence)",
     "gateway/workflow_call.py::error_from": "the reply parsed is the gateway's own route answer, already built by gateway.client_errors",
     "proxy.py::create_response": "`upstream` is the gateway's own /v1/chat/completions answer (an engine's words are already replaced there)",
     "proxy.py::_handle_rerank": "RerankUpstreamError and the build_response ValueError carry the fixed sentences of gateway/rerank.py",

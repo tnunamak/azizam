@@ -362,6 +362,9 @@ Selected successful workflows are exercised separately.
 | `PUT /admin/api/operator/service-availability` | owner-bearer | denied | `gateway.admin_api.update_service_availability_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engine-definitions` | owner-bearer | denied | `gateway.engine_admin.get_engine_definitions`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engine-protocols` | owner-bearer | denied | `gateway.engine_protocol_admin.engine_protocols`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engine-protocols/{protocol_id}` | owner-bearer | denied | `gateway.engine_protocol_admin.engine_protocol`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/engine-protocols/{protocol_id}` | owner-bearer | denied | `gateway.engine_protocol_admin.put_engine_protocol`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/engine-protocols/{protocol_id}` | owner-bearer | denied | `gateway.engine_protocol_admin.delete_engine_protocol`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/engines/check` | owner-bearer | denied | `gateway.engine_admin.check_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

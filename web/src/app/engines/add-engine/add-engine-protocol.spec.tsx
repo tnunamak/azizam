@@ -123,4 +123,64 @@ describe("Add engine protocol dispatch", () => {
     expect(screen.getByRole("button", { name: "Add protocol engine (off)" })).toBeDisabled();
     expect(runCheck).not.toHaveBeenCalled();
   });
+
+  it("offers the operations the description declares as a pick list and sends the ticked ones as tasks", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue({
+      protocols: [
+        {
+          id: "d0-smell",
+          title: "Smell",
+          executor: "http-v1",
+          operations: ["smell.infer", "smell.explain"],
+          source: "user",
+          dispatch_supported: true,
+          validation: { valid: true, message: "Valid description. 2 operations." },
+        },
+      ],
+      problems: [],
+    });
+    const user = userEvent.setup();
+    const create = vi.spyOn(enginesApi, "create").mockResolvedValue({
+      registry: { schema_version: 1, services: {} },
+      serviceId: "smell-box",
+    } as never);
+    renderWithClient(
+      <AddEngineDialog open onOpenChange={() => undefined} onAdded={() => undefined} onOpenEngine={() => undefined} checkRevealMs={0} />,
+    );
+    await user.click(await screen.findByRole("button", { name: /Any OpenAI-compatible server/ }));
+    await user.type(screen.getByLabelText(/^Address/), "http://127.0.0.1:18301");
+    await user.selectOptions(screen.getByLabelText("Request dispatch"), "protocol");
+    expect(screen.queryByRole("checkbox", { name: "smell.infer" })).toBeNull();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Protocol description" }), "d0-smell");
+    expect(screen.getByRole("checkbox", { name: "smell.infer" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "smell.explain" })).not.toBeChecked();
+    expect(screen.queryByRole("textbox", { name: /task|operation/i })).toBeNull();
+    await user.click(screen.getByRole("checkbox", { name: "smell.infer" }));
+    await user.click(screen.getByRole("button", { name: "Add protocol engine (off)" }));
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ disabled: true, capabilities: ["smell.infer"] }),
+    );
+  });
+
+  it("sends no tasks when none is ticked and forgets the ticks when another description is chosen", async () => {
+    const user = userEvent.setup();
+    const create = vi.spyOn(enginesApi, "create").mockResolvedValue({
+      registry: { schema_version: 1, services: {} },
+      serviceId: "tiny",
+    } as never);
+    renderWithClient(
+      <AddEngineDialog open onOpenChange={() => undefined} onAdded={() => undefined} onOpenEngine={() => undefined} checkRevealMs={0} />,
+    );
+    await user.click(await screen.findByRole("button", { name: /Any OpenAI-compatible server/ }));
+    await user.type(screen.getByLabelText(/^Address/), "http://127.0.0.1:18301");
+    await user.selectOptions(screen.getByLabelText("Request dispatch"), "protocol");
+    const choose = await screen.findByRole("combobox", { name: "Protocol description" });
+    await user.selectOptions(choose, "tiny");
+    await user.click(screen.getByRole("checkbox", { name: "chat" }));
+    await user.selectOptions(choose, "");
+    await user.selectOptions(choose, "tiny");
+    expect(screen.getByRole("checkbox", { name: "chat" })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Add protocol engine (off)" }));
+    expect(create.mock.calls[0][0]).not.toHaveProperty("capabilities");
+  });
 });
