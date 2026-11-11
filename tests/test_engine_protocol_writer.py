@@ -292,3 +292,178 @@ def test_a_second_worker_sees_create_replace_and_delete_without_a_restart(env, m
     finally:
         worker.stdin.close()
         worker.wait(timeout=20)
+
+
+# --- Fixes from the independent review (c2d/t52-owner-fixes) -----------------------------------------------------------
+
+def _document_with(name, *operations):
+    doc = _document(name)
+    model = doc["operations"]["models"]
+    doc["operations"] = {op: json.loads(json.dumps(model)) for op in operations}
+    return yaml.safe_dump(doc)
+
+
+def _engine_advertising(env, protocol, *capabilities):
+    registry = {"services": {"box": {"enabled": False, "capabilities": list(capabilities),
+                                      "config": {"connection": {"dispatch": "protocol", "protocol": protocol}}}}}
+    with sqlite3.connect(env.db) as conn:
+        conn.execute("INSERT OR REPLACE INTO operator_settings(key, value_json, updated_at) VALUES ('service_registry', ?, 0)",
+                     (json.dumps(registry),))
+
+
+def test_a_replace_that_drops_an_operation_an_engine_advertises_is_refused(env):
+    client = _client()
+    etag = _create(client, "tiny", _document_with("tiny", "models", "custom.infer"))
+    _engine_advertising(env, "tiny", "custom.infer")
+    refused = _put(client, "tiny", _document_with("tiny", "models"), **{"If-Match": etag})
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "protocol_in_use"
+    assert "box" in refused.text and "custom.infer" in refused.text
+    assert "operations:" not in refused.text and "models" not in refused.json()["error"]["message"]
+    assert client.get(f"{PATH}/tiny").headers["ETag"] == etag
+    # A replace that keeps the advertised operation, or one nobody advertises, goes through.
+    assert _put(client, "tiny", _document_with("tiny", "models", "custom.infer"), **{"If-Match": etag}).status_code == 200
+    _engine_advertising(env, "tiny", "models")
+    etag = client.get(f"{PATH}/tiny").headers["ETag"]
+    assert _put(client, "tiny", _document_with("tiny", "models"), **{"If-Match": etag}).status_code == 200
+
+
+def _future_release_ships(env, protocol_id, title="Shipped later"):
+    (env.seeds / f"{protocol_id}.yml").write_text(_text(protocol_id, title))
+
+
+def test_an_owner_row_wins_over_a_later_shipped_id_until_the_owner_deletes_it(env):
+    client = _client()
+    etag = _create(client, "future", _text("future", "Owner copy"))
+    _future_release_ships(env, "future")
+    assert client.get(f"{PATH}/future").json()["source"] == "user"
+    assert description.get_description("future").title == "Owner copy"
+    assert _listing(client)["future"]["title"] == "Owner copy" and _listing(client)["future"]["source"] == "user"
+    # PUT stays refused for a shipped id, replace included.
+    assert _put(client, "future", _text("future", "Edited"), **{"If-Match": etag}).status_code == 409
+    assert description.get_description("future").title == "Owner copy"
+    # DELETE needs the current revision, then removes the owner row and the shipped file shows again.
+    assert client.delete(f"{PATH}/future", headers={"If-Match": '"pd-999"'}).status_code == 412
+    assert client.delete(f"{PATH}/future").status_code == 428
+    assert client.delete(f"{PATH}/future", headers={"If-Match": etag}).status_code == 200
+    assert _rows(env) == []
+    assert description.get_description("future").title == "Shipped later"
+    assert client.get(f"{PATH}/future").json()["source"] == "seed"
+    # With no owner row left, the shipped id is not removable again.
+    assert client.delete(f"{PATH}/future", headers={"If-Match": etag}).status_code == 409
+
+
+def test_a_shipped_owner_row_is_still_refused_while_an_engine_names_it(env):
+    client = _client()
+    etag = _create(client, "future", _text("future", "Owner copy"))
+    _future_release_ships(env, "future")
+    _name_description_in_an_engine(env, "future")
+    assert client.delete(f"{PATH}/future", headers={"If-Match": etag}).status_code == 409
+
+
+def test_the_routes_take_no_database_path_and_share_the_loaders_store(env, tmp_path, monkeypatch):
+    import inspect
+    assert "db_path" not in inspect.signature(engine_protocol_admin.register_engine_protocol_routes).parameters
+    other = tmp_path / "other.db"
+    admin_store.init_db(other)
+    monkeypatch.setattr(protocol_description_store, "_provider", lambda: other)
+    client = _client()
+    _create(client)
+    assert _rows(env) == []  # nothing in the default database
+    with sqlite3.connect(other) as conn:
+        assert [r[0] for r in conn.execute("SELECT id FROM protocol_descriptions")] == ["tiny"]
+    assert client.get(f"{PATH}/tiny").status_code == 200 and "tiny" in _listing(client)
+    assert description.get_description("tiny") is not None
+
+
+def _lock_the_reads(monkeypatch):
+    real = admin_store.shared_connection
+
+    def failing(path):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(admin_store, "shared_connection", failing)
+    return real
+
+
+def test_a_failed_read_is_a_503_and_the_loader_keeps_its_last_good_snapshot(env, monkeypatch):
+    client = _client()
+    _create(client)
+    assert "tiny" in description.load_registry()
+    _lock_the_reads(monkeypatch)
+    unavailable = client.get(f"{PATH}/tiny")
+    assert unavailable.status_code == 503 and unavailable.json()["error"]["code"] == "protocol_store_unavailable"
+    assert "locked" not in unavailable.text and str(env.db) not in unavailable.text
+    assert "tiny" in description.load_registry()
+    assert any("stored descriptions" in row["file"] for row in description.registry_problems())
+    with pytest.raises(sqlite3.OperationalError):
+        protocol_description_store.read_all()
+    with pytest.raises(sqlite3.OperationalError):
+        protocol_description_store.generation()
+
+
+def test_only_an_absent_database_or_table_reads_as_nothing_installed(env, tmp_path):
+    assert protocol_description_store.read_all(tmp_path / "missing.db") == (0, [])
+    assert protocol_description_store.generation(tmp_path / "missing.db") == 0
+    bare = tmp_path / "bare.db"
+    sqlite3.connect(bare).close()
+    assert protocol_description_store.read_all(bare) == (0, [])
+    assert protocol_description_store.generation(bare) == 0
+    assert protocol_description_store.get("tiny", bare) is None
+
+
+def _canary_documents():
+    canary, fake_path = "CANARY-7f3a", "/etc/canary-7f3a/secret.yml"
+    doc = _document()
+    bad_pointer = _document()
+    bad_pointer["operations"]["models"]["response"]["select"]["ids"] = f"{canary}/{fake_path}"
+    bad_key = {**_document(), canary: fake_path}
+    bad_impl = _document(implementation=canary)
+    bad_header = _document()
+    bad_header["operations"]["models"]["request"]["headers"] = {f"Authorization-{canary}": fake_path}
+    bad_enum = _document(executor=f"{canary}{fake_path}")
+    return {
+        "yaml-syntax": f"operations: [{canary} {fake_path}",
+        "yaml-tag": f"!!python/object:{canary} {{}}",
+        "yaml-alias": f"a: &{canary} 1\nb: *{canary}\n",
+        "not-a-mapping": f"- {canary}\n- {fake_path}\n",
+        "pointer": yaml.safe_dump(bad_pointer),
+        "extra-key": yaml.safe_dump(bad_key),
+        "implementation": yaml.safe_dump(bad_impl),
+        "header": yaml.safe_dump(bad_header),
+        "enum": yaml.safe_dump(bad_enum),
+        "long": yaml.safe_dump({**doc, "title": canary * 5000}),
+        "int-key": yaml.safe_dump({**doc, 7: canary}),
+    }
+
+
+@pytest.mark.parametrize("kind", sorted(_canary_documents()))
+def test_a_refusal_never_carries_posted_text_or_a_path(env, kind):
+    client = _client()
+    refused = _put(client, "tiny", _canary_documents()[kind], **{"If-None-Match": "*"})
+    assert refused.status_code in (413, 422), refused.text
+    for leaked in ("CANARY", "canary", "7f3a", "/etc", "secret.yml", str(env.db), str(env.seeds), str(env.overlay), "Traceback"):
+        assert leaked not in refused.text
+    error = refused.json()["error"]
+    if refused.status_code == 422 and error["code"] == "invalid_description":
+        assert error["message"] == "The description is not valid. Check it with the validator and send it again."
+        assert error["problem_codes"] and error["problem_count"] >= 1
+        assert set(error["problem_codes"].split(",")) <= {
+            "yaml_alias", "yaml_syntax", "not_a_mapping", "code_field", "non_string_key", "unknown_implementation",
+            "bad_pointer", "bad_header", "bad_path", "invalid_value"}
+    assert _rows(env) == []
+
+
+def test_a_registry_write_that_names_a_missing_description_is_refused(env):
+    client = _client()
+    _create(client)
+
+    def write(protocol_id, generation):
+        registry = {"services": {"box": {"enabled": False, "config": {"connection": {"dispatch": "protocol", "protocol": protocol_id}}}}}
+        return admin_store.write_service_registry_with_audit(
+            registry, expected_generation=generation, updated_by="t", audit_action="t", audit_actor_kind="t", audit_actor_id="t",
+            audit_actor_label="t", audit_target_kind="t", audit_target_id="t", path=env.db)
+
+    with pytest.raises(protocol_description_store.DescriptionRefused):
+        write("ghost", 0)
+    assert write("tiny", 0)["operator_settings_generation"] == 1
+    # A reference the registry already holds does not stop an unrelated write.
+    assert write("tiny", 1)["operator_settings_generation"] == 2

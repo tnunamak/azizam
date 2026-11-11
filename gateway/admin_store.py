@@ -4498,6 +4498,10 @@ def write_service_registry_in_transaction(
         and service_registry.is_litellm_service_record(record_id, record),
     )
     after_effective = registry_layers.layer(value, release)
+    # Every engine write runs here under the writer lock, so a description delete cannot slip between this check and the
+    # write: an engine that now names a protocol description needs the description to exist.
+    from gateway import protocol_description_store
+    protocol_description_store.require_new_references(conn, registry_layers.layer(before, release), after_effective)
     # The one name check every write of the registry document runs (CODE_TO_DATA_S4_S8, 3.0): a write may not give one
     # name to two owners. A clash the registry already held does not stop an unrelated write.
     service_registry.refuse_new_name_clashes(registry_layers.layer(before, release), after_effective)

@@ -36,7 +36,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from gateway import log_scrub
-from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
+from gateway import admin_store, category_enforcement, egress, projection, protocol_description_store, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.compat import positive_int_env
 from gateway.access_plans import PlanError, plan_from_document
 from gateway.capability_ids import MODEL_KINDS
@@ -1536,9 +1536,24 @@ class EngineService:
                 for extra in ("status", "cwd", "env", "timeout_s"):
                     if extra in old_driver_config and old_lifecycle.get("driver") == "command":
                         raw["lifecycle"]["driver_config"].setdefault(extra, copy.deepcopy(old_driver_config[extra]))
-            record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
-                                             replace=existing is not None, existing=existing,
-                                             drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")))
+            # The description was read before this write began. A delete or a replace can commit in between, so the
+            # write rechecks, under its own writer lock, that the description is still there and still declares the
+            # tasks this engine offers.
+            recheck = None
+            if values.get("dispatch") == "protocol":
+                protocol_id = str(values.get("protocol_description") or "")
+                described = described_operations(values)
+                own_words = capability_words(catalog, definition)
+                selected = sorted({c for c in raw["capabilities"] if c in described and c not in own_words})
+                recheck = lambda conn: protocol_description_store.require_operations(conn, protocol_id, selected)  # noqa: E731
+            try:
+                record = self.store.write_engine(service_id=service_id, raw=raw, actor=ctx, expected_generation=expected_generation,
+                                                 replace=existing is not None, existing=existing,
+                                                 drop_inference_secret_ref=key_dropped or key.source == "pasted" or bool(values.get("api_key_env")),
+                                                 **({"in_transaction": recheck} if recheck is not None else {}))
+            except protocol_description_store.DescriptionRefused as refused:
+                raise EngineRouteError(status.HTTP_409_CONFLICT, "protocol_description_changed", str(refused),
+                                       field="protocol_description") from None
         except BaseException:
             for secret_id_written in written:
                 try:

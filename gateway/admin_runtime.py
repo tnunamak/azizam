@@ -1209,6 +1209,7 @@ class AdminSQLiteStore:
         removing: Collection[tuple[str, str]] = (),
         ingest: bool = True,
         _trusted_engine_evidence: bool = False,
+        in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     ) -> dict[str, Any]:
         created: list[str] = []
         retired: list[str] = []
@@ -1222,7 +1223,7 @@ class AdminSQLiteStore:
             raise
         document, excluded = self._with_excluded_records(value, removing=removing)
         try:
-            record = self._write_registry_for_persist(document, value, action, actor, service_id, expected_generation, extra)
+            record = self._write_registry_for_persist(document, value, action, actor, service_id, expected_generation, extra, in_transaction)
         except BaseException:
             self._discard_secrets(created)
             raise
@@ -1238,7 +1239,8 @@ class AdminSQLiteStore:
         return record
 
     def _write_registry_for_persist(self, document: Mapping[str, Any], value: Mapping[str, Any], action: str, actor: AdminContext,
-                                    service_id: str, expected_generation: int, extra: Mapping[str, Any] | None) -> dict[str, Any]:
+                                    service_id: str, expected_generation: int, extra: Mapping[str, Any] | None,
+                                    in_transaction: Callable[[sqlite3.Connection], None] | None = None) -> dict[str, Any]:
         record = admin_store.write_service_registry_with_audit(
             document,
             expected_generation=expected_generation,
@@ -1254,6 +1256,7 @@ class AdminSQLiteStore:
             },
             session=actor.browser_session,
             path=self.path,
+            also_in_transaction=(lambda conn, _now: in_transaction(conn)) if in_transaction is not None else None,
         )
         return record
 
@@ -1297,8 +1300,11 @@ class AdminSQLiteStore:
         self, *, service_id: str, raw: Mapping[str, Any], actor: AdminContext,
         expected_generation: int, replace: bool, existing: Mapping[str, Any] | None = None,
         drop_inference_secret_ref: bool = False,
+        in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     ) -> dict[str, Any]:
         """Create or replace one service from an engine definition's record (gateway/engine_admin.py).
+
+        ``in_transaction(conn)`` runs inside the registry write's own transaction; it may raise to refuse the write.
 
         ``raw`` is the whole record, already built and checked; the credential and
         lifecycle rules for administrators are applied here as for every write.
@@ -1328,6 +1334,7 @@ class AdminSQLiteStore:
             expected_generation=expected_generation,
             extra={"definition": str(raw.get("definition") or "")},
             _trusted_engine_evidence=True,
+            in_transaction=in_transaction,
         )
 
     def update_service(
