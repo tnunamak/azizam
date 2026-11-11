@@ -114,18 +114,25 @@ def test_step2_the_owner_adds_an_engine_record_that_names_the_description(owner)
     assert record["capabilities"] == []
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Step 3 breaks: the owner cannot declare the smell.infer task on the engine. The add-engine route accepts only the "
-    "capabilities of the engine definition (gateway/engine_admin.py:511 raises 'does not offer the work' for any other id) "
-    "and registry/engine_definitions.json:4-26 offers only chat and embeddings. With no declared task the stored engine "
-    "has no offering (service_registry.py:902-918), so dispatch.resolve (engine_protocol/dispatch.py:44-84) never finds it."))
-def test_step3_the_owner_declares_the_smell_task_and_turns_the_engine_on(owner):
+def test_step3_the_owner_declares_the_smell_task_and_turns_the_engine_on(owner, gateway):
     client, overlay, *_ = owner
     _install_description(overlay)
     created = _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}])
     assert created.status_code == 201, created.text
+    record = created.json()["service_registry"]["services"]["smell-box"]
+    # A described operation is its own record capability; the model row carries the upstream name dispatch resolves.
+    assert record["capabilities"] == ["smell.infer"]
+    assert [row["upstream_model"] for row in record["config"]["models"]] == ["smell-1"]
     enabled = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True})
     assert enabled.status_code == 200, enabled.text
+    from gateway import admin_store
+    from gateway.engine_protocol import dispatch
+
+    registry = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]
+    assert registry["services"]["smell-box"]["enabled"] is True
+    target = dispatch.resolve(registry, "smell-1", "smell.infer")
+    assert target is not None and target.engine_id == "smell-box"
+    assert {row["task"] for row in target.offering["tasks"]} == {"smell.infer"}
 
 
 def _app_key(client, owner_id, plan_id) -> str:
@@ -138,7 +145,7 @@ def _app_key(client, owner_id, plan_id) -> str:
 
 
 @pytest.mark.xfail(strict=True, reason=(
-    "Step 4 breaks even when step 3 is seeded: the public job route admits only the intents of a closed table "
+    "Step 4 breaks even though step 3 now stores the record: the public job route admits only the intents of a closed table "
     "(registry/media_job_intents.yml:10-16, read by gateway/media_job_intents.py; refusal at proxy.py:25940), and the "
     "protocol dispatch callers pass a fixed operation (proxy.py:26073 'images', proxy.py:33788 intents for "
     "chat/embeddings/images/speech). The engine layer itself accepts smell.infer once the record holds a model row and "
@@ -146,23 +153,11 @@ def _app_key(client, owner_id, plan_id) -> str:
     "description that names a binding (proxy.py:26829-26843), and an http-v1 description cannot serve a record by "
     "capability (description.py:392)."))
 def test_step4_a_public_job_runs_on_the_engine_and_returns_the_molecule(owner, smell_engine, gateway):
-    from gateway import admin_store
-
     client, overlay, owner_id, plan_id = owner
     _install_description(overlay)
-    assert _add_engine(client).status_code == 201
-    # Stand-in for step 3, which the owner route cannot do: write the record the route would have stored.
-    record = admin_store.get_service_registry_with_generation(path=gateway.path)
-    registry = record["value"]
-    service = registry["services"]["smell-box"]
-    service["enabled"] = True
-    service["capabilities"] = ["smell.infer"]
-    service["config"]["capabilities"] = ["smell.infer"]
-    service["config"]["models"] = [{"id": "smell-1", "upstream_model": "smell-1"}]
-    admin_store.write_service_registry_with_audit(
-        registry, expected_generation=record["operator_settings_generation"], updated_by="test", audit_action="test",
-        audit_actor_kind=None, audit_actor_id=None, audit_actor_label=None, audit_target_kind=None,
-        audit_target_id=None, path=gateway.path)
+    # Step 3 now writes the record: the task and the model row come from the owner route.
+    assert _add_engine(client, capabilities=["smell.infer"], models=[{"id": "smell-1", "public_name": "smell-1"}]).status_code == 201
+    assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
     key = _app_key(client, owner_id, plan_id)
     public = gateway.client()
     submitted = public.post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
