@@ -17,10 +17,14 @@ ORACLE_RESOURCE_CLASS = {
     "image.generate": "image",
     "image.edit": "image",
     "image.identity": "image",
+    "image.variation": "image",
     "audio.generate": "audio",
     "music.generate": "audio",
     "sfx.generate": "audio",
     "video.generate": "video",
+    "video.extend": "video",
+    "video.remix": "video",
+    "video.edit": "video",
 }
 ORACLE_PROSE = (
     "The body you would send to the matching sync route: "

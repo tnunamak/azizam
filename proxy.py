@@ -9193,9 +9193,8 @@ async def proxy_graph_image_request(
     intents: frontend_mount.ExecutionIntents,
 ) -> Response:
     """Handle OpenAI-compatible image generation request via ComfyUI."""
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        intents.require_admission(), auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -9446,9 +9445,8 @@ async def proxy_graph_image_request(
 
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(_graph_service(_GRAPH_CAPABILITY).timeout, connect=10)) as client:
-            admission = _dispatch_admission_response(
-                intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-                service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            admission = _graph_media_admission(
+                intents.require_admission(), auth_context=auth_context,
             )
             if admission is not None:
                 return admission
@@ -9583,9 +9581,8 @@ async def proxy_graph_image_edit_request(
     intents: frontend_mount.ExecutionIntents,
 ) -> Response:
     """Handle OpenAI-compatible image edit request via ComfyUI."""
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        intents.require_admission(), auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -10108,9 +10105,8 @@ async def proxy_graph_image_edit_request(
                 set_workflow_background_removal(workflow, meta, False)
                 workflow_name_for_batching = workflow_name
 
-            admission = _dispatch_admission_response(
-                intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-                service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            admission = _graph_media_admission(
+                intents.require_admission(), auth_context=auth_context,
             )
             if admission is not None:
                 return admission
@@ -10209,9 +10205,8 @@ async def proxy_graph_image_variations_request(
     `proxy_config.yml`), reusing its entire upload/inject/adaptive-batching
     pipeline rather than duplicating it.
     """
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        intents.require_admission(), auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -11862,9 +11857,8 @@ async def _submit_video_graph(
     headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
-            admission = _dispatch_admission_response(
-                admission_intent, auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
-                service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            admission = _graph_media_admission(
+                admission_intent, auth_context=auth_context,
             )
             if admission is not None:
                 return admission
@@ -12106,9 +12100,8 @@ async def _proxy_graph_video_create(
 
     # Create has no mounted row to read this from (see registry/README.md, "Execution intents"): it stays spelled here.
     admission_intent = "video.generate"
-    admission = _dispatch_admission_response(
-        admission_intent, auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
-        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        admission_intent, auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -13154,9 +13147,8 @@ async def proxy_graph_video_extend(
         return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
     await _warm_video_owner_keys(auth_context)
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
-        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        intents.require_admission(), auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -13962,9 +13954,8 @@ async def proxy_graph_video_remix(
     `negative_prompt`) are accepted as top-level fields.
     """
     await _warm_video_owner_keys(auth_context)
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
-        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        intents.require_admission(), auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -14024,9 +14015,8 @@ async def proxy_graph_video_edit(
     An uploaded clip gives `remixed_from_video_id: null`.
     """
     await _warm_video_owner_keys(auth_context)
-    admission = _dispatch_admission_response(
-        intents.require_admission(), auth_context=auth_context, service_id=_graph_service_id(_VIDEO_GRAPH_CAPABILITY),
-        service_available=_graph_service(_VIDEO_GRAPH_CAPABILITY).enabled, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+    admission = _graph_media_admission(
+        intents.require_admission(), auth_context=auth_context,
     )
     if admission is not None:
         return admission
@@ -16999,9 +16989,8 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             if upload_error is not None:
                 raise RuntimeError(f"{engine} image upload failed")
             graph[node_id]["inputs"]["image"] = name
-        admission = _dispatch_admission_response(
-            "image.edit", auth_context=auth_context, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-            service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+        admission = _graph_media_admission(
+            "image.edit", auth_context=auth_context,
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
@@ -17235,9 +17224,8 @@ def _identity_admission(auth: AuthContext, path: str) -> Response | None:
     denied = _enforce_runtime_route_policy(auth, path, policy={"protocol": "openai.images", "intent": "image.edit", "backend": _graph_service_id(_GRAPH_CAPABILITY)})
     if denied is not None:
         return denied
-    return _dispatch_admission_response(
-        "image.edit", auth_context=auth, service_id=_graph_service_id(_GRAPH_CAPABILITY),
-        service_available=_graph_service(_GRAPH_CAPABILITY).enabled, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+    return _graph_media_admission(
+        "image.edit", auth_context=auth,
     )
 
 
@@ -24608,6 +24596,18 @@ _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT = dict(media_job_intents.MODALITY_BY_INTENT)
 # Every intent that counts toward the queue depth and an App's concurrency: the modality jobs above, and workflow runs
 # (whose resource class is the workflow's own fact, so it is not in the table).
 _QUEUED_MEDIA_JOB_INTENTS = frozenset(_MEDIA_JOB_RESOURCE_CLASS_BY_INTENT) | {workflow_run.RUN_INTENT}
+
+
+def _graph_media_admission(intent: str, *, auth_context: Any) -> Any:
+    """Admit a graph media job: its resource class is its intent row's modality, its graph family that class's family."""
+    modality = media_job_intents.MODALITY_BY_INTENT.get(intent)
+    if modality is None:
+        raise ValueError(f"media job intent {intent!r} has no row in {media_job_intents.DATA_PATH.name}; add one with its modality")
+    family = _GRAPH_FAMILY_BY_RESOURCE_CLASS[modality]
+    return _dispatch_admission_response(
+        intent, auth_context=auth_context, service_id=_graph_service_id(family),
+        service_available=_graph_service(family).enabled, resource_class=modality, queue_key=_MEDIA_JOB_QUEUE_KEY,
+    )
 
 
 def _optional_int_config(mapping: Mapping[str, Any], key: str) -> int | None:
