@@ -234,7 +234,11 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     none_models, none_openapi, none_intents = _public_documents(public, key)
     _install_description(overlay)
     # A description alone adds an engine to nothing: the documents are the bytes they were.
-    assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
+    again = _public_documents(public, key)
+    import difflib
+    a, b = json.loads(none_models), json.loads(again[0])
+    assert [r for r in a["data"] if r not in b["data"]] == [r for r in b["data"] if r not in a["data"]], "DBG"
+    assert again == (none_models, none_openapi, none_intents)
     _enabled_engine(client)
     models, openapi, intents = _public_documents(public, key)
     listed = {row["id"]: row for row in json.loads(models)["data"]}
