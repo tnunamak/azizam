@@ -13,7 +13,8 @@ def service_priority(record: Mapping[str, Any] | None) -> int:
     Non-integral floats and booleans are refused; an integral float is normalized to an int.
     """
     value = record.get("priority") if isinstance(record, Mapping) else None
-    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+    if (isinstance(value, bool) or not isinstance(value, (int, float, str, type(None)))
+            or (isinstance(value, float) and not value.is_integer())):
         raise ValueError(f"a service priority is a whole number, not {value!r}")
     return DEFAULT_PRIORITY if value is None or value == "" else int(value)
 
