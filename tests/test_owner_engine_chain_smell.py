@@ -219,19 +219,19 @@ def _public_documents(public, key) -> tuple[bytes, bytes, dict]:
 def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_changes_nothing(owner, gateway):
     client, overlay, owner_id, plan_id = owner
     key = _app_key(client, owner_id, plan_id)
-    with gateway.client() as public:
-        none_models, none_openapi, none_intents = _public_documents(public, key)
-        _install_description(overlay)
-        # A description alone adds an engine to nothing: the documents are the bytes they were.
-        assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
-        _enabled_engine(client)
-        models, openapi, intents = _public_documents(public, key)
-        listed = {row["id"]: row for row in json.loads(models)["data"]}
-        assert listed["smell-1"]["azizam_operations"] == ["smell.infer"]
-        assert "smell.infer" in intents and "smell.infer" not in none_intents
-        submit = json.loads(openapi)["paths"]["/gateway/v1/media/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-        assert "smell.infer" in submit["properties"]["intent"]["enum"]
-        # Turning the engine off returns every document to the bytes it had with no engine.
-        off = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": False})
-        assert off.status_code == 200, off.text
-        assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
+    public = gateway.client()  # no lifespan: nothing here runs a background job
+    none_models, none_openapi, none_intents = _public_documents(public, key)
+    _install_description(overlay)
+    # A description alone adds an engine to nothing: the documents are the bytes they were.
+    assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
+    _enabled_engine(client)
+    models, openapi, intents = _public_documents(public, key)
+    listed = {row["id"]: row for row in json.loads(models)["data"]}
+    assert listed["smell-1"]["azizam_operations"] == ["smell.infer"]
+    assert "smell.infer" in intents and "smell.infer" not in none_intents
+    submit = json.loads(openapi)["paths"]["/gateway/v1/media/jobs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    assert "smell.infer" in submit["properties"]["intent"]["enum"]
+    # Turning the engine off returns every document to the bytes it had with no engine.
+    off = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": False})
+    assert off.status_code == 200, off.text
+    assert _public_documents(public, key) == (none_models, none_openapi, none_intents)
