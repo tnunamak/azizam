@@ -35,7 +35,8 @@ engine that serves the OpenAI-shaped API: `models`, `chat`, `embeddings`,
 `speech`, `transcribe`. LiteLLM still executes chat. The seed stays on its existing execution path. Public execution requires the
 record opt-in described below. Operator descriptions also load from
 `<admin-state-directory>/protocols`, or `AZIZAM_PROTOCOLS_DIR`; user files
-replace seeds by id. Validate a file with
+replace seeds by id. The owner may also store a description in `admin.db` with `PUT /admin/api/engine-protocols/{id}`
+(`gateway/protocol_description_store.py`); the loader merges those rows last. Validate a file with
 `python -m gateway.engine_protocol.description path/to/id.yml`. An invalid
 file disables only that description. The [operator guide](../guides/ADD_HTTP_ENGINE_AS_DATA.md)
 includes persistent Docker storage and stored-key setup.
