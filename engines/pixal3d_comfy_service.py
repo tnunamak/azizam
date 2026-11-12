@@ -118,7 +118,13 @@ class Pixal3DService:
         prompt_id = upstream_object(sub, "prompt submit").get("prompt_id")
         if not isinstance(prompt_id, str) or not prompt_id:
             raise Refusal(502, "ComfyUI prompt submit reply has no prompt id")
-        entry = await self._wait(client, prompt_id)
+        try:
+            entry = await self._wait(client, prompt_id)
+        except Exception:
+            # ComfyUI accepted the prompt; a wait that fails (timeout, a bad or failed history reply) must not leave
+            # it queued. A prompt that ComfyUI itself reported as failed is gone already; the cleanup is then a no-op.
+            await self._cancel_prompt(client, prompt_id)
+            raise
         ref = find_glb(entry.get("outputs") or {})
         if ref is None:
             raise Refusal(502, "ComfyUI finished without a GLB")
@@ -139,7 +145,6 @@ class Pixal3DService:
                 if status.get("completed") or entry.get("outputs"):
                     return entry
             if asyncio.get_running_loop().time() > deadline:
-                await self._cancel_prompt(client, prompt_id)
                 raise Refusal(504, "ComfyUI did not finish in time")
             await asyncio.sleep(self.poll_interval)
 
