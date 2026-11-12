@@ -9,12 +9,16 @@ The image-to-3D routes serve every registry record that has the mesh intent and 
   sorted by `(rank, id)`. `current_mesh_workflows()` and `current_mesh_workflow(id)` convert them once per record object.
 - **Choice (option A).** A request names a record with the optional `model` field on `POST /v1/3d/generations` and
   `/glb`. The field holds a workflow id (or its short form, `pixal3d`). A name that is not a mesh record is a 404.
-- **First choice is data.** A request with no `model` runs the record with the lowest `rank:N` tag in its policy facts
-  (`registry/workflow_policy.yml`; `workflow_policy.rank_of`). A record with no rank sorts last; a tie goes to the lower id.
-  An owner changes the first choice by editing the tags. The shape asks `DEFAULT_WORKFLOWS` for it (`proxy._mesh_default_workflow`,
+- **First choice is data.** A request with no `model` runs the record with the lowest `selection_rank` in its policy facts
+  (`registry/workflow_policy.yml`; `workflow_policy.rank_of`). `selection_rank` is an optional typed fact: a whole number from
+  0 to 1,000,000 (a bool, a negative, a fraction or text is refused), one per record. A record with no rank sorts last; a tie
+  goes to the lower id. The release file and the stored record validate it the same way (`facts_from_mapping`). An owner changes
+  the first choice by writing `facts.selection_rank` on the record: `PUT /admin/api/workflows/{id}` (a bundled id is first
+  overridden with `POST /admin/api/workflows` and `overrides`), tested in `tests/test_workflow_owner_api.py`. The web owner view
+  keeps the stored value and does not edit it yet. The shape asks `DEFAULT_WORKFLOWS` for it (`proxy._mesh_default_workflow`,
   the first ranked record the live registry holds), and `choose_workflow(prefer=...)` applies it only when more than one
   record fits the request. It never hides a missing-input refusal.
-- **Shipped value.** Pixal3D is `rank:1`, TRELLIS.2 is `rank:2`. This is the owner’s declared default until a
+- **Shipped value.** Pixal3D is `selection_rank: 1`, TRELLIS.2 is `selection_rank: 2`. This is the owner’s declared default until a
   side-by-side comparison of the same pictures says otherwise. No comparative quality result is claimed here.
 - **Availability, facts, probe.** `_mesh_present(id)`, `_mesh_facts` (one catalog row per record) and
   `mesh_api.records_evidence` work per record. A service is available when any of its records is present and its health
@@ -24,7 +28,7 @@ The image-to-3D routes serve every registry record that has the mesh intent and 
 - **Receipt.** A receipt and a media job name the workflow that ran (`name_receipt(owner, entry.id, ...)`), so two records
   give two names.
 
-Option B (query or header) and option C (an owner setting for the default only) were not built. C is now the rank tag.
+Option B (query or header) and option C (an owner setting for the default only) were not built. C is now the `selection_rank` fact.
 
 ## Snapshots that moved
 
@@ -37,7 +41,7 @@ Each through its documented command.
   Six synthetic schema 1 test examples exercise the converter for the new records. The production migration’s historical
   schema 1 release copy stays unchanged; the new records never shipped in that release.
 - `tests/fixtures/workflow_reader_outputs.json.gz`: `scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py --readers`.
-  Six added records; the existing generator changes only its declared rank tag.
+  Six added records; the existing generator changes only its rank (the `rank:N` tag became the `selection_rank` fact).
 - `tests/fixtures/engine_protocol/legacy-wire.json`: `scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py --legacy-wire`.
   Only the two added services enter the seeded projection; existing projections, compiled configurations and request wires are unchanged.
 - `tests/fixtures/category_discovery_ungoverned.json`: `scripts/run-hermetic-pytest.sh -s tests/test_route_policy_inventory.py::test_ungoverned_discovery_snapshot`.
