@@ -146,7 +146,7 @@ ADMIN_PROBES = {
     # An administrator may mint an admin key; only the owner may mint an owner key.
     "POST /admin/api/admin-keys": {"body": {"name": "guard-proof", "role": "owner"}, "code": "admin_role_forbidden"},
     # Only the App's accountable person may trust an address, and the App is not this administrator's.
-    "POST /admin/api/apps/{app_id}/trusted-addresses": {"body": {"address": "10.9.9.9"}, "code": "not_your_app", "app": True},
+    "POST /admin/api/apps/{app_id}/trusted-addresses": {"body": {"address": "10.0.0.9"}, "code": "not_your_app", "app": True},
     # Only the owner changes a secret (the check is before the registry generation check).
     "POST /admin/api/operator/services/{service_id}/secret-entries": {
         "body": {"commands": [{"operation": "add", "carrier": "config.api_key", "name": "k", "value": "v"}]},
