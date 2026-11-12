@@ -969,6 +969,19 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                 ])
                 self._assert_no_strata_inheritance(self._list_real_selector())
 
+    def test_an_alias_that_is_another_listed_models_own_id_names_nothing(self) -> None:
+        # A canonical id in the same response is a claim by that model on its own name (train 53 review P2).
+        for listing in (
+            [{"id": "strata-new-name", "aliases": ["another-primary"]}, {"id": "another-primary"}],
+            [{"id": "another-primary"}, {"id": "strata-new-name", "aliases": [" Another-Primary "]}],
+        ):
+            with self.subTest(listing=listing):
+                self.assertEqual(proxy._engine_reported_aliases("strata-new-name", {"data": listing}), frozenset())
+        # An alias no other entry owns is still kept.
+        self.assertEqual(proxy._engine_reported_aliases("strata-new-name", {"data": [
+            {"id": "strata-new-name", "aliases": ["strata-old-name"]}, {"id": "another-primary"}]}),
+            frozenset({"strata-old-name"}))
+
     def test_the_alias_set_stays_with_its_loaded_id_however_long_the_listing_takes(self) -> None:
         self.addCleanup(proxy._ENGINE_SERVED_ALIASES.clear)
         proxy._remember_engine_aliases("kobold", "strata-new-name", {"data": [
