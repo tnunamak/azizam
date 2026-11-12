@@ -1399,3 +1399,40 @@ def test_registered_synthetic_family_gate_reaches_catalog_response(
             }
             assert aliases == []
     assert local_capabilities._BACKEND_ROWS is original_rows
+
+
+def test_unclassified_summary_uses_presentation_words():
+    from gateway import model_presentation
+
+    cap = Capability(intent="synthetic.unclassified", model="synthetic", backend="local")
+    expected = model_presentation.PRESENTATION_WORDS["unclassified"]
+    assert model_presentation.product_capability(cap) == expected["capability"]
+    summary, = models_catalog._capability_summaries([cap])
+    assert summary["label"] == expected["label"]
+    assert summary["icon_key"] == expected["icon"]
+    assert summary["capability"] == expected["capability"]
+    labels_only = set(models_catalog.CAPABILITY_LABELS) - set(models_catalog.CAPABILITY_ICON_KEYS)
+    icons_only = set(models_catalog.CAPABILITY_ICON_KEYS) - set(models_catalog.CAPABILITY_LABELS)
+    assert not labels_only and not icons_only, (labels_only, icons_only)
+
+
+def test_unclassified_summary_follows_patched_words(monkeypatch):
+    from gateway import model_presentation
+
+    cap = Capability(intent="synthetic.unclassified", model="synthetic", backend="local")
+    words = model_presentation.PRESENTATION_WORDS
+    replacement = {**words["unclassified"], "label": "Synthetic label", "icon": "synthetic-icon"}
+    monkeypatch.setattr(model_presentation, "PRESENTATION_WORDS", {**words, "unclassified": replacement})
+    original = models_catalog.product_capability
+    calls = []
+
+    def classify(capability, metadata=None):
+        calls.append((capability, metadata))
+        return original(capability, metadata)
+
+    monkeypatch.setattr(models_catalog, "product_capability", classify)
+    summary, = models_catalog._capability_summaries([cap])
+    assert summary["label"] == replacement["label"]
+    assert summary["icon_key"] == replacement["icon"]
+    assert summary["capability"] == replacement["capability"]
+    assert calls == [(cap, None)]

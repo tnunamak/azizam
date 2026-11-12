@@ -34,7 +34,7 @@ from gateway.availability import project_service
 from gateway.capability_ids import CAPABILITY_ALIAS_HIDES_NAMES, MODEL_KINDS
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, LISTED_METADATA_KEY, RECOMMENDED_ALIASES, capability_presentation, product_capability,
-    declared_health_success, engine_label, model_locality, service_health_endpoint, starts_on_demand, CAPABILITY_ICON_KEYS)
+    declared_health_success, engine_label, model_locality, service_health_endpoint, starts_on_demand, CAPABILITY_ICON_KEYS, unclassified_capability_words)
 from gateway.model_files import model_file_availability
 from gateway.provider_model_catalog import (
     remote_provider_model_capabilities,
@@ -763,13 +763,15 @@ def _base_row(
 
 def _capability_summaries(capabilities: Sequence[Capability], metadata: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     out = []
+    fallback_label, fallback_icon = unclassified_capability_words()
     for cap in sorted(capabilities, key=lambda c: c.sort_key):
+        capability = product_capability(cap, metadata)
         out.append(
             {
                 "intent": cap.intent,
-                "label": CAPABILITY_LABELS.get(product_capability(cap, metadata), "AI"),
-                "capability": product_capability(cap, metadata),
-                "icon_key": CAPABILITY_ICON_KEYS.get(product_capability(cap, metadata), "chat"),
+                "label": CAPABILITY_LABELS.get(capability, fallback_label),
+                "capability": capability,
+                "icon_key": CAPABILITY_ICON_KEYS.get(capability, fallback_icon),
                 "input_modalities": list(cap.input_modalities),
                 "output_modalities": list(cap.output_modalities),
                 "streaming": cap.streaming,
