@@ -197,22 +197,12 @@ def test_a_failed_history_poll_cancels_the_submitted_prompt(fake_upstreams, repl
     assert not [r for r in fake.requests if r.path == "/interrupt"]
 
 
-def test_a_history_poll_that_cannot_connect_cancels_the_submitted_prompt(fake_upstreams, monkeypatch) -> None:
+def test_a_history_poll_that_cannot_connect_cancels_the_submitted_prompt(fake_upstreams) -> None:
     steps = full_run([{}], view=False) + [
+        exchange("history-drop", "GET", "/history/p1", {"disconnect_before_headers": True}),
         exchange("delete", "POST", "/queue", {"json": {}}),
         exchange("cleanup-queue", "GET", "/queue", {"json": {"queue_running": [], "queue_pending": [[1, "p1"]]}})]
     fake, app = serve(fake_upstreams, steps)
-    real_get = httpx.AsyncClient.get
-    polls = {"n": 0}
-
-    async def flaky_get(self, url, *args, **kwargs):
-        if "/history/" in str(url):
-            polls["n"] += 1
-            if polls["n"] > 1:
-                raise httpx.ReadTimeout("history poll timed out")
-        return await real_get(self, url, *args, **kwargs)
-
-    monkeypatch.setattr(httpx.AsyncClient, "get", flaky_get)
     response = post(app)
     assert response.status_code == 502
     assert fake.calls("delete")[0].json == {"delete": ["p1"]}
