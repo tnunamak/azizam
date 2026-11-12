@@ -49,6 +49,8 @@ def test_an_unknown_intent_never_becomes_chat():
     ("mesh.generate", "openai.mesh"),
     ("decision.systemone", "typesafe.systemone"),
     ("chat.generate", "openai.chat"),
+    ("chat.completions", "openai.chat"),
+    ("provider.native", "provider-native"),
 ])
 def test_known_intents_keep_their_protocols(intent, protocol):
     assert policy_protocol.protocol_for_intent(intent) == protocol

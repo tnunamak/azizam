@@ -6,6 +6,21 @@ from pathlib import Path
 sys.path[:0] = [str(Path.cwd()), str(Path.cwd() / 'tests')]
 import conftest
 import proxy
+if sys.argv[1:] == ['--catalog-proof']:
+    import tests.test_engine_contract_oracle as oracle
+    original = oracle._digest
+    def check(value):
+        if isinstance(value, dict) and set(value) == {'models', 'capabilities', 'engine'}:
+            wanted = 'f358d972e72f0a2ad15acdb6b89ff724b6c8743643afa7724803b2aff82e5517'
+            rows = value['models']
+            retired = ('face-likeness', 'image', {'input_modalities': ['image'], 'output_modalities': ['text']})
+            matches = [i for i in range(len(rows)+1) if original({**value, 'models': [*rows[:i], retired, *rows[i:]]}) == wanted]
+            print('CATALOG_PROOF=' + json.dumps({'old_digest_restored_by_face_likeness_only': matches}))
+            assert len(matches) == 1
+        return original(value)
+    oracle._digest = check
+    oracle.test_public_catalog_surfaces_are_frozen(Path(tempfile.mkdtemp()))
+    raise SystemExit(0)
 from gateway import policy_protocol
 for intent in ('chat.completions', 'provider.native'):
     try:

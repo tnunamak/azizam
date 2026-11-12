@@ -404,7 +404,8 @@ def _test_browser_sends_origin(monkeypatch) -> None:
     def request(self, method, url, **kwargs):
         headers = httpx.Headers(kwargs.get("headers") or {})
         opted_out = headers.pop(NO_ORIGIN, None) is not None
-        if (not opted_out and (httpx.URL(url).path != "/mcp" or self.cookies or kwargs.get("cookies")) and method.upper() not in {"GET", "HEAD", "OPTIONS"} and "authorization" not in headers
+        browser = httpx.URL(url).path != "/mcp" or self.cookies or kwargs.get("cookies")
+        if (not opted_out and browser and method.upper() not in {"GET", "HEAD", "OPTIONS"} and "authorization" not in headers
                 and not {"origin", "referer", "sec-fetch-site"} & set(headers.keys())):
             headers["origin"] = str(self.base_url).rstrip("/")
         kwargs["headers"] = headers
