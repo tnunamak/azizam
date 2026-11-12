@@ -94,6 +94,33 @@ def test_the_list_shows_only_the_makers_own_rows_newest_first_and_no_content(gat
     assert items[0]["summary"]["route"] == "/v1/chat/completions"
 
 
+def _tagged(member, tag, created):
+    record = _record(member, created=created)
+    if tag is not None:
+        record["summary"] = {**record["summary"], "tag": tag}
+    return record
+
+
+def test_a_run_tag_is_echoed_on_each_row_and_filters_the_list(gateway):
+    a, b, none = (_tagged(gateway["maker"], tag, NOW - index) for index, tag in enumerate(("batch-1", "batch-2", None)))
+    _store(gateway, a, b, none)
+    items = _call("GET", "/gateway/v1/requests", gateway["maker"].key).json()["requests"]
+    assert [item["tag"] for item in items] == ["batch-1", "batch-2", None]       # an absent tag reads as null; rows are unchanged
+    only = _call("GET", "/gateway/v1/requests?tag=batch-2", gateway["maker"].key).json()["requests"]
+    assert [item["record_id"] for item in only] == [b["record_id"]]
+    assert _call("GET", "/gateway/v1/requests?tag=nope", gateway["maker"].key).json()["requests"] == []
+
+
+def test_the_tag_filter_never_shows_another_members_rows(gateway):
+    _store(gateway, _tagged(gateway["other"], "batch-1", NOW))
+    assert _call("GET", "/gateway/v1/requests?tag=batch-1", gateway["maker"].key).json()["requests"] == []
+
+
+def test_a_bad_tag_filter_is_refused_with_a_clear_answer(gateway):
+    response = _call("GET", "/gateway/v1/requests?tag=has%20space", gateway["maker"].key)
+    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_tag"
+
+
 def test_each_row_names_the_app_it_came_through(gateway):
     _store(gateway, _record(gateway["maker"], created=NOW), _record(gateway["other"], created=NOW + 1))
     items = _call("GET", "/gateway/v1/requests", gateway["maker"].key).json()["requests"]

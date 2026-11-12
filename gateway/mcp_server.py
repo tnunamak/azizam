@@ -42,6 +42,7 @@ the core cannot do returns an explicit tool error.
 """
 from __future__ import annotations
 
+from gateway import run_tag
 from gateway.media_jobs import ERROR_FIELDS, PHASE_FIELDS, is_terminal
 
 import asyncio
@@ -158,6 +159,9 @@ class McpDeps:
     # (request, auth, tool name, arguments) -> the result, or a ``CallError`` the model can act on. The gateway
     # decides who may rename what; ``None`` means this host offers no renaming.
     rename: Callable[[Request, Any, str, Mapping[str, Any]], dict[str, Any]] | None = None
+    # (request, workflow ids) -> {id: {"available", "reason", "last_healthy_at"}} from the gateway's engine health record
+    # (``gateway.availability.workflow_availability``). A failure leaves the rows without it; ``None`` means this host has none.
+    availability: Callable[[Request, list[str]], Awaitable[Mapping[str, Mapping[str, Any]]]] | None = None
     retention_ledger: Callable[[Request, Any, str | None], dict[str, Any] | None] | None = None
     retention_visible: Callable[[Request, Any], bool] = lambda _request, _auth: False
     # ``report_problem`` (gateway/problem_reports.py): (request, auth, arguments) -> the reply, or a ``CallError``.
@@ -239,6 +243,8 @@ TOOLS: list[dict[str, Any]] = [
                 "mode": {"type": "string", "enum": ["auto", "sync", "async"], "default": "auto"},
                 "wait_seconds": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_SECONDS, "default": DEFAULT_WAIT_SECONDS,
                                  "description": "How long to wait for a job before returning its id."},
+                "tag": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$",
+                        "description": "Optional label kept with this request. `requests` echoes it and can filter by it."},
             },
             "required": ["target"],
             "additionalProperties": False,
@@ -345,6 +351,8 @@ TOOLS.append({
         "action": {"type": "string", "enum": ["list", "get", "delete", "delete_all"]},
         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
         "cursor": {"type": "string"},
+        "tag": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$",
+                "description": "With list: only requests that carried this run tag."},
         "record_id": {"type": "string", "minLength": 1, "maxLength": 128},
     }, "required": ["action"], "additionalProperties": False},
     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
@@ -605,6 +613,7 @@ def _normalize_job(payload: Mapping[str, Any]) -> dict[str, Any]:
 class Tools:
     def __init__(self, deps: McpDeps, request: Request, auth: Any) -> None:
         self.deps, self.request, self.auth = deps, request, auth
+        self._tag: str | None = None
 
     # -- resolution -----------------------------------------------------
 
@@ -665,7 +674,9 @@ class Tools:
         query = str(args.get("query") or "").lower()
         intent = str(args.get("intent") or "")
         rows = []
-        for entry in self._catalog():
+        entries = self._catalog()
+        health = await self._availability([entry["id"] for entry in entries])
+        for entry in entries:
             hay = " ".join([entry["id"], entry.get("description") or "", entry["intent"], *(entry.get("aliases") or [])]).lower()
             if query and query not in hay or intent and entry["intent"] != intent:
                 continue
@@ -673,11 +684,21 @@ class Tools:
                 "target": entry["short_id"], "intent": entry["intent"], "aliases": entry.get("aliases") or [],
                 "description": (entry.get("description") or "")[:160],
                 "typical_seconds": entry.get("typical_seconds"), "mode": self._mode_for(entry, "auto"),
+                "availability": health.get(entry["id"]),
             })
         if not intent and (not query or query in SPEECH_TARGET):
             rows.append({"target": SPEECH_TARGET, "intent": "audio.speech", "aliases": self._speech_names(),
                           "description": "Text to speech.", "typical_seconds": None, "mode": "sync"})
         return {"workflows": rows, "hint": "Call capabilities with `target` for typed inputs; run with `target` and `inputs`."}
+
+    async def _availability(self, workflow_ids: list[str]) -> Mapping[str, Mapping[str, Any]]:
+        """Each workflow's availability from the host's engine health record; empty when the host has none or it fails."""
+        if self.deps.availability is None:
+            return {}
+        try:
+            return await self.deps.availability(self.request, workflow_ids)
+        except Exception:  # noqa: BLE001 - availability is a nicety; the listing must not fail because of it
+            return {}
 
     def _describe(self, entry: Mapping[str, Any]) -> dict[str, Any]:
         execution = entry.get("execution") or {}
@@ -713,6 +734,7 @@ class Tools:
         if mode not in ("auto", "sync", "async"):
             raise CallError("`mode` must be auto, sync or async")
         wait = self._wait(args.get("wait_seconds"), DEFAULT_WAIT_SECONDS)
+        self._tag = self._run_tag(args.get("tag"))
         kind, entry, speech_model = self.resolve(target, inputs)
         if kind == "speech":
             return await self._speech(inputs, speech_model)
@@ -764,12 +786,21 @@ class Tools:
             kwargs["data"] = built.data
         if built.files:
             kwargs["files"] = built.files
-        if built.headers:
-            kwargs["headers"] = built.headers
+        if built.headers or self._tag:
+            kwargs["headers"] = {**(built.headers or {}), **({run_tag.TAG_HEADER: self._tag} if self._tag else {})}
         try:
             return await asyncio.wait_for(self.deps.call(self.request, built.method, built.path, **kwargs), timeout)
         except asyncio.TimeoutError:
             raise CallError("the gateway did not answer in time; retry with mode=async if the workflow offers it") from None
+
+    @staticmethod
+    def _run_tag(value: Any) -> str | None:
+        if value is None:
+            return None
+        try:
+            return run_tag.validate(value)
+        except run_tag.InvalidTag as exc:
+            raise CallError(f"`tag` is not valid: {exc}") from None
 
     @staticmethod
     def _wait(value: Any, default: int) -> int:
@@ -803,7 +834,7 @@ class Tools:
             await asyncio.sleep(min(self.deps.poll_interval, max(0.0, deadline - time.monotonic())))
             state = await self._poll(job_id)
         out: dict[str, Any] = {"status": state["status"], "job_id": job_id}
-        out.update({name: state["raw"].get(name) for name in (*PHASE_FIELDS, "attempt_number", "previous_attempts")})
+        out.update({name: state["raw"].get(name) for name in (*PHASE_FIELDS, "attempt_number", "previous_attempts", "queue_position")})
         if entry:
             out["target"] = entry["short_id"]
         elif state["raw"].get("workflow"):
@@ -824,7 +855,7 @@ class Tools:
         elif state["status"] in ("failed", "canceled"):
             out["error"] = state["error"] or state["status"]
             # Who refused: the gateway (an access plan, inputs, capacity) or the upstream work.
-            out.update({name: state["raw"][name] for name in ERROR_FIELDS if state["raw"].get(name) is not None})
+            out.update({name: state["raw"][name] for name in (*ERROR_FIELDS, "last_healthy_at") if state["raw"].get(name) is not None})
         else:
             out["next"] = "Call `job` with this job_id to keep waiting (set wait_seconds)."
         return out
@@ -930,16 +961,23 @@ async def _history_tool(deps: McpDeps, request: Request, auth: Any, name: str, a
                                is_error=view is None, version=version)
 
         if action == "list":
-            if set(args) - {"action", "limit", "cursor"}:
-                return _tool_argument_error("list accepts only limit and cursor", version)
+            if set(args) - {"action", "limit", "cursor", "tag"}:
+                return _tool_argument_error("list accepts only limit, cursor and tag", version)
             limit = args.get("limit", 20)
             cursor = args.get("cursor")
             if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
                 return _tool_argument_error("limit must be an integer from 1 to 100", version)
             if cursor is not None and (not isinstance(cursor, str) or not cursor):
                 return _tool_argument_error("cursor must be a non-empty cursor string", version)
+            tag = args.get("tag")
+            if tag is not None:
+                try:
+                    run_tag.validate(tag)
+                except run_tag.InvalidTag as exc:
+                    return _tool_argument_error(str(exc), version)
             method, path = "GET", "/gateway/v1/requests"
-            kwargs["params"] = {"limit": limit, **({"cursor": cursor} if cursor is not None else {})}
+            kwargs["params"] = {"limit": limit, **({"cursor": cursor} if cursor is not None else {}),
+                                **({"tag": tag} if tag is not None else {})}
         elif action in {"get", "delete"}:
             if set(args) != {"action", "record_id"}:
                 return _tool_argument_error(f"{action} requires only record_id", version)

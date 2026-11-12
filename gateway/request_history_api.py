@@ -24,7 +24,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-from gateway import asset_types, content_access, request_history, retention
+from gateway import asset_types, content_access, request_history, retention, run_tag
 from gateway.public_failure import PublicFailure
 
 GROUP = retention.GROUP_REQUEST_HISTORY
@@ -96,11 +96,12 @@ _BATCH = 100
 
 
 def _item(row: dict[str, Any], app_name: str | None) -> dict[str, Any]:
+    summary = json.loads(row["summary_json"])
     return {
         "record_id": row["record_id"], "request_id": row.get("request_id"), "kind": row["kind"],
         "created_at": int(row["created_at"]), "kept_until": row.get("kept_until"),
         "origin_kind": row.get("origin_kind"), "app_name": app_name, "kept_parts": json.loads(row["parts_kept"]),
-        "summary": json.loads(row["summary_json"]),
+        "summary": summary, "tag": summary.get("tag"),
     }
 
 
@@ -182,10 +183,15 @@ def create_request_history_router(
     @router.get("/gateway/v1/requests")
     @_retry_when_busy
     def list_requests(request: Request, limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-                      cursor: str | None = Query(None)) -> Any:
+                      cursor: str | None = Query(None), tag: str | None = Query(None)) -> Any:
         viewer = _viewer(request)
         if isinstance(viewer, JSONResponse):
             return viewer
+        if tag is not None:
+            try:
+                run_tag.validate(tag)
+            except run_tag.InvalidTag as exc:
+                return _error(400, "invalid_tag", str(exc))
         try:
             before = _cursor_position(cursor)
         except ValueError:
@@ -200,7 +206,7 @@ def create_request_history_router(
         next_cursor: str | None = None
         while next_cursor is None:
             batch = request_history.page_for_person(viewer.person_id, after=after, now=now, before=before,
-                                                    limit=_BATCH, path=media_path())
+                                                    limit=_BATCH, tag=tag, path=media_path())
             for row in batch:
                 if not isinstance(content_access.decide(viewer, content_access.request_history_record(row), "read"),
                                   content_access.Own):

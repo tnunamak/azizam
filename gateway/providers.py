@@ -11,7 +11,7 @@ plans cap the accountable person's and the App's totals (design §2.11).
 from __future__ import annotations
 
 from gateway.compat import get_env
-from gateway import log_scrub
+from gateway import log_scrub, protocol_family
 
 import json
 import os
@@ -878,8 +878,9 @@ def estimate_request_cost(
 def _protocol_matches(requested: str, declared: tuple[str, ...]) -> bool:
     if requested in declared:
         return True
-    if requested in {"openai-chat", "openai-compatible"}:
-        return bool({"openai-chat", "openai-compatible"} & set(declared))
+    same_shape = {"openai-chat", protocol_family.chat_protocol_id()}
+    if requested in same_shape:
+        return bool(same_shape & set(declared))
     return False
 
 

@@ -117,7 +117,7 @@ class Core:
         return self.assets.get(asset_id)
 
 
-def _build_env(catalog):
+def _build_env(catalog, **deps_extra):
     core = Core()
 
     def authenticate(request, _path):
@@ -128,7 +128,7 @@ def _build_env(catalog):
     deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: catalog, aliases=lambda: ALIASES,
                    store_asset=core.store_asset, read_asset=core.read_asset,
                    read_preview_asset=core.read_asset, public_base_url=lambda r: "https://gw.test", poll_interval=0.0,
-                   allowed_origins=lambda r: ["https://gw.test"])
+                   allowed_origins=lambda r: ["https://gw.test"], **deps_extra)
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
     return SimpleNamespace(core=core, client=TestClient(app))
@@ -461,6 +461,54 @@ def test_modern_results_carry_result_type_and_cache_hints(env):
 def test_unknown_tool_is_a_protocol_error(env):
     resp = rpc(env, "tools/call", {"name": "nope", "arguments": {}})
     assert resp.json()["error"]["code"] == mcp_server.INVALID_PARAMS
+
+
+# ------------------------------------------------------------ availability and run tag
+
+
+def test_capabilities_rows_carry_availability_when_the_host_has_a_health_record():
+    async def availability(request, ids):
+        assert "audio.generate.sfx" in ids or "sfx" in " ".join(ids)
+        return {entry_id: {"available": entry_id.endswith("sfx"), "reason": "engine_down" if not entry_id.endswith("sfx") else None,
+                           "last_healthy_at": 1_700_000_000} for entry_id in ids}
+
+    env = _build_env(CATALOG, availability=availability)
+    rows = {r["target"]: r for r in call(env, "capabilities", {})["structuredContent"]["workflows"]}
+    assert rows["sfx"]["availability"]["available"] is True
+    assert rows["ltx"]["availability"] == {"available": False, "reason": "engine_down", "last_healthy_at": 1_700_000_000}
+
+
+def test_capabilities_rows_hold_none_when_the_host_has_no_record_or_it_fails(env):
+    assert all(r.get("availability") is None for r in call(env, "capabilities", {})["structuredContent"]["workflows"])
+
+    async def broken(request, ids):
+        raise RuntimeError("probe table gone")
+
+    rows = call(_build_env(CATALOG, availability=broken), "capabilities", {})["structuredContent"]["workflows"]
+    assert rows and all(r.get("availability") is None for r in rows)
+
+
+def test_run_sends_its_tag_as_a_header_and_a_run_without_one_sends_none(env):
+    env.core.routes[("POST", "/v1/images/generations")] = lambda kw: _image_reply(kw["json"])
+    call(env, "run", {"target": "image", "inputs": {"prompt": "a fish"}, "tag": "batch:7_a.b-c"})
+    assert env.core.calls[-1][2]["headers"] == {"x-azizam-tag": "batch:7_a.b-c"}
+    call(env, "run", {"target": "image", "inputs": {"prompt": "a fish"}})
+    assert "headers" not in env.core.calls[-1][2] or "x-azizam-tag" not in env.core.calls[-1][2]["headers"]
+
+
+@pytest.mark.parametrize("tag", ["", "x" * 65, "has space", "semi;colon", "naïve"])
+def test_run_refuses_a_bad_tag_clearly_before_calling_core(env, tag):
+    before = len(env.core.calls)
+    result = call(env, "run", {"target": "image", "inputs": {"prompt": "a fish"}, "tag": tag})
+    assert result["isError"] is True and "`tag`" in result["content"][0]["text"]
+    assert len(env.core.calls) == before
+
+
+def test_requests_list_passes_the_tag_filter_and_refuses_a_bad_one(env):
+    env.core.routes[("GET", "/gateway/v1/requests")] = httpx.Response(200, json={"requests": [], "next_cursor": None})
+    call(env, "requests", {"action": "list", "tag": "batch-1"})
+    assert env.core.calls[-1][2]["params"]["tag"] == "batch-1"
+    assert call(env, "requests", {"action": "list", "tag": "no good"})["isError"] is True
 
 
 # ------------------------------------------------------------ capabilities

@@ -258,6 +258,7 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
+from gateway import availability
 from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
@@ -16408,6 +16409,17 @@ def _mcp_catalog() -> list[dict[str, Any]]:
     return [{**entry, "inputs": advertised_inputs_schema(by_id[entry["id"]])} for entry in entries]
 
 
+async def _mcp_availability(request: Request, workflow_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """The availability of each listed workflow, from the same engine health record the capability list reads."""
+    capabilities = await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request))
+    service_records = await asyncio.to_thread(lambda: _workflow_availability_services(ADMIN_STORE.get_service_registry()))
+    evidence = await _capabilities_availability_evidence(capabilities, service_records)
+    records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+    return {workflow_id: availability.workflow_availability(
+        records[workflow_id], service_records=service_records, evidence=evidence, records=records)
+        for workflow_id in workflow_ids if workflow_id in records}
+
+
 def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suffix: str) -> dict[str, Any]:
     owner = _asset_owner_key(auth if isinstance(auth, AuthContext) else None)
     asset_id = store_asset_bytes(content, kind=kind, suffix=suffix, owner_key_hash=owner)
@@ -16577,6 +16589,7 @@ def _mount_mcp(app: FastAPI) -> None:
             stt_measurement=_mcp_stt_measurement,
             owner_visible=_mcp_stt_measurement_visible,
             catalog=_mcp_catalog,
+            availability=_mcp_availability,
             aliases=lambda: _gateway_aliases_provider(),
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
             store_asset=_mcp_store_asset,
@@ -27272,6 +27285,11 @@ class _WorkflowRunPort:
 
     def resume_on_start(self) -> bool:
         return _image_media_job_resume_on_start()
+
+    def engine_last_healthy_at(self, job: Mapping[str, Any]) -> int | None:
+        """When the gateway's engine health record last saw this job's engine answer; None when it holds no time."""
+        evidence = _cached_status_payload_for_availability().get("_availability_evidence")
+        return availability.last_healthy_at(str(job.get("backend") or ""), evidence if isinstance(evidence, Mapping) else None)
 
     # running
     def schedule(self, job_id: str) -> None:

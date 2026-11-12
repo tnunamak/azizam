@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from gateway import generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
+from gateway import engine_unavailable, generated_defaults, job_wake, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
@@ -422,7 +422,8 @@ def job_view(job: Mapping[str, Any], path: Path, *, disposition: str = "new") ->
         failure = RunFailure(code=str(job.get("error_code") or INTERNAL_ERROR),
                              category=str(job.get("error_category") or "internal"),
                              message=str(job.get("error") or "The job failed."),
-                             retryable=bool(job.get("retryable")), upstream_status=job.get("upstream_http_status"))
+                             retryable=bool(job.get("retryable")), upstream_status=job.get("upstream_http_status"),
+                             last_healthy_at=(job.get("metadata") or {}).get(media_jobs.LAST_HEALTHY_KEY))
     revision, binding_key = _envelope_facts(str(job["job_id"]), path)
     results = _published_results(str(job["job_id"]), path) if status == media_jobs.STATUS_SUCCEEDED else None
     return RunJobView(
@@ -934,8 +935,12 @@ class WorkflowRunCore:
                     text, code = media_job_shape.stored_failure(
                         str((job.get("metadata") or {}).get("failure_text") or "adapter"), category, _client_message(exc),
                         _code_of(exc), _upstream_status(exc))
-                    self._fail(job_id, code, category, text, retryable=bool(getattr(exc, "retryable", False)),
-                               upstream_status=_upstream_status(exc))
+                    retryable, healthy = bool(getattr(exc, "retryable", False)), None
+                    if (verdict := engine_unavailable.classify(exc)) is not None:      # no engine answered: say so, and when one last did
+                        category, code, retryable = engine_unavailable.CATEGORY, engine_unavailable.CODE, verdict.retryable   # the client text stays
+                        healthy = port.engine_last_healthy_at(job) if hasattr(port, "engine_last_healthy_at") else None
+                    self._fail(job_id, code, category, text, retryable=retryable,
+                               upstream_status=_upstream_status(exc), last_healthy_at=healthy)
                     return
                 caller, payload, problem = await self._before_retry(job_id, exc, attempt, delay, policy)
                 if problem is not None:
@@ -1076,14 +1081,16 @@ class WorkflowRunCore:
         return None
 
     def _fail(self, job_id: str, code: str, category: str, message: str, *, retryable: bool = False,
-              upstream_status: int | None = None) -> None:
+              upstream_status: int | None = None, last_healthy_at: int | None = None) -> None:
         category = category if category in media_jobs.ERROR_CATEGORIES else "internal"
         message = log_scrub.scrub(message, limit=2000)      # one door for every stored failure text
+        last_status = upstream_status if upstream_status is not None else 504 if category == "timeout" else None
+        facts = {**({"last_http_status": last_status} if last_status is not None else {}),
+                 **({media_jobs.LAST_HEALTHY_KEY: int(last_healthy_at)} if last_healthy_at is not None else {})}
         try:
             media_jobs.update_status(
                 job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
-                metadata_patch=({"last_http_status": last_status} if (last_status := upstream_status if upstream_status is not None
-                                                                        else 504 if category == "timeout" else None) is not None else None),
+                metadata_patch=facts or None,
                 error_info={"error_code": code, "error_category": category, "retryable": retryable,
                             "upstream_http_status": upstream_status})
         except ValueError:
@@ -1223,6 +1230,7 @@ def view_body(view: RunJobView) -> dict[str, Any]:
         failure = view.failure
         body["failure"] = {"code": failure.code, "category": failure.category, "message": _wire_text(failure.message),
                            "retryable": failure.retryable, "upstream_status": failure.upstream_status,
+                           **({"last_healthy_at": failure.last_healthy_at} if failure.last_healthy_at is not None else {}),
                            "problems": [{"path": e.pointer, "code": e.code, "message": _wire_text(e.message)}
                                         for e in failure.problems]}
     if view.results is not None:
