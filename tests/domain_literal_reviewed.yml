@@ -131,11 +131,6 @@ sites:
     category: media_type
     reason: Names an IANA top-level media type extracted from an asset's accepts or legacy media_type declaration and returned unchanged as an input modality; it does not select a workflow or engine.
   - file: gateway/local_capabilities.py
-    literal: image
-    count: 1
-    category: wire_enum
-    reason: Names the image value in the gateway Capability.input_modalities vocabulary returned by the local inventory; this allowance covers the emitted enum token, not the separate vision inference rule.
-  - file: gateway/local_capabilities.py
     literal: "video.generate"
     count: 1
     category: wire_enum
