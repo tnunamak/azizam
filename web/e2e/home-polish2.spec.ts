@@ -5,6 +5,9 @@ import type { HomeSnapshot } from "../src/app/_home/home-api";
 import { readFile } from "node:fs/promises";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
+// The words GET /me/api/media sends for an image (gateway/asset_types.py kind_names("image")); the web keeps none.
+const IMAGE_KIND_ROW = { kind: "image", label: "Image", plural: "Images", untitled: "Picture", input: "picture", recent: true };
+
 // The Home pass-through route can still be fetching when a test ends.
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -341,12 +344,12 @@ for (const width of [390, 1440]) {
     const prompt = "Azizam".repeat(90);
     const imageUrl =
       "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='teal'/%3E%3C/svg%3E";
-    // The server's own kind rows name the tiles; only the assets are stubbed.
+    // The page sends the words for the kinds on it (GET /me/api/media, gateway/asset_types.py); the stub sends the
+    // image row because its assets are images. The fixture owner has no assets, so the real page has no rows.
     await page.route("**/me/api/media?**", async (route) => {
       const response = await route.fetch();
-      const { kinds } = await response.json();
       await fulfilJson(route, {
-          kinds,
+          kinds: [IMAGE_KIND_ROW],
           assets: [
             {
               asset_id: "empty-prompt",
@@ -388,12 +391,11 @@ test("Home failed images show a named unavailable preview", async ({
   request,
 }) => {
   await fixture(page, request);
-  // The server's own kind rows name the tile; only the asset is stubbed.
+  // The image kind row, as the page sends it for an image asset (see the test above).
   await page.route("**/me/api/media?**", async (route) => {
     const response = await route.fetch();
-    const { kinds } = await response.json();
     await fulfilJson(route, {
-        kinds,
+        kinds: [IMAGE_KIND_ROW],
         assets: [
           {
             asset_id: "broken",
