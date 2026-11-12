@@ -961,3 +961,47 @@ class SnapshotFixtureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AliasLimitsTests(RequestLoadedMetadataTests):
+    """`current` and `current-fast` publish the limits the served model's own row publishes."""
+
+    def _non_path_strata(self, *, window_at: str) -> dict:
+        backend = self.backends["kobold"]
+        backend.pop("loaded_model_identity")
+        backend.pop("context_window_probe", None)
+        record = backend["models"][0]
+        record["upstream_model"] = record["id"]
+        for key in ("activation_model", "model", "context_window"):
+            record.pop(key, None)
+        record["model_metadata"]["max_tokens"] = 262144
+        if window_at == "backend":
+            backend["context_window"] = 262144
+        else:
+            record["context_window"] = 262144
+        return record
+
+    def _list_serving(self, record: dict) -> dict[str, dict]:
+        async def selected():
+            return SimpleNamespace(backend="kobold", model=record["id"]), None
+
+        with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            listed, _ = self._served()
+        return listed
+
+    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_record(self) -> None:
+        listed = self._list_serving(self._non_path_strata(window_at="record"))
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
+
+    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_backend(self) -> None:
+        record = self._non_path_strata(window_at="backend")
+        listed = self._list_serving(record)
+        self.assertEqual(listed[record["id"]].get("context_window"), 262144)
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
