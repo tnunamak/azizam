@@ -677,16 +677,15 @@ def _mesh_facts(**changes):
 
 
 def _save_mesh(api, **facts):
+    """An owner's override of the bundled record, written through the owner route, with its facts."""
     contract = api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["contract"]
-    return api.put(f"/admin/api/workflows/{MESH_ID}", json={"contract": contract, "overrides": MESH_ID,
-                                                            "facts": _mesh_facts(**facts)},
-                   headers={"If-Match": os_n(api)})
+    return api.post("/admin/api/workflows", json={"contract": contract, "overrides": MESH_ID, "facts": _mesh_facts(**facts)})
 
 
 @pytest.mark.parametrize("api", ["real"], indirect=True)
 def test_the_owner_route_stores_selection_rank_and_the_stored_record_loads_it(api):
     saved = _save_mesh(api, selection_rank=0)
-    assert saved.status_code == 200, saved.text
+    assert saved.status_code == 201, saved.text
     assert api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"]["selection_rank"] == 0
     from gateway.workflow_policy import rank_of
     records = {record.id: record for record in service_registry.workflow_records_from_registry(
@@ -698,11 +697,11 @@ def test_the_owner_route_stores_selection_rank_and_the_stored_record_loads_it(ap
 @pytest.mark.parametrize("bad", [True, False, -1, 10**30, 1.5, "1", [1]])
 def test_the_owner_route_refuses_a_selection_rank_that_is_not_a_bounded_integer(api, bad):
     refused = _save_mesh(api, selection_rank=bad)
-    assert refused.status_code == 422, refused.text
+    assert refused.status_code == 422 and "selection_rank" in refused.text, refused.text
 
 
 @pytest.mark.parametrize("api", ["real"], indirect=True)
 def test_an_owner_write_without_selection_rank_keeps_the_record_unranked(api):
-    r = _save_mesh(api); assert r.status_code == 200, r.text
-    assert "selection_rank" not in api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"] \
-        or api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"]["selection_rank"] is None
+    saved = _save_mesh(api)
+    assert saved.status_code == 201, saved.text
+    assert api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"].get("selection_rank") is None
