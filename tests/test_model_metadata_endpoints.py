@@ -387,6 +387,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         _start_model_list_patches(self, real_loaded_state=True)
         self.requests: list[tuple[str, str]] = []
+        self.engine_models: dict[str, list[dict]] = {}
         self.healthy = {"kobold", "other"}
         self.loaded_paths = {"kobold": QWEN_PATH, "other": OTHER_PATH}
         # A text-only fallback exposes stale inheritance after a backend switch
@@ -454,6 +455,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         if request.url.path == "/health":
             return httpx.Response(200 if backend in self.healthy else 503)
         self.assertEqual(request.url.path, "/v1/models")
+        if backend in self.engine_models:
+            return httpx.Response(200, json={"data": self.engine_models[backend]})
         return httpx.Response(200, json={"data": [{"id": f"loaded-{backend}", "context_window": 8192}]})
 
     async def _catalog_payload(self, *args, **kwargs):
@@ -802,6 +805,160 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                     ids, calls = self._observe()
                 self.assertEqual(calls, [] if cache and now - cache["kobold"][0] < 30
                                  else [("kobold.test", "/v1/models")])
+
+
+    def _non_path_strata(self, *, window_at: str) -> dict:
+        backend = self.backends["kobold"]
+        backend.pop("loaded_model_identity")
+        backend.pop("context_window_probe", None)
+        record = backend["models"][0]
+        record["upstream_model"] = record["id"]
+        for key in ("activation_model", "model", "context_window"):
+            record.pop(key, None)
+        record["model_metadata"]["max_tokens"] = 262144
+        if window_at == "backend":
+            backend["context_window"] = 262144
+        else:
+            record["context_window"] = 262144
+        return record
+
+    def _list_serving(self, record: dict) -> dict[str, dict]:
+        async def selected():
+            return SimpleNamespace(backend="kobold", model=record["id"]), None
+
+        with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            listed, _ = self._served()
+        return listed
+
+    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_record(self) -> None:
+        listed = self._list_serving(self._non_path_strata(window_at="record"))
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
+
+    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_backend(self) -> None:
+        record = self._non_path_strata(window_at="backend")
+        listed = self._list_serving(record)
+        self.assertEqual(listed[record["id"]].get("context_window"), 262144)
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
+
+    def test_a_model_swap_between_two_requests_changes_the_published_limits(self) -> None:
+        record = self._non_path_strata(window_at="record")
+        backend = self.backends["kobold"]
+        other = copy.deepcopy(record)
+        other.update(id="strata-small", upstream_model="strata-small", context_window=32768)
+        other["model_metadata"]["max_tokens"] = 4096
+        backend["models"].append(other)
+        for served, window, cap in ((record["id"], 262144, 262144), (other["id"], 32768, 4096),
+                                    (record["id"], 262144, 262144)):
+            async def selected(served=served):
+                return SimpleNamespace(backend="kobold", model=served), None
+
+            with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                    patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+                listed, _ = self._served()
+            for alias in sorted(DYNAMIC):
+                with self.subTest(served=served, alias=alias):
+                    self.assertEqual((listed[alias].get("context_window"), listed[alias].get("max_tokens")),
+                                     (window, cap))
+
+    def test_no_servable_backend_publishes_no_limit_the_alias_does_not_declare(self) -> None:
+        self._non_path_strata(window_at="backend")
+        self.healthy = set()
+        listed, _ = self._served()
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertNotEqual(listed[alias].get("context_window"), 262144)
+                self.assertNotIn("max_tokens", listed[alias])
+
+    def test_an_engine_observed_window_wins_over_the_configured_one(self) -> None:
+        record = self._non_path_strata(window_at="backend")
+        self.backends["kobold"]["context_window_probe"] = {"endpoint": "/v1/models"}
+        listed = self._list_serving(record)
+        self.assertEqual(listed[record["id"]]["context_window"], 262144)
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+
+    def _strata_after_a_weight_swap(self, *, listed: list[dict]) -> None:
+        """The engine's primary id changed; the records still ask for the old id the engine keeps as an alias."""
+        backend = self.backends["kobold"]
+        for key in ("loaded_model_identity", "context_window_probe"):
+            backend.pop(key, None)
+        backend["state_type"] = "openai_compatible"
+        declared = {"type": "language", "input_modalities": ["text", "image"], "output_modalities": ["text"],
+                    "tags": ["reasoning", "tool-use", "vision"], "max_tokens": 262144}
+        strata = {"id": "strata", "upstream_model": "strata-old-name", "context_window": 262144,
+                  "model_metadata": copy.deepcopy(declared)}
+        fast = {**copy.deepcopy(strata), "id": "strata-fast"}
+        backend["models"][:] = [strata, fast, *backend["models"][1:]]
+        self.engine_models["kobold"] = listed
+
+    def _list_real_selector(self) -> dict[str, dict]:
+        with patch.object(proxy, "_policy_turns_reasoning_off",
+                          side_effect=lambda model_id: model_id in {"current-fast", "strata-fast"}):
+            listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
+        return listed
+
+    def _assert_strata_limits(self, listed: dict[str, dict]) -> None:
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
+                self.assertEqual(listed[alias]["architecture"]["input_modalities"], ["text", "image"])
+        self.assertIn("reasoning", listed["current"]["tags"])
+        self.assertNotIn("reasoning", listed["current-fast"]["tags"])
+
+    def test_aliases_match_a_declaration_through_the_alias_the_engine_lists(self) -> None:
+        self._strata_after_a_weight_swap(listed=[
+            {"id": "strata-new-name", "status": {"value": "loaded"}, "meta": {"n_ctx": 262144},
+             "aliases": ["strata-old-name"]},
+            {"id": "strata-old-name", "status": {"value": "loaded"}, "meta": {"n_ctx": 262144},
+             "aliases": ["strata-old-name"], "alias_of": "strata-new-name"},
+        ])
+        self._assert_strata_limits(self._list_real_selector())
+
+    def test_aliases_match_through_a_listed_entry_that_names_the_loaded_id_as_its_alias_of(self) -> None:
+        self._strata_after_a_weight_swap(listed=[
+            {"id": "strata-new-name", "status": {"value": "loaded"}},
+            {"id": "strata-old-name", "alias_of": "strata-new-name"},
+        ])
+        self._assert_strata_limits(self._list_real_selector())
+
+    def test_a_record_id_the_engine_does_not_list_keeps_the_alias_declaration(self) -> None:
+        self._strata_after_a_weight_swap(listed=[
+            {"id": "strata-new-name", "status": {"value": "loaded"}, "aliases": ["something-else"]},
+            {"id": "unrelated", "alias_of": "another-primary"},
+        ])
+        listed = self._list_real_selector()
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertNotEqual(listed[alias].get("context_window"), 262144)
+                self.assertNotIn("max_tokens", listed[alias])
+                self.assertNotIn("vision", listed[alias].get("tags", []))
+
+    def test_the_alias_set_comes_from_the_selector_probe_with_no_extra_request(self) -> None:
+        self._strata_after_a_weight_swap(listed=[
+            {"id": "strata-new-name", "aliases": ["strata-old-name"]},
+            {"id": "strata-old-name", "alias_of": "strata-new-name"},
+        ])
+        proxy._HEALTH_EVIDENCE_CACHE.clear()
+        proxy._RESOURCE_FACT_CACHE.clear()
+        self.requests.clear()
+        self._list_real_selector()
+        probes_of_model_list = [r for r in self.requests if r == ("kobold.test", "/v1/models")]
+        proxy._HEALTH_EVIDENCE_CACHE.clear()
+        self.requests.clear()
+        with patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            asyncio.run(proxy._first_servable_loaded_llm_target())
+        self.assertEqual(len(probes_of_model_list), self.requests.count(("kobold.test", "/v1/models")))
+
 
 # What each `/v1/models` type may show as on the Models page. The oracle for
 # the agreement tests below: written out here, not imported from the code.
