@@ -914,7 +914,10 @@ class Tools:
                 "description": (entry.get("description") or "")[:160],
                 "typical_seconds": entry.get("typical_seconds"), "mode": self._mode_for(entry, "auto"),
                 "availability": health.get(entry["id"]),
+                "status": entry.get("status") or "current", "superseded_by": entry.get("superseded_by"),
             })
+        # An agent asks "what should I use": workflows to choose today come before the ones they replaced.
+        rows.sort(key=lambda row: row["status"] != "current")
         for descriptor in self.registry.targets:
             if query and query not in descriptor.target.lower():
                 continue
@@ -944,6 +947,7 @@ class Tools:
             "target": entry["short_id"], "id": entry["id"], "intent": entry["intent"],
             "display_name": entry.get("display_name"), "description": entry.get("description"),
             "aliases": entry.get("aliases") or [], "typical_seconds": entry.get("typical_seconds"),
+            "status": entry.get("status") or "current", "superseded_by": entry.get("superseded_by"),
             "mode": self._mode_for(entry, "auto"),
             "modes_available": [m for m in ("sync", "async") if execution.get(m)],
             "inputs": effective_schema(entry), "outputs": entry.get("outputs") or [],

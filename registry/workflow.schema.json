@@ -15,6 +15,12 @@
     "outputs",
     "bindings"
   ],
+  "dependentSchemas": {
+    "superseded_by": {
+      "required": ["status"],
+      "properties": {"status": {"const": "superseded"}}
+    }
+  },
   "properties": {
     "schema_version": {
       "const": 2
@@ -69,6 +75,15 @@
       "type": "number",
       "exclusiveMinimum": 0,
       "maximum": 86400
+    },
+    "status": {
+      "description": "Whether to choose this workflow today. Absent means current. A superseded workflow still runs; listings put current workflows first.",
+      "enum": ["current", "superseded"]
+    },
+    "superseded_by": {
+      "description": "The id of the workflow to use instead. Only a superseded workflow names one.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
     },
     "annotations": {
       "$ref": "#/$defs/annotations"
