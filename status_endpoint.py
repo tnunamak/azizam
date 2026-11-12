@@ -35,6 +35,7 @@ import threading
 import time
 from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
 import httpx
@@ -2419,6 +2420,35 @@ def _thermal_state(temp: Optional[float], warn: float, crit: float) -> str:
     return "ok"
 
 
+def _engine_listener_pids(config: Optional[Mapping[str, Any]]) -> set[int]:
+    """PIDs that listen on the port of a configured record's address, when that address is on this host.
+
+    The join is the address each record names (the one the probes dial) and the kernel's list of listening sockets,
+    so it needs no process name. One ``ss`` call; a missing or failing ``ss`` gives no PIDs.
+    """
+    ports: set[int] = set()
+    for record in ((config or {}).get("backends") or {}).values():
+        if not isinstance(record, Mapping):
+            continue
+        origin = _configured_engine_base(record)
+        if not origin:
+            continue
+        try:
+            parts = urlsplit(origin)
+            host, port = (parts.hostname or "").lower(), parts.port
+        except ValueError:
+            continue
+        if port and host in _LOCAL_HOSTS | {"::1"}:
+            ports.add(port)
+    if not ports:
+        return set()
+    try:
+        listening = _listening_pids()
+    except Exception:
+        return set()
+    return {pid for port in ports for pid in listening.get(port, ())}
+
+
 def _service_process_patterns(config: Optional[Mapping[str, Any]]) -> tuple[str, ...]:
     """Lower-case substrings that mark a process as an engine service: the lifecycle names and ``aux.process`` of each
     record. A record names its own units; the page does not list engines."""
@@ -2487,14 +2517,16 @@ def _cpu_usage_quick(config: Optional[Mapping[str, Any]] = None) -> dict:
     # which Brave window is on top.
     SERVICE_PATTERNS = ("proxy.py", "daisy", "claude", "main.py", "uvicorn", *_service_process_patterns(config))
 
-    def _is_service(cmd: str) -> bool:
-        c = cmd.lower()
-        return any(pat in c for pat in SERVICE_PATTERNS)
+    engine_pids = _engine_listener_pids(config)
+
+    def _is_service(proc: Mapping[str, Any]) -> bool:
+        c = str(proc.get("command") or "").lower()
+        return proc.get("pid") in engine_pids or any(pat in c for pat in SERVICE_PATTERNS)
 
     services: list[dict] = []
     desktop: list[dict] = []
     for p in procs:
-        if _is_service(p.get("command") or ""):
+        if _is_service(p):
             services.append(p)
         else:
             desktop.append(p)
