@@ -157,8 +157,10 @@ skips lends no metadata. The loaded model maps to declarations of that backend o
   The engine may also name other ids that serve the same loaded model, for example an old id kept as an
   alias after the weights changed. The loaded entry's own `aliases`, and the id of every listed entry
   whose `alias_of` is the loaded id, match too. They come from the same model-list read that found the
-  loaded id, are cached with it, and cost no request. Both fields are read only when the engine sends
-  them; without them, matching is exactly as above. An id the engine does not list never matches.
+  loaded id, are kept with that id until the next read replaces them, and cost no request. Both fields
+  are read only when the engine sends them; without them, matching is exactly as above. An id the
+  engine does not list never matches, and neither does an id the same response also gives to another
+  model.
 
 A listing that includes neither alias makes no observation.
 
