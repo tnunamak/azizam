@@ -81,14 +81,21 @@ def protocol_for_workflow(workflow_id: str, contract: Mapping[str, Any]) -> str:
     return protocol_for_intent(str(contract.get("intent") or ""))
 
 
+@functools.lru_cache(maxsize=1)
+def _model_listed_intents() -> frozenset[str]:
+    """The intents of the routes of every frontend row that lists its workflows as models."""
+    return frozenset(
+        route.runtime_policy["intent"]
+        for row in frontend_shapes.bundled_rows() if row.lists_as_model
+        for route in row.routes if route.runtime_policy.get("intent")
+    )
+
+
 def lists_as_model(workflow_id: str, contract: Mapping[str, Any]) -> bool:
-    """Whether a frontend row that lists its workflows as models selects this workflow."""
-    for row in frontend_shapes.bundled_rows():
-        if not row.lists_as_model:
-            continue
-        try:
-            if selector_matches(row.selects, workflow_id, contract):
-                return True
-        except (AttributeError, TypeError):
-            continue
-    return False
+    """Whether a frontend row that lists its workflows as models serves this workflow's intent.
+
+    The rows' contract selectors are looser than the listing (a video edit workflow also has a prompt and a video output),
+    so the intent of the row's route, not the selector, decides membership: any intent a listing row serves is listed, with
+    every binding of it.
+    """
+    return str(contract.get("intent") or "") in _model_listed_intents()
