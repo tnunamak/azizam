@@ -4175,43 +4175,53 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
     )
 
 
-# {backend: (loaded id, ids the engine itself reports as serving it, time)}, kept from the probe
-# that read the loaded id, so a listing that follows `current` makes no second request.
-_ENGINE_SERVED_ALIASES: dict[str, tuple[str, frozenset[str], float]] = {}
+# {backend: (loaded id, ids the engine itself reports as serving it)}, kept from the probe that read the
+# loaded id, so a listing that follows `current` makes no second request. Every probe replaces the entry,
+# and a read must name the same loaded id, so the set is exactly as fresh as the id it pairs with; a
+# separate time limit would only let the aliases lapse while the id they belong to is still in use.
+_ENGINE_SERVED_ALIASES: dict[str, tuple[str, frozenset[str]]] = {}
 
 
 def _engine_reported_aliases(loaded: str, data: Mapping[str, Any]) -> frozenset[str]:
-    """Ids the engine's own model list says name the loaded model.
+    """Ids the engine's own model list says name the loaded model, and no other model.
 
-    The loaded entry's `aliases`, and the id of every listed entry whose `alias_of` is the loaded id.
-    Both fields are read only when present; an id the engine does not list is never added.
+    A listed entry's `aliases` claim those ids for that entry; an entry with `alias_of` claims its own id
+    for the named entry. Both fields are read only when present. An id is kept only when every claim in
+    the same response names the loaded model; an id claimed for another model as well is dropped.
     """
     entries = data.get("data")
     if not loaded or not isinstance(entries, list):
         return frozenset()
-    names: set[str] = set()
+    owners: dict[str, set[str]] = {}
+    spelled: dict[str, str] = {}
+
+    def claim(alias: Any, owner: Any) -> None:
+        if isinstance(alias, str) and alias and isinstance(owner, str) and owner:
+            key, owner_key = normalize_model_id(alias), normalize_model_id(owner)
+            if key != owner_key:  # an entry that lists its own id names nothing else
+                owners.setdefault(key, set()).add(owner_key)
+                spelled.setdefault(key, alias)
+
     for entry in entries:
         if not isinstance(entry, Mapping):
             continue
         entry_id = entry.get("id")
-        if entry_id == loaded and isinstance(entry.get("aliases"), list):
-            names.update(a for a in entry["aliases"] if isinstance(a, str) and a)
-        if isinstance(entry_id, str) and entry_id and entry.get("alias_of") == loaded:
-            names.add(entry_id)
-    names.discard(loaded)
-    return frozenset(names)
+        if isinstance(entry.get("aliases"), list):
+            for alias in entry["aliases"]:
+                claim(alias, entry_id)
+        claim(entry_id, entry.get("alias_of"))
+    own = normalize_model_id(loaded)
+    return frozenset(spelled[key] for key, claimed in owners.items() if claimed == {own} and key != own)
 
 
 def _remember_engine_aliases(backend: str, loaded: str, data: Mapping[str, Any]) -> None:
-    _ENGINE_SERVED_ALIASES[backend] = (loaded, _engine_reported_aliases(loaded, data), time.time())
+    _ENGINE_SERVED_ALIASES[backend] = (loaded, _engine_reported_aliases(loaded, data))
 
 
 def _engine_aliases_of_loaded(backend: str, loaded: str) -> frozenset[str]:
-    """The cached alias set, only for the id it was read with and while the loaded-state entry would still be fresh."""
+    """The alias set from the probe that read this loaded id; empty for another id or no probe."""
     held = _ENGINE_SERVED_ALIASES.get(backend)
-    if held and held[0] == loaded and time.time() - held[2] < _LOADED_STATE_TTL:
-        return held[1]
-    return frozenset()
+    return held[1] if held and held[0] == loaded else frozenset()
 
 
 async def current_llm_model_for_backend(backend: str) -> str:

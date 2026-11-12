@@ -943,6 +943,42 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                 self.assertNotIn("max_tokens", listed[alias])
                 self.assertNotIn("vision", listed[alias].get("tags", []))
 
+    def test_aliases_match_through_the_loaded_entrys_own_aliases_alone(self) -> None:
+        self._strata_after_a_weight_swap(listed=[
+            {"id": "strata-new-name", "status": {"value": "loaded"}, "aliases": ["strata-old-name"]},
+        ])
+        self._assert_strata_limits(self._list_real_selector())
+
+    def _assert_no_strata_inheritance(self, listed: dict[str, dict]) -> None:
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertNotIn("max_tokens", listed[alias])
+                self.assertNotIn("vision", listed[alias].get("tags", []))
+
+    def test_an_alias_the_same_response_also_gives_another_model_lends_nothing(self) -> None:
+        for other_claim in (
+            {"id": "strata-old-name", "alias_of": "another-primary"},
+            {"id": "another-primary", "aliases": ["strata-old-name"]},
+            {"id": "another-primary", "aliases": [" Strata-Old-Name "]},
+        ):
+            with self.subTest(other_claim=other_claim):
+                proxy._ENGINE_SERVED_ALIASES.clear()
+                self._strata_after_a_weight_swap(listed=[
+                    {"id": "strata-new-name", "status": {"value": "loaded"}, "aliases": ["strata-old-name"]},
+                    other_claim,
+                ])
+                self._assert_no_strata_inheritance(self._list_real_selector())
+
+    def test_the_alias_set_stays_with_its_loaded_id_however_long_the_listing_takes(self) -> None:
+        self.addCleanup(proxy._ENGINE_SERVED_ALIASES.clear)
+        proxy._remember_engine_aliases("kobold", "strata-new-name", {"data": [
+            {"id": "strata-new-name", "aliases": ["strata-old-name"]}]})
+        later = time.time() + 10 * proxy._LOADED_STATE_TTL
+        with patch.object(proxy.time, "time", return_value=later):
+            self.assertEqual(proxy._engine_aliases_of_loaded("kobold", "strata-new-name"), frozenset({"strata-old-name"}))
+        self.assertEqual(proxy._engine_aliases_of_loaded("kobold", "another-id"), frozenset())
+        self.assertEqual(proxy._engine_aliases_of_loaded("other-backend", "strata-new-name"), frozenset())
+
     def test_the_alias_set_comes_from_the_selector_probe_with_no_extra_request(self) -> None:
         self._strata_after_a_weight_swap(listed=[
             {"id": "strata-new-name", "aliases": ["strata-old-name"]},
