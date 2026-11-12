@@ -16131,6 +16131,13 @@ class _SessionMakeRuntime:
     def workflow_id(self, intent: str, model: str) -> str:
         return _image_job_workflow_id(intent, model)
 
+    def source_input(self, intent: str, model: str) -> me_make.SourceInput:
+        record = _image_workflow_record(intent, model)
+        if record is None:
+            # An owner graph with no record has no contract to read: the intent decides.
+            return "required" if intent == me_make.EDIT_INTENT else "none"
+        return me_make.source_input_of_contract(record.manifest.get("inputs") or {})
+
     def admission(self, intent: str) -> Response | None:
         # The same operator admission regular media jobs meet at submit.
         return _media_job_admission_response(intent)
