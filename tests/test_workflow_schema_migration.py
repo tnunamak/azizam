@@ -839,6 +839,7 @@ def test_every_frozen_release_document_converts_to_the_bundled_schema_2_file():
             for key in change["path"][:-1]:
                 original, current = original[key], current[key]
             key = change["path"][-1]
+            assert (key in original) is change["before_present"], (record_id, change["path"])
             assert original.get(key) == change["before"], (record_id, change["path"])
             assert current.get(key) == change["after"], (record_id, change["path"])
             if key in original:

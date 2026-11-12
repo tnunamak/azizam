@@ -38,6 +38,7 @@
         "B minor"
       ],
       "before": null,
+      "before_present": false,
       "path": [
         "inputs",
         "keyscale",
@@ -99,6 +100,7 @@
         "unknown"
       ],
       "before": null,
+      "before_present": false,
       "path": [
         "inputs",
         "language",
@@ -113,6 +115,7 @@
         "6"
       ],
       "before": null,
+      "before_present": false,
       "path": [
         "inputs",
         "timesignature",
@@ -124,6 +127,7 @@
     {
       "after": "superseded",
       "before": null,
+      "before_present": false,
       "path": [
         "status"
       ]
@@ -131,6 +135,7 @@
     {
       "after": "audio.generate.sa3-small-sfx",
       "before": null,
+      "before_present": false,
       "path": [
         "superseded_by"
       ]
@@ -140,6 +145,7 @@
     {
       "after": "Length in seconds. The model can stop early on long prompts.",
       "before": "Maximum length in seconds; the song may be shorter.",
+      "before_present": true,
       "path": [
         "inputs",
         "duration",
@@ -149,6 +155,7 @@
     {
       "after": "Length",
       "before": "Maximum length",
+      "before_present": true,
       "path": [
         "inputs",
         "duration",
@@ -158,6 +165,7 @@
     {
       "after": "Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.",
       "before": "Describe the genre, instruments, and mood.",
+      "before_present": true,
       "path": [
         "inputs",
         "tags",
@@ -167,6 +175,7 @@
     {
       "after": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
       "before": null,
+      "before_present": false,
       "path": [
         "inputs",
         "tags",
