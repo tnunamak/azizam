@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
 from gateway.availability import project_service
-from gateway.capability_ids import MODEL_KINDS
+from gateway.capability_ids import CAPABILITY_ALIAS_HIDES_NAMES, MODEL_KINDS
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, LISTED_METADATA_KEY, RECOMMENDED_ALIASES, capability_presentation, product_capability,
     declared_health_success, engine_label, model_locality, service_health_endpoint, starts_on_demand, CAPABILITY_ICON_KEYS)
@@ -707,7 +707,7 @@ def _base_row(
     raw_description = _description(presentation_metadata)
     if is_alias:
         presentation_metadata["alias"] = row_id
-        if capabilities and product_capability(capabilities[0], presentation_metadata) == "chat":
+        if capabilities and product_capability(capabilities[0], presentation_metadata) in CAPABILITY_ALIAS_HIDES_NAMES:
             for field in ("title", "display_name", "name"):
                 presentation_metadata.pop(field, None)
     presentation = capability_presentation(capabilities[0], presentation_metadata) if capabilities else {}
