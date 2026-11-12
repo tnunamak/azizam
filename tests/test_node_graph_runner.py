@@ -6,17 +6,19 @@ is the sum of the sleeps. Nothing here names an engine or a workflow."""
 from __future__ import annotations
 
 import asyncio
+import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from gateway import media_delivery, media_jobs, media_metadata
-from gateway.engine_protocol import graph_round
+from gateway.engine_protocol import graph_round, node_validation
 from gateway.engine_protocol.description import Poll
-from gateway.engine_protocol.errors import TransportFailure
+from gateway.engine_protocol.errors import TransportFailure, UpstreamError
 from gateway.engine_protocol.types import JobRef, JobState, JobStatus
-from gateway.node_graph_runner import GraphHost, NodeGraphRunner, RunFailed, failure_of
+from gateway.node_graph_runner import GraphHost, NodeGraphRunner, Plan, RunFailed, Variant, _input_bindings, failure_of
 from gateway.workflow_run import REQUEST_FACTS_KEY
 
 CADENCE = Poll(ramp_s=(), interval_s=5.0, max_polls=None)
@@ -308,3 +310,259 @@ def test_unknown_kind_words_use_the_shared_table_fallback():
 
     assert "smell" not in asset_types.KIND_NAMES
     assert output_noun({"out": {"media_type": "smell/example"}}) == "smells"
+
+
+# The complete HTTP 400 response captured from the installed engine on 2026-11-12, without shortening its details.
+REAL_INPUT_REFUSAL = (
+    b'{"error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation", "details": "", '
+    b'"extra_info": {}}, "node_errors": {"5": {"errors": [{"type": "value_not_in_list", "message": "Value not in list", '
+    b'"details": "keyscale: \'Dm\' not in (list of length 34)", "extra_info": {"input_name": "keyscale", "input_config": null, '
+    b'"received_value": "Dm"}}], "dependent_outputs": ["38"], "class_type": "TextEncodeAceStepAudio1.5"}}}'
+)
+
+
+def test_real_input_refusal_decodes_only_identifiers_and_validation_type():
+    body = node_validation.parse_refusal_body(REAL_INPUT_REFUSAL)
+    assert body == json.loads(REAL_INPUT_REFUSAL)
+    facts = node_validation.input_refusals(body)
+    assert facts == (node_validation.InputRefusal("5", "keyscale", "value_not_in_list"),)
+    assert "Dm" not in repr(facts) and "TextEncode" not in repr(facts) and "length 34" not in repr(facts)
+
+
+@pytest.mark.parametrize("raw", [
+    b"", b"{}", b"null", b"[]", b"not json", b"\xff", REAL_INPUT_REFUSAL[:-1], REAL_INPUT_REFUSAL + b"{}",
+    b'{"node_errors": {}, "node_errors": {}}', b'{"error": NaN}',
+    REAL_INPUT_REFUSAL.replace(b'{"error":', b'{"error": {}, "error":', 1),
+    REAL_INPUT_REFUSAL.replace(b'"received_value": "Dm"', b'"received_value": NaN'),
+    b"[" * 1500 + b"0" + b"]" * 1500,
+    REAL_INPUT_REFUSAL + b" " * node_validation.MAX_REFUSAL_BODY_BYTES,
+])
+def test_incomplete_ambiguous_or_oversize_refusals_supply_no_input_evidence(raw):
+    assert node_validation.input_refusals(node_validation.parse_refusal_body(raw)) == ()
+
+
+def test_refusal_body_bound_accepts_a_complete_body_without_reading_a_prefix():
+    raw = REAL_INPUT_REFUSAL + b" " * (node_validation.MAX_REFUSAL_BODY_BYTES - len(REAL_INPUT_REFUSAL))
+    assert node_validation.input_refusals(node_validation.parse_refusal_body(raw))
+    assert node_validation.parse_refusal_body(raw + b" ") is None
+
+
+@pytest.mark.parametrize("other", [
+    None, {}, {"errors": []}, {"errors": [None]}, {"errors": [{"type": "unknown_validation"}]},
+    {"errors": [{"type": "value_not_in_list", "extra_info": {}}]},
+    {"errors": [{"type": "value_not_in_list", "extra_info": {"input_name": 3}}]},
+    {"errors": [{"type": "value_not_in_list", "extra_info": {"input_name": " "}}]},
+])
+def test_one_unknown_node_or_error_discards_the_whole_refusal(other):
+    body = json.loads(REAL_INPUT_REFUSAL)
+    body["node_errors"]["6"] = other
+    assert node_validation.input_refusals(body) == ()
+
+
+def test_unknown_envelope_and_excessive_facts_are_not_input_evidence():
+    body = json.loads(REAL_INPUT_REFUSAL)
+    body["error"]["type"] = "unrecognized_failure"
+    assert node_validation.input_refusals(body) == ()
+    body = json.loads(REAL_INPUT_REFUSAL)
+    body["node_errors"]["5"]["errors"] *= node_validation.MAX_REFUSAL_FACTS + 1
+    assert node_validation.input_refusals(body) == ()
+
+
+def _one_input_refusal(monkeypatch, *, inputs=None, media=None, generated=None, staged=None, binding=None,
+                       status=400, raw=REAL_INPUT_REFUSAL, batching=None, edit=None, during_submit=None, excerpt=""):
+    monkeypatch.setattr(media_jobs, "update_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(media_jobs, "get", lambda *args, **kwargs: {})
+    ctx = SimpleNamespace(job_id="test", inputs=inputs or {}, generated=generated or {}, media=media or {},
+                          record_result_metadata=lambda value: None, record_progress=lambda value: None)
+
+    class RefusingAdapter:
+        label = "Engine"
+
+        def compile(self, op, request, *, edit=None):
+            graph = {"5": {"class_type": "Encoder", "inputs": {"keyscale": request.body.get("scale", "Dm")}},
+                     "9": {"class_type": "Output", "inputs": {"enabled": True}}}
+            if edit is not None:
+                edit(graph)
+            return graph, {"prompt": graph}
+
+        async def submit(self, conn, op, request):
+            if during_submit is not None:
+                during_submit(ctx)
+            raise UpstreamError(status, "The engine refused the prompt.", body=raw, excerpt=excerpt)
+
+    host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None,
+                     control_timeout=lambda: 1, headers=None, batching=None, stages={})
+    with pytest.raises(RunFailed) as caught:
+        asyncio.run(NodeGraphRunner("binding", "adapter", host)._one_round(
+            ctx=ctx, adapter=RefusingAdapter(), session=SimpleNamespace(conn=None), runtime=SimpleNamespace(wait_s=1),
+            op="generate", template_request=SimpleNamespace(params={}), manifest_inputs={}, offset=0,
+            batching=batching, plan=None, target=1, probe=None, headers={},
+            binding=binding if binding is not None else {"map": {"scale": [{"node": "5", "input": "keyscale"}]}},
+            outputs={}, limits=None, poll=CADENCE, label="test", failure_binding="binding", conn=None,
+            retry_freed=lambda: False, staged=staged or {}, edit=edit))
+    return caught.value
+
+
+@pytest.mark.parametrize("status", [400, 422])
+def test_real_refusal_uses_pinned_public_name_and_actual_status_without_echo(monkeypatch, status):
+    failed = _one_input_refusal(monkeypatch, inputs={"scale": "Dm"}, status=status)
+    assert (failed.code, failed.category, failed.upstream_status, failed.retryable) == ("invalid_input", "invalid_input", status, False)
+    assert failed.client_message == "Input 'scale' is not accepted. Choose a value from the workflow input schema."
+    assert "Dm" not in failed.client_message and "keyscale" not in failed.client_message and "TextEncode" not in failed.client_message
+    round_failure = failed.__cause__
+    assert round_failure.refusal_body == json.loads(REAL_INPUT_REFUSAL)
+    assert "Dm" not in str(round_failure) and "Dm" not in repr(round_failure)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {}, {"generated": {"scale": "Dm"}}, {"inputs": {"scale": "Dm"}, "generated": {"scale": "Dm"}},
+    {"inputs": {"scale": "Dm"}, "staged": {"scale": "Dm"}},
+    {"inputs": {"scale": "Dm"}, "status": 500},
+    {"inputs": {"scale": "Dm"}, "raw": REAL_INPUT_REFUSAL[:-1]},
+    {"inputs": {"scale": "Dm"}, "binding": {}},
+    {"inputs": {"scale": "Dm"}, "binding": {"map": {"scale": [{"path": "5.inputs.keyscale"}]}}},
+    {"inputs": {"scale": "Dm"}, "binding": {"map": {
+        "scale": [{"node": "5", "input": "keyscale"}], "other": [{"path": "5.inputs.keyscale"}]}}},
+    {"inputs": {"scale": "Dm"}, "binding": {"map": {
+        "scale": [{"node": "5", "input": "keyscale"}], "other": [{"node": "5", "input": "keyscale"}]}}},
+])
+def test_defaults_overrides_ambiguous_bindings_and_unproven_refusals_keep_upstream_failure(monkeypatch, kwargs):
+    failed = _one_input_refusal(monkeypatch, **kwargs)
+    assert (failed.code, failed.category, failed.upstream_status) == ("upstream_refused", "upstream", 502)
+    assert failed.client_message == "Engine: The engine refused this request."
+
+
+def test_caller_media_presence_can_attribute_the_staged_value(monkeypatch):
+    failed = _one_input_refusal(monkeypatch, media={"scale": "caller asset"}, staged={"scale": "Dm"})
+    assert failed.category == "invalid_input"
+
+
+def test_caller_provenance_is_fixed_before_the_round_waits(monkeypatch):
+    binding = {"map": {"scale": [{"node": "5", "input": "keyscale"}]}}
+
+    def mutate(ctx):
+        ctx.inputs.clear()
+        binding["map"].clear()
+
+    failed = _one_input_refusal(monkeypatch, inputs={"scale": "Dm"}, binding=binding, during_submit=mutate)
+    assert failed.category == "invalid_input" and "'scale'" in failed.client_message
+
+
+def test_late_caller_inputs_cannot_convert_a_default_refusal_to_caller_fault(monkeypatch):
+    failed = _one_input_refusal(monkeypatch, during_submit=lambda ctx: ctx.inputs.update(scale="Dm"))
+    assert failed.category == "upstream"
+
+
+def test_a_variant_cannot_blame_a_caller_for_an_edited_node(monkeypatch):
+    def edit(graph):
+        graph["5"]["class_type"] = "DifferentEncoder"
+
+    failed = _one_input_refusal(monkeypatch, inputs={"scale": "Dm"}, edit=edit)
+    assert failed.category == "upstream"
+
+
+def test_a_variant_cannot_blame_a_caller_for_a_changed_input_value(monkeypatch):
+    def edit(graph):
+        graph["5"]["inputs"]["keyscale"] = "different value"
+
+    failed = _one_input_refusal(monkeypatch, inputs={"scale": "Dm"}, edit=edit)
+    assert failed.category == "upstream"
+
+
+def test_an_unrelated_variant_edit_preserves_provenance_and_input_refusal_skips_oom_retry(monkeypatch):
+    class Batching:
+        def round_inputs(self, plan, target):
+            return {}
+
+        async def free_after_refusal(self, plan, session):
+            pytest.fail("an attributed input refusal must not free models or retry")
+
+    def edit(graph):
+        graph["9"]["inputs"]["enabled"] = False
+
+    failed = _one_input_refusal(monkeypatch, inputs={"scale": "Dm"}, batching=Batching(), edit=edit,
+                                excerpt="engine-echoed cuda out of memory")
+    assert failed.category == "invalid_input"
+
+
+def test_a_batching_override_is_not_the_callers_input(monkeypatch):
+    batching = SimpleNamespace(round_inputs=lambda plan, target: {"scale": "Dm"})
+    failed = _one_input_refusal(monkeypatch, inputs={"scale": "Dm"}, batching=batching)
+    assert failed.category == "upstream"
+
+
+@pytest.mark.parametrize("other_owner", [None, "defaulted", "second"])
+def test_mixed_refusals_are_never_partly_attributed(other_owner):
+    body = json.loads(REAL_INPUT_REFUSAL)
+    body["node_errors"]["6"] = {"errors": [{"type": "value_not_in_list", "extra_info": {"input_name": "mode"}}]}
+    bindings = {("5", "keyscale"): "scale"}
+    if other_owner is not None:
+        bindings[("6", "mode")] = other_owner
+    failed = failure_of(graph_round.RoundFailure(graph_round.REFUSED, status=400, refusal_body=body),
+                        SimpleNamespace(label="Engine"), None, "binding", input_bindings=bindings,
+                        supplied_inputs=frozenset({"scale", "second"}))
+    assert failed.category == "upstream" and failed.upstream_status == 502
+
+
+def test_one_public_input_can_fan_out_to_multiple_refused_targets():
+    body = json.loads(REAL_INPUT_REFUSAL)
+    body["node_errors"]["6"] = body["node_errors"]["5"]
+    bindings = _input_bindings({"map": {"scale": [{"node": node, "input": "keyscale"} for node in ("5", "6")]}})
+    with pytest.raises(TypeError):
+        bindings[("5", "keyscale")] = "changed"
+    failed = failure_of(graph_round.RoundFailure(graph_round.REFUSED, status=400, refusal_body=body),
+                        SimpleNamespace(label="Engine"), None, "binding", input_bindings=bindings,
+                        supplied_inputs=frozenset({"scale"}))
+    assert failed.category == "invalid_input"
+
+
+@pytest.mark.parametrize("category,attempts", [("invalid_input", 1), ("upstream", 2)])
+def test_only_non_input_failures_can_retry_a_variant(monkeypatch, category, attempts):
+    calls = []
+    variant = Variant(edit=lambda graph: None, facts={"chosen": True}, fallback_facts={"fallback": True})
+
+    async def choose(ctx):
+        return variant
+
+    async def collect(*args, **kwargs):
+        calls.append(True)
+        raise RunFailed(category, category, "The request failed.", upstream_status=400 if category == "invalid_input" else 502)
+
+    graph = NodeGraphRunner("binding", "adapter", SimpleNamespace(variant=choose))
+    monkeypatch.setattr(graph, "_collect", collect)
+    with pytest.raises(RunFailed):
+        asyncio.run(graph._rounds(SimpleNamespace(pin=SimpleNamespace(contract={})), None, None, "generate", {}))
+    assert len(calls) == attempts
+
+
+@pytest.mark.parametrize("media_type,noun", [("audio/wav", "audio"), ("video/mp4", "video"), ("image/png", "images")])
+def test_repeated_empty_rounds_name_the_declared_output(monkeypatch, media_type, noun):
+    class Batching:
+        async def plan(self, *args):
+            return Plan(total=1, max_rounds=2)
+
+        async def target(self, *args):
+            return 1
+
+        def probe(self, *args):
+            return None
+
+    @asynccontextmanager
+    async def opened(conn):
+        yield None
+
+    async def empty(*args, **kwargs):
+        return None, []
+
+    host = SimpleNamespace(batching=lambda *args: Batching(), headers=lambda ctx: {}, limits=lambda: None)
+    graph = NodeGraphRunner("binding", "adapter", host)
+    monkeypatch.setattr(graph, "_one_round", empty)
+    ctx = SimpleNamespace(inputs={}, generated={}, payload={"body": {}},
+                          pin=SimpleNamespace(contract={"inputs": {}, "outputs": {"result": {"media_type": media_type}}},
+                                              binding={}, envelope=SimpleNamespace(binding_key="binding")))
+    runtime = SimpleNamespace(request=lambda *args: None, connection_for=lambda op: None)
+    adapter = SimpleNamespace(label="Engine", poll_for=lambda op: CADENCE, open=opened)
+    with pytest.raises(RunFailed) as caught:
+        asyncio.run(graph._collect(ctx, adapter, runtime, "generate", {}, None))
+    assert caught.value.client_message == f"Engine returned no {noun}"
+    assert (caught.value.code, caught.value.upstream_status) == ("upstream_empty", 502)
