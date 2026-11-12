@@ -172,3 +172,39 @@ def test_history_becomes_non_json_mid_wait(fake_upstreams) -> None:
     response = post(app)
     assert response.status_code == 502
     assert "history" in response.json()["error"]
+
+
+@pytest.mark.parametrize("reply", [{"status": 500, "body": [{"hex": "3c68746d6c3e6572726f723c2f68746d6c3e"}]},
+                                   {"body": [{"hex": "6e6f74204a534f4e"}]}, {"json": []}])
+def test_a_failed_history_poll_cancels_the_submitted_prompt(fake_upstreams, reply) -> None:
+    # A prompt ComfyUI accepted is not left queued when the wait for it fails (train 53 review P2).
+    steps = full_run([{}], view=False) + [
+        exchange("bad-history", "GET", "/history/p1", reply),
+        exchange("delete", "POST", "/queue", {"json": {}}),
+        exchange("cleanup-queue", "GET", "/queue", {"json": {"queue_running": [], "queue_pending": [[1, "p1"]]}})]
+    fake, app = serve(fake_upstreams, steps)
+    response = post(app)
+    assert response.status_code == 502
+    assert fake.calls("delete")[0].json == {"delete": ["p1"]}
+    assert not [r for r in fake.requests if r.path == "/interrupt"]
+
+
+def test_a_history_poll_that_cannot_connect_cancels_the_submitted_prompt(fake_upstreams, monkeypatch) -> None:
+    steps = full_run([{}], view=False) + [
+        exchange("delete", "POST", "/queue", {"json": {}}),
+        exchange("cleanup-queue", "GET", "/queue", {"json": {"queue_running": [], "queue_pending": [[1, "p1"]]}})]
+    fake, app = serve(fake_upstreams, steps)
+    real_get = httpx.AsyncClient.get
+    polls = {"n": 0}
+
+    async def flaky_get(self, url, *args, **kwargs):
+        if "/history/" in str(url):
+            polls["n"] += 1
+            if polls["n"] > 1:
+                raise httpx.ReadTimeout("history poll timed out")
+        return await real_get(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", flaky_get)
+    response = post(app)
+    assert response.status_code == 502
+    assert fake.calls("delete")[0].json == {"delete": ["p1"]}
