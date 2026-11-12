@@ -186,16 +186,6 @@ sites:
     category: wire_enum
     reason: "Example text in the MCP tool inputSchema description of the intent property (published discovery contract); it is documentation, not an allowlist or dispatch."
   - file: gateway/mcp_server.py
-    literal: "audio"
-    count: 1
-    category: wire_enum
-    reason: "Output name in the published MCP workflow-detail outputs[].name list, beside the fixed audio/mpeg type; it is not a MIME type."
-  - file: gateway/mcp_server.py
-    literal: "audio.speech"
-    count: 2
-    category: wire_enum
-    reason: "Emitted gateway MCP workflow-discovery detail.intent value, the published introspection vocabulary; it is not OpenAI's request intent field."
-  - file: gateway/mcp_server.py
     literal: "image"
     count: 2
     category: wire_enum

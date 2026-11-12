@@ -4,10 +4,9 @@
     "gateway/a1111_api.py": 2,
     "gateway/lifecycle_drivers.py": 11,
     "gateway/openai_media_schemas.py": 1,
-    "gateway/service_registry.py": 1,
     "gateway/video_media_jobs.py": 1,
     "metrics_sampler.py": 8,
-    "proxy.py": 157,
+    "proxy.py": 146,
     "status_endpoint.py": 132
   }
 }

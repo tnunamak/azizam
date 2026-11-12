@@ -535,7 +535,7 @@ def test_only_non_input_failures_can_retry_a_variant(monkeypatch, category, atte
     assert len(calls) == attempts
 
 
-@pytest.mark.parametrize("media_type,noun", [("audio/wav", "audio"), ("video/mp4", "video"), ("image/png", "images")])
+@pytest.mark.parametrize("media_type,noun", [("audio/wav", "audios"), ("video/mp4", "videos"), ("image/png", "images")])
 def test_repeated_empty_rounds_name_the_declared_output(monkeypatch, media_type, noun):
     class Batching:
         async def plan(self, *args):

@@ -1229,8 +1229,10 @@ def test_usage_capability_follows_exact_recorded_execution_intent():
 def test_usage_capability_does_not_guess_from_unknown_names_or_paths():
     from gateway import me_media
     for intent in ("audio.transcri-mystery", "audio.speech.unknown", "image.future", "opaque", ""):
-        assert me_media._capability({"intent": intent, "path": "/v1/audio/transcriptions"}) == "other"
-    assert me_media._capability({"path": "/v1/images/generations"}) == "other"
+        assert me_media._capability({"intent": intent, "path": "/v1/audio/transcriptions-mystery"}) == "other"
+        # An unknown intent falls back to the route row that serves its exact path, never a path prefix.
+        assert me_media._capability({"intent": intent, "path": "/v1/audio/transcriptions"}) == "transcribe"
+    assert me_media._capability({"path": "/v1/images/unknown"}) == "other"
 
 
 def test_usage_capability_accepts_an_unfamiliar_declared_word():
