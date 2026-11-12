@@ -172,7 +172,11 @@ The member catalog makes no observation and uses the conservative fallback.
   is `current-fast`, through its `reasoning_effort: none` overlay. The gateway reads this from the
   policy data, not from the alias name.
 - `context_window`: a value observed from the running engine wins. Without one, the aliases take the
-  smallest `context_window` configured on the loaded model's records, ahead of static alias values.
+  smallest window the loaded model's own rows publish. Each id gets its window by the lookup its own row
+  uses: its record, else its service's configured window, else the service's cached probe. These come ahead
+  of static alias values. The aliases read the rows already in the listing and start no extra probe.
+- `max_tokens` rides the same merge as the tags. An id that declares none counts as not agreeing, so a
+  sibling record of the same weights with no declared cap keeps the aliases from publishing one.
 - When no backend is servable, no id of the served model is declared (for example `cydonia-24b`), a
   path backend's loaded path is gone or matches no record, or the declaration match is ambiguous, the
   aliases keep their own declaration: text in, text out, no tags.
