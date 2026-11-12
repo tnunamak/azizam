@@ -4175,6 +4175,45 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
     )
 
 
+# {backend: (loaded id, ids the engine itself reports as serving it, time)}, kept from the probe
+# that read the loaded id, so a listing that follows `current` makes no second request.
+_ENGINE_SERVED_ALIASES: dict[str, tuple[str, frozenset[str], float]] = {}
+
+
+def _engine_reported_aliases(loaded: str, data: Mapping[str, Any]) -> frozenset[str]:
+    """Ids the engine's own model list says name the loaded model.
+
+    The loaded entry's `aliases`, and the id of every listed entry whose `alias_of` is the loaded id.
+    Both fields are read only when present; an id the engine does not list is never added.
+    """
+    entries = data.get("data")
+    if not loaded or not isinstance(entries, list):
+        return frozenset()
+    names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        entry_id = entry.get("id")
+        if entry_id == loaded and isinstance(entry.get("aliases"), list):
+            names.update(a for a in entry["aliases"] if isinstance(a, str) and a)
+        if isinstance(entry_id, str) and entry_id and entry.get("alias_of") == loaded:
+            names.add(entry_id)
+    names.discard(loaded)
+    return frozenset(names)
+
+
+def _remember_engine_aliases(backend: str, loaded: str, data: Mapping[str, Any]) -> None:
+    _ENGINE_SERVED_ALIASES[backend] = (loaded, _engine_reported_aliases(loaded, data), time.time())
+
+
+def _engine_aliases_of_loaded(backend: str, loaded: str) -> frozenset[str]:
+    """The cached alias set, only for the id it was read with and while the loaded-state entry would still be fresh."""
+    held = _ENGINE_SERVED_ALIASES.get(backend)
+    if held and held[0] == loaded and time.time() - held[2] < _LOADED_STATE_TTL:
+        return held[1]
+    return frozenset()
+
+
 async def current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
@@ -4197,7 +4236,9 @@ async def current_llm_model_for_backend(backend: str) -> str:
         data = await _engine_probe_json(backend, str(strategy["endpoint"]), 2.0)
         if not isinstance(data, dict):
             return ""
-        return _resolve_dot_path(data, str(strategy["model_key"])) or ""
+        loaded = _resolve_dot_path(data, str(strategy["model_key"])) or ""
+        _remember_engine_aliases(backend, loaded, data)
+        return loaded
     except Exception:
         return ""
 
@@ -14856,7 +14897,9 @@ def _role_catalog_ids_for_loaded_path(
     return ids
 
 
-def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
+def _declarations_for_loaded_model(
+    backend: str, loaded_model: str, engine_aliases: Iterable[str] = (),
+) -> set[str]:
     """Match the backend's declarations to what it has loaded, without I/O.
 
     A backend that loads by path is matched on the activation path, by chat execution's activation
@@ -14869,9 +14912,10 @@ def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
     loaded = normalize_model_id(loaded_model)
     ids: set[str] = set()
     if not _backend_reports_loaded_model_as_path(backend):
+        served = {loaded, *(normalize_model_id(alias) for alias in engine_aliases)}
         for record in _service_model_records(service_cfg):
             name = str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
-            if name and name not in USE_LOADED_MODEL_ALIASES and normalize_model_id(record_served_model_id(record)) == loaded:
+            if name and name not in USE_LOADED_MODEL_ALIASES and normalize_model_id(record_served_model_id(record)) in served:
                 ids.add(name)
         return ids
     names = {
@@ -29274,7 +29318,10 @@ async def _model_list_served_declarations() -> set[str]:
             loaded = currently_loaded_model(target.backend)
         else:
             loaded = target.model
-        return _declarations_for_loaded_model(target.backend, loaded) if loaded else set()
+        if not loaded:
+            return set()
+        aliases = () if _backend_reports_loaded_model_as_path(target.backend) else _engine_aliases_of_loaded(target.backend, loaded)
+        return _declarations_for_loaded_model(target.backend, loaded, aliases)
     except Exception:  # noqa: BLE001 - a failed probe leaves the aliases on their own declaration
         return set()
 
