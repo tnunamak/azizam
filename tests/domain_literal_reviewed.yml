@@ -215,3 +215,8 @@ sites:
     count: 1
     category: wire_enum
     reason: "Emitted object discriminator of the gateway audio-generation response (created, job_id, data), the gateway extension's response object contract, not a claimed OpenAI discriminator."
+  - file: proxy.py
+    literal: audio
+    count: 1
+    category: config_key
+    reason: Names the audio section of the startup config file (proxy_config.yml) as a literal, so the import-time config read audit (tests/test_import_time_config_reads.py) can see which section is read; it is a file key and selects no workflow, intent or engine.

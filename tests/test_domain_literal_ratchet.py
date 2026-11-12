@@ -175,7 +175,7 @@ def partition_reviewed_sites(
     assert isinstance(document.get("sites"), list), f"{reviewed_path}: sites must be a list"
     remaining: dict[tuple[str, str], int] = {}
     fields = {"file", "literal", "count", "category", "reason"}
-    categories = {"media_type", "engine_node_input", "wire_enum"}
+    categories = {"media_type", "engine_node_input", "wire_enum", "config_key"}
     for index, entry in enumerate(document["sites"]):
         label = f"{reviewed_path.name} sites[{index}]"
         assert isinstance(entry, dict), f"{label}: expected a mapping"
