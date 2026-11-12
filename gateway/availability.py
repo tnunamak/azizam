@@ -196,28 +196,33 @@ def workflow_availability(
     follows the one that limits it; one that can run on several takes the best of them.
     """
     services = _services_mapping(service_records)
-    requirements = requirements_of(record.contract)
-    composed = isinstance(requirements, Mapping)
-    if composed:
-        dependencies = [str(service) for service in requirements.get("services") or ()]
-        for workflow_id in requirements.get("workflows") or ():
-            needed = (records or {}).get(str(workflow_id))
-            dependencies += needed.supported_backends if needed is not None else []
-        dependencies = list(dict.fromkeys(dependencies))
-    else:
-        dependencies = list(record.supported_backends)
-    projected = [project_service(service, service_records=service_records, evidence=evidence, services=services)
-                 for service in dependencies]
-    if not projected:
+    groups = _dependency_groups(record, records or {}, set())
+    if not any(groups):
         return {"available": True, "reason": "Not measured yet", "last_healthy_at": None}
     priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3, "unknown": 4, "idle": 5, "ready": 6}
-    pick = (min if composed else max)(projected, key=lambda item: priority.get(item.status, 4))
-    healthy = [last_healthy_at(item.service_id, evidence) for item in projected]
-    known = [value for value in healthy if value is not None]
+    rank = lambda item: priority.get(item.status, 4)
+    # Each group is a set of interchangeable engines: the best one serves it. The worst served group limits the workflow.
+    best = [max((project_service(service, service_records=service_records, evidence=evidence, services=services)
+                 for service in group), key=rank) for group in groups if group]
+    pick = min(best, key=rank)
     down = pick.status == "unavailable"
     reason = None if pick.status in {"ready", "idle", "busy"} else (
         _dependency_reason(pick, services.get(pick.service_id) or {}) if down else pick.reason)
-    return {"available": not down, "reason": reason, "last_healthy_at": max(known) if known else None}
+    return {"available": not down, "reason": reason, "last_healthy_at": last_healthy_at(pick.service_id, evidence)}
+
+
+def _dependency_groups(record: WorkflowRecord, records: Mapping[str, WorkflowRecord], seen: set[str]) -> list[list[str]]:
+    """The engines a workflow needs, as groups of interchangeable engines: each required service is a group of one; a
+    required workflow adds its own groups (recursively); a workflow with no requirements is one group of its backends."""
+    requirements = requirements_of(record.contract)
+    if not isinstance(requirements, Mapping):
+        return [list(dict.fromkeys(record.supported_backends))]
+    groups = [[str(service)] for service in dict.fromkeys(requirements.get("services") or ())]
+    for workflow_id in requirements.get("workflows") or ():
+        needed = records.get(str(workflow_id))
+        if needed is not None and needed.id not in seen:
+            groups += _dependency_groups(needed, records, seen | {record.id})
+    return groups
 
 
 # A name is servable when its service is ready, startable on demand, busy or degraded.

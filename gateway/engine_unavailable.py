@@ -14,7 +14,8 @@ What the code can tell apart:
 * **A name that does not resolve** (kind ``dns``): the address is wrong. Asking again will not help: not retryable.
 
 A connect timeout is not told apart from a read timeout by the failure the engine layer raises, so a timeout stays a
-``timeout`` failure. An engine's own 5xx (a 500 from its code) stays an ordinary upstream error.
+``timeout`` failure. An engine's own 5xx (a 500 from its code, or any 502-504 with a JSON body) stays an ordinary
+upstream error.
 """
 from __future__ import annotations
 
@@ -49,6 +50,8 @@ def _proxy_before_engine(error: UpstreamError) -> bool:
     if error.status not in _PROXY_PHRASES:
         return False
     text = _text(error)
+    if text.startswith(("{", "[")):
+        return False   # a JSON body is the engine's own answer, whatever words it uses
     return not text or text.startswith("<") or any(word in text for word in _PROXY_WORDS)
 
 

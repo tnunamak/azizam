@@ -29,6 +29,8 @@ def test_the_cases_the_code_can_tell_apart(error, expected):
     TransportFailure("tls", "bad cert"),
     UpstreamError(500, "The engine answered 500.", body=b'{"error": "model crashed"}'),
     UpstreamError(502, "The engine answered 502.", body=b'{"error": "out of memory in the model"}'),
+    UpstreamError(502, "The engine answered 502.", body=b'{"error": "service unavailable"}'),   # JSON: the engine's own words
+    UpstreamError(503, "The engine answered 503.", body=b'{"error": "connection refused"}'),
     ValueError("anything else"),
 ])
 def test_everything_else_is_not_engine_unavailable(error):
@@ -89,3 +91,37 @@ def test_an_engine_that_answered_reads_available_and_an_unmeasured_one_is_not_ca
     assert up["available"] is True and up["last_healthy_at"] == 900
     unmeasured = workflow_availability(record, service_records=services, records=registry, evidence={})
     assert unmeasured["available"] is True and unmeasured["last_healthy_at"] is None
+
+
+def _fake(workflow_id, backends=(), services=(), workflows=()):
+    from types import SimpleNamespace
+    requires = {"services": list(services), "workflows": list(workflows)} if services or workflows else None
+    contract = {"bindings": {"gateway": {"requires": requires}}} if requires else {}
+    return SimpleNamespace(id=workflow_id, contract=contract, supported_backends=list(backends))
+
+
+_DOWN = {"status": "down", "available": False, "observed_at_s": 950, "last_success_at_s": 100}
+_UP = {"status": "ok", "available": True, "observed_at_s": 950, "last_success_at_s": 900}
+_TWO = {"services": {"a": _COMFYUI, "b": _COMFYUI}}
+
+
+def test_a_composed_workflow_reports_the_limiting_engines_last_answer_not_the_newest():
+    parent = _fake("parent", backends=["gateway"], services=["a", "b"])
+    row = workflow_availability(parent, service_records=_TWO, evidence={"a": _DOWN, "b": _UP}, records={})
+    assert row["available"] is False and row["last_healthy_at"] == 100
+
+
+def test_a_required_workflow_with_interchangeable_engines_is_served_by_the_best_one():
+    child = _fake("child", backends=["a", "b"])
+    parent = _fake("parent", backends=["gateway"], workflows=["child"])
+    row = workflow_availability(parent, service_records=_TWO, evidence={"a": _DOWN, "b": _UP}, records={"child": child})
+    assert row["available"] is True and row["last_healthy_at"] == 900
+
+
+def test_nested_required_workflows_are_followed_and_a_cycle_ends():
+    leaf = _fake("leaf", backends=["a"])
+    middle = _fake("middle", backends=["gateway"], workflows=["leaf", "parent"])
+    parent = _fake("parent", backends=["gateway"], workflows=["middle"])
+    records = {"leaf": leaf, "middle": middle, "parent": parent}
+    row = workflow_availability(parent, service_records=_TWO, evidence={"a": _DOWN}, records=records)
+    assert row["available"] is False and row["last_healthy_at"] == 100
