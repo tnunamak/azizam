@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import frontend_mount, operation_security
+from gateway import domain_rows, frontend_mount, operation_security
 
 MADE_UP = "frobnicate.widget"
 MADE_UP_RECEIPT = "quux.receipt"
@@ -378,13 +378,14 @@ def test_the_video_rows_keep_route_policy_and_execution_intents_apart():
     assert items["videos.remix"]["execution_intents"] == {"admission": "video.remix"}
 
 
-def test_videos_create_is_the_one_video_handler_that_still_spells_its_intents():
-    """Its registered row has no translator, so the mount holds no row to read; this pins what stays spelled."""
+def test_videos_create_is_the_one_video_handler_that_still_names_its_intents():
+    """Its registered row has no translator, so the mount holds no row to read; the intent comes from the route row by path."""
     create = _body(proxy._proxy_graph_video_create)
-    assert _spelled_intents(proxy._proxy_graph_video_create) == ["video.generate"]  # the receipt it starts
-    assigned = [node.value.value for node in ast.walk(create) if isinstance(node, ast.Assign)
+    assert _spelled_intents(proxy._proxy_graph_video_create) == []  # no literal: the receipt reads the row
+    assigned = [node.value for node in ast.walk(create) if isinstance(node, ast.Assign)
                 and [t.id for t in node.targets if isinstance(t, ast.Name)] == ["admission_intent"]]
-    assert assigned == ["video.generate"]
+    assert assigned and not any(isinstance(value, ast.Constant) for value in assigned)
+    assert domain_rows.VIDEO_GENERATE == "video.generate"
     document = yaml.safe_load((ROOT / "registry" / "protocol_frontends.yml").read_text(encoding="utf-8"))
     row = next(item for record in document["records"] for item in record.get("registered_routes") or ()
                if item.get("intent") == "videos.create")
