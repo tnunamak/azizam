@@ -2267,6 +2267,7 @@ class _GatedMakeRuntime:
         self.autostart = True
         self.pending: list = []
         self.refusal = None  # The operator's admission refusal, if any.
+        self.source_inputs: dict[tuple[str, str], str] = {}  # (intent, model) -> the record's source contract
 
     def keep_payload(self, job_id: str, payload) -> None:
         self.payloads[job_id] = json.loads(json.dumps(payload))
@@ -2283,6 +2284,10 @@ class _GatedMakeRuntime:
 
     def workflow_id(self, intent: str, model: str) -> str:
         return f"{intent}.{model}"
+
+    def source_input(self, intent: str, model: str) -> str:
+        # No entry: like an owner graph with no record, the edit intent takes a source.
+        return self.source_inputs.get((intent, model), "required" if intent == "image.edit" else "none")
 
     def admission(self, intent: str):
         return self.refusal
@@ -3105,6 +3110,24 @@ class MemberFailureCopyTests(unittest.TestCase):
                          self.client.post(self.make_url, json=self._picture(), headers=self._make_headers("g"))):
             error = self._error(response, 401, "session_user_not_found", "account")
             self.assertEqual(error["message"], "Your sign-in no longer matches an account. Sign in again.")
+
+    def test_the_workflow_input_contract_decides_whether_a_source_is_needed(self) -> None:
+        source = "img_" + "c1" * 32
+        self._write_asset(source, ["sha256:alice"])
+        post = lambda key, **body: self.client.post(self.make_url, json=self._picture(**body), headers=self._make_headers(key))
+        # An edit-intent model whose record declares no picture input refuses a source.
+        self.runtime.source_inputs[("image.edit", "image")] = "none"
+        self._error(post("c-none", intent="image.edit", source_asset_id=source), 400, "invalid_source", "request")
+        self.assertIn(post("c-none-ok", intent="image.edit").status_code, (200, 202))
+        # A generate-intent model whose record requires a picture asks for one.
+        self.runtime.source_inputs[("image.generate", "image")] = "required"
+        needs = self._error(post("c-req"), 400, "invalid_source", "request")
+        self.assertEqual(needs["message"], "Editing needs a source picture. Choose a picture to edit.")
+        self.assertIn(post("c-req-ok", source_asset_id=source).status_code, (200, 202))
+        # An optional picture input takes both.
+        self.runtime.source_inputs[("image.generate", "image")] = "optional"
+        self.assertIn(post("c-opt-a").status_code, (200, 202))
+        self.assertIn(post("c-opt-b", source_asset_id=source).status_code, (200, 202))
 
     def test_make_request_errors_keep_parameter_names_in_details(self) -> None:
         unknown = self._error(self.client.post(self.make_url, json=self._picture(steps=4), headers=self._make_headers("f")),
