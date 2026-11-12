@@ -38,7 +38,9 @@ JOB_MODE = "session_make"
 CANCEL_REQUESTED = "cancel_requested"
 _CANCELED = describe("canceled")[1]
 ROUTE_PATH = "/me/api/make/jobs"
-SUPPORTED_INTENTS = frozenset(operation_intent(operation) for operation in ("images", "image_edits"))
+# The edit operation's declared intent is the one that takes a source picture.
+EDIT_INTENT = operation_intent("image_edits")
+SUPPORTED_INTENTS = frozenset({operation_intent("images"), EDIT_INTENT})
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
 # Request fields passed to the backend unchanged. Anything else is refused,
 # so a browser cannot smuggle routing or auth fields into the job.
@@ -413,9 +415,9 @@ def _submit(
     request_id = _idempotent_request_id(app_id, key, forget=forget) if key else new_request_id()
     source_asset_id = _owned_source(request, body, user_id=user_id, find_owned_asset=find_owned_asset,
                                     admin_path=admin_path, jobs_path=jobs_path)
-    if (intent == "image.edit") != (source_asset_id is not None):
+    if (intent == EDIT_INTENT) != (source_asset_id is not None):
         raise PublicFailure("invalid_source", 400, intent=intent,
-                            copy="edit_needs_source" if intent == "image.edit" else "generate_takes_no_source")
+                            copy="edit_needs_source" if intent == EDIT_INTENT else "generate_takes_no_source")
     if source_asset_id is not None:
         backend_body["source_asset_id"] = source_asset_id
 
