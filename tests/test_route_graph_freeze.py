@@ -278,7 +278,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-12 for the optional ``tag`` query parameter of GET /gateway/v1/requests and the yue2-song help
         # text (train 54, L3); only that one operation and that one input schema moved (tests/fixtures/headless_openapi.json
         # shows the same two changes). Before it the digest was 0dc822c7d41ec205ce192fd68f286a6e2ef7bb5265998618be5a6df152448999.
-        assert route_graph.openapi_digest(proxy.app) == "738e100d24ecf08ff89af488ba8c4a950e73cb8a789aafca2d066a1c3412d5b1"
+        # Re-captured 2026-11-12 for the train 54 integration: every workflow-list entry gains ``status`` and
+        # ``superseded_by`` (memo M5), and the ace-step input schema publishes its keyscale, language and timesignature
+        # choices (memo M2); no path, operation or other schema moved (tests/fixtures/headless_openapi.json shows the same).
+        # Before it the digest was 738e100d24ecf08ff89af488ba8c4a950e73cb8a789aafca2d066a1c3412d5b1.
+        assert route_graph.openapi_digest(proxy.app) == "eda3623f3ef8ff74c1669284e7c874458611f7f6a6d9ba16a82bdc6881964bd6"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
