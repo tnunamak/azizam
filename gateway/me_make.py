@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store, request_source
 from gateway.admin_oidc import AdminSession
+from gateway.discovery_metadata import operation_intent
 from gateway.public_failure import PublicFailure, describe, project_job
 from gateway import output_availability
 from gateway.receipts import RouteReceipt, new_request_id
@@ -37,7 +38,7 @@ JOB_MODE = "session_make"
 CANCEL_REQUESTED = "cancel_requested"
 _CANCELED = describe("canceled")[1]
 ROUTE_PATH = "/me/api/make/jobs"
-SUPPORTED_INTENTS = frozenset({"image.generate", "image.edit"})
+SUPPORTED_INTENTS = frozenset(operation_intent(operation) for operation in ("images", "image_edits"))
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
 # Request fields passed to the backend unchanged. Anything else is refused,
 # so a browser cannot smuggle routing or auth fields into the job.

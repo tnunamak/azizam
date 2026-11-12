@@ -432,3 +432,12 @@ def refused_by_profile(doc: dict[str, Any]) -> Exception:
     with pytest.raises(ContractErrors) as caught:
         frontend_profiles.check(doc)
     return caught.value
+
+
+def test_mesh_admission_intent_is_the_explicit_frontend_capability_intent():
+    from gateway import mesh_manifest
+    from gateway.capability_ids import MEDIA_TYPE_MODALITIES
+    from gateway.discovery_metadata import capability_execution_intent
+    assert mesh_manifest.MESH_INTENT == capability_execution_intent(
+        MEDIA_TYPE_MODALITIES[mesh_manifest.MESH_MEDIA_TYPE]
+    ) == "mesh.generate"

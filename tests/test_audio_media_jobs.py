@@ -126,5 +126,21 @@ class TestAudioMediaJobs(unittest.TestCase):
         self.assertNotIn("bytes", payload)
 
 
+
+
+
+class AudioIntentRowsTests(unittest.TestCase):
+    def test_default_audio_intent_keeps_the_published_value(self):
+        self.assertEqual(audio_media_jobs.infer_audio_intent({}), "audio.generate")
+        self.assertEqual(audio_media_jobs.infer_audio_intent({"type": "song"}), "music.generate")
+        self.assertEqual(audio_media_jobs.infer_audio_intent({"type": "sound-effect"}), "sfx.generate")
+
+    def test_default_audio_intent_comes_from_the_operation_row(self):
+        from unittest.mock import patch
+        with patch.object(audio_media_jobs, "operation_intent", return_value="unfamiliar.generate") as declared:
+            self.assertEqual(audio_media_jobs.infer_audio_intent({}), "unfamiliar.generate")
+            declared.assert_called_once_with("audio_generate")
+
+
 if __name__ == "__main__":
     unittest.main()

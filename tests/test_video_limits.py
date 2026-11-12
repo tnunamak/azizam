@@ -138,9 +138,31 @@ class WorkflowIdForVideoKeyTests(unittest.TestCase):
         from gateway.video_limits import workflow_id_for_video_key
         self.assertEqual(workflow_id_for_video_key("video-scail-2-replace"), "video.edit.scail-2-replace")
 
-    def test_an_owner_added_key_keeps_the_generate_prefix(self) -> None:
+    def test_an_owner_added_key_has_no_invented_registry_identity(self) -> None:
         from gateway.video_limits import workflow_id_for_video_key
-        self.assertEqual(workflow_id_for_video_key("my-own"), "video.generate.my-own")
+        self.assertIsNone(workflow_id_for_video_key("my-own"))
+
+
+
+
+
+class ExplicitWorkflowIdentityTests(unittest.TestCase):
+    def test_identity_comes_from_the_explicit_registry_mapping(self):
+        from types import SimpleNamespace
+        from gateway import video_limits as limits_module
+        declared = {"opaque.registry.identity": "owner-key"}
+        with patch.object(limits_module, "COMPATIBILITY", SimpleNamespace(limit_key_aliases=declared)), \
+             patch.object(limits_module, "_KEY_TO_WORKFLOW_ID", {"owner-key": "opaque.registry.identity"}):
+            self.assertEqual(limits_module.workflow_id_for_video_key("owner-key"), "opaque.registry.identity")
+            self.assertEqual(limits_module.workflow_id_for_video_key("opaque.registry.identity"), "opaque.registry.identity")
+
+    def test_unknown_names_are_not_synthesized_into_workflow_ids(self):
+        from types import SimpleNamespace
+        from gateway import video_limits as limits_module
+        with patch.object(limits_module, "COMPATIBILITY", SimpleNamespace(limit_key_aliases={})), \
+             patch.object(limits_module, "_KEY_TO_WORKFLOW_ID", {}):
+            for name in ("custom", "video.generate.custom", "", "owner/arbitrary"):
+                self.assertIsNone(limits_module.workflow_id_for_video_key(name))
 
 
 if __name__ == "__main__":

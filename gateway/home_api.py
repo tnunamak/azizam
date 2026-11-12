@@ -325,7 +325,7 @@ def _required_input_modalities(cap: Capability, workflow_records) -> list[str]:
     return ["text"] if "text" in declared else declared
 
 
-_MEDIA_FAMILIES = frozenset({"image", "audio", "video"})
+_MEDIA_FAMILIES = frozenset(asset_types.ASSET_PREFIX_BY_TOP_TYPE)
 
 
 def _required_media_inputs(cap: Capability, workflow_records) -> list[dict[str, Any]] | None:

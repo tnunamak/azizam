@@ -15,6 +15,8 @@ from typing import Any
 import jsonschema
 import yaml
 
+from gateway.capability_ids import AUDIO_RULE
+
 _ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = _ROOT / "registry" / "media_job_intents.yml"
 SCHEMA_PATH = _ROOT / "registry" / "media_job_intents.schema.json"
@@ -65,7 +67,7 @@ ROWS: tuple[IntentRow, ...] = load_rows()
 
 SUBMITTABLE_INTENTS: tuple[str, ...] = tuple(r.intent for r in ROWS if r.submittable)
 MODALITY_BY_INTENT: dict[str, str] = {r.intent: r.modality for r in ROWS}
-AUDIO_INTENTS: frozenset[str] = frozenset(r.intent for r in ROWS if r.modality == "audio")
+AUDIO_INTENTS: frozenset[str] = frozenset(r.intent for r in ROWS if r.modality == AUDIO_RULE["type"])
 
 
 def intents_of(modality: str) -> frozenset[str]:

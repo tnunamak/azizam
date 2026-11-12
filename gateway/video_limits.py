@@ -91,11 +91,13 @@ def limits_for_workflow(
 _KEY_TO_WORKFLOW_ID = {key: workflow_id for workflow_id, key in COMPATIBILITY.limit_key_aliases.items()}
 
 
-def workflow_id_for_video_key(key: str) -> str:
+def workflow_id_for_video_key(key: str) -> str | None:
     """Registry workflow id for a ``videos.workflows`` config key.
 
     Shipped keys are file stems (``video-ltx-2.5-t2v``); the id is the manifest id
     (``video.generate.ltx-2.5-t2v``). A key an owner added under its own name has no
-    entry and keeps the ``video.generate.`` prefix.
+    entry and has no known registry identity; it is not a workflow id guessed from its name.
     """
-    return _KEY_TO_WORKFLOW_ID.get(key) or f"video.generate.{key}"
+    if key in COMPATIBILITY.limit_key_aliases:
+        return key  # already an explicitly registered identity
+    return _KEY_TO_WORKFLOW_ID.get(key)

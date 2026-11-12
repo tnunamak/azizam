@@ -6,6 +6,8 @@
 # its loss report is empty). A row with `body: multipart` cannot be checked field by field; it says so, and
 # declares no `carries`. The anthropic and ollama rows list what their translators read (gateway/protocols/);
 # they stay `lenient`, because clients send fields these translators do not map and a refusal would break them.
+# adapter_request_fields: fields an adapter may supply automatically, separately
+# from workflow-owned route_inputs. An absent declaration grants no default.
 records:
   - id: openai
     # Stored-receipt protocol vocabulary; owner projections read this data.
@@ -137,6 +139,7 @@ records:
         extensions: [com.azizam.prompts, com.azizam.workflow]
         extension_order: 10
         route_inputs: [prompt, source_image, width, height]
+        adapter_request_fields: [response_format]
         workflow_targets:
           intent_prefixes: [image.generate]
           route_intent: image.generate
@@ -154,6 +157,7 @@ records:
         extensions: [com.azizam.prompts, com.azizam.workflow]
         extension_order: 20
         route_inputs: [prompt, source_image, width, height, mask, source_mask, mask_asset]
+        adapter_request_fields: [response_format]
         workflow_targets:
           intent_prefixes: [image.edit]
           route_intent: image.edit
@@ -339,12 +343,14 @@ records:
         canonical: /v1/images/variations
         translator: identity
         intent: images.variations
+        adapter_request_fields: [response_format]
         execution_intents: {admission: image.variation}
         body: multipart
       - methods: [POST]
         canonical: /openai/v1/images/variations
         translator: identity
         intent: images.variations
+        adapter_request_fields: [response_format]
         execution_intents: {admission: image.variation}
         body: multipart
       - methods: [POST]

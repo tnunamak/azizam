@@ -40,11 +40,15 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from gateway import retention
+from gateway.capability_ids import POLICY_PROTOCOLS, RECOMMENDED_ALIASES, capability_of_word
+from gateway.discovery_metadata import operation_intent
 from gateway.runtime_auth import discovery_allows
 from gateway.policy import PolicyRequest
 from gateway.workflow_call import BuiltRequest, CallError, build_request, effective_schema, error_from, validate_inputs
 
-DEFAULT_MODEL = "image"
+IMAGE_INTENT = operation_intent("images")
+_IMAGE_CAPABILITY = capability_of_word(IMAGE_INTENT)
+DEFAULT_MODEL = RECOMMENDED_ALIASES[_IMAGE_CAPABILITY]
 MAX_IMAGES = 10
 CORE_TIMEOUT_SECONDS = 600.0
 
@@ -121,7 +125,7 @@ class Session:
 
 
 def _image_entries(deps: A1111Deps) -> list[dict[str, Any]]:
-    return [e for e in deps.catalog() if e["intent"] == "image.generate" and (e.get("execution") or {}).get("sync")]
+    return [e for e in deps.catalog() if e["intent"] == IMAGE_INTENT and (e.get("execution") or {}).get("sync")]
 
 
 def _image_aliases(deps: A1111Deps) -> list[str]:
@@ -403,7 +407,7 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
         return JSONResponse([{"title": t, "model_name": t, "hash": None, "sha256": None, "filename": t, "config": None}
                              for t in model_titles(deps, entries=entries)
                              if discovery_allows(getattr(auth, "identity", None), PolicyRequest(
-                                 protocol="openai.images", intent="image.generate",
+                                 protocol=POLICY_PROTOCOLS[_IMAGE_CAPABILITY], intent=IMAGE_INTENT,
                                  model=t, workflow=by_title[t]["id"],
                              ))])
 

@@ -13,9 +13,11 @@ import binascii
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Protocol
 
-from gateway import compatibility, media_job_intents, media_jobs
+from gateway import asset_types, compatibility, media_job_intents, media_jobs
+from gateway.capability_ids import AUDIO_RULE
+from gateway.discovery_metadata import operation_intent
 
-AUDIO_ASSET_KIND = "aud"
+AUDIO_ASSET_KIND = asset_types.ASSET_PREFIX_BY_TOP_TYPE[AUDIO_RULE["type"]]
 DEFAULT_AUDIO_MEDIA_TYPE = "audio/wav"
 DEFAULT_AUDIO_SUFFIX = ".wav"
 _AUDIO_INTENTS = media_job_intents.AUDIO_INTENTS
@@ -65,7 +67,7 @@ def infer_audio_intent(request_body: Mapping[str, Any]) -> str:
         return "music.generate"
     if raw in {"sfx", "sound_effect", "sound-effect", "sound_effects"}:
         return "sfx.generate"
-    return "audio.generate"
+    return operation_intent("audio_generate")
 
 
 def audio_job_from_request(

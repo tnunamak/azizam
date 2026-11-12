@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 
+from gateway.discovery_metadata import operation_intent
 from gateway import media_jobs
 
-INTENT_VIDEO_GENERATE = "video.generate"
+INTENT_VIDEO_GENERATE = operation_intent("videos")
 VIDEO_OBJECT = "video"
 LEGACY_VIDEO_OBJECT = "video.generation"
 
