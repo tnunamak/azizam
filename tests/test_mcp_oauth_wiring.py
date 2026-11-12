@@ -110,7 +110,7 @@ class McpAuthorizationWiringTests(unittest.TestCase):
 
         route = APIRoute("/gateway/v1/media/jobs/{job_id}", job_route, methods=["GET"])
         with patch.object(proxy.app.router, "routes", [route, *proxy.app.router.routes]):
-            job = self.post(token, "tools/call", {"name": "job", "arguments": {"job_id": "mj_missing"}}, modern=True)
+            job = self.post(token, "tools/call", {"name": "job", "arguments": {"job_id": "mj_missing", "job_profile": "media_job"}}, modern=True)
         self.assertEqual(job.status_code, 200, job.text)
         result = job.json()["result"]
         self.assertTrue(result["isError"])

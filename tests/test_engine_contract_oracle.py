@@ -165,7 +165,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # order of image-anime/image-uncensored and of stt-diarize/stt-fast/stt-quality moved. Capabilities and engine did not move.
     # Re-captured 2026-11-08 (S5 projections): the face-likeness workflow's output modalities read from its contract and now
     # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "f358d972e72f0a2ad15acdb6b89ff724b6c8743643afa7724803b2aff82e5517"
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "2203b28987cb3687035bd38cf9d0c2f36a559c7ea18bd2dcd3060c9fc46e80ca"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

@@ -1,0 +1,177 @@
+{
+  "audio.generate.ace-step-1.5-xl-turbo": [
+    {
+      "after": [
+        "C major",
+        "C# major",
+        "Db major",
+        "D major",
+        "D# major",
+        "Eb major",
+        "E major",
+        "F major",
+        "F# major",
+        "Gb major",
+        "G major",
+        "G# major",
+        "Ab major",
+        "A major",
+        "A# major",
+        "Bb major",
+        "B major",
+        "C minor",
+        "C# minor",
+        "Db minor",
+        "D minor",
+        "D# minor",
+        "Eb minor",
+        "E minor",
+        "F minor",
+        "F# minor",
+        "Gb minor",
+        "G minor",
+        "G# minor",
+        "Ab minor",
+        "A minor",
+        "A# minor",
+        "Bb minor",
+        "B minor"
+      ],
+      "before": null,
+      "path": [
+        "inputs",
+        "keyscale",
+        "enum"
+      ]
+    },
+    {
+      "after": [
+        "ar",
+        "az",
+        "bg",
+        "bn",
+        "ca",
+        "cs",
+        "da",
+        "de",
+        "el",
+        "en",
+        "es",
+        "fa",
+        "fi",
+        "fr",
+        "he",
+        "hi",
+        "hr",
+        "ht",
+        "hu",
+        "id",
+        "is",
+        "it",
+        "ja",
+        "ko",
+        "la",
+        "lt",
+        "ms",
+        "ne",
+        "nl",
+        "no",
+        "pa",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sa",
+        "sk",
+        "sr",
+        "sv",
+        "sw",
+        "ta",
+        "te",
+        "th",
+        "tl",
+        "tr",
+        "uk",
+        "ur",
+        "vi",
+        "yue",
+        "zh",
+        "unknown"
+      ],
+      "before": null,
+      "path": [
+        "inputs",
+        "language",
+        "enum"
+      ]
+    },
+    {
+      "after": [
+        "2",
+        "3",
+        "4",
+        "6"
+      ],
+      "before": null,
+      "path": [
+        "inputs",
+        "timesignature",
+        "enum"
+      ]
+    }
+  ],
+  "audio.generate.tangoflux": [
+    {
+      "after": "superseded",
+      "before": null,
+      "path": [
+        "status"
+      ]
+    },
+    {
+      "after": "audio.generate.sa3-small-sfx",
+      "before": null,
+      "path": [
+        "superseded_by"
+      ]
+    }
+  ],
+  "audio.generate.yue2-song": [
+    {
+      "after": "Length in seconds. The model can stop early on long prompts.",
+      "before": "Maximum length in seconds; the song may be shorter.",
+      "path": [
+        "inputs",
+        "duration",
+        "help"
+      ]
+    },
+    {
+      "after": "Length",
+      "before": "Maximum length",
+      "path": [
+        "inputs",
+        "duration",
+        "label"
+      ]
+    },
+    {
+      "after": "Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.",
+      "before": "Describe the genre, instruments, and mood.",
+      "path": [
+        "inputs",
+        "tags",
+        "help"
+      ]
+    },
+    {
+      "after": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
+      "before": null,
+      "path": [
+        "inputs",
+        "tags",
+        "description"
+      ]
+    }
+  ]
+}

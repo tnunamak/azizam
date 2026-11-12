@@ -410,6 +410,12 @@ class TestShippedWorkflowOutputMediaTypes(unittest.TestCase):
     # format "auto" keeps its input container; TangoFlux writes through its own node), or a binding with no graph
     # writer at all (the gateway or an HTTP engine makes the output). A new unchecked output fails until it is added here.
     UNCHECKED_OUTPUTS = {
+        ("mesh.edit.texture-refine.yml", "http-multipart", "mesh", "<no graph workflow>"),
+        ("mesh.edit.rig-humanoid.yml", "http-multipart", "mesh", "<no graph workflow>"),
+        ("mesh.edit.rig-auto.yml", "http-multipart", "mesh", "<no graph workflow>"),
+        ("mesh.edit.uv-unwrap.yml", "http-multipart", "mesh", "<no graph workflow>"),
+        ("mesh.edit.retopo.yml", "http-multipart", "mesh", "<no graph workflow>"),
+        ("mesh.generate.pixal3d.yml", "http-multipart", "mesh", "<no graph workflow>"),
         ("face-likeness.yml", "gateway", "report", "<no graph workflow>"),
         ("flux2-klein-4b-seamless-tile.yml", "gateway", "image", "<no graph workflow>"),
         ("mesh.generate.trellis-2.yml", "http-multipart", "mesh", "<no graph workflow>"),

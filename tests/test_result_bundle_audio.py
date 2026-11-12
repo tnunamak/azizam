@@ -92,7 +92,8 @@ def test_the_job_view_is_what_it_was_and_gains_no_results_field(rig: GatewayRig)
     assert set(client) == {"request_id", "job_id", "intent", "status", "progress", "assets", "error", "created_at",
                            "updated_at", "parent_request_id", "accepted_at", "queued_at", "started_at",
                            "first_output_at", "finished_at", "error_code", "error_category", "retryable",
-                           "upstream_http_status", "attempt_number", "previous_attempts", "cancel_requested"}
+                           "upstream_http_status", "attempt_number", "previous_attempts", "cancel_requested",
+                           "last_healthy_at", "queue_position"}
     assert set(client["assets"][0]) == {"asset_id", "kind", "media_type", "size_bytes", "index"}
     admin = media_jobs.get(job_id, audience="admin", path=media_jobs.DB_PATH)
     assert "results" not in admin and "bundle" not in json.dumps(admin)

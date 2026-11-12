@@ -44,10 +44,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"image.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<req:1>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"image.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<req:1>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<686 after normalisation>",
+          "content-length": "<735 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:1>"
         },
@@ -73,10 +73,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"image.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<req:1>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"image.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<req:1>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": 0, \"queued_at\": \"<time>\", \"request_id\": \"imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<686 after normalisation>",
+          "content-length": "<732 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:1>"
         },
@@ -102,10 +102,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [{\"asset_id\": \"img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e\", \"asset_url\": \"http://gateway.test/v1/assets/img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e/content?expires=<expires>&md=none&sig=<sig>\", \"media_type\": \"image/png\", \"url\": \"http://gateway.test/v1/images/img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e/content?expires=<expires>&md=none&sig=<sig>\"}], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": \"<time>\", \"first_output_at\": \"<time>\", \"id\": \"<job:1>\", \"intent\": \"image.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<req:1>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 100, \"queued_at\": \"<time>\", \"request_id\": \"imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc\", \"retryable\": null, \"started_at\": \"<time>\", \"status\": \"succeeded\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [{\"asset_id\": \"img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e\", \"asset_url\": \"http://gateway.test/v1/assets/img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e/content?expires=<expires>&md=none&sig=<sig>\", \"media_type\": \"image/png\", \"url\": \"http://gateway.test/v1/images/img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e/content?expires=<expires>&md=none&sig=<sig>\"}], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": \"<time>\", \"first_output_at\": \"<time>\", \"id\": \"<job:1>\", \"intent\": \"image.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<req:1>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 100, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc\", \"retryable\": null, \"started_at\": \"<time>\", \"status\": \"succeeded\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<1126 after normalisation>",
+          "content-length": "<1175 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:1>"
         },
@@ -478,6 +478,7 @@
           "input_hash": "<digest>",
           "intent": "image.generate",
           "job_id": "<job:1>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -499,6 +500,7 @@
           "parent_request_id": "<req:1>",
           "previous_attempts": [],
           "progress": 100,
+          "queue_position": null,
           "queued_at": "<time>",
           "request_id": "imgjob_idem_a642ca6c67fd40823616072d59dbe4e47b2e45cc",
           "retryable": null,

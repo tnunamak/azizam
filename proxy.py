@@ -28756,11 +28756,9 @@ async def proxy_audio_generate(
             manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
             workflow_id = str(manifest.get("id") or "")
-            if (pinned_workflow != workflow_id
-                    or not _manifest_names_audio_workflow(manifest, workflow_name)
-                    or (str(body.get("model") or "") != workflow_name
-                        and _manifest_names_audio_workflow(manifest, str(body.get("model") or ""))
-                        and not _manifest_names_audio_workflow(manifest, workflow_name))):
+            # A graph file can back several workflows. Only the pinned identity, never its artifact,
+            # can establish that an alias still resolves to the workflow accepted for this job.
+            if pinned_workflow != workflow_id or workflow_name not in (workflow_id, workflow_id.rsplit(".", 1)[-1]):
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:

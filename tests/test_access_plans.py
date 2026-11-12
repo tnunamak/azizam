@@ -322,9 +322,12 @@ def test_video_record_id_is_the_access_plan_identity(key, workflow_id, intent, m
     ("my-own", False),
     ("video.edit.my-own", False),
 ])
-def test_owner_video_entry_uses_its_generate_record_id(listed_id, allowed):
+def test_owner_video_entry_uses_its_generate_record_id(monkeypatch, listed_id, allowed):
     from gateway.video_limits import workflow_id_for_video_key
 
+    # Owner entries need a declared identity, just like shipped entries. Unknown keys are never guessed.
+    from gateway import video_limits
+    monkeypatch.setattr(video_limits, "_KEY_TO_WORKFLOW_ID", {"my-own": "video.generate.my-own"})
     resolved = workflow_id_for_video_key("my-own")
     assert resolved == "video.generate.my-own"
     listed = plan(can_use={"video": CapabilityGrant(workflows=frozenset({listed_id}))})

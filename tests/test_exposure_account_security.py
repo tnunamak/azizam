@@ -458,6 +458,7 @@ def test_admin_config_reload_cookie_session_requires_valid_csrf(
             "STT_HOST": "",
             "EMBEDDINGS_HOST": "",
             "COMFY_HOST": "",
+            "_GRAPH_BINDING": proxy.DERIVED._GRAPH_BINDING,
         }
 
     monkeypatch.setattr(proxy, "reload_runtime_config", fake_reload_runtime_config)
@@ -501,6 +502,7 @@ def test_admin_config_reload_bearer_admin_does_not_require_csrf(
             "STT_HOST": "",
             "EMBEDDINGS_HOST": "",
             "COMFY_HOST": "",
+            "_GRAPH_BINDING": proxy.DERIVED._GRAPH_BINDING,
         }
 
     monkeypatch.setattr(proxy, "reload_runtime_config", fake_reload_runtime_config)

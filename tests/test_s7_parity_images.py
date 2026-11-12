@@ -1086,6 +1086,14 @@ def test_images_J20_failure_records_error_and_event(tmp_path):
 def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
     old, row = job_pair(tmp_path, job_body(), job_setup(setup), after=job_get())
     old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
+    if name == "unreachable":
+        # The new executor distinguishes an engine that never answered; the old route did not.
+        assert _job_doc(old, 1)["error_code"] == "upstream_error"
+        assert _job_doc(row, 1)["error_code"] == "engine_unavailable"
+        old_doc = {**_job_doc(old, 1), "error_code": "engine_unavailable"}
+        assert old_doc == _job_doc(row, 1)
+        assert_same(old, row, ("errors", lambda o: [(j["status"], j.get("error")) for j in media_jobs(o)]))
+        return
     assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("errors", lambda o: [(j["status"], j.get("error")) for j in media_jobs(o)]))
 
 

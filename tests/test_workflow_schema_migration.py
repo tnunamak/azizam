@@ -831,7 +831,21 @@ def test_every_frozen_release_document_converts_to_the_bundled_schema_2_file():
         plan = _plan({record_id: _owner_record(record_id, record["manifest"])})
         assert _rows(plan)[record_id].action == migration.CONVERT_WHOLE, record_id
         stored = plan.stored["workflows"][record_id]["manifest"]
-        assert stored == without_section_additions(bundled[record_id], stored), record_id
+        expected = without_section_additions(bundled[record_id], stored)
+        # Later bundled edits do not rewrite an owner's frozen schema-1 definitions. Pin both sides exactly.
+        edits = json.loads((Path(__file__).parent / "fixtures/workflow_post_schema_edits.json").read_text())
+        for change in edits.get(record_id, []):
+            original, current = stored, expected
+            for key in change["path"][:-1]:
+                original, current = original[key], current[key]
+            key = change["path"][-1]
+            assert original.get(key) == change["before"], (record_id, change["path"])
+            assert current.get(key) == change["after"], (record_id, change["path"])
+            if key in original:
+                current[key] = original[key]
+            else:
+                del current[key]
+        assert stored == expected, record_id
 
 
 def test_the_ace_fix_is_data_and_removes_only_a_value_the_record_still_holds_from_the_release():

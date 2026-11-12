@@ -140,7 +140,7 @@ class McpJobResultTests(unittest.IsolatedAsyncioTestCase):
 
         deps = McpDeps(authenticate=lambda *_: None, call=call, catalog=lambda: [], aliases=lambda: {},
                        store_asset=lambda *_: {}, read_asset=lambda *_: None, public_base_url=lambda _r: None)
-        result = await Tools(deps, None, None).job({"job_id": "mj_x"})  # type: ignore[arg-type]
+        result = await Tools(deps, None, None).job({"job_id": "mj_x", "job_profile": "media_job"})  # type: ignore[arg-type]
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"], "This workflow isn't in your access plan.")
         self.assertEqual(result["error_code"], "not_in_access_plan")

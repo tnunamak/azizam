@@ -144,10 +144,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"schema_version\":1,\"audience\":\"internal\",\"asset_url_ttl_s\":3600,\"jobs\":[{\"accepted_at\":\"<time>\",\"queued_at\":null,\"started_at\":null,\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f\",\"kind\":\"image\",\"media_type\":\"image/png\",\"asset_url\":\"http://gateway.test/v1/assets/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/images/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"image.edit\",\"job_id\":\"<job:1>\",\"metadata\":{\"mode\":\"sync_media_route\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"qwen-image-2.1-inpaint\"}]}"
+          "text": "{\"schema_version\":1,\"audience\":\"internal\",\"asset_url_ttl_s\":3600,\"jobs\":[{\"accepted_at\":\"<time>\",\"queued_at\":null,\"started_at\":null,\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f\",\"kind\":\"image\",\"media_type\":\"image/png\",\"asset_url\":\"http://gateway.test/v1/assets/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/images/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"image.edit\",\"job_id\":\"<job:1>\",\"metadata\":{\"mode\":\"sync_media_route\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"qwen-image-2.1-inpaint\",\"queue_position\":null,\"last_healthy_at\":null}]}"
         },
         "headers": {
-          "content-length": "<1134 after normalisation>",
+          "content-length": "<1179 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -221,10 +221,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":null,\"started_at\":null,\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f\",\"kind\":\"image\",\"media_type\":\"image/png\",\"asset_url\":\"http://gateway.test/v1/assets/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/images/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"image.edit\",\"job_id\":\"<job:1>\",\"metadata\":{\"mode\":\"sync_media_route\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"qwen-image-2.1-inpaint\",\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":null,\"started_at\":null,\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f\",\"kind\":\"image\",\"media_type\":\"image/png\",\"asset_url\":\"http://gateway.test/v1/assets/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/images/img_4968039700bbc4e78187c13ff17ae43cb944dd9bb4c7ea616e3cfa4227a8f92f/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"image.edit\",\"job_id\":\"<job:1>\",\"metadata\":{\"mode\":\"sync_media_route\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"qwen-image-2.1-inpaint\",\"asset_url_ttl_s\":3600}"
         },
         "headers": {
-          "content-length": "<1082 after normalisation>",
+          "content-length": "<1127 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -503,6 +503,7 @@
           "input_hash": "<digest>",
           "intent": "image.edit",
           "job_id": "<job:1>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -514,6 +515,7 @@
           "parent_request_id": null,
           "previous_attempts": [],
           "progress": 100,
+          "queue_position": null,
           "queued_at": null,
           "request_id": "<req:1>",
           "retryable": null,

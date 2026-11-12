@@ -466,7 +466,7 @@ def test_a_failed_reload_answers_with_fixed_text_and_a_reload_answer_shows_hosts
     assert reply.status_code == 500 and reply.json()["error"]["code"] == "reload_failed"
     assert "ZPW-RELOAD-1" not in reply.text and "ZTOK-RELOAD-2" not in reply.text and "h.invalid" not in reply.text
 
-    hosts = {"LLM_BACKEND_HOSTS": {"a": "http://uZ:ZPW-RELOAD-3@10.0.0.5:8000/v1?key=ZTOK-RELOAD-4"},              "TTS_HOST": None, "STT_HOST": "", "EMBEDDINGS_HOST": "http://10.0.0.7:1", "COMFY_HOST": "http://10.0.0.8:2"}
+    hosts = {"LLM_BACKEND_HOSTS": {"a": "http://uZ:ZPW-RELOAD-3@10.0.0.5:8000/v1?key=ZTOK-RELOAD-4"},              "TTS_HOST": None, "STT_HOST": "", "EMBEDDINGS_HOST": "http://10.0.0.7:1", "COMFY_HOST": "http://10.0.0.8:2", "_GRAPH_BINDING": proxy.DERIVED._GRAPH_BINDING}
     monkeypatch.setattr(proxy, "reload_runtime_config", lambda: hosts)
     ok = owner.post("/admin/api/config/reload", headers=csrf_for(owner))
     assert ok.status_code == 200
