@@ -237,14 +237,14 @@ def test_the_media_list_names_each_kind_once_for_the_web(library):
     _store(library, b"hello", ".zzunknown")
     kinds = library.client.get("/me/api/media").json()["kinds"]
     assert kinds == [
-        {"kind": "file", "label": "File", "plural": "Files", "untitled": "File", "input": "file"},
-        {"kind": "model", "label": "3D model", "plural": "3D models", "untitled": "3D model", "input": "3D model"},
+        {"kind": "file", "label": "File", "plural": "Files", "untitled": "File", "input": "file", "recent": True},
+        {"kind": "model", "label": "3D model", "plural": "3D models", "untitled": "3D model", "input": "3D model", "recent": True},
     ]
 
 
 def test_a_kind_with_no_row_is_named_from_its_own_type():
     assert asset_types.kind_names("smell") == {
-        "kind": "smell", "label": "Smell", "plural": "Smell", "untitled": "Smell", "input": "smell",
+        "kind": "smell", "label": "Smell", "plural": "Smell", "untitled": "Smell", "input": "smell", "recent": True,
     }
 
 
@@ -340,7 +340,7 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     table = asset_types.load_kind_names()
     assert table == asset_types.KIND_NAMES
     assert {"image", "video", "audio", "model", "text", "file"} <= set(table)
-    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix"}
+    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent"}
                for words in table.values())
 
 
@@ -351,6 +351,9 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     "kinds: {smell: {label: Smell, plural: Smells, untitled: '', input: smell}}\n",
     "kinds: {Smell: {label: Smell, plural: Smells, untitled: Smell, input: smell}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, prefix: ast}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: 'no'}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: 0}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: null}}\n",
     "other: 1\n",
 ])
 def test_a_malformed_kind_file_is_refused(tmp_path, text):
@@ -368,14 +371,14 @@ def test_a_kind_added_only_in_the_data_file_is_named_filtered_and_listed(library
     # The one other place a new type is one row, as the module says: a suffix that stands for the type.
     monkeypatch.setitem(asset_types.SUFFIX_MEDIA_TYPES, ".aroma", "smell/aroma-bundle")
     assert asset_types.kind_names("smell") == {
-        "kind": "smell", "label": "Aroma", "plural": "Aromas", "untitled": "Scent", "input": "aroma sample"}
+        "kind": "smell", "label": "Aroma", "plural": "Aromas", "untitled": "Scent", "input": "aroma sample", "recent": True}
     assert asset_types.input_word("smell") == "aroma sample"
     assert asset_types.file_words("smell/aroma-bundle")["word"] == "aroma sample"
     smell = _store(library, b"vapor", ".aroma")
     _store(library, GLB, ".glb")
     listing = library.client.get("/me/api/media").json()
     assert next(i for i in listing["assets"] if i["asset_id"] == smell)["kind"] == "smell"
-    assert {"kind": "smell", "label": "Aroma", "plural": "Aromas", "untitled": "Scent", "input": "aroma sample"} in listing["kinds"]
+    assert {"kind": "smell", "label": "Aroma", "plural": "Aromas", "untitled": "Scent", "input": "aroma sample", "recent": True} in listing["kinds"]
     filtered = library.client.get("/me/api/media?kind=smell").json()
     assert [i["asset_id"] for i in filtered["assets"]] == [smell]
 
@@ -454,3 +457,38 @@ def test_the_stored_id_tables_derive_from_the_asset_kind_rows():
     assert asset_types.asset_kind_names_by_prefix() == {"img": "image", "aud": "audio", "vid": "video"}
     assert proxy._ASSET_SUFFIXES_BY_KIND == me_media._ASSET_SUFFIXES_BY_KIND == suffixes
     assert proxy._ASSET_KIND_NAMES == {"img": "image", "aud": "audio", "vid": "video"}
+
+
+# --- Home's Recent shows a kind by what its row says, not by what the web knows ---------------------------------------
+
+def test_the_shipped_rows_decide_recent_and_text_is_the_only_hidden_kind():
+    table = asset_types.load_kind_names()
+    assert {kind for kind, row in table.items() if row.get("recent") is False} == {"text"}
+    for kind in table:
+        assert asset_types.kind_names(kind)["recent"] is table[kind].get("recent", True)
+    assert asset_types.kind_names("smell")["recent"] is True
+
+
+def test_an_explicit_recent_flag_is_kept_and_an_absent_one_means_true(tmp_path):
+    path = tmp_path / "asset_kinds.yml"
+    row = "label: Aroma, plural: Aromas, untitled: Scent, input: aroma sample"
+    path.write_text(f"kinds: {{smell: {{{row}, recent: false}}, mesh: {{{row}, recent: true}}, plain: {{{row}}}}}\n", encoding="utf-8")
+    table = asset_types.load_kind_names(path)
+    assert [table[k].get("recent") for k in ("smell", "mesh", "plain")] == [False, True, None]
+
+
+def test_every_kind_rows_recent_flag_reaches_the_media_list(library, monkeypatch, tmp_path):
+    data = tmp_path / "asset_kinds.yml"
+    data.write_text(asset_types.KIND_NAMES_PATH.read_text(encoding="utf-8")
+                    + "  smell: {label: Aroma, plural: Aromas, untitled: Scent, input: aroma sample, recent: false}\n", encoding="utf-8")
+    table = asset_types.load_kind_names(data)
+    monkeypatch.setattr(asset_types, "KIND_NAMES", table)
+    suffixes = {"image": ".png", "video": ".mp4", "audio": ".wav", "model": ".glb", "text": ".txt", "file": ".zzunknown"}
+    for suffix in suffixes.values():
+        _store(library, GLB if suffix == ".glb" else suffix.encode(), suffix)
+    listing = library.client.get("/me/api/media").json()
+    by_kind = {row["kind"]: row for row in listing["kinds"]}
+    assert set(by_kind) == set(suffixes), "every stored kind is listed with its words"
+    assert {kind: row["recent"] for kind, row in by_kind.items()} == {kind: table[kind].get("recent", True) for kind in suffixes}
+    assert by_kind["text"]["recent"] is False
+    assert {row["kind"] for row in listing["assets"]} == set(suffixes)
