@@ -4186,8 +4186,9 @@ def _engine_reported_aliases(loaded: str, data: Mapping[str, Any]) -> frozenset[
     """Ids the engine's own model list says name the loaded model, and no other model.
 
     A listed entry's `aliases` claim those ids for that entry; an entry with `alias_of` claims its own id
-    for the named entry. Both fields are read only when present. An id is kept only when every claim in
-    the same response names the loaded model; an id claimed for another model as well is dropped.
+    for the named entry, and an entry without `alias_of` claims its own id for itself. Both fields are read
+    only when present. An id is kept only when every claim in the same response names the loaded model; an
+    id claimed for another model as well, including another listed model's own id, is dropped.
     """
     entries = data.get("data")
     if not loaded or not isinstance(entries, list):
@@ -4209,6 +4210,9 @@ def _engine_reported_aliases(loaded: str, data: Mapping[str, Any]) -> frozenset[
         if isinstance(entry.get("aliases"), list):
             for alias in entry["aliases"]:
                 claim(alias, entry_id)
+        if entry.get("alias_of") is None and isinstance(entry_id, str) and entry_id:
+            # A listed model that is not an alias claims its own id, so another entry's alias cannot take it.
+            owners.setdefault(normalize_model_id(entry_id), set()).add(normalize_model_id(entry_id))
         claim(entry_id, entry.get("alias_of"))
     own = normalize_model_id(loaded)
     return frozenset(spelled[key] for key, claimed in owners.items() if claimed == {own} and key != own)
