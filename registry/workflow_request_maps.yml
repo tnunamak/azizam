@@ -54,6 +54,15 @@ maps:
     default:
       in: form
 
+  # The 3D stage run route: plain multipart form, the model as a file part.
+  - select:
+      intent: mesh.edit
+      mode: sync
+    asset:
+      in: file
+    default:
+      in: form
+
   # The image-generations route (POST /v1/images/generations): the prompt and the
   # combined size at the top level, the route-managed image inputs unset, the
   # rest as extension keys.
@@ -265,6 +274,16 @@ execution:
         kind: media_job
         poll: /gateway/v1/media/jobs/{job_id}
         content: /gateway/v1/media/jobs/{job_id}/content
+    model_workflow_job:
+      method: POST
+      path: {from: workflow_run_path}
+      content_type: multipart/form-data
+      fields: {from: fields, mode: sync}
+      output: a media job; its content is the model
+      response:
+        kind: media_job
+        poll: /gateway/v1/media/jobs/{job_id}
+        content: /gateway/v1/media/jobs/{job_id}/content
 
   async_templates:
     generated_image_job:
@@ -366,6 +385,12 @@ execution:
       route_inputs: [size_body]
       sync: binary_model
       async: prefer_binary_model_job
+      native_alternate: null
+    mesh.edit:
+      model_prefix: ""
+      route_inputs: []
+      sync: model_workflow_job
+      async: null
       native_alternate: null
     video.generate:
       model_prefix: video-

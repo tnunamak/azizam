@@ -9,6 +9,9 @@ raw GLB bytes back. This service keeps that contract and turns each request into
 3. patch the prompt (picture, seed, resolution, output name) and submit it with ``/prompt``;
 4. poll ``/history/<id>`` until it finishes, then download the textured GLB with ``/view``.
 
+``timeout`` (``PIXAL3D_TIMEOUT_SECONDS``) is the history-wait limit, not a total deadline: it starts when the prompt is
+submitted and bounds only the polling. Each other HTTP call has its own 60 second client limit.
+
 The prompt is the data file ``pixal3d_prompt.json`` next to this script. The node ids below name nodes of that file.
 Run: ``COMFYUI_URL=http://127.0.0.1:8188 uvicorn engines.pixal3d_comfy_service:app --port 8892``
 """
@@ -43,7 +46,7 @@ class Refusal(Exception):
 
 
 class PromptEnded(Refusal):
-    """ComfyUI itself reported the prompt as failed: it is no longer queued or running, so there is nothing to cancel."""
+    """ComfyUI itself reported that the submitted prompt ended in error: nothing is left to cancel."""
 
 
 def upstream_object(response: httpx.Response, step: str) -> dict[str, Any]:
@@ -88,12 +91,13 @@ def find_glb(outputs: dict[str, Any]) -> dict[str, str] | None:
 
 class Pixal3DService:
     def __init__(self, base_url: str, prompt: dict[str, Any], client_factory: Callable[[], httpx.AsyncClient],
-                 poll_interval: float = 2.0, timeout: float = 900.0) -> None:
+                 poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.prompt = prompt
         self.client_factory = client_factory
         self.poll_interval = poll_interval
         self.timeout = timeout
+        self.cleanup_timeout = cleanup_timeout
         self._busy = False
 
     async def generate(self, data: bytes, seed: int | None, resolution: int | None) -> bytes:
@@ -127,8 +131,7 @@ class Pixal3DService:
         except PromptEnded:
             raise
         except Exception:
-            # ComfyUI accepted the prompt; a wait that fails (timeout, a bad or failed history reply) must not leave
-            # it queued.
+            # Every other failed wait (timeout, a failed or malformed poll) leaves the submitted prompt possibly running.
             await self._cancel_prompt(client, prompt_id)
             raise
         ref = find_glb(entry.get("outputs") or {})
@@ -155,31 +158,35 @@ class Pixal3DService:
             await asyncio.sleep(self.poll_interval)
 
     async def _cancel_prompt(self, client: httpx.AsyncClient, prompt_id: str) -> None:
-        # ComfyUI POST /queue deletes pending ids. POST /interrupt is global,
-        # so call it only when GET /queue names our id as the running prompt.
+        # Pending deletion is scoped. Even a prompt_id on /interrupt is unsafe:
+        # the installed handler checks a snapshot before a global interrupt.
+        logger = logging.getLogger(__name__)
         errors = []
         try:
-            response = await client.post(f"{self.base_url}/queue", json={"delete": [prompt_id]})
-            response.raise_for_status()
-        except Exception as exc:
-            errors.append(type(exc).__name__)
-        try:
-            queue = upstream_object(await client.get(f"{self.base_url}/queue"), "cleanup queue")
-            if any(isinstance(row, list) and len(row) > 1 and row[1] == prompt_id
-                   for row in queue.get("queue_running", [])):
-                response = await client.post(f"{self.base_url}/interrupt", json={})
-                response.raise_for_status()
-        except Exception as exc:
-            errors.append(type(exc).__name__)
+            async with asyncio.timeout(self.cleanup_timeout):
+                try:
+                    response = await client.post(f"{self.base_url}/queue", json={"delete": [prompt_id]})
+                    response.raise_for_status()
+                except Exception as exc:
+                    errors.append(type(exc).__name__)
+                try:
+                    queue = upstream_object(await client.get(f"{self.base_url}/queue"), "cleanup queue")
+                    if any(isinstance(row, list) and len(row) > 1 and row[1] == prompt_id
+                           for row in queue.get("queue_running", [])):
+                        logger.warning("ComfyUI running prompt could not be cancelled safely")
+                except Exception as exc:
+                    errors.append(type(exc).__name__)
+        except TimeoutError:
+            errors.append("cleanup deadline exceeded")
         if errors:
-            logging.getLogger(__name__).warning("ComfyUI prompt cleanup failed: %s", ", ".join(errors))
+            logger.warning("ComfyUI prompt cleanup failed: %s", ", ".join(errors))
 
 
 def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,
                client_factory: Callable[[], httpx.AsyncClient] | None = None,
-               poll_interval: float = 2.0, timeout: float = 900.0) -> FastAPI:
+               poll_interval: float = 2.0, timeout: float = 900.0, cleanup_timeout: float = 5.0) -> FastAPI:
     service = Pixal3DService(base_url, prompt if prompt is not None else load_prompt(),
-                             client_factory or (lambda: httpx.AsyncClient(timeout=60.0)), poll_interval, timeout)
+                             client_factory or (lambda: httpx.AsyncClient(timeout=60.0)), poll_interval, timeout, cleanup_timeout)
     app = FastAPI(title="Pixal3D ComfyUI service")
 
     @app.get("/health")
@@ -210,7 +217,8 @@ def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,
 def _app_from_env() -> FastAPI:
     return create_app(os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188"),
                       poll_interval=float(os.environ.get("PIXAL3D_POLL_SECONDS", "2")),
-                      timeout=float(os.environ.get("PIXAL3D_TIMEOUT_SECONDS", "900")))
+                      timeout=float(os.environ.get("PIXAL3D_TIMEOUT_SECONDS", "900")),
+                      cleanup_timeout=float(os.environ.get("PIXAL3D_CLEANUP_TIMEOUT_SECONDS", "5")))
 
 
 app = _app_from_env()

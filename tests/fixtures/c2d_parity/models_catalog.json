@@ -224,6 +224,42 @@
         "image.generate.flux2-klein-4b-seamless-tile"
       ],
       [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.retopo"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-auto"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-humanoid"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.texture-refine"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.uv-unwrap"
+      ],
+      [
+        "mesh.generate",
+        "pixal3d",
+        null,
+        "mesh.generate.pixal3d"
+      ],
+      [
         "mesh.generate",
         "trellis",
         null,
@@ -1536,6 +1572,42 @@
         "image.generate.flux2-klein-4b-seamless-tile"
       ],
       [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.retopo"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-auto"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-humanoid"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.texture-refine"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.uv-unwrap"
+      ],
+      [
+        "mesh.generate",
+        "pixal3d",
+        null,
+        "mesh.generate.pixal3d"
+      ],
+      [
         "mesh.generate",
         "trellis",
         null,
@@ -1890,6 +1962,42 @@
         "gateway",
         null,
         "image.generate.flux2-klein-4b-seamless-tile"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.retopo"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-auto"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-humanoid"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.texture-refine"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.uv-unwrap"
+      ],
+      [
+        "mesh.generate",
+        "pixal3d",
+        null,
+        "mesh.generate.pixal3d"
       ],
       [
         "mesh.generate",
@@ -2365,6 +2473,42 @@
         "gateway",
         null,
         "image.generate.flux2-klein-4b-seamless-tile"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.retopo"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-auto"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.rig-humanoid"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.texture-refine"
+      ],
+      [
+        "mesh.edit",
+        "local3d-stages",
+        null,
+        "mesh.edit.uv-unwrap"
+      ],
+      [
+        "mesh.generate",
+        "pixal3d",
+        null,
+        "mesh.generate.pixal3d"
       ],
       [
         "mesh.generate",
@@ -3128,8 +3272,8 @@
   ],
   "catalog_counts": {
     "aliases": 3,
-    "capabilities": 59,
-    "models": 49
+    "capabilities": 65,
+    "models": 55
   },
   "catalog_models": [
     {
@@ -6049,6 +6193,524 @@
       "sha256": "333e26145b69e975adc87ea7d44a83ad844af4d180198b17bbf40ac6f23ce805"
     },
     {
+      "bytes": 1655,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "mesh",
+            "icon_key": "mesh",
+            "input_modalities": [
+              "asset"
+            ],
+            "intent": "mesh.edit",
+            "label": "3D models",
+            "output_modalities": [],
+            "streaming": false
+          }
+        ],
+        "capability": "mesh",
+        "capability_title": "3D models",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "A 3D model from one picture.",
+        "display_name": "Retopologize a 3D model",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "mesh.edit"
+          }
+        ],
+        "icon_key": "mesh",
+        "id": "mesh.edit.retopo",
+        "io": {
+          "input": [
+            "asset"
+          ],
+          "output": []
+        },
+        "locality": "unknown",
+        "name": "Retopologize a 3D model",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "local3d-stages",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Retopologize a 3D model",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Retopologize a 3D model",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "mesh.edit.retopo",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "mesh.edit.retopo"
+        ],
+        "workflow": "mesh.edit.retopo"
+      },
+      "id": "mesh.edit.retopo",
+      "sha256": "9fcb2e2aa8ff6019db714bc7d3f383ff89aea62b6fb9758cf380da7953a026e4"
+    },
+    {
+      "bytes": 1691,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "mesh",
+            "icon_key": "mesh",
+            "input_modalities": [
+              "asset"
+            ],
+            "intent": "mesh.edit",
+            "label": "3D models",
+            "output_modalities": [],
+            "streaming": false
+          }
+        ],
+        "capability": "mesh",
+        "capability_title": "3D models",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "A 3D model from one picture.",
+        "display_name": "Rig a 3D model with a skeleton",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "mesh.edit"
+          }
+        ],
+        "icon_key": "mesh",
+        "id": "mesh.edit.rig-auto",
+        "io": {
+          "input": [
+            "asset"
+          ],
+          "output": []
+        },
+        "locality": "unknown",
+        "name": "Rig a 3D model with a skeleton",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "local3d-stages",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Rig a 3D model with a skeleton",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Rig a 3D model with a skeleton",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "mesh.edit.rig-auto",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "mesh.edit.rig-auto"
+        ],
+        "workflow": "mesh.edit.rig-auto"
+      },
+      "id": "mesh.edit.rig-auto",
+      "sha256": "3a7e9ba65787fd6823e16bb12007878214c76da0dcb8bfacda3b25090e7abc91"
+    },
+    {
+      "bytes": 1679,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "mesh",
+            "icon_key": "mesh",
+            "input_modalities": [
+              "asset"
+            ],
+            "intent": "mesh.edit",
+            "label": "3D models",
+            "output_modalities": [],
+            "streaming": false
+          }
+        ],
+        "capability": "mesh",
+        "capability_title": "3D models",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "A 3D model from one picture.",
+        "display_name": "Rig a humanoid 3D model",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "mesh.edit"
+          }
+        ],
+        "icon_key": "mesh",
+        "id": "mesh.edit.rig-humanoid",
+        "io": {
+          "input": [
+            "asset"
+          ],
+          "output": []
+        },
+        "locality": "unknown",
+        "name": "Rig a humanoid 3D model",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "local3d-stages",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Rig a humanoid 3D model",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Rig a humanoid 3D model",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "mesh.edit.rig-humanoid",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "mesh.edit.rig-humanoid"
+        ],
+        "workflow": "mesh.edit.rig-humanoid"
+      },
+      "id": "mesh.edit.rig-humanoid",
+      "sha256": "6c73e6c5ca5100b64f14f140512e59a8a6b318808b8bb227f3b2605b88924341"
+    },
+    {
+      "bytes": 1755,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "mesh",
+            "icon_key": "mesh",
+            "input_modalities": [
+              "asset",
+              "image"
+            ],
+            "intent": "mesh.edit",
+            "label": "3D models",
+            "output_modalities": [],
+            "streaming": false
+          }
+        ],
+        "capability": "mesh",
+        "capability_title": "3D models",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "A 3D model from one picture.",
+        "display_name": "Refine the texture of a 3D model",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "mesh.edit"
+          }
+        ],
+        "icon_key": "mesh",
+        "id": "mesh.edit.texture-refine",
+        "io": {
+          "input": [
+            "asset",
+            "image"
+          ],
+          "output": []
+        },
+        "locality": "unknown",
+        "name": "Refine the texture of a 3D model",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "local3d-stages",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Refine the texture of a 3D model",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Refine the texture of a 3D model",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "mesh.edit.texture-refine",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "mesh.edit.texture-refine"
+        ],
+        "workflow": "mesh.edit.texture-refine"
+      },
+      "id": "mesh.edit.texture-refine",
+      "sha256": "d2a513adf59888d09981c3401034837b3dff72a333661785ffd62e706e9f0a56"
+    },
+    {
+      "bytes": 1687,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "mesh",
+            "icon_key": "mesh",
+            "input_modalities": [
+              "asset"
+            ],
+            "intent": "mesh.edit",
+            "label": "3D models",
+            "output_modalities": [],
+            "streaming": false
+          }
+        ],
+        "capability": "mesh",
+        "capability_title": "3D models",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "A 3D model from one picture.",
+        "display_name": "Unwrap the UVs of a 3D model",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "mesh.edit"
+          }
+        ],
+        "icon_key": "mesh",
+        "id": "mesh.edit.uv-unwrap",
+        "io": {
+          "input": [
+            "asset"
+          ],
+          "output": []
+        },
+        "locality": "unknown",
+        "name": "Unwrap the UVs of a 3D model",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "local3d-stages",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Unwrap the UVs of a 3D model",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Unwrap the UVs of a 3D model",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "mesh.edit.uv-unwrap",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "mesh.edit.uv-unwrap"
+        ],
+        "workflow": "mesh.edit.uv-unwrap"
+      },
+      "id": "mesh.edit.uv-unwrap",
+      "sha256": "632b516d2c39f02a8cb89bcafc1b262704ef0dfa28f6dd888c32c0de0b204368"
+    },
+    {
+      "bytes": 1660,
+      "full": {
+        "alias": false,
+        "availability": {
+          "available": false,
+          "configured": true,
+          "enabled": true,
+          "evidence": {
+            "kind": "unknown"
+          },
+          "idle_startable": false,
+          "measured": false,
+          "reason": "Not measured yet",
+          "status": "unknown",
+          "up": null
+        },
+        "capabilities": [
+          {
+            "available": true,
+            "capability": "mesh",
+            "icon_key": "mesh",
+            "input_modalities": [
+              "image"
+            ],
+            "intent": "mesh.generate",
+            "label": "3D models",
+            "output_modalities": [],
+            "streaming": false
+          }
+        ],
+        "capability": "mesh",
+        "capability_title": "3D models",
+        "cost": {
+          "kind": "unknown",
+          "price": null
+        },
+        "description": "A 3D model from one picture.",
+        "display_name": "Pixal3D image to 3D",
+        "engine_label": null,
+        "examples": [
+          {
+            "body": null,
+            "kind": "mesh.generate"
+          }
+        ],
+        "icon_key": "mesh",
+        "id": "mesh.generate.pixal3d",
+        "io": {
+          "input": [
+            "image"
+          ],
+          "output": []
+        },
+        "locality": "unknown",
+        "name": "Pixal3D image to 3D",
+        "object": "model_catalog.model",
+        "operations": [],
+        "provider": "pixal3d",
+        "recent_receipts": [],
+        "recommended": false,
+        "recommended_model": "Pixal3D image to 3D",
+        "resolves_to": {},
+        "same_model_as": [],
+        "secondary_profile": false,
+        "summary": {},
+        "timing": {
+          "source": null,
+          "typical_seconds": null
+        },
+        "title": "Pixal3D image to 3D",
+        "use": {
+          "curl": null,
+          "javascript": null,
+          "model": "mesh.generate.pixal3d",
+          "path": null,
+          "python": null
+        },
+        "use_names": [
+          "mesh.generate.pixal3d"
+        ],
+        "workflow": "mesh.generate.pixal3d"
+      },
+      "id": "mesh.generate.pixal3d",
+      "sha256": "9f859f59554c2e7a968ad45feae983e76b5b9c8506e21c1548eced9cc408ca51"
+    },
+    {
       "bytes": 1706,
       "full": {
         "alias": false,
@@ -8260,6 +8922,12 @@
         "kind": "mesh"
       }
     ],
+    "mesh.edit": [
+      {
+        "body": null,
+        "kind": "mesh.edit"
+      }
+    ],
     "mesh.generate": [
       {
         "body": null,
@@ -8689,6 +9357,42 @@
       "image.generate.flux2-klein-4b-seamless-tile"
     ],
     [
+      "mesh.edit",
+      "local3d-stages",
+      null,
+      "mesh.edit.retopo"
+    ],
+    [
+      "mesh.edit",
+      "local3d-stages",
+      null,
+      "mesh.edit.rig-auto"
+    ],
+    [
+      "mesh.edit",
+      "local3d-stages",
+      null,
+      "mesh.edit.rig-humanoid"
+    ],
+    [
+      "mesh.edit",
+      "local3d-stages",
+      null,
+      "mesh.edit.texture-refine"
+    ],
+    [
+      "mesh.edit",
+      "local3d-stages",
+      null,
+      "mesh.edit.uv-unwrap"
+    ],
+    [
+      "mesh.generate",
+      "pixal3d",
+      null,
+      "mesh.generate.pixal3d"
+    ],
+    [
       "mesh.generate",
       "trellis",
       null,
@@ -8994,6 +9698,7 @@
     "images.generations",
     "llm.execution",
     "mesh",
+    "mesh.edit",
     "mesh.generate",
     "music",
     "music.generate",
@@ -9109,6 +9814,7 @@
     "images.generations": null,
     "llm.execution": null,
     "mesh": null,
+    "mesh.edit": null,
     "mesh.generate": null,
     "music": null,
     "music.generate": null,

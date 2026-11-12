@@ -109,7 +109,7 @@ def test_published_video_create_extension_contract_is_json_only():
 # let an incorrect prefix or native alternate pass the shadow comparison.
 _SHIPPED_TEMPLATED_INTENTS = frozenset({
     "image.generate", "image.edit", "audio.generate",
-    "mesh.generate", "video.generate", "video.edit",
+    "mesh.generate", "mesh.edit", "video.generate", "video.edit",
 })
 _FROZEN_EXECUTION_METADATA = {
     "image.generate": ("", None),
@@ -121,6 +121,7 @@ _FROZEN_EXECUTION_METADATA = {
     }),
     "audio.generate": ("", None),
     "mesh.generate": ("", None),
+    "mesh.edit": ("", None),
     "video.generate": ("video-", None),
     "video.edit": ("video-", None),
     "image.analyze": ("", None),

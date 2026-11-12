@@ -230,13 +230,16 @@ def _facts_of(facts: PolicyFacts | None) -> WorkflowFacts | None:
     if facts is None:
         return None
     return WorkflowFacts(exposure=facts.exposure, trust_tier=facts.trust_tier, resource_tier=facts.resource_tier,
-                         resource_class=facts.resource_class, tags=tuple(facts.tags))
+                         resource_class=facts.resource_class, tags=tuple(facts.tags), selection_rank=facts.selection_rank)
 
 
 def _record_digest(contract: Mapping[str, Any], facts: WorkflowFacts | None, state: str, published: bool,
                    overrides: str | None) -> str:
     """The digest of the whole stored record: contract with annotations, facts, state, published, overrides."""
-    return digest({"contract": contract, "facts": asdict(facts) if facts else None, "state": state,
+    stated = asdict(facts) if facts else None
+    if stated is not None and stated["selection_rank"] is None:
+        del stated["selection_rank"]   # an unranked record digests as it did before the field existed
+    return digest({"contract": contract, "facts": stated, "state": state,
                    "published": published, "overrides": overrides})
 
 

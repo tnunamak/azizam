@@ -85,6 +85,7 @@ class WorkflowFacts:
     resource_tier: str
     resource_class: str
     tags: tuple[str, ...] = ()
+    selection_rank: int | None = None
 
 
 @dataclass(frozen=True)

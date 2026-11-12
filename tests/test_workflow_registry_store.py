@@ -34,7 +34,8 @@ def build_snapshot(document, bundled, *, generation):
     for workflow_id, record in (document.get("workflows") or {}).items():
         policy = record.get("policy")
         facts = WorkflowFacts(policy["exposure"], policy["trust_tier"], policy["resource_tier"],
-                              policy.get("resource_class", ""), tuple(policy["tags"])) if policy else None
+                              policy.get("resource_class", ""), tuple(policy["tags"]),
+                              policy.get("selection_rank")) if policy else None
         workflows[workflow_id] = entry(
             record["manifest"], revision=record.get("record_revision", 1), state=record.get("state", "active"),
             published=record.get("published", True), facts=facts, incarnation=record.get("incarnation", "unstepped"),

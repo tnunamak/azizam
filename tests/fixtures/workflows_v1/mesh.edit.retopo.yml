@@ -1,0 +1,39 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: mesh.edit.retopo
+intent: mesh.edit
+capability: mesh
+display_name: Retopologize a 3D model
+purpose: Cut a 3D model down to fewer faces
+description: Rebuilds a high-polygon 3D model with fewer faces and returns it as a binary glTF.
+technical_description: Fixed 3D stage bound to the local3d-stages service over one multipart POST. The service returns raw GLB bytes.
+summary: Send a model; receive the same model with fewer faces (model/gltf-binary).
+source: local
+trusted: true
+inputs:
+  mesh:
+    label: model
+    help: The 3D model to work on, as a binary glTF (.glb) file.
+    type: asset
+    required: true
+    media_type: model/gltf-binary
+  target_faces:
+    label: face count
+    help: About how many faces the result should have.
+    type: integer
+    minimum: 500
+    maximum: 200000
+    default: 8000
+outputs:
+  mesh:
+    modality: mesh
+    media_type: model/gltf-binary
+bindings:
+  local3d-stages:
+    transport:
+      kind: http-multipart
+      path: /retopo
+    map:
+      mesh: mesh
+      target_faces: target_faces

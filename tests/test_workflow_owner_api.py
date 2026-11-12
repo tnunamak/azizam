@@ -666,3 +666,57 @@ def test_every_bundled_run_control_patch_write_returns_a_new_etag(api):
         assert listed.headers["etag"] == detailed.headers["etag"] == current
         seen.add(current)
         previous, record_revision = current, commit["record_revision"]
+
+
+MESH_ID = "mesh.generate.trellis-2"
+
+
+def _mesh_facts(**changes):
+    return {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media",
+            "tags": [], **changes}
+
+
+def _save_mesh(api, **facts):
+    """An owner's override of the bundled record, written through the owner route, with its facts."""
+    contract = api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["contract"]
+    return api.post("/admin/api/workflows", json={"contract": contract, "overrides": MESH_ID, "facts": _mesh_facts(**facts)})
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_the_owner_route_stores_selection_rank_and_the_stored_record_loads_it(api):
+    saved = _save_mesh(api, selection_rank=0)
+    assert saved.status_code == 201, saved.text
+    assert api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"]["selection_rank"] == 0
+    from gateway.workflow_policy import rank_of
+    records = {record.id: record for record in service_registry.workflow_records_from_registry(
+        service_registry.load_service_registry(path=api.db))}
+    assert rank_of(records[MESH_ID].facts) == 0
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+@pytest.mark.parametrize("bad", [True, False, -1, 10**30, 1.5, "1", [1]])
+def test_the_owner_route_refuses_a_selection_rank_that_is_not_a_bounded_integer(api, bad):
+    refused = _save_mesh(api, selection_rank=bad)
+    assert refused.status_code == 422 and "selection_rank" in refused.text, refused.text
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_an_owner_write_without_selection_rank_keeps_the_record_unranked(api):
+    saved = _save_mesh(api)
+    assert saved.status_code == 201, saved.text
+    assert api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"].get("selection_rank") is None
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_selection_rank_set_through_the_owner_route_changes_the_model_an_unnamed_request_runs(api, monkeypatch):
+    import proxy
+
+    saved = proxy.GATEWAY_WORKFLOW_REGISTRY.contents()
+    try:
+        assert proxy._mesh_default_workflow() == "mesh.generate.pixal3d"      # the release ships Pixal3D first
+        assert _save_mesh(api, selection_rank=0).status_code == 201
+        monkeypatch.setattr(proxy, "ADMIN_DB_PATH", api.db)
+        proxy.GATEWAY_WORKFLOW_REGISTRY.adopt(proxy._load_gateway_workflow_registry(strict=True))
+        assert proxy._mesh_default_workflow() == MESH_ID
+    finally:
+        proxy.GATEWAY_WORKFLOW_REGISTRY.restore(saved)

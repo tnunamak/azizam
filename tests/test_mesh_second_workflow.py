@@ -18,21 +18,27 @@ import pytest
 
 import proxy
 from gateway import frontend_profiles, mesh_api, service_registry
-from gateway.manifests import ContractErrors, enforce_contract
+from gateway.discovery import WorkflowRegistry
+from gateway.manifests import ContractErrors, Provenance, enforce_contract
 from gateway.mesh_manifest import MeshManifestError
 from tests.mesh_workflows import SECOND_ID, SECOND_SERVICE, bundled_document, second_document, workflow_of
 
 
 # --- another contract under the bundled id runs through the live registry reader ------------------------------------------
 
-def test_a_different_contract_under_the_bundled_id_is_what_the_live_reader_serves(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_different_contract_under_the_bundled_id_is_what_the_live_reader_serves() -> None:
     document = second_document()
     document["id"] = bundled_document()["id"]
-    record = SimpleNamespace(contract=document, identity=SimpleNamespace(manifest_hash="h"))
     registry = proxy.GATEWAY_WORKFLOW_REGISTRY
-    original = registry.get(document["id"])
-    monkeypatch.setattr(registry, "get", lambda key, *a, **k: record if key == document["id"] else original)
-    workflow = proxy.current_mesh_workflow()
+    saved = registry.contents()
+    held = registry.get(document["id"])
+    changed = WorkflowRegistry()
+    changed.add_manifest(document, source_path=held.source_path, provenance=Provenance(trusted=held.identity.trusted, source=held.identity.source), facts=held.facts)
+    registry.adopt(changed)
+    try:
+        workflow = proxy.current_mesh_workflow(document["id"])
+    finally:
+        registry.restore(saved)
     assert (workflow.image_input, workflow.service_id) == ("photo", SECOND_SERVICE)
 
 

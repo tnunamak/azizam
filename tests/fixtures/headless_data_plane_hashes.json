@@ -50,7 +50,7 @@
     "/gateway/v1/workflows/video.edit.scail-2-replace/run": "b8fb28e62e11a674c3cd7a6a56a51aaa5803c8a02c622698d4bb123bdcc60385",
     "/gateway/v1/workflows/video.edit.rife-interpolate/run": "0395f67fa694966327dbfa16bbf1c2daabc7d13913e9adb7abd2b6c6fbab4701",
     "/gateway/v1/workflows/{workflow_id}": "463a3b1254e41398259113d02899a1d097f5951dadee8eecf3828229f41555f1",
-    "/gateway/v1/workflows/{workflow_id}/run": "ed48b3c7095d8054599934ada785608d15188447459ec1eeea9fcbbbdb252bda",
+    "/gateway/v1/workflows/{workflow_id}/run": "0539fe7c32b62f33e04fd2b50d44015781c318ac936205a3ed1d6b5f459349e4",
     "/health": "93585e18848742e92a42f73e15bb58b41aef6031d54c77da25a162bd6fb33ac8",
     "/ollama/api/blobs/{digest}": "be0df03a4b1e25e740a15a06660da48659267ea6ab1b7f729704ca19c34919ae",
     "/ollama/api/chat": "225573cab79f256727d3aa26e222d513966092c1b4e427cd8fa361004c6e3379",

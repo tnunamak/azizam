@@ -32,7 +32,8 @@ def record_of(entry: WorkflowEntry, source_path: str = "") -> WorkflowRecord:
     identity is the manifest identity receipts record, not the execution digest."""
     identity = manifest_identity(_thaw(entry.contract), Provenance(entry.provenance.trusted, entry.provenance.source))
     facts = None if entry.facts is None else PolicyFacts(
-        entry.facts.exposure, entry.facts.trust_tier, entry.facts.resource_tier, entry.facts.resource_class, tuple(entry.facts.tags))
+        entry.facts.exposure, entry.facts.trust_tier, entry.facts.resource_tier, entry.facts.resource_class, tuple(entry.facts.tags),
+        entry.facts.selection_rank)
     return WorkflowRecord(manifest=_thaw(entry.contract), identity=identity, source_path=Path(source_path),
                           facts=facts)
 

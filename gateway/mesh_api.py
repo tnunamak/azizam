@@ -309,6 +309,21 @@ async def pool_evidence(deps: MeshApiDeps) -> dict[str, dict[str, Any]]:
     }}
 
 
+async def records_evidence(deps: MeshApiDeps, workflows: Sequence[MeshWorkflow],
+                           present: Callable[[str], bool]) -> dict[str, dict[str, Any]]:
+    """The pool evidence of every mesh workflow, keyed by service. Workflows on one service (or on services that share a
+    pool) share the probe cache; a service that any of its workflows can use is available."""
+    parts = await asyncio.gather(*(
+        pool_evidence(replace(deps, current_manifest=lambda w=workflow: w, workflow_available=lambda w=workflow: present(w.id)))
+        for workflow in workflows))
+    merged: dict[str, dict[str, Any]] = {}
+    for part in parts:
+        for service_id, evidence in part.items():
+            if service_id not in merged or (evidence["available"] and not merged[service_id]["available"]):
+                merged[service_id] = evidence
+    return merged
+
+
 async def _pool_answer(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mapping[str, Any]) -> tuple[str | None, int]:
     """The reason the pool cannot take work now (None when it can), and the epoch second it was observed, from the probe
     cache. A pair never probed waits for its first probe, which every listing that arrives meanwhile shares. A cached

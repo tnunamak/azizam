@@ -1,0 +1,13 @@
+{
+ "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "flux-2-klein-base-9b-Q8_0.gguf"}},
+ "2": {"class_type": "UltraTexLoraLoader", "inputs": {"model": ["1", 0], "lora_name": "ultratex_flux2.safetensors", "strength": 1.0}},
+ "3": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
+ "4": {"class_type": "UltraTexForegroundDecoder", "inputs": {"vae": ["3", 0], "decoder_name": "ultratex_flux2_decoder.pt"}},
+ "5": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_8b_fp8mixed.safetensors", "type": "flux2", "device": "default"}},
+ "6": {"class_type": "UltraTexTextEncode", "inputs": {"clip": ["5", 0], "text": ""}},
+ "7": {"class_type": "LoadImage", "inputs": {"image": "REFERENCE_IMAGE.png"}},
+ "8": {"class_type": "UltraTexPrep", "inputs": {"reference_image": ["7", 0], "reference_mask": ["7", 1], "mesh_path": "/ABSOLUTE/PATH/input.glb", "render_size": 2048, "atlas_size": 2048, "uv_mode": "comfy_gpu", "reference_alignment": "fit_front_silhouette", "mask_meaning": "background (LoadImage)"}},
+ "9": {"class_type": "UltraTexSampler", "inputs": {"model": ["2", 0], "vae": ["4", 0], "positive": ["6", 0], "prep": ["8", 0], "resolution": 1024, "steps": 25, "seed": 12345, "guidance": 2.0, "drop_background_tokens": true, "attention": "ultratex_sparse", "sparse_topk": 0.2, "token_chunk": 8192, "memory_factor": 0.0}},
+ "10": {"class_type": "UltraTexBake", "inputs": {"prep": ["8", 0], "albedo_views": ["9", 0], "texture_size": 2048, "filename_prefix": "ultratex/refined", "view_weight_power": 4.0, "best_view_mix": 0.5, "edge_feather_px": 6.0, "fusion": "two_band", "detail_sharpness": 32.0, "exposure_match": true, "hole_fill": "mesh", "views_2_weight": 0.6}},
+ "11": {"class_type": "PreviewAny", "inputs": {"source": ["10", 3]}}
+}

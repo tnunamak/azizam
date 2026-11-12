@@ -1364,7 +1364,7 @@ frontends:
     receipt_protocol: openai.mesh
     strictness: exact
     lists_as_model: true
-    selects: {match: {outputs: {media_type: "model/gltf-binary"}}}
+    selects: {match: {intent: mesh.generate, outputs: {media_type: "model/gltf-binary"}}}
     routes:
       - methods: [POST]
         canonical: /v1/3d/generations
@@ -1374,7 +1374,7 @@ frontends:
     mode: sync
     receipt_protocol: openai.mesh
     strictness: exact
-    selects: {match: {outputs: {media_type: "model/gltf-binary"}}}
+    selects: {match: {intent: mesh.generate, outputs: {media_type: "model/gltf-binary"}}}
     routes:
       - methods: [POST]
         canonical: /v1/3d/generations/glb

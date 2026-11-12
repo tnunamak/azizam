@@ -941,6 +941,43 @@
       "role": "required",
       "service_name": "litellm"
     },
+    "local3d-stages": {
+      "base_path": "/",
+      "capabilities": [
+        "mesh"
+      ],
+      "description": "Refine, retopologize, unwrap and rig a 3D model.",
+      "display_name": "3D stages",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "3D stages",
+      "port": 8893,
+      "priority": 100,
+      "resource_capacity": {
+        "enabled": true,
+        "max_claim_bytes": 9663676416,
+        "mode": "exclusive-route-pool",
+        "observer": {
+          "free_pointer": "/memory_free_bytes",
+          "path": "/vram",
+          "service": "vram-observer",
+          "total_pointer": "/memory_total_bytes"
+        },
+        "pool_id": "gpu0",
+        "reserve_bytes": 1073741824,
+        "retry_after_seconds": 30,
+        "timeout_seconds": 5
+      },
+      "role": "optional",
+      "timeout": 900
+    },
     "openrouter": {
       "api_key_env": "OPENROUTER_API_KEY",
       "base_url": "https://openrouter.ai/api/v1",
@@ -971,6 +1008,43 @@
       "provider_id": "openrouter",
       "provider_type": "paid-remote",
       "role": "optional"
+    },
+    "pixal3d": {
+      "base_path": "/",
+      "capabilities": [
+        "mesh"
+      ],
+      "description": "Turn one image into a textured 3D model.",
+      "display_name": "Image to 3D (Pixal3D)",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "Pixal3D (ComfyUI)",
+      "port": 8892,
+      "priority": 100,
+      "resource_capacity": {
+        "enabled": true,
+        "max_claim_bytes": 22011707392,
+        "mode": "exclusive-route-pool",
+        "observer": {
+          "free_pointer": "/memory_free_bytes",
+          "path": "/vram",
+          "service": "vram-observer",
+          "total_pointer": "/memory_total_bytes"
+        },
+        "pool_id": "gpu0",
+        "reserve_bytes": 1073741824,
+        "retry_after_seconds": 30,
+        "timeout_seconds": 5
+      },
+      "role": "optional",
+      "timeout": 900
     },
     "realtime": {
       "capabilities": [

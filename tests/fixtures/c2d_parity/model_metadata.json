@@ -60,8 +60,13 @@
         "type": "image"
       },
       {
+        "azizam_intent": "mesh.edit",
+        "azizam_workflow_id": "mesh.edit.retopo",
+        "id": "wf-mesh.edit"
+      },
+      {
         "azizam_intent": "mesh.generate",
-        "azizam_workflow_id": "mesh.generate.trellis-2",
+        "azizam_workflow_id": "mesh.generate.pixal3d",
         "id": "wf-mesh.generate"
       },
       {
@@ -1503,6 +1508,7 @@
           "type": "image"
         }
       },
+      "wf-mesh.edit": null,
       "wf-mesh.generate": null,
       "wf-unknown-manifest": {
         "fields": {
@@ -2010,6 +2016,7 @@
         },
         "type": "image"
       },
+      "wf-mesh.edit": {},
       "wf-mesh.generate": {},
       "wf-unknown-manifest": {
         "architecture": {
@@ -7112,6 +7119,12 @@
         "type": "image"
       }
     },
+    "mesh.edit.retopo": null,
+    "mesh.edit.rig-auto": null,
+    "mesh.edit.rig-humanoid": null,
+    "mesh.edit.texture-refine": null,
+    "mesh.edit.uv-unwrap": null,
+    "mesh.generate.pixal3d": null,
     "mesh.generate.trellis-2": null,
     "video.edit.rife-interpolate": {
       "fields": {
@@ -8541,6 +8554,12 @@
     "image.generate.moss-image-fast",
     "image.generate.moss-image-quality",
     "image.generate.sdxl-seamless-tile",
+    "mesh.edit.retopo",
+    "mesh.edit.rig-auto",
+    "mesh.edit.rig-humanoid",
+    "mesh.edit.texture-refine",
+    "mesh.edit.uv-unwrap",
+    "mesh.generate.pixal3d",
     "mesh.generate.trellis-2",
     "video.edit.rife-interpolate",
     "video.edit.scail-2-replace",

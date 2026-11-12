@@ -85,7 +85,11 @@ def facts_from_body(body: Mapping[str, Any]) -> Any:
     if not isinstance(raw, Mapping) or not all(isinstance(raw.get(name), str) for name in FACT_TEXTS) \
             or not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
         raise BodyError("facts", "facts is null or an object of exposure, trust_tier, resource_tier, resource_class and tags")
-    return WorkflowFacts(raw["exposure"], raw["trust_tier"], raw["resource_tier"], raw["resource_class"], tuple(tags))
+    rank = raw.get("selection_rank")
+    if rank is not None and not workflow_policy.valid_selection_rank(rank):
+        raise BodyError("facts.selection_rank", "selection_rank is a whole number from 0 to "
+                        f"{workflow_policy.MAX_SELECTION_RANK}, or absent")
+    return WorkflowFacts(raw["exposure"], raw["trust_tier"], raw["resource_tier"], raw["resource_class"], tuple(tags), rank)
 
 
 def _save_body(body: Mapping[str, Any]) -> tuple[dict[str, Any], Any, str | None]:

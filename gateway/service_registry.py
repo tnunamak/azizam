@@ -2705,6 +2705,8 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
     if stated is not None:
         # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
         normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
+        if stated.selection_rank is not None:
+            normalized["policy"]["selection_rank"] = stated.selection_rank
         if isinstance(policy.get(RESOURCE_CLASS_KEY), str) and policy[RESOURCE_CLASS_KEY]:
             normalized["policy"][RESOURCE_CLASS_KEY] = policy[RESOURCE_CLASS_KEY]
     normalized.update(run_control_of(raw))

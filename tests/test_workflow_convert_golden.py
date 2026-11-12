@@ -2,6 +2,10 @@
 
 The golden file was generated from the converter before the intent-prefix table moved to data. This test never writes it:
 a converter change that moves one output byte fails here.
+
+Capture a reviewed additive example through
+``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_converter_fixture.py``.
+The CONVERTER_GOLDEN_JSON line is the serialized golden; save it only after reviewing the diff.
 """
 from __future__ import annotations
 
@@ -20,7 +24,8 @@ from gateway.workflow_convert import convert_1_to_2  # noqa: E402
 
 GOLDEN = ROOT / "tests" / "fixtures" / "workflows_v1_converted" / "converted.json"
 FIXTURES = ROOT / "tests" / "fixtures" / "workflows_v1"
-EXPECTED_FIXTURE_COUNT = 39
+EXPECTED_FIXTURE_COUNT = 45
+EXPECTED_FROZEN_RELEASE_COUNT = 39
 
 
 def _serialize(document: dict, notes: list) -> str:
@@ -41,6 +46,7 @@ def _current() -> dict[str, str]:
 def test_the_converter_output_for_every_schema_1_input_is_byte_identical_to_the_golden():
     current = _current()
     assert sum(key.startswith("fixture:") for key in current) == EXPECTED_FIXTURE_COUNT
-    assert len(current) == 2 * EXPECTED_FIXTURE_COUNT
+    assert sum(key.startswith("frozen:") for key in current) == EXPECTED_FROZEN_RELEASE_COUNT
+    assert len(current) == EXPECTED_FIXTURE_COUNT + EXPECTED_FROZEN_RELEASE_COUNT
     expected = GOLDEN.read_text(encoding="utf-8")
     assert json.dumps(current, sort_keys=True, indent=1) + "\n" == expected

@@ -40,7 +40,8 @@ ALLOWED = (
     "scripts/security/exposure_probe.py", "scripts/post-deploy-smoke",  # probe that /ui/home/ is a 404
     "docs/CORE_CONTRACTS.md", "docs/FIRST_RUN_SETUP.md", "docs/guides/OPERATOR.md",  # describe the move
     "scripts/run-hermetic-pytest.sh", "tests/test_flux2_seamless_tile_composition.py",
-    "tests/test_sdxl_seamless_tile_manifest.py", "tests/test_mesh_pixal3d_example.py",
+    "tests/test_sdxl_seamless_tile_manifest.py", "tests/test_mesh_pixal3d_record.py",
+    "tests/test_local3d_stages_service.py",  # filesystem privacy assertions contain /home, not browser links
     "tests/test_pixal3d_comfy_service.py",  # /home is a file system path there
     "gateway/category_api.py", "web/src/app/categories/", "web/e2e/categories-editor.spec.ts",
     "web/e2e/engines-real.spec.ts",  # /admin/api/categories/services and /admin/api/services/<id>
