@@ -115,3 +115,57 @@ def test_the_detail_cards_render_from_the_declared_panels():
 def test_the_summary_cards_render_from_the_declared_panels(name, aux):
     payload = {"aux_health": aux, "aux_panels": TODAY_PANELS}
     assert firehose_render._render_backend_readiness(payload) == PINS[name]
+
+
+# --- process buckets: an engine service is a process that listens on a configured record's local port --------------
+
+LIVE = json.loads((Path(__file__).parent / "fixtures" / "live_shaped_registry.json").read_text())["services"]
+
+
+def _live_backends():
+    """The live-shaped records as the status page reads them: the record's config and its other fields, flat."""
+    return {sid: {**rec.get("config", {}), **{k: v for k, v in rec.items() if k != "config"}} for sid, rec in LIVE.items()}
+
+
+def _top(*rows):
+    head = "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND\n"
+    return head + "".join(f"{pid} u 20 0 1 1 1 S 5.0 1.0 0:01 {cmd}\n" for pid, cmd in rows)
+
+
+def _ss(*listeners):
+    return "".join(f'LISTEN 0 128 0.0.0.0:{port} 0.0.0.0:* users:(("{name}",pid={pid},fd=3))\n' for port, name, pid in listeners)
+
+
+def _fake_run(monkeypatch, top, ss):
+    def run(cmd, timeout=None):
+        if cmd[0] == "top":
+            return 0, top, ""
+        if cmd[0] == "ss":
+            return ss if isinstance(ss, tuple) else (0, ss, "")
+        return 1, "", ""
+    monkeypatch.setattr(status_endpoint, "_run", run)
+
+
+def test_processes_listening_on_a_record_port_are_services(monkeypatch):
+    ports = {sid: LIVE[sid]["config"]["port"] for sid in ("comfyui", "stt", "kobold")}
+    _fake_run(
+        monkeypatch,
+        _top((100, "python run_a"), (101, "python run_b"), (102, "llama-server --port 5051"), (200, "brave --type=gpu")),
+        _ss((ports["comfyui"], "python", 100), (ports["stt"], "python", 101), (ports["kobold"], "llama-server", 102),
+            (3333, "brave", 200)))
+    rows = status_endpoint._cpu_usage_quick({"backends": _live_backends()})["top_procs"]
+    assert [r["pid"] for r in rows] == [100, 101, 102, 0]
+    assert "1 procs" in rows[-1]["command"]
+
+
+@pytest.mark.parametrize("ss", [(127, "", "ss: not found"), (1, "", "denied"), (0, "garbage\nLISTEN\n", ""), (0, "", "")])
+def test_a_missing_or_broken_ss_leaves_no_engine_pids(monkeypatch, ss):
+    _fake_run(monkeypatch, _top((100, "python run_a"), (200, "proxy.py")), ss)
+    rows = status_endpoint._cpu_usage_quick({"backends": _live_backends()})["top_procs"]
+    assert [r["pid"] for r in rows] == [200, 0]  # the named non-engine literals still count; nothing else does
+
+
+def test_a_remote_record_address_adds_no_port(monkeypatch):
+    backends = {"far": {"base_url": "https://203.0.113.7:7890", "capabilities": ["chat"]}}
+    _fake_run(monkeypatch, _top((100, "python run_a")), _ss((7890, "python", 100)))
+    assert status_endpoint._engine_listener_pids({"backends": backends}) == set()
