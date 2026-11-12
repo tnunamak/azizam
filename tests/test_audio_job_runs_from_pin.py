@@ -276,3 +276,25 @@ def test_a_pinned_job_still_runs_when_its_alias_is_renamed_to_the_same_workflow(
     job_id = run(scenario_())
     assert job(job_id)["status"] == media_jobs.STATUS_SUCCEEDED, job(job_id).get("error")
     assert len(prompts(rig)) == 1
+
+
+def test_a_pinned_job_keeps_an_owner_identity_whose_config_key_is_its_artifact_stem(rig: GatewayRig):
+    """An operator can give a workflow its own id while retaining the graph's config key."""
+    registry = WorkflowRegistry()
+    for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records():
+        manifest = copy.deepcopy(dict(record.manifest))
+        if record.id == "audio.generate.tangoflux":
+            manifest["id"] = "audio.generate.owner-named-sound"
+        registry.add_manifest(manifest, source_path=record.source_path)
+    rig.set(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
+
+    async def scenario_() -> str:
+        job_id = await accept(rig)
+        assert job(job_id)["workflow"] == "audio.generate.owner-named-sound"
+        forbid_live_reads(rig)
+        await proxy._run_audio_media_job(job_id)
+        return job_id
+
+    job_id = run(scenario_())
+    assert job(job_id)["status"] == media_jobs.STATUS_SUCCEEDED
+    assert len(prompts(rig)) == 1
