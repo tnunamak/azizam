@@ -14822,7 +14822,7 @@ def _workflow_target_ids(
     manifest: Mapping[str, Any] | None = None,
     extra_ids: Iterable[str] = (),
 ) -> set[str]:
-    ids = {str(item).strip() for item in extra_ids if str(item).strip()}
+    ids = {str(item).strip() for item in extra_ids if item is not None and str(item).strip()}
     for item in (requested, resolved):
         if item:
             ids.add(str(item).strip())
