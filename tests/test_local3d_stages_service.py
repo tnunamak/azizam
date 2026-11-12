@@ -4,13 +4,15 @@ scenario fake of ComfyUI (tests/support/fake_upstream)."""
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from pathlib import Path
 
 import httpx
 import pytest
 
 from engines import local3d_stages_service as svc
-from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401 - fixture
+from tests.support.fake_upstream import HandlerTransport, fake_upstreams, scenario_from_data  # noqa: F401 - fixture
 
 GLB = b"glTF\x02\x00\x00\x00in-model"
 OUT = b"glTF\x02\x00\x00\x00out-model"
@@ -25,16 +27,16 @@ PROVENANCE = {"source": "hand-written", "reference": "ComfyUI server routes GET 
 class Recorder:
     """A runner that records each command and writes the output file the last argument names, like the real tools."""
 
-    def __init__(self, code: int = 0, write: bool = True) -> None:
+    def __init__(self, code: int = 0, write: bool = True, output: bytes = OUT) -> None:
         self.calls: list[tuple[list[str], dict, Path]] = []
-        self.code, self.write = code, write
+        self.code, self.write, self.output = code, write, output
 
     async def __call__(self, argv, env, cwd):
         self.calls.append((list(argv), dict(env), cwd))
         if self.write and self.code == 0:
             target = argv[argv.index("--out") + 1] if "--out" in argv else argv[argv.index("--output") + 1]
             if target.endswith(".glb"):
-                Path(target).write_bytes(OUT)
+                Path(target).write_bytes(self.output)
         return self.code, ""
 
 
@@ -224,3 +226,224 @@ def test_configured_stage_timeout_cancels_the_runner_and_admits_the_next_request
     assert post(app, "/uv").status_code == 504
     assert cleaned
     assert post(app, "/uv").content == OUT
+
+
+# --- the lifecycle of a prompt ComfyUI accepted, scratch setup, output checks, malformed replies, input caps -----------------
+
+class Comfy:
+    """A hand-written ComfyUI for the stage service: the prompt is accepted, runs ``run_for`` seconds, then ends.
+    ``run_for=None`` means it never ends on its own. A pending-queue delete is recorded; it removes the prompt only
+    while it is pending, never while it runs (the real server cannot cancel a running prompt that way)."""
+
+    def __init__(self, *, run_for: float | None = 0.0, starts_running: bool = True, replies: dict | None = None) -> None:
+        self.run_for, self.starts_running, self.replies = run_for, starts_running, replies or {}
+        self.deletes: list[dict] = []
+        self.paths: list[str] = []
+        self.mesh_existed: list[bool] = []
+        self.mesh_path: Path | None = None
+        self.submitted_at: float | None = None
+        self.accepted = asyncio.Event()
+
+    def ended(self) -> bool:
+        if self.submitted_at is None or self.run_for is None:
+            return False
+        return asyncio.get_running_loop().time() - self.submitted_at >= self.run_for
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        self.paths.append(f"{request.method} {path}")
+        if path in self.replies:
+            return self.replies[path]
+        if request.method == "POST" and path == "/queue":
+            self.deletes.append(json.loads(request.content))
+            return httpx.Response(200, json={})
+        if path == "/queue":
+            if self.mesh_path is not None:
+                self.mesh_existed.append(self.mesh_path.exists())
+            if self.submitted_at is None or self.ended():
+                return httpx.Response(200, json=IDLE)
+            return httpx.Response(200, json={"queue_running": [[0, "p1"]] if self.starts_running else [], "queue_pending": [] if self.starts_running else [[0, "p1"]]})
+        if path == "/upload/image":
+            return httpx.Response(200, json={"name": "up.png"})
+        if path == "/prompt":
+            graph = json.loads(request.content)["prompt"]
+            self.mesh_path = Path(graph[svc.PREP_NODE]["inputs"]["mesh_path"])
+            self.submitted_at = asyncio.get_running_loop().time()
+            self.accepted.set()
+            return httpx.Response(200, json={"prompt_id": "p1"})
+        if path == "/history/p1":
+            return httpx.Response(200, json=DONE if self.ended() else {})
+        if path == "/view":
+            return httpx.Response(200, content=OUT)
+        raise AssertionError(path)
+
+
+def comfy_service(comfy: Comfy, tmp_path: Path, **extra) -> svc.Stages:
+    transport = HandlerTransport(comfy)
+    return svc.Stages(env=ENV, runner=Recorder(), comfy_url="http://comfy.test", prompt=svc.json.loads(svc.PROMPT_PATH.read_text()),
+                      client_factory=lambda: httpx.AsyncClient(transport=transport), work_dir=tmp_path, poll_interval=0.005,
+                      timeout=extra.pop("timeout", 0.05), **extra)
+
+
+def run_refine(stages: svc.Stages) -> bytes:
+    return asyncio.run(stages.run("refine", GLB, {}, b"\x89PNG-ref"))
+
+
+def test_a_timed_out_refine_deletes_only_its_prompt_and_keeps_its_input_until_the_prompt_ended(tmp_path) -> None:
+    comfy = Comfy(run_for=0.3)
+    stages = comfy_service(comfy, tmp_path, cleanup_timeout=2.0)
+    with pytest.raises(svc.Refusal) as refusal:
+        run_refine(stages)
+    assert refusal.value.status == 504
+    assert comfy.deletes == [{"delete": ["p1"]}]
+    assert not [p for p in comfy.paths if "interrupt" in p]
+    assert comfy.mesh_existed and all(comfy.mesh_existed)      # the model stayed while the prompt could still run
+    assert stages._busy is False and not comfy.mesh_path.exists() and list(tmp_path.iterdir()) == []
+
+
+def test_a_prompt_that_never_ends_is_given_one_bounded_cleanup_deadline_then_logged(tmp_path, caplog) -> None:
+    comfy = Comfy(run_for=None)
+    stages = comfy_service(comfy, tmp_path, cleanup_timeout=0.15)
+
+    async def scenario():
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(svc.Refusal) as refusal:
+            await stages.run("refine", GLB, {}, b"\x89PNG-ref")
+        return refusal.value.status, asyncio.get_running_loop().time() - started
+
+    with caplog.at_level(logging.WARNING):
+        status, elapsed = asyncio.run(scenario())
+    assert status == 504 and 0.15 <= elapsed < 0.6
+    assert "may still run" in caplog.text
+    assert stages._busy is False and list(tmp_path.iterdir()) == []
+
+
+def test_a_cancelled_caller_cleans_up_the_accepted_prompt_before_capacity_is_released(tmp_path) -> None:
+    comfy = Comfy(run_for=0.2)
+    stages = comfy_service(comfy, tmp_path, timeout=30, cleanup_timeout=2.0)
+
+    async def scenario():
+        task = asyncio.create_task(stages.run("refine", GLB, {}, b"\x89PNG-ref"))
+        await comfy.accepted.wait()
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert comfy.deletes == [{"delete": ["p1"]}]
+    assert comfy.mesh_existed and all(comfy.mesh_existed)
+    assert stages._busy is False and list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure", ["mkdir", "mkdtemp", "write"])
+def test_a_scratch_setup_error_releases_the_stage_and_the_next_request_runs(tmp_path, monkeypatch, failure) -> None:
+    work_dir = tmp_path / "scratch"
+    if failure == "mkdir":
+        work_dir.write_text("a file, not a directory")
+    else:
+        broken = {"mkdtemp": (svc.tempfile, "mkdtemp"), "write": (Path, "write_bytes")}[failure]
+        real = getattr(*broken)
+        calls = []
+
+        def once(*args, **kwargs):
+            if not calls:
+                calls.append(1)
+                raise OSError(28, "No space left on device")
+            return real(*args, **kwargs)
+        monkeypatch.setattr(*broken, once)
+    app = svc.create_app(env=ENV, runner=Recorder(), work_dir=work_dir)
+    first = post(app, "/uv")
+    assert first.status_code == 500 and "error" in first.json()
+    if failure == "mkdir":
+        work_dir.unlink()
+    second = post(app, "/uv")
+    assert (second.status_code, second.content) == (200, OUT)
+
+
+@pytest.mark.parametrize("not_a_model", [b"", b'{"error": "not a model"}', b"<html>oops</html>", b"glT"])
+def test_a_tool_output_without_the_glb_magic_is_a_json_502(tmp_path, not_a_model) -> None:
+    runner = Recorder(output=not_a_model or b"x")
+    if not not_a_model:
+        runner = Recorder(write=False)
+    response = post(app_with(runner, tmp_path), "/uv")
+    assert response.status_code == 502 and response.headers["content-type"].startswith("application/json")
+    assert response.json()["error"]
+
+
+def test_a_view_reply_that_is_not_a_glb_is_a_json_502(tmp_path) -> None:
+    comfy = Comfy(replies={"/view": httpx.Response(200, json={"error": "not a model"})})
+    stages = comfy_service(comfy, tmp_path, timeout=5)
+    with pytest.raises(svc.Refusal) as refusal:
+        run_refine(stages)
+    assert refusal.value.status == 502
+
+
+MALFORMED = {
+    "queue is a list": ("/queue", httpx.Response(200, json=[]), False),
+    "queue is html": ("/queue", httpx.Response(200, content=b"<html>"), False),
+    "upload is a list": ("/upload/image", httpx.Response(200, json=[]), False),
+    "upload is html": ("/upload/image", httpx.Response(200, content=b"<html>"), False),
+    "submit is a list": ("/prompt", httpx.Response(200, json=[]), False),
+    "submit has no id": ("/prompt", httpx.Response(200, json={}), False),
+    "history is a list": ("/history/p1", httpx.Response(200, json=[]), True),
+    "history is html": ("/history/p1", httpx.Response(200, content=b"<html>"), True),
+    "history entry is a list": ("/history/p1", httpx.Response(200, json={"p1": []}), True),
+    "history outputs is a list": ("/history/p1", httpx.Response(200, json={"p1": {"outputs": [1], "status": {"completed": True}}}), True),
+    "history status is text": ("/history/p1", httpx.Response(200, json={"p1": {"status": "ok"}}), True),
+}
+
+
+@pytest.mark.parametrize("name", MALFORMED)
+def test_a_malformed_comfyui_reply_is_a_json_502_and_an_accepted_prompt_is_reconciled(tmp_path, name) -> None:
+    path, reply, accepted = MALFORMED[name]
+    comfy = Comfy(run_for=0.0, replies={path: reply})
+    app = svc.create_app(env=ENV, runner=Recorder(), work_dir=tmp_path, comfy_url="http://comfy.test", poll_interval=0.005,
+                         client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(comfy)), timeout=5, cleanup_timeout=1.0)
+    response = refine(app)
+    assert response.status_code == 502 and response.headers["content-type"].startswith("application/json"), response.text
+    assert (comfy.deletes == [{"delete": ["p1"]}]) is accepted
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_stage_service_refuses_a_body_over_its_cap_before_it_reads_it(tmp_path) -> None:
+    app = svc.create_app(env=ENV, runner=Recorder(), work_dir=tmp_path, max_mesh_bytes=64, max_reference_bytes=16)
+    received = []
+
+    async def scenario():
+        sent = []
+
+        async def receive():
+            received.append(1)
+            raise AssertionError("the body was read")
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "path": "/uv", "raw_path": b"/uv",
+                 "query_string": b"", "root_path": "", "scheme": "http", "server": ("svc.test", 80), "client": ("c", 1),
+                 "headers": [(b"host", b"svc.test"), (b"content-type", b"multipart/form-data; boundary=x"), (b"content-length", b"%d" % (10 * 1024 * 1024))]}
+        await app(scope, receive, send)
+        return sent
+
+    sent = asyncio.run(scenario())
+    assert sent[0]["status"] == 413 and received == []
+
+
+def test_a_mesh_or_reference_over_its_cap_is_a_413_before_any_tool_or_comfyui_work(tmp_path) -> None:
+    runner = Recorder()
+    app = svc.create_app(env=ENV, runner=runner, work_dir=tmp_path, max_mesh_bytes=len(GLB), max_reference_bytes=8, comfy_url="http://comfy.invalid")
+    assert post(app, "/uv", {"mesh": ("in.glb", GLB + b"x", "model/gltf-binary")}).status_code == 413
+    assert post(app, "/uv").status_code == 200      # exactly the cap is fine
+    big_reference = post(app, "/refine", {"mesh": ("in.glb", GLB, "model/gltf-binary"), "reference": ("r.png", b"123456789", "image/png")})
+    assert big_reference.status_code == 413 and len(runner.calls) == 1
+
+
+def test_the_manifests_cap_the_mesh_and_reference_inputs_at_what_the_service_accepts() -> None:
+    import yaml
+
+    for stage in ("retopo", "rig-auto", "rig-humanoid", "texture-refine", "uv-unwrap"):
+        document = yaml.safe_load((Path(__file__).resolve().parent.parent / "manifests" / "workflows" / f"mesh.edit.{stage}.yml").read_text())
+        assert document["inputs"]["mesh"]["max_bytes"] == svc.DEFAULT_MAX_MESH_BYTES, stage
+    refine_doc = yaml.safe_load((Path(__file__).resolve().parent.parent / "manifests" / "workflows" / "mesh.edit.texture-refine.yml").read_text())
+    assert refine_doc["inputs"]["reference"]["max_bytes"] == svc.DEFAULT_MAX_REFERENCE_BYTES
