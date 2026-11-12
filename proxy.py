@@ -12297,7 +12297,7 @@ async def _proxy_graph_video_create(
             if chain_cfg is None:
                 return _gateway_input_error(
                     f"Model {workflow_name} cannot render shots or clips longer than "
-                    f"{workflow_cfg.get('max_seconds', 8):g} s{_chain_model_suggestion()}",
+                    f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported",
                     job_message=f"This model cannot render shots or clips longer than "
@@ -12869,14 +12869,6 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     return None, None
 
 
-def _chain_model_suggestion() -> str:
-    """``; use a, b or c`` naming the configured video workflows that can render a long video, or nothing when none can."""
-    names = sorted(name for name, cfg in _video_workflow_table().items() if video_extend.engine_for((cfg or {}).get("builder")))
-    if not names:
-        return ""
-    return "; use " + (names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}")
-
-
 def _chain_policy_denial(auth_context: AuthContext, requested_model: Any, workflow_name: str, *, receipt: RouteReceipt | None = None) -> Response | None:
     decision = evaluate_and_apply(
         auth_context.identity,
@@ -13278,7 +13270,7 @@ async def proxy_graph_video_extend(
         requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
-        return _json_error(400, f"model {requested!r} cannot extend videos{_chain_model_suggestion()}",
+        return _json_error(400, f"model {requested!r} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3",
                            param="model", code="video_extend_not_supported")
     public_model = str(body.get("model") or source_model or "video-long")
     return await _with_request_media_inputs(lambda holder: _submit_video_chain(
