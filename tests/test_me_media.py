@@ -1682,7 +1682,9 @@ class MeMediaRouterTests(unittest.TestCase):
             self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
 
     def test_usage_summary_omits_route_when_model_is_not_recorded(self) -> None:
-        self.assertEqual(me_media._capability({"intent": "default"}), "chat")
+        # An intent word no row declares is classified by the route row of its exact path, never by its spelling.
+        self.assertEqual(me_media._capability({"intent": "default", "path": "/v1/chat/completions"}), "chat")
+        self.assertEqual(me_media._capability({"intent": "default"}), "other")
         self.assertEqual(me_media._capability({"intent": "stt"}), "transcribe")
         self._receipt(
             self.app_a["id"],

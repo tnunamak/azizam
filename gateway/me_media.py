@@ -8,6 +8,7 @@ the session make routes it mounts live in ``gateway.me_make``.
 
 from __future__ import annotations
 
+import functools
 import base64
 import json
 import logging
@@ -2471,6 +2472,22 @@ def _receipt_served_locally(receipt: Mapping[str, Any]) -> bool:
     return served and _receipt_cost(receipt) in (None, 0)
 
 
+@functools.lru_cache(maxsize=1)
+def _route_intents() -> dict[str, str]:
+    """Exact route path (canonical and alias) -> the execution intent its first registered frontend row declares."""
+    from gateway.discovery_metadata import registered_frontend_routes
+
+    found: dict[str, str] = {}
+    for row in registered_frontend_routes():
+        intent = (row.get("runtime_policy") or {}).get("intent") or row.get("intent")
+        if not intent:
+            continue
+        for path in (row.get("canonical"), row.get("alias")):
+            if path and "{" not in path:
+                found.setdefault(str(path), str(intent))
+    return found
+
+
 def _capability(receipt: Mapping[str, Any]) -> str:
     """Classify the recorded execution intent by its declared capability, never its spelling or URL."""
     intent = str(receipt.get("intent") or "")
@@ -2479,6 +2496,9 @@ def _capability(receipt: Mapping[str, Any]) -> str:
         # Some internal jobs declare only their modality. Read that exact row;
         # an unregistered intent still has no capability, regardless of spelling.
         capability = INTENT_CAPABILITIES.get(MODALITY_BY_INTENT.get(intent, ""))
+    if capability is None:
+        # A receipt without a known intent (older rows) is classified by the route row that serves its exact path.
+        capability = INTENT_CAPABILITIES.get(_route_intents().get(str(receipt.get("path") or ""), ""))
     if capability is None:
         return "other"
     return _USAGE_CAPABILITY_IDS.get(capability, capability)
