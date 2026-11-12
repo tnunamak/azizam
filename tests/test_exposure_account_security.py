@@ -246,6 +246,43 @@ def test_setup_local_owner_refuses_cross_origin_lan_post_without_side_effects(
     assert admin_store.list_admin_roles(path=isolated_admin) == []
 
 
+_OWNER_FORM = {"email": "owner@example.test", "password": "correct-horse-battery", "password_confirm": "correct-horse-battery"}
+
+
+def test_setup_local_owner_refuses_a_post_with_no_origin_and_no_referer_without_side_effects(
+    isolated_admin: Path,
+) -> None:
+    # The test browser adds Origin to every write; this header is how a test makes it send nothing.
+    client = _first_owner_client("192.168.1.25")
+
+    response = client.post("/setup/local-owner", headers={"x-test-browser-sends-no-origin": "1"}, data=_OWNER_FORM,
+                           follow_redirects=False)
+
+    assert response.status_code == 403
+    assert admin_store.list_users(path=isolated_admin) == []
+    assert admin_store.list_admin_roles(path=isolated_admin) == []
+
+
+def test_setup_local_owner_accepts_a_post_the_browser_marks_same_origin(isolated_admin: Path) -> None:
+    client = _first_owner_client("192.168.1.25")
+
+    response = client.post("/setup/local-owner", headers={"x-test-browser-sends-no-origin": "1", "sec-fetch-site": "same-origin"},
+                           data=_OWNER_FORM, follow_redirects=False)
+
+    assert response.status_code == 303, response.text
+    assert len(admin_store.list_users(path=isolated_admin)) == 1
+
+
+def test_setup_local_owner_keeps_its_client_address_gate_when_the_origin_is_right(isolated_admin: Path) -> None:
+    client = _first_owner_client("203.0.113.10")
+
+    response = client.post("/setup/local-owner", headers={"sec-fetch-site": "same-origin"}, data=_OWNER_FORM,
+                           follow_redirects=False)
+
+    assert response.status_code == 403
+    assert admin_store.list_users(path=isolated_admin) == []
+
+
 def test_setup_local_owner_refuses_lan_dns_rebinding_host_before_writes(
     isolated_admin: Path,
 ) -> None:

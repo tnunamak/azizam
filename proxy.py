@@ -19735,7 +19735,8 @@ def _origin_header_allowed_for_request(request: Request) -> bool:
         return False
     supplied = request.headers.get("origin") or request.headers.get("referer")
     if not supplied:
-        return True
+        # No Origin and no Referer: only a browser's Sec-Fetch-Site: same-origin vouches for the request.
+        return request.headers.get("sec-fetch-site", "").strip().lower() == "same-origin"
     try:
         parsed = urlsplit(supplied)
     except ValueError:
