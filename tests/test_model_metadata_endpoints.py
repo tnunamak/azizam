@@ -803,6 +803,86 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                 self.assertEqual(calls, [] if cache and now - cache["kobold"][0] < 30
                                  else [("kobold.test", "/v1/models")])
 
+
+    def _non_path_strata(self, *, window_at: str) -> dict:
+        backend = self.backends["kobold"]
+        backend.pop("loaded_model_identity")
+        backend.pop("context_window_probe", None)
+        record = backend["models"][0]
+        record["upstream_model"] = record["id"]
+        for key in ("activation_model", "model", "context_window"):
+            record.pop(key, None)
+        record["model_metadata"]["max_tokens"] = 262144
+        if window_at == "backend":
+            backend["context_window"] = 262144
+        else:
+            record["context_window"] = 262144
+        return record
+
+    def _list_serving(self, record: dict) -> dict[str, dict]:
+        async def selected():
+            return SimpleNamespace(backend="kobold", model=record["id"]), None
+
+        with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            listed, _ = self._served()
+        return listed
+
+    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_record(self) -> None:
+        listed = self._list_serving(self._non_path_strata(window_at="record"))
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
+
+    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_backend(self) -> None:
+        record = self._non_path_strata(window_at="backend")
+        listed = self._list_serving(record)
+        self.assertEqual(listed[record["id"]].get("context_window"), 262144)
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+                self.assertEqual(listed[alias].get("max_tokens"), 262144)
+
+    def test_a_model_swap_between_two_requests_changes_the_published_limits(self) -> None:
+        record = self._non_path_strata(window_at="record")
+        backend = self.backends["kobold"]
+        other = copy.deepcopy(record)
+        other.update(id="strata-small", upstream_model="strata-small", context_window=32768)
+        other["model_metadata"]["max_tokens"] = 4096
+        backend["models"].append(other)
+        for served, window, cap in ((record["id"], 262144, 262144), (other["id"], 32768, 4096),
+                                    (record["id"], 262144, 262144)):
+            async def selected(served=served):
+                return SimpleNamespace(backend="kobold", model=served), None
+
+            with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                    patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+                listed, _ = self._served()
+            for alias in sorted(DYNAMIC):
+                with self.subTest(served=served, alias=alias):
+                    self.assertEqual((listed[alias].get("context_window"), listed[alias].get("max_tokens")),
+                                     (window, cap))
+
+    def test_no_servable_backend_publishes_no_limit_the_alias_does_not_declare(self) -> None:
+        self._non_path_strata(window_at="backend")
+        self.healthy = set()
+        listed, _ = self._served()
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertNotEqual(listed[alias].get("context_window"), 262144)
+                self.assertNotIn("max_tokens", listed[alias])
+
+    def test_an_engine_observed_window_wins_over_the_configured_one(self) -> None:
+        record = self._non_path_strata(window_at="backend")
+        self.backends["kobold"]["context_window_probe"] = {"endpoint": "/v1/models"}
+        listed = self._list_serving(record)
+        self.assertEqual(listed[record["id"]]["context_window"], 262144)
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
+
+
 # What each `/v1/models` type may show as on the Models page. The oracle for
 # the agreement tests below: written out here, not imported from the code.
 UI_CAPABILITIES_FOR_TYPE = {
@@ -961,85 +1041,3 @@ class SnapshotFixtureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class AliasLimitsTests(RequestLoadedMetadataTests):
-    """`current` and `current-fast` publish the limits the served model's own row publishes."""
-
-    def _non_path_strata(self, *, window_at: str) -> dict:
-        backend = self.backends["kobold"]
-        backend.pop("loaded_model_identity")
-        backend.pop("context_window_probe", None)
-        record = backend["models"][0]
-        record["upstream_model"] = record["id"]
-        for key in ("activation_model", "model", "context_window"):
-            record.pop(key, None)
-        record["model_metadata"]["max_tokens"] = 262144
-        if window_at == "backend":
-            backend["context_window"] = 262144
-        else:
-            record["context_window"] = 262144
-        return record
-
-    def _list_serving(self, record: dict) -> dict[str, dict]:
-        async def selected():
-            return SimpleNamespace(backend="kobold", model=record["id"]), None
-
-        with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
-                patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
-            listed, _ = self._served()
-        return listed
-
-    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_record(self) -> None:
-        listed = self._list_serving(self._non_path_strata(window_at="record"))
-        for alias in sorted(DYNAMIC):
-            with self.subTest(alias=alias):
-                self.assertEqual(listed[alias].get("context_window"), 262144)
-                self.assertEqual(listed[alias].get("max_tokens"), 262144)
-
-    def test_aliases_publish_the_limits_of_the_served_row_window_on_the_backend(self) -> None:
-        record = self._non_path_strata(window_at="backend")
-        listed = self._list_serving(record)
-        self.assertEqual(listed[record["id"]].get("context_window"), 262144)
-        for alias in sorted(DYNAMIC):
-            with self.subTest(alias=alias):
-                self.assertEqual(listed[alias].get("context_window"), 262144)
-                self.assertEqual(listed[alias].get("max_tokens"), 262144)
-
-    def test_a_model_swap_between_two_requests_changes_the_published_limits(self) -> None:
-        record = self._non_path_strata(window_at="record")
-        backend = self.backends["kobold"]
-        other = copy.deepcopy(record)
-        other.update(id="strata-small", upstream_model="strata-small", context_window=32768)
-        other["model_metadata"]["max_tokens"] = 4096
-        backend["models"].append(other)
-        for served, window, cap in ((record["id"], 262144, 262144), (other["id"], 32768, 4096),
-                                    (record["id"], 262144, 262144)):
-            async def selected(served=served):
-                return SimpleNamespace(backend="kobold", model=served), None
-
-            with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
-                    patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
-                listed, _ = self._served()
-            for alias in sorted(DYNAMIC):
-                with self.subTest(served=served, alias=alias):
-                    self.assertEqual((listed[alias].get("context_window"), listed[alias].get("max_tokens")),
-                                     (window, cap))
-
-    def test_no_servable_backend_publishes_no_limit_the_alias_does_not_declare(self) -> None:
-        self._non_path_strata(window_at="backend")
-        self.healthy = set()
-        listed, _ = self._served()
-        for alias in sorted(DYNAMIC):
-            with self.subTest(alias=alias):
-                self.assertNotEqual(listed[alias].get("context_window"), 262144)
-                self.assertNotIn("max_tokens", listed[alias])
-
-    def test_an_engine_observed_window_wins_over_the_configured_one(self) -> None:
-        record = self._non_path_strata(window_at="backend")
-        self.backends["kobold"]["context_window_probe"] = {"endpoint": "/v1/models"}
-        listed = self._list_serving(record)
-        self.assertEqual(listed[record["id"]]["context_window"], 262144)
-        for alias in sorted(DYNAMIC):
-            with self.subTest(alias=alias):
-                self.assertEqual(listed[alias].get("context_window"), 262144)
