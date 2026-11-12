@@ -71,6 +71,20 @@ try:
 except Exception as exc:
     print("invalid models response: " + str(exc))' "$MODELS_STATUS")
 check "models without key ($AUTH_MODE)" "$verdict"
+# Clients size their context from these rows (Pi read no limits on `current` and overflowed).
+# A listed `current` or `current-fast` must publish a context window. Needs a key to list.
+if [ -n "${AZIZAM_SMOKE_KEY:-}" ]; then
+  out=$(curl -s --max-time 30 "${AUTH[@]}" "$BASE/v1/models")
+  verdict=$(printf '%s' "$out" | python3 -c 'import json,sys
+try:
+    rows = {m.get("id"): m for m in json.loads(sys.stdin.read()).get("data", []) if isinstance(m, dict)}
+    bad = [i for i in ("current", "current-fast") if i in rows
+           and not (isinstance(rows[i].get("context_window"), int) and rows[i]["context_window"] > 0)]
+    print("no context_window on " + ", ".join(bad) if bad else "ok")
+except Exception as exc:
+    print("invalid models response: " + str(exc)[:80])')
+  check "current aliases publish limits" "$verdict"
+fi
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I "$BASE/v1/models"); check "HEAD models" "$([ "$code" = 405 ] && echo ok || echo "HTTP $code")"
 hdr=$(curl -s -D - -o /dev/null --max-time 30 "$BASE/mcp" | tr -d '\r')
 check "GET /mcp" "$(printf '%s\n' "$hdr" | head -1 | grep -q ' 405' && printf '%s\n' "$hdr" | grep -qi '^allow:.*POST' && echo ok || echo "got $(printf '%s' "$hdr" | head -1)")"
