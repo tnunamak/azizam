@@ -11,6 +11,7 @@ import mimetypes
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -22,30 +23,38 @@ UNKNOWN_KIND = "file"
 # its own. A kind with no row is named from its own type, so a new media type needs no entry to list, filter and download.
 KIND_NAMES_PATH = Path(__file__).resolve().parent.parent / "registry" / "asset_kinds.yml"
 KIND_WORDS = ("label", "plural", "untitled", "input")
+# Optional boolean per kind: whether Home's Recent shows items of this kind. A kind with no row, or a row without it, shows.
+RECENT_FIELD = "recent"
 # A stored file whose kind has no prefix of its own is stored under this one, so no kind row may claim it.
 OTHER_ASSET_PREFIX = "ast"
 
 
-def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
-    """Load kind words and optional unique stored-id prefixes from the bundled data file.
+def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
+    """Load kind words, optional unique stored-id prefixes and the optional ``recent`` flag from the bundled data file.
 
-    Words must be non-empty text; a prefix must be 1-8 lowercase ASCII letters.
+    Words must be non-empty text; a prefix must be 1-8 lowercase ASCII letters; ``recent`` must be a boolean.
     Invalid or unknown fields are a fault in what was shipped, so they raise.
     """
     document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     rows = document.get("kinds") if isinstance(document, dict) else None
     if not isinstance(rows, dict) or not rows:
         raise ValueError(f"{path.name}: expected a 'kinds' mapping")
-    table: dict[str, dict[str, str]] = {}
+    table: dict[str, dict[str, Any]] = {}
     prefixes: set[str] = set()
     for kind, words in rows.items():
         if not isinstance(kind, str) or not kind or kind != kind.lower() or not isinstance(words, dict):
             raise ValueError(f"{path.name}: kind {kind!r} must be a lower-case name with a mapping of words")
-        if set(words) not in (set(KIND_WORDS), set(KIND_WORDS) | {"prefix"}) or not all(
+        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD} or not all(
             isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS
         ):
-            raise ValueError(f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix")
+            raise ValueError(
+                f"{path.name}: kind {kind!r} needs {', '.join(KIND_WORDS)}, each a non-empty string, and optional prefix and {RECENT_FIELD}"
+            )
+        if RECENT_FIELD in words and not isinstance(words[RECENT_FIELD], bool):
+            raise ValueError(f"{path.name}: kind {kind!r} {RECENT_FIELD} must be true or false")
         table[kind] = {word: words[word].strip() for word in KIND_WORDS}
+        if RECENT_FIELD in words:
+            table[kind][RECENT_FIELD] = words[RECENT_FIELD]
         if "prefix" in words:
             prefix = words["prefix"]
             if not isinstance(prefix, str) or re.fullmatch(r"[a-z]{1,8}", prefix) is None:
@@ -59,7 +68,7 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, str]]:
     return table
 
 
-KIND_NAMES: dict[str, dict[str, str]] = load_kind_names()
+KIND_NAMES: dict[str, dict[str, Any]] = load_kind_names()
 
 # Suffix -> media type. These rows win over the standard library, which lacks some types and
 # disagrees on others (for example ``.m4a``).
@@ -107,13 +116,15 @@ def kind_for_media_type(media_type: str | None) -> str:
     return top
 
 
-def kind_names(kind: str) -> dict[str, str]:
-    """``{kind, label, plural, untitled, input}`` for a kind; a kind with no row is named from its own type."""
+def kind_names(kind: str) -> dict[str, Any]:
+    """``{kind, label, plural, untitled, input, recent}`` for a kind; a kind with no row is named from its own type.
+
+    ``recent`` says whether Home's Recent shows items of the kind; it is true unless the kind's row says false."""
     row = KIND_NAMES.get(kind)
     if row is None:
         word = kind[:1].upper() + kind[1:] if kind else "File"
         row = {"label": word, "plural": word, "untitled": word, "input": word.lower()}
-    return {"kind": kind, **{word: row[word] for word in KIND_WORDS}}
+    return {"kind": kind, **{word: row[word] for word in KIND_WORDS}, RECENT_FIELD: row.get(RECENT_FIELD, True)}
 
 
 def input_word(modality: str) -> str:
@@ -147,7 +158,7 @@ def download_file_name(stem: str | None, suffix: str | None, media_type: str | N
     return f"{clean or fallback}{extension}"
 
 
-def asset_prefixes_by_top_type(kinds: dict[str, dict[str, str]]) -> dict[str, str]:
+def asset_prefixes_by_top_type(kinds: dict[str, dict[str, Any]]) -> dict[str, str]:
     """The stored-id prefixes declared by validated kind rows; rows without one are omitted."""
     return {kind: row["prefix"] for kind, row in kinds.items() if "prefix" in row}
 

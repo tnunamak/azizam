@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AudioLines, ImageIcon, Pause, Play, Video } from "lucide-react";
+import { AudioLines, File as FileIcon, ImageIcon, Pause, Play, Video } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RelativeTime } from "@/components/product/relative-time";
@@ -55,8 +55,14 @@ function firstWords(value?: string | null): string | null {
   return words.slice(0, 12).join(" ");
 }
 
-export function mediaKindLabel(kind: HomeCreation["kind"]): string {
-  return kind === "video" ? "Video" : kind === "audio" ? "Audio" : "Image";
+/** The server's word for the kind of this item; a row that arrived without words reads as a neutral file. */
+export function mediaKindLabel(creation: HomeCreation): string {
+  return creation.kind_info?.label.trim() || "File";
+}
+
+/** The kinds this tile has a renderer for: a capability of the drawing code, not a list of what Recent shows. */
+function kindIcon(kind: string) {
+  return kind === "video" ? Video : kind === "audio" ? AudioLines : kind === "image" ? ImageIcon : FileIcon;
 }
 
 /** The picture, poster or clip of one creation; falls back to a labelled placeholder. */
@@ -69,7 +75,7 @@ function CreationMedia({
   title: string;
   visible: boolean;
 }) {
-  const Icon = creation.kind === "video" ? Video : creation.kind === "audio" ? AudioLines : ImageIcon;
+  const Icon = kindIcon(creation.kind);
   const { data: poster, isPending: posterQueryPending } = useQuery({
     queryKey: ["library", "poster", creation.poster_asset_id, false],
     enabled: creation.kind === "video" && !!creation.poster_asset_id,
@@ -252,7 +258,7 @@ function CreationMedia({
   return (
     <div
       role="img"
-      aria-label={`${mediaKindLabel(creation.kind)} preview unavailable`}
+      aria-label={`${mediaKindLabel(creation)} preview unavailable`}
       className="bg-muted text-muted-foreground flex size-full flex-col items-center justify-center gap-2 p-3 text-center"
     >
       <Icon aria-hidden="true" className="size-6" />
@@ -267,9 +273,9 @@ function CreationMedia({
  */
 export function MediaTile({ creation, className }: { creation: HomeCreation; className?: string }) {
   const { ref: visibilityRef, visible } = useHomePreviewVisible();
-  const label = mediaKindLabel(creation.kind);
+  const label = mediaKindLabel(creation);
   const prompt = firstWords(creation.prompt);
-  const title = prompt ?? label;
+  const title = prompt ?? (creation.kind_info?.untitled.trim() || label);
   const at = parseEpochSeconds(creation.created_at);
   const href = `/library/?asset=${encodeURIComponent(creation.asset_id)}`;
   // A picture or video is one link, named by its caption (what is visible). Audio keeps its play control

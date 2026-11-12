@@ -25,9 +25,19 @@ export type HomeChat = NonNullable<SharedHomeSnapshot["recent_chats"]>[number];
 /** The newest media Home shows: one page, which is what the six Recent tiles need. */
 export const RECENT_MEDIA_LIMIT = 8;
 
+/** The server's words for a kind, and whether Recent shows it (registry/asset_kinds.yml). */
+export interface HomeKindInfo {
+  label: string;
+  untitled: string;
+  recent: boolean;
+}
+
 export interface HomeCreation {
   asset_id: string;
-  kind: "image" | "video" | "audio";
+  /** Any kind the gateway names; the tile draws the ones it has a renderer for and shows a file tile for the rest. */
+  kind: string;
+  /** Set by `homeApi.creations` from the page's kind words; a row without it reads as a neutral file. */
+  kind_info?: HomeKindInfo;
   prompt?: string | null;
   model?: string | null;
   created_at?: number | string | null;
@@ -39,13 +49,32 @@ export interface HomeCreation {
 }
 export interface HomeCreationsResponse {
   assets: HomeCreation[];
+  /** The words for each kind in the Library, as `GET /me/api/media` sends them. */
+  kinds?: unknown[];
   next_cursor?: string | null;
   has_more?: boolean;
   partial?: boolean;
 }
 
+/** Recent keeps a row unless the server's words for its kind say not to show it. */
 export function hasHomeCreationContent(creation: HomeCreation): boolean {
-  return ["image", "video", "audio"].includes(creation.kind);
+  return creation.kind_info?.recent !== false;
+}
+
+/** The words per kind from the page's `kinds` list; rows that are not well-formed are ignored. */
+function kindInfoByKind(rows: readonly unknown[] | undefined): Map<string, HomeKindInfo> {
+  const byKind = new Map<string, HomeKindInfo>();
+  for (const row of rows ?? []) {
+    if (!row || typeof row !== "object") continue;
+    const { kind, label, untitled, recent } = row as Record<string, unknown>;
+    if (typeof kind !== "string" || typeof label !== "string" || !label.trim()) continue;
+    byKind.set(kind, {
+      label: label.trim(),
+      untitled: typeof untitled === "string" && untitled.trim() ? untitled.trim() : label.trim(),
+      recent: recent !== false,
+    });
+  }
+  return byKind;
 }
 
 async function homeRequest<T>(
@@ -108,7 +137,11 @@ export const homeApi = {
     const page = await homeRequest<HomeCreationsResponse>(
       `/me/api/media?limit=${RECENT_MEDIA_LIMIT}`,
     );
-    return { assets: page.assets.filter(hasHomeCreationContent) };
+    const words = kindInfoByKind(page.kinds);
+    const assets = page.assets
+      .map((row) => (words.has(row.kind) ? { ...row, kind_info: words.get(row.kind) } : row))
+      .filter(hasHomeCreationContent);
+    return { ...page, assets };
   },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(
