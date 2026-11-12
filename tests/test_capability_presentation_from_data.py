@@ -226,3 +226,13 @@ def test_shipped_projection_and_preview_outputs_match_legacy_vocabulary(monkeypa
         before = access_preview.build_access_preview(**kwargs)
     assert shown == before
     assert [group["group"] for group in shown["groups"]] == list(LEGACY_ORDER)
+
+
+def test_a_row_declares_whether_its_aliases_hide_the_names_their_model_declares(tmp_path):
+    assert capability_ids.CAPABILITY_ALIAS_HIDES_NAMES == frozenset({"chat"})
+    document = _document()
+    document["capabilities"][0]["alias_hides_declared_names"] = True
+    assert capability_ids.load_capability_alias_name_hiding(_write(tmp_path, document)) == {document["capabilities"][0]["id"]}
+    document["capabilities"][0]["alias_hides_declared_names"] = "yes"
+    with pytest.raises(ValueError, match="alias_hides_declared_names must be true or false"):
+        capability_ids.load_capability_alias_name_hiding(_write(tmp_path, document))

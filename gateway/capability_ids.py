@@ -61,7 +61,7 @@ def load_media_type_modalities(path: Path = CAPABILITY_WORDS_PATH) -> Mapping[st
 def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
-    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int],
+    Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int], frozenset[str],
 ]:
     """Validate capability, presentation and classification rows together."""
     def invalid(word: object, reason: str) -> ValueError:
@@ -99,11 +99,12 @@ def _load_capability_tables(path: Path) -> tuple[
     summaries: dict[str, str] = {}
     hidden_by: dict[str, tuple[str, ...]] = {}
     display_order: dict[str, int] = {}
+    alias_hides_names: set[str] = set()
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order", "alias_hides_declared_names"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -133,6 +134,11 @@ def _load_capability_tables(path: Path) -> tuple[
             aliases[capability] = row["recommended_alias"]
         if "summary" in row:
             summaries[capability] = row["summary"]
+        if "alias_hides_declared_names" in row:
+            if type(row["alias_hides_declared_names"]) is not bool:
+                raise invalid_row(index, "alias_hides_declared_names must be true or false")
+            if row["alias_hides_declared_names"]:
+                alias_hides_names.add(capability)
         if "hidden_by" in row:
             hidden = row["hidden_by"]
             if not isinstance(hidden, list):
@@ -205,7 +211,7 @@ def _load_capability_tables(path: Path) -> tuple[
             MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
             MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
             MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by),
-            MappingProxyType(display_order))
+            MappingProxyType(display_order), frozenset(alias_hides_names))
 
 
 def _load_capability_data(path: Path) -> tuple[
@@ -234,6 +240,11 @@ def load_capability_display_order(path: Path = CAPABILITY_WORDS_PATH) -> Mapping
     return _load_capability_tables(path)[10]
 
 
+def load_capability_alias_name_hiding(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
+    """Capabilities whose alias rows show no title, display name or name the model itself declares."""
+    return _load_capability_tables(path)[11]
+
+
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
     """Read the word maps after validating their capability rows; preserve the two-map API."""
     _, _, protocol, intents = _load_capability_data(path)
@@ -242,7 +253,7 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
  CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
- TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+ TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER, CAPABILITY_ALIAS_HIDES_NAMES) = _load_capability_tables(CAPABILITY_WORDS_PATH)
 
 MODALITY_WORDS = load_modality_words()
 MEDIA_TYPE_MODALITIES = load_media_type_modalities()
