@@ -190,10 +190,14 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
              "image.generate.flux2-klein-snofs",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
-             "mesh.generate.trellis-2", "video.edit.video-mux"}
+             "mesh.generate.trellis-2", "mesh.generate.pixal3d", "video.edit.video-mux",
+             "mesh.edit.retopo", "mesh.edit.rig-auto", "mesh.edit.rig-humanoid",
+             "mesh.edit.texture-refine", "mesh.edit.uv-unwrap"}
     records = {record.id: record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records() if record.id not in added}
     with monkeypatch.context() as patch:
         patch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(rs.build({}, rs.BundledRelease(records, ()), generation=1)))
+        # The 3D rows also list the bundled mesh records the live registry lacks, so the additions leave that list too.
+        patch.setattr(proxy, "_BUNDLED_MESH_RECORDS", {key: record for key, record in proxy._BUNDLED_MESH_RECORDS.items() if key not in added})
         proxy.app.openapi_schema = None
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
@@ -328,4 +332,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # output entry moved. Before it the frozen digest was 90a6a005c57d01b1092479448f948571aecf0ccc7bfd1c4a90c17136367069d3.
     # Re-captured 2026-11-11 for the protocol description item routes: only that path differs. Before it the frozen digest was
     # dc5901a47a554ab6ad138535e2218107798fa5847830d173048a08c2057812d8.
-    assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
+    # Reviewed additive mesh workflow schemas and catalog entries, captured with
+    # scripts/run-hermetic-pytest.sh --python-script scripts/generate_headless_fixtures.py.
+    # The stripped comparison above still pins the pre-existing document.
+    assert route_graph.openapi_digest(proxy.app) == "af785390cf213322a139886e62fe993037560bff2757c8091d637e0b4c0ef6bc"

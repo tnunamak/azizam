@@ -1310,6 +1310,130 @@
         "type": "object",
         "x-azizam-workflow-id": "video.generate.minimax-h3-t2v"
       },
+      "WorkflowForm_mesh_edit_retopo": {
+        "additionalProperties": false,
+        "description": "Send a model; receive the same model with fewer faces (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "The 3D model to work on, as a binary glTF (.glb) file.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "target_faces": {
+            "default": 8000,
+            "description": "About how many faces the result should have.",
+            "maximum": 200000,
+            "minimum": 500,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Retopologize a 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.retopo"
+      },
+      "WorkflowForm_mesh_edit_rig_auto": {
+        "additionalProperties": false,
+        "description": "Send a model; receive the same model with a skeleton and skin weights (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "The 3D model to work on, as a binary glTF (.glb) file.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Rig a 3D model with a skeleton",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.rig-auto"
+      },
+      "WorkflowForm_mesh_edit_rig_humanoid": {
+        "additionalProperties": false,
+        "description": "Send a humanoid model; receive the same model with a humanoid skeleton (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "The 3D model to work on, as a binary glTF (.glb) file.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Rig a humanoid 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.rig-humanoid"
+      },
+      "WorkflowForm_mesh_edit_texture_refine": {
+        "additionalProperties": false,
+        "description": "Send a model and a reference picture; receive the model with a new texture (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "The 3D model to work on, as a binary glTF (.glb) file.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "reference": {
+            "description": "The picture the new texture should follow. A cut-out on a plain background works best.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "resolution": {
+            "default": 1024,
+            "description": "Size of the painted views. Higher is slower.",
+            "maximum": 2048,
+            "minimum": 512,
+            "type": "integer"
+          },
+          "seed": {
+            "description": "Reuse this number with the same inputs for a similar result.",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 25,
+            "description": "Painting steps. More steps are slower.",
+            "maximum": 50,
+            "minimum": 10,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mesh",
+          "reference"
+        ],
+        "title": "Refine the texture of a 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.texture-refine"
+      },
+      "WorkflowForm_mesh_edit_uv_unwrap": {
+        "additionalProperties": false,
+        "description": "Send a model; receive the same model with fresh texture coordinates (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "The 3D model to work on, as a binary glTF (.glb) file.",
+            "format": "binary",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Unwrap the UVs of a 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.uv-unwrap"
+      },
       "WorkflowForm_video_edit_rife_interpolate": {
         "additionalProperties": false,
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
@@ -2828,6 +2952,157 @@
         "title": "SDXL Seamless Tile",
         "type": "object",
         "x-azizam-workflow-id": "image.generate.sdxl-seamless-tile"
+      },
+      "WorkflowInputs_mesh_edit_retopo": {
+        "additionalProperties": false,
+        "description": "Send a model; receive the same model with fewer faces (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The 3D model to work on, as a binary glTF (.glb) file.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "target_faces": {
+            "default": 8000,
+            "description": "About how many faces the result should have.",
+            "maximum": 200000,
+            "minimum": 500,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Retopologize a 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.retopo"
+      },
+      "WorkflowInputs_mesh_edit_rig_auto": {
+        "additionalProperties": false,
+        "description": "Send a model; receive the same model with a skeleton and skin weights (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The 3D model to work on, as a binary glTF (.glb) file.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Rig a 3D model with a skeleton",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.rig-auto"
+      },
+      "WorkflowInputs_mesh_edit_rig_humanoid": {
+        "additionalProperties": false,
+        "description": "Send a humanoid model; receive the same model with a humanoid skeleton (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The 3D model to work on, as a binary glTF (.glb) file.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Rig a humanoid 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.rig-humanoid"
+      },
+      "WorkflowInputs_mesh_edit_texture_refine": {
+        "additionalProperties": false,
+        "description": "Send a model and a reference picture; receive the model with a new texture (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The 3D model to work on, as a binary glTF (.glb) file.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "reference": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture the new texture should follow. A cut-out on a plain background works best.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "resolution": {
+            "default": 1024,
+            "description": "Size of the painted views. Higher is slower.",
+            "maximum": 2048,
+            "minimum": 512,
+            "type": "integer"
+          },
+          "seed": {
+            "description": "Reuse this number with the same inputs for a similar result.",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 25,
+            "description": "Painting steps. More steps are slower.",
+            "maximum": 50,
+            "minimum": 10,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mesh",
+          "reference"
+        ],
+        "title": "Refine the texture of a 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.texture-refine"
+      },
+      "WorkflowInputs_mesh_edit_uv_unwrap": {
+        "additionalProperties": false,
+        "description": "Send a model; receive the same model with fresh texture coordinates (model/gltf-binary).",
+        "properties": {
+          "mesh": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The 3D model to work on, as a binary glTF (.glb) file.",
+            "type": "string",
+            "x-azizam-asset": true
+          }
+        },
+        "required": [
+          "mesh"
+        ],
+        "title": "Unwrap the UVs of a 3D model",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.edit.uv-unwrap"
+      },
+      "WorkflowInputs_mesh_generate_pixal3d": {
+        "additionalProperties": false,
+        "description": "Send one picture; receive one textured 3D model (model/gltf-binary).",
+        "properties": {
+          "image": {
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture to turn into a 3D model. PNG, JPEG or WebP.",
+            "type": "string",
+            "x-azizam-asset": true
+          },
+          "resolution": {
+            "default": 1024,
+            "description": "Geometry resolution. Higher is slower.",
+            "enum": [
+              512,
+              1024,
+              1536
+            ],
+            "type": "integer"
+          },
+          "seed": {
+            "description": "Reuse this number and the same picture for a similar model.",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "title": "Pixal3D image to 3D",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.generate.pixal3d"
       },
       "WorkflowInputs_mesh_generate_trellis_2": {
         "additionalProperties": false,
@@ -21718,6 +21993,576 @@
         ]
       }
     },
+    "/gateway/v1/workflows/mesh.edit.retopo/run": {
+      "post": {
+        "description": "Send a model; receive the same model with fewer faces (model/gltf-binary).",
+        "operationId": "run_retopo",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowForm_mesh_edit_retopo"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid input. `error.message` names the field and the rule."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not permitted by the app profile."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown workflow, model, or job."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend failed while rendering."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend unavailable or disabled."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Run Retopologize a 3D model",
+        "tags": [
+          "gateway-workflows"
+        ],
+        "x-azizam-workflow-id": "mesh.edit.retopo"
+      }
+    },
+    "/gateway/v1/workflows/mesh.edit.rig-auto/run": {
+      "post": {
+        "description": "Send a model; receive the same model with a skeleton and skin weights (model/gltf-binary).",
+        "operationId": "run_rig_auto",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowForm_mesh_edit_rig_auto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid input. `error.message` names the field and the rule."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not permitted by the app profile."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown workflow, model, or job."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend failed while rendering."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend unavailable or disabled."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Run Rig a 3D model with a skeleton",
+        "tags": [
+          "gateway-workflows"
+        ],
+        "x-azizam-workflow-id": "mesh.edit.rig-auto"
+      }
+    },
+    "/gateway/v1/workflows/mesh.edit.rig-humanoid/run": {
+      "post": {
+        "description": "Send a humanoid model; receive the same model with a humanoid skeleton (model/gltf-binary).",
+        "operationId": "run_rig_humanoid",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowForm_mesh_edit_rig_humanoid"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid input. `error.message` names the field and the rule."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not permitted by the app profile."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown workflow, model, or job."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend failed while rendering."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend unavailable or disabled."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Run Rig a humanoid 3D model",
+        "tags": [
+          "gateway-workflows"
+        ],
+        "x-azizam-workflow-id": "mesh.edit.rig-humanoid"
+      }
+    },
+    "/gateway/v1/workflows/mesh.edit.texture-refine/run": {
+      "post": {
+        "description": "Send a model and a reference picture; receive the model with a new texture (model/gltf-binary).",
+        "operationId": "run_texture_refine",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowForm_mesh_edit_texture_refine"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid input. `error.message` names the field and the rule."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not permitted by the app profile."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown workflow, model, or job."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend failed while rendering."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend unavailable or disabled."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Run Refine the texture of a 3D model",
+        "tags": [
+          "gateway-workflows"
+        ],
+        "x-azizam-workflow-id": "mesh.edit.texture-refine"
+      }
+    },
+    "/gateway/v1/workflows/mesh.edit.uv-unwrap/run": {
+      "post": {
+        "description": "Send a model; receive the same model with fresh texture coordinates (model/gltf-binary).",
+        "operationId": "run_uv_unwrap",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowForm_mesh_edit_uv_unwrap"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, ended within `Prefer: wait`."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The job, queued or running; `Location` is its address."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Invalid input. `error.message` names the field and the rule."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Missing or invalid bearer token."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not permitted by the app profile."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unknown workflow, model, or job."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend failed while rendering."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
+                }
+              }
+            },
+            "description": "Backend unavailable or disabled."
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Run Unwrap the UVs of a 3D model",
+        "tags": [
+          "gateway-workflows"
+        ],
+        "x-azizam-workflow-id": "mesh.edit.uv-unwrap"
+      }
+    },
     "/gateway/v1/workflows/video.edit.rife-interpolate/run": {
       "post": {
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
@@ -22131,6 +22976,21 @@
             "multipart/form-data": {
               "schema": {
                 "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/WorkflowForm_mesh_edit_retopo"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowForm_mesh_edit_rig_auto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowForm_mesh_edit_rig_humanoid"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowForm_mesh_edit_texture_refine"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WorkflowForm_mesh_edit_uv_unwrap"
+                  },
                   {
                     "$ref": "#/components/schemas/WorkflowForm_video_edit_rife_interpolate"
                   },
@@ -40556,6 +41416,332 @@
         }
       ],
       "short_id": "sdxl-seamless-tile",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send a model; receive the same model with fewer faces (model/gltf-binary).",
+      "display_name": "Retopologize a 3D model",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "mesh": {
+              "field": "mesh",
+              "in": "file"
+            },
+            "target_faces": {
+              "field": "target_faces",
+              "in": "form"
+            }
+          },
+          "method": "POST",
+          "output": "a media job; its content is the model",
+          "path": "/gateway/v1/workflows/mesh.edit.retopo/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
+        }
+      },
+      "id": "mesh.edit.retopo",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_edit_retopo"
+      },
+      "intent": "mesh.edit",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [],
+      "short_id": "retopo",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send a model; receive the same model with a skeleton and skin weights (model/gltf-binary).",
+      "display_name": "Rig a 3D model with a skeleton",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "mesh": {
+              "field": "mesh",
+              "in": "file"
+            }
+          },
+          "method": "POST",
+          "output": "a media job; its content is the model",
+          "path": "/gateway/v1/workflows/mesh.edit.rig-auto/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
+        }
+      },
+      "id": "mesh.edit.rig-auto",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_edit_rig_auto"
+      },
+      "intent": "mesh.edit",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [],
+      "short_id": "rig-auto",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send a humanoid model; receive the same model with a humanoid skeleton (model/gltf-binary).",
+      "display_name": "Rig a humanoid 3D model",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "mesh": {
+              "field": "mesh",
+              "in": "file"
+            }
+          },
+          "method": "POST",
+          "output": "a media job; its content is the model",
+          "path": "/gateway/v1/workflows/mesh.edit.rig-humanoid/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
+        }
+      },
+      "id": "mesh.edit.rig-humanoid",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_edit_rig_humanoid"
+      },
+      "intent": "mesh.edit",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [],
+      "short_id": "rig-humanoid",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send a model and a reference picture; receive the model with a new texture (model/gltf-binary).",
+      "display_name": "Refine the texture of a 3D model",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "mesh": {
+              "field": "mesh",
+              "in": "file"
+            },
+            "reference": {
+              "field": "reference",
+              "in": "file"
+            },
+            "resolution": {
+              "field": "resolution",
+              "in": "form"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "form"
+            },
+            "steps": {
+              "field": "steps",
+              "in": "form"
+            }
+          },
+          "method": "POST",
+          "output": "a media job; its content is the model",
+          "path": "/gateway/v1/workflows/mesh.edit.texture-refine/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
+        }
+      },
+      "id": "mesh.edit.texture-refine",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_edit_texture_refine"
+      },
+      "intent": "mesh.edit",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [],
+      "short_id": "texture-refine",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send a model; receive the same model with fresh texture coordinates (model/gltf-binary).",
+      "display_name": "Unwrap the UVs of a 3D model",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "mesh": {
+              "field": "mesh",
+              "in": "file"
+            }
+          },
+          "method": "POST",
+          "output": "a media job; its content is the model",
+          "path": "/gateway/v1/workflows/mesh.edit.uv-unwrap/run",
+          "response": {
+            "content": "/gateway/v1/media/jobs/{job_id}/content",
+            "kind": "media_job",
+            "poll": "/gateway/v1/media/jobs/{job_id}"
+          }
+        }
+      },
+      "id": "mesh.edit.uv-unwrap",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_edit_uv_unwrap"
+      },
+      "intent": "mesh.edit",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [],
+      "short_id": "uv-unwrap",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send one picture; receive one textured 3D model (model/gltf-binary).",
+      "display_name": "Pixal3D image to 3D",
+      "execution": {
+        "async": {
+          "cancel": {
+            "method": "POST",
+            "note": "the engine cannot stop mid-run: the job ends as canceled when the run returns",
+            "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+          },
+          "content": {
+            "method": "GET",
+            "output": "model/gltf-binary (GLB bytes)",
+            "path": "/gateway/v1/media/jobs/{job_id}/content"
+          },
+          "fields": {
+            "image": {
+              "field": "image",
+              "in": "file"
+            },
+            "resolution": {
+              "field": "resolution",
+              "in": "form"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "form"
+            }
+          },
+          "kind": "respond_async",
+          "output": "202 with a media job (Location, Preference-Applied: respond-async)",
+          "poll": {
+            "method": "GET",
+            "path": "/gateway/v1/media/jobs/{job_id}"
+          },
+          "statuses": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ],
+          "submit": {
+            "content_type": "multipart/form-data",
+            "headers": {
+              "Prefer": "respond-async"
+            },
+            "method": "POST",
+            "path": "/v1/3d/generations/glb"
+          },
+          "terminal": [
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "recommended": "async",
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "image": {
+              "field": "image",
+              "in": "file"
+            },
+            "resolution": {
+              "field": "resolution",
+              "in": "form"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "form"
+            }
+          },
+          "method": "POST",
+          "output": "model/gltf-binary (GLB bytes)",
+          "path": "/v1/3d/generations/glb",
+          "response": {
+            "kind": "binary",
+            "media_type": "model/gltf-binary"
+          }
+        }
+      },
+      "id": "mesh.generate.pixal3d",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_generate_pixal3d"
+      },
+      "intent": "mesh.generate",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "pixal3d",
       "typical_seconds": null
     },
     {

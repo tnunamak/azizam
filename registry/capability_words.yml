@@ -124,6 +124,7 @@ route_intents:
   "video.extend": "video"
   "image.analyze": "image"
   "mesh.generate": "mesh"
+  "mesh.edit": "mesh"
   "embedding": "embed"
   "images.generate": "image"
   "images.generations": "image"

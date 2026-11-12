@@ -15,11 +15,12 @@ from gateway.discovery import WorkflowRegistry
 from gateway.manifests import Provenance
 
 NEW_VERSION = "9.9.9-live-record"
+WATCHED_ID = "mesh.generate.trellis-2"
 
 
 def _adopt_changed_record() -> str:
     """Adopt a registry whose mesh record has another version. Returns the new version."""
-    old = proxy.GATEWAY_WORKFLOW_REGISTRY.get(proxy._MESH_WORKFLOW_ID) or proxy._BUNDLED_MESH_RECORD
+    old = proxy.GATEWAY_WORKFLOW_REGISTRY.get(WATCHED_ID)
     manifest = copy.deepcopy(old.manifest)
     assert manifest["version"] != NEW_VERSION
     manifest["version"] = NEW_VERSION
@@ -37,18 +38,18 @@ def restored_registry():
 
 
 def test_an_adopted_mesh_record_reaches_the_discovery_facts(restored_registry):
-    before = proxy.current_mesh_workflow()
+    before = proxy.current_mesh_workflow(WATCHED_ID)
     assert before.version != NEW_VERSION
     version = _adopt_changed_record()
 
-    assert proxy.MESH_DEPS.current_manifest().version == version
-    assert proxy._mesh_facts({}).workflow == before.id
-    assert proxy.current_mesh_workflow() is proxy.current_mesh_workflow()  # converted once per record, not per call
+    assert proxy.current_mesh_workflow(WATCHED_ID).version == version
+    assert WATCHED_ID in {capability.workflow for capability in proxy._mesh_facts({})}
+    assert proxy.current_mesh_workflow(WATCHED_ID) is proxy.current_mesh_workflow(WATCHED_ID)  # converted once per record, not per call
 
 
 def test_an_adopted_mesh_record_with_another_service_reaches_the_facts(restored_registry):
-    before = proxy.current_mesh_workflow()
-    old = proxy.GATEWAY_WORKFLOW_REGISTRY.get(proxy._MESH_WORKFLOW_ID) or proxy._BUNDLED_MESH_RECORD
+    before = proxy.current_mesh_workflow(WATCHED_ID)
+    old = proxy.GATEWAY_WORKFLOW_REGISTRY.get(WATCHED_ID)
     manifest = copy.deepcopy(old.manifest)
     text = repr(manifest)
     assert before.service_id in text
@@ -57,8 +58,8 @@ def test_an_adopted_mesh_record_with_another_service_reaches_the_facts(restored_
     changed.add_manifest(manifest, source_path=old.source_path, provenance=Provenance(trusted=old.identity.trusted, source=old.identity.source), facts=old.facts)
     proxy.GATEWAY_WORKFLOW_REGISTRY.adopt(changed)
 
-    assert proxy.current_mesh_workflow().service_id == "swapped-engine"
-    assert proxy._mesh_facts({}).backend == "swapped-engine"
+    assert proxy.current_mesh_workflow(WATCHED_ID).service_id == "swapped-engine"
+    assert {c.workflow: c.backend for c in proxy._mesh_facts({})}[WATCHED_ID] == "swapped-engine"
 
 
 def _replace_service(node, old, new):

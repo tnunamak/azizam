@@ -130,6 +130,7 @@ from gateway import pinned_runtime, request_spool, workflow_run
 from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
+from gateway.frontend_shapes import mesh as frontend_mesh_shapes
 from gateway.frontend_shapes import video_create as frontend_video_create
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
@@ -359,6 +360,7 @@ from gateway.toolcall_detection import (
     ToolcallStreamDetector as _ToolcallStreamDetector,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway import workflow_policy
 from gateway.workflow_policy import (
     NEEDS_CONFIGURATION_CODE, NEEDS_CONFIGURATION_MESSAGE, NeedsConfiguration, PolicyFacts)
 from gateway.video_limits import limits_for_workflow, video_limits, workflow_id_for_video_key
@@ -15239,8 +15241,8 @@ def _gateway_catalog_finish(
     capabilities = [*base, *remote]
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        if record.id == _MESH_WORKFLOW_ID:
-            continue  # The mesh route's manifest lists once, with the route's own facts (_mesh_facts, below).
+        if _is_mesh_record(record):
+            continue  # A mesh workflow lists once, with the route's own facts (_mesh_facts, below).
         for backend in record.supported_backends:
             try:
                 capabilities.append(capability_from_workflow_record(
@@ -15270,7 +15272,7 @@ def _gateway_catalog_finish(
     ]
 
     # The mesh row's facts. Its state joins later as live evidence (LIVE_PROBES), like every other row's.
-    capabilities.append(_mesh_facts(live_registry))
+    capabilities.extend(_mesh_facts(live_registry))
     return capabilities
 
 
@@ -16800,32 +16802,61 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 ))
 
 # --- Image to 3D: the 3D rows over the run core (gateway/row_routes.py, gateway/multipart_adapter.py) ---
-# The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
-_MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
-# The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
-# (CODE_TO_DATA_S3, D9). The file names the record; the route holds no copy of its content.
-_MESH_WORKFLOW_ID = str(yaml.safe_load(_MESH_MANIFEST_PATH.read_text(encoding="utf-8"))["id"])
-# The live registry may hold no mesh record (the owner turned an override off, or it is left out): the route then answers
-# unavailable (``MESH_DEPS.workflow_available``). Its identity for the catalog and receipts then comes from the bundled file.
-_BUNDLED_MESH_RECORD = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).get(_MESH_WORKFLOW_ID)
-if _BUNDLED_MESH_RECORD is None:
-    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not bundled")
-# The last record converted, with the record it came from. A listing or request that meets the same record object again
-# reuses the conversion; an adopted change brings a new record object and converts once.
-_mesh_workflow_cache: tuple[Any, Any] | None = None
+# The workflows are records (the schema 2 contract): every record of the 3D intent that passes the mesh frontend profile
+# is a choice, bundled or stored by the owner. A request names one with ``model``; with none the route runs the first choice
+# (``workflow_policy.rank_of``, then id). The lease manager is one per process (one gateway worker per physical pool).
+# Bundled mesh records, read once. The live registry may hold none of them (the owner turned an override off, or left it
+# out): the route then answers unavailable (``_mesh_present``), and the record's identity for the catalog comes from here.
+_BUNDLED_MESH_RECORDS = {
+    record.id: record for record in WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).records()
+    if record.contract.get("intent") == mesh_api.MESH_INTENT and not mesh_api.mesh_profile_errors(record.contract)}
+if not _BUNDLED_MESH_RECORDS:
+    raise mesh_manifest.MeshManifestError("no mesh workflow is bundled")
+# Records converted, by record id, with the record each came from. A listing or request that meets the same record object
+# again reuses the conversion; an adopted change brings a new record object and converts once.
+_mesh_workflow_cache: dict[str, tuple[Any, Any]] = {}
 
 
-def current_mesh_workflow() -> "mesh_api.MeshWorkflow":
-    """The mesh workflow for the registry's record now, else for the bundled record. Called on every request and listing
-    (never captured at import), so a record the owner changes is used by the next one."""
-    global _mesh_workflow_cache
-    record = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) or _BUNDLED_MESH_RECORD
-    cached = _mesh_workflow_cache
+def _is_mesh_record(record: Any) -> bool:
+    return record.contract.get("intent") == mesh_api.MESH_INTENT and not mesh_api.mesh_profile_errors(record.contract)
+
+
+def _mesh_workflow_of(record: Any) -> "mesh_api.MeshWorkflow":
+    cached = _mesh_workflow_cache.get(record.id)
     if cached is not None and cached[0] is record:
         return cached[1]
     workflow = mesh_api.mesh_workflow_from_record(record)
-    _mesh_workflow_cache = (record, workflow)
+    _mesh_workflow_cache[record.id] = (record, workflow)
     return workflow
+
+
+def _mesh_records() -> list[Any]:
+    """The mesh records now, first choice first: the live registry's, then the bundled ones it does not hold. Called on
+    every request and listing (never captured at import), so a record the owner changes is used by the next one."""
+    found = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records() if _is_mesh_record(record)}
+    for record_id, record in _BUNDLED_MESH_RECORDS.items():
+        found.setdefault(record_id, record)
+    return sorted(found.values(), key=lambda record: (workflow_policy.rank_of(record.facts), record.id))
+
+
+def _mesh_present(workflow_id: str) -> bool:
+    return GATEWAY_WORKFLOW_REGISTRY.get(workflow_id) is not None
+
+
+def current_mesh_workflows() -> "list[mesh_api.MeshWorkflow]":
+    return [_mesh_workflow_of(record) for record in _mesh_records()]
+
+
+def current_mesh_workflow(workflow_id: str | None = None) -> "mesh_api.MeshWorkflow":
+    """The named mesh workflow, or the first choice among them (what a request that names none runs while it is in the
+    registry)."""
+    workflows = current_mesh_workflows()
+    return next(w for w in workflows if w.id == workflow_id) if workflow_id else workflows[0]
+
+
+def _mesh_default_workflow() -> str | None:
+    """The workflow id a 3D request that names no model runs: the first choice the live registry holds."""
+    return next((record.id for record in _mesh_records() if _mesh_present(record.id)), None)
 
 
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
@@ -16888,7 +16919,7 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 
 MESH_DEPS = mesh_api.MeshApiDeps(
     current_manifest=current_mesh_workflow,
-    workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
+    workflow_available=lambda: _mesh_present(current_mesh_workflow().id),
     frontend_records=lambda: route_registry.protocol_frontend_records(
         registry=_live_service_registry(), proxy_config=runtime().config),
     services=lambda: (_live_service_registry() or {}).get("services") or {},
@@ -16928,16 +16959,21 @@ def _mount_video_rows(app: FastAPI) -> None:
 FRONTEND_TRANSLATORS.register_owned("videos", _mount_video_rows)
 
 
-def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
-    """The mesh row's facts, read from the same registry snapshot as the catalog around it (the route's own tiers)."""
-    return mesh_api.discovery_facts(current_mesh_workflow(), route_registry.protocol_frontend_records(
-        registry=live_registry, proxy_config=config))
+def _mesh_facts(live_registry: Mapping[str, Any] | None) -> list[Capability]:
+    """One row of facts for each mesh workflow, read from the same registry snapshot as the catalog around it (the route's
+    own tiers)."""
+    frontends = route_registry.protocol_frontend_records(registry=live_registry, proxy_config=config)
+    return [mesh_api.discovery_facts(workflow, frontends) for workflow in current_mesh_workflows()]
+
+
+def _mesh_pool_evidence() -> Awaitable[dict[str, dict[str, Any]]]:
+    return mesh_api.records_evidence(MESH_DEPS, current_mesh_workflows(), _mesh_present)
 
 
 # Live probes whose answers are availability evidence, by name. Each returns evidence keyed by service ID. A service with
 # a probe is judged by that probe alone (availability_evidence_snapshot), and each listing asks it once.
 LIVE_PROBES: dict[str, Callable[[], Awaitable[dict[str, dict[str, Any]]]]] = {
-    "mesh": lambda: mesh_api.pool_evidence(MESH_DEPS),
+    "mesh": _mesh_pool_evidence,
 }
 
 
@@ -27577,6 +27613,8 @@ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipar
 frontend_wire_shapes.DEFAULT_WORKFLOWS[
     frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+for _mesh_shape in (frontend_mesh_shapes.LocalAI3D, frontend_mesh_shapes.RawGlb):
+    frontend_wire_shapes.DEFAULT_WORKFLOWS[_mesh_shape.shape_id] = _mesh_default_workflow
 def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
     """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
     # A picture that is no readable file is refused as the upload check refuses it, before the mask is read.

@@ -32,7 +32,13 @@ workflows:
   image.generate.moss-image-fast: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.moss-image-quality: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
   image.generate.sdxl-seamless-tile: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: image, tags: []}
-  mesh.generate.trellis-2: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  mesh.generate.pixal3d: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: ["rank:1"]}
+  mesh.generate.trellis-2: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: ["rank:2"]}
+  mesh.edit.retopo: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  mesh.edit.rig-auto: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  mesh.edit.rig-humanoid: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  mesh.edit.texture-refine: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
+  mesh.edit.uv-unwrap: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   video.edit.rife-interpolate: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   video.edit.video-mux: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}
   video.edit.scail-2-replace: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: []}

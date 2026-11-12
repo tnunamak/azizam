@@ -149,7 +149,8 @@ def test_every_bundled_manifest_loads_through_validate_manifest():
 # refuses selectors on a binding whose adapter takes none.
 
 IDENTITY = ROOT / "manifests" / "workflows" / "image-identity.yml"
-NO_ENGINE_HISTORY = {"face-likeness", "flux2-klein-4b-seamless-tile", "mesh.generate.trellis-2"}
+NO_ENGINE_HISTORY = {"face-likeness", "flux2-klein-4b-seamless-tile", "mesh.generate.trellis-2", "mesh.generate.pixal3d",
+                     "mesh.edit.retopo", "mesh.edit.uv-unwrap", "mesh.edit.rig-auto", "mesh.edit.rig-humanoid", "mesh.edit.texture-refine"}
 
 
 def test_the_identity_scene_selector_names_the_node_its_graph_saves_with_and_passes_the_save_rules():

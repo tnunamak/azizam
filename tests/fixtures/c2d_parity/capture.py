@@ -5,6 +5,8 @@ Run it only when a golden must change on purpose, and review the diff. Run it fr
 
     ./venv/bin/python tests/fixtures/c2d_parity/capture.py [name ...]
 
+For a hermetic capture, run ``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py [name ...]`` and review the WORKFLOW_PARITY_JSON lines before saving their data with ``c2d_parity.canonical``.
+
 With no names it rewrites every golden. The parity tests only read goldens; they never write them.
 """
 

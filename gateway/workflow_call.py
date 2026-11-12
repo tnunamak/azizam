@@ -98,7 +98,7 @@ def effective_schema(entry: Mapping[str, Any]) -> dict[str, Any]:
 # top-level type of one of them (workflow_contract, ``accepts_unknown_type``). A test keeps it equal to what ``sniff`` returns.
 SNIFFED_MEDIA_TYPES = frozenset({
     "image/png", "image/jpeg", "image/gif", "image/webp", "video/mp4",
-    "audio/wav", "audio/mpeg", "audio/flac", "audio/ogg",
+    "audio/wav", "audio/mpeg", "audio/flac", "audio/ogg", "model/gltf-binary",
 })
 
 
@@ -122,6 +122,8 @@ def sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
         return "audio/flac", ".flac"
     if data[:4] == b"OggS":
         return "audio/ogg", ".ogg"
+    if data[:4] == b"glTF" and data[4:8] == b"\x02\x00\x00\x00":      # a binary glTF 2 file starts with its magic and version
+        return "model/gltf-binary", ".glb"
     hint = (hint or "").split(";")[0].strip().lower()
     return hint or "application/octet-stream", {
         "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "video/mp4": ".mp4",

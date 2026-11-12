@@ -79,6 +79,8 @@ import proxy
 from gateway import media_jobs, multipart_adapter, receipt_store, request_spool, workflow_adapters
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.gateway import gateway_client, use_admin_db
+from gateway.frontend_shapes import mesh as frontend_mesh_shapes, shapes as frontend_wire_shapes
+from tests.mesh_workflows import BUNDLED_ID
 from tests.support.mesh_harness import GLB, PNG, Harness
 
 SYNC = "/v1/3d/generations"
@@ -108,6 +110,9 @@ def rig(monkeypatch, tmp_path):
     cache.mkdir()
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", cache)
     harness = Harness()
+    # This rig stands in for the TRELLIS.2 service, so a request that names no model runs that workflow here.
+    for shape in (frontend_mesh_shapes.LocalAI3D, frontend_mesh_shapes.RawGlb):
+        monkeypatch.setitem(frontend_wire_shapes.DEFAULT_WORKFLOWS, shape.shape_id, lambda: BUNDLED_ID)
     # One run at a time is the gateway's default (images.media_jobs.concurrency); a cell that needs two at once raises it.
     monkeypatch.setattr(proxy, "_workflow_run_semaphore", asyncio.Semaphore(1))
     harness.run_slots = lambda n: monkeypatch.setattr(proxy, "_workflow_run_semaphore", asyncio.Semaphore(n))

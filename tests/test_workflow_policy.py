@@ -60,9 +60,12 @@ DEMO = "image.generate.test-demo-package"
 def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_demo_package_and_nothing_else():
     bundled = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in BUNDLED.glob("*.yml")}
     policy = release_policy()
-    assert set(policy) == bundled and len(policy) == 39   # the demo package's row is a package row: not a bundled workflow's
+    assert set(policy) == bundled and len(policy) == 45   # the demo package's row is a package row: not a bundled workflow's
     assert {facts.exposure for facts in policy.values()} == {"default"}
-    assert {(facts.trust_tier, facts.resource_tier, facts.tags) for facts in policy.values()} == {("stable", "batch", ())}
+    # Only the mesh records carry a tag: ``rank:N`` is their first-choice order (docs/design/MESH_WORKFLOW_SELECTION.md).
+    assert {(facts.trust_tier, facts.resource_tier) for facts in policy.values()} == {("stable", "batch")}
+    assert {facts.tags for facts in policy.values()} == {(), ("rank:1",), ("rank:2",)}
+    assert {record_id for record_id, facts in policy.items() if facts.tags} == {"mesh.generate.pixal3d", "mesh.generate.trellis-2"}
     # The shipped demo package keeps the facts its schema 1 file stated, so it stays runnable with the same exposure.
     shipped = shipped_package_hash(DEMO_PACKAGE)
     assert shipped and release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash=shipped, from_package=True) == PolicyFacts(

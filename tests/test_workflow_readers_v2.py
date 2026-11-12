@@ -10,6 +10,14 @@ The recorded reads are kept per consumer: none holds a key the schema 2 document
 top-level ``requires``, ``transport``), none holds a policy fact (exposure, trust_tier, resource_tier, tags, trusted; those
 are record data, read from ``record.facts`` and ``record.identity``), and each reads what it must.
 
+For a reviewed additive workflow, capture with
+``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py --readers``.
+Save WORKFLOW_READERS_JSON as sorted, two-space JSON with a final newline, compressed with gzip mtime=0.
+Review every existing entry that changes before replacing it.
+
+Re-captured for the six added model workflows: existing entries change only the mesh generator’s rank:2 tag
+in capabilities, member catalog, projection and the three audience summaries.
+
 The golden moved at S3.5a, when the bundled files became schema 2. Only the entries below moved; every other entry is
 byte for byte what the readers gave before the switch:
 

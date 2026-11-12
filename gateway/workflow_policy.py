@@ -56,6 +56,20 @@ class PolicyFacts:
     tags: tuple[str, ...] = ()
 
 
+# A workflow that competes with others for the same route states its place as a tag, ``rank:1`` the first choice. A route that
+# is not told which workflow to run runs the lowest rank; a tie goes to the lower id. An owner changes a rank by editing the
+# record's tags, like any other fact.
+RANK_TAG_PREFIX = "rank:"
+UNRANKED = float("inf")
+
+
+def rank_of(facts: PolicyFacts | None) -> int | float:
+    """The place a record's tags give it among its rivals (lower is first); a record with no valid rank tag comes last."""
+    ranks = [int(tag[len(RANK_TAG_PREFIX):]) for tag in (facts.tags if facts else ())
+             if tag.startswith(RANK_TAG_PREFIX) and tag[len(RANK_TAG_PREFIX):].isdecimal()]
+    return min(ranks) if ranks else UNRANKED
+
+
 def facts_from_mapping(raw: Any) -> PolicyFacts | None:
     """The facts a mapping states, or ``None`` when it does not state all five (or any is malformed). It never fills one in."""
     if not isinstance(raw, Mapping) or any(name not in raw for name in FACT_NAMES):

@@ -71,7 +71,7 @@ def paths(result: eq.Result) -> list[tuple[str, str, str]]:
 def test_the_bundled_bindings_are_the_converters_edits_of_the_old_ones_and_the_named_edits(trees, tmp_path):
     result = run(trees["before_v1"], trees["same"], tmp_path, checks=("binding_content",))
     assert result.ok, [d.line() for d in result.unexplained]
-    assert result.compared == {"binding_content": 40}  # 39 bundled workflows and the demo package's
+    assert result.compared == {"binding_content": 46}  # 45 bundled workflows and the demo package's
 
 
 def test_control_a_swap_of_two_composition_targets_fails_the_check(trees, tmp_path_factory):

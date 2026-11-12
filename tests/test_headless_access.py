@@ -538,6 +538,7 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     Re-captured 2026-11-10 for train 45: the two video create paths and VideoGenerationRequest gained the
     descriptor-owned com.azizam.video extension controls; nothing else moved.
     """
+    # Re-captured 2026-11-12: the generic run schema lists the five additive mesh.edit forms.
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())
     for path, expected in baseline["paths"].items():

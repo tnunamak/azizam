@@ -63,6 +63,7 @@ EXTRA_INTENTS = {
     "video.extend": "video",
     "image.analyze": "image",
     "mesh.generate": "mesh",
+    "mesh.edit": "mesh",
     "embedding": "embed",
     "images.generate": "image",
     "images.generations": "image",
@@ -120,7 +121,7 @@ def test_loaded_maps_equal_literal_base_tables_including_order(tmp_path):
     assert dict(module.INTENT_CAPABILITIES) == EXPECTED_INTENTS
     assert list(module.INTENT_CAPABILITIES.items()) == list(EXPECTED_INTENTS.items())
     assert len(module.PROTOCOL_CAPABILITIES) == 35
-    assert len(module.INTENT_CAPABILITIES) == 56
+    assert len(module.INTENT_CAPABILITIES) == 57
     for word, capability in EXPECTED_INTENTS.items():
         assert module.capability_of_word(word) == capability
 

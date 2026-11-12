@@ -270,10 +270,11 @@ def required_inputs(entry: WorkflowEntry) -> set[str]:
 
 def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str | None, supplied: Sequence[str],
                     servable: Callable[[WorkflowEntry], bool] | None = None,
-                    not_found: Callable[[str], Response | None] | None = None) -> WorkflowEntry | Response:
+                    not_found: Callable[[str], Response | None] | None = None, prefer: str | None = None) -> WorkflowEntry | Response:
     """The workflow this request runs. A named target resolves through the snapshot's name view (a workflow id or
     alias) and must be one the row selects. With no target the row's selection narrows to the workflows whose
-    required inputs the request supplies; exactly one must remain."""
+    required inputs the request supplies; exactly one must remain, or else ``prefer`` (the wire's first choice) settles it when
+    it is one of them."""
     pool = candidates(snapshot, row, servable)
     if target:
         for kind in ("workflow", "workflow_alias"):
@@ -295,6 +296,9 @@ def choose_workflow(snapshot: RegistrySnapshot, row: FrontendRow, *, target: str
         return error_response(400, "Missing required input: " + ", ".join(missing), code="missing_input", param=missing[0])
     if not fitting:
         return error_response(404, "No workflow on this route accepts these inputs", code=WORKFLOW_NOT_FOUND)
+    preferred = next((entry for entry in fitting if entry.id == prefer), None) if prefer else None
+    if preferred is not None:
+        return preferred
     return error_response(400, "Name a model: more than one workflow on this route accepts these inputs",
                           code=WORKFLOW_AMBIGUOUS, param="model")
 

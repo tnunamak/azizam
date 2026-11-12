@@ -1,0 +1,28 @@
+schema_version: 2
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: mesh.edit.uv-unwrap
+intent: mesh.edit
+capability: mesh
+display_name: Unwrap the UVs of a 3D model
+purpose: Unwrap the UVs of a 3D model
+description: Unwraps and packs the texture coordinates of a 3D model and returns it as a binary glTF.
+technical_description: Fixed 3D stage bound to the local3d-stages service over one multipart POST. The service returns raw GLB bytes.
+summary: Send a model; receive the same model with fresh texture coordinates (model/gltf-binary).
+inputs:
+  mesh:
+    label: model
+    help: The 3D model to work on, as a binary glTF (.glb) file.
+    type: asset
+    accepts:
+      - model/gltf-binary
+    required: true
+outputs:
+  mesh:
+    media_type: model/gltf-binary
+bindings:
+  http-multipart:
+    map:
+      mesh: mesh
+    service: local3d-stages
+    path: /uv

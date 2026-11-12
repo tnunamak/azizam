@@ -194,7 +194,7 @@ class Shape:
         pool = _wire.candidates(snapshot, row, servable)
         supplied = [*fields, *(name for entry in pool for name in _wire.asset_input_names(entry) if uploads)]
         chosen = _wire.choose_workflow(snapshot, row, target=target, supplied=supplied, servable=servable,
-                                       not_found=self.no_such_model)
+                                       not_found=self.no_such_model, prefer=self.preferred_target())
         if isinstance(chosen, Response):
             return chosen
         refused = self.postcheck(chosen, fields, uploads)
@@ -268,6 +268,11 @@ class Shape:
 
     def default_target(self) -> str | None:
         """The workflow a request that names no model runs: the deployment's default for this wire, or None."""
+        return None
+
+    def preferred_target(self) -> str | None:
+        """The workflow that settles a request that names no model when more than one workflow fits it (the wire's first
+        choice), or None: such a request is then refused as ambiguous. It never changes a request one workflow fits."""
         return None
 
     # -- response -----------------------------------------------------------------------------------------------

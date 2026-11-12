@@ -1,7 +1,9 @@
-# Pixal3D image to 3D, as an owner override
+# Pixal3D image to 3D
 
-Pixal3D (MIT licence) runs inside ComfyUI. This directory shows how to serve the gateway's image-to-3D route with it
-instead of the bundled TRELLIS.2 service. Nothing here changes a bundled manifest.
+Pixal3D (MIT licence) runs inside ComfyUI. The gateway bundles it as the second image-to-3D workflow,
+`manifests/workflows/mesh.generate.pixal3d.yml`, beside the TRELLIS.2 one. A request names one with `model`; a request
+that names none runs the first choice (the lowest `rank:` tag in `registry/workflow_policy.yml`; an owner changes it by
+editing the record's tags). `docs/design/MESH_WORKFLOW_SELECTION.md` has the design.
 
 Parts:
 
@@ -10,12 +12,12 @@ Parts:
   patches the shipped API prompt (`engines/pixal3d_prompt.json`), waits for the run and returns the textured GLB. It
   answers 503 while ComfyUI has queued or running work. Start it with
   `COMFYUI_URL=<comfyui address> uvicorn engines.pixal3d_comfy_service:app --port 8892`. `PIXAL3D_POLL_SECONDS` and
-  `PIXAL3D_TIMEOUT_SECONDS` tune polling.
-- `service-record.example.yml` is the `pixal3d` service record for the deployment config.
-- `mesh.generate.pixal3d.example.yml` is the workflow document. Save it as an owner override of the bundled mesh record
-  (it keeps that record's id, because the 3D routes serve exactly one workflow id) so the route calls `pixal3d`.
+  `PIXAL3D_TIMEOUT_SECONDS` tune polling and the generation deadline.
+  `PIXAL3D_CLEANUP_TIMEOUT_SECONDS` bounds total timeout cleanup (default 5 seconds).
+  Cleanup deletes only this prompt from the pending queue; a running prompt is left alone because the interrupt handler cannot cancel it atomically.
+- The `pixal3d` service record is in `tests/fixtures/config_homes/deployment_config.yml`, beside `trellis`. Both declare
+  the same exclusive pool, `gpu0`, so one request at a time holds the card.
 
 The ComfyUI install needs the Pixal3D models and nodes that `pixal3d_prompt.json` names. `bg_removal` is accepted by the
 service and ignored, since the prompt removes the background itself. `resolution` sets the upsample stage; 512 has not
-been run against it. Running two mesh workflows side by side needs a gateway change:
-see `docs/design/MESH_WORKFLOW_SELECTION.md`.
+been run against it.

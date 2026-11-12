@@ -765,6 +765,64 @@ backends:
         path: /vram
         free_pointer: /memory_free_bytes
         total_pointer: /memory_total_bytes
+  # Image to 3D (Pixal3D, run inside ComfyUI by engines/pixal3d_comfy_service.py). Serves the same routes through the
+  # mesh.generate.pixal3d manifest. It shares GPU0 with trellis, so it joins the same exclusive pool (pool_id gpu0): one
+  # request at a time holds the card, whichever workflow it runs. The claim comes from one measured run (about 20 GB of
+  # GPU memory peak, about 150 s): 20 GB x 1.1, rounded up to a whole 256 MiB = 20992 MiB. Measure more inputs and
+  # resolutions before relying on it.
+  pixal3d:
+    display_name: Image to 3D (Pixal3D)
+    description: Turn one image into a textured 3D model.
+    name: Pixal3D (ComfyUI)
+    host: 127.0.0.1
+    port: 8892
+    base_path: /
+    health_endpoint: /health
+    timeout: 900
+    role: optional
+    managed: false
+    capabilities: [mesh]
+    resource_capacity:
+      enabled: true
+      mode: exclusive-route-pool
+      pool_id: gpu0
+      max_claim_bytes: 22011707392 # 20992 MiB (one measured run, see above)
+      reserve_bytes: 1073741824 # 1 GiB
+      retry_after_seconds: 30
+      timeout_seconds: 5
+      observer:
+        service: vram-observer
+        path: /vram
+        free_pointer: /memory_free_bytes
+        total_pointer: /memory_total_bytes
+  # Later 3D stages (texture refine, retopology, UV unwrap, rigging), run by engines/local3d_stages_service.py. They share
+  # GPU0 with the picture-to-3D services, so they join the same exclusive pool (pool_id gpu0). The claim is the largest
+  # stage measured, the texture refine at 8.1 GB of GPU memory: 8.1 GB x 1.1, rounded up to a whole 256 MiB = 9216 MiB.
+  local3d-stages:
+    display_name: 3D stages
+    description: Refine, retopologize, unwrap and rig a 3D model.
+    name: 3D stages
+    host: 127.0.0.1
+    port: 8893
+    base_path: /
+    health_endpoint: /health
+    timeout: 900
+    role: optional
+    managed: false
+    capabilities: [mesh]
+    resource_capacity:
+      enabled: true
+      mode: exclusive-route-pool
+      pool_id: gpu0
+      max_claim_bytes: 9663676416 # 9216 MiB (the largest stage measured, see above)
+      reserve_bytes: 1073741824 # 1 GiB
+      retry_after_seconds: 30
+      timeout_seconds: 5
+      observer:
+        service: vram-observer
+        path: /vram
+        free_pointer: /memory_free_bytes
+        total_pointer: /memory_total_bytes
   # Loopback observer for the trellis pool: `python -m gateway.vram_observer --port 8891` (nvidia-smi, GPU0).
   # It is a read-only fact source with no route of its own, so the pool refuses whenever it does not answer.
   vram-observer:
