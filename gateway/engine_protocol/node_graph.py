@@ -309,6 +309,8 @@ def graph_selector_cardinality(selector: Mapping[str, str]) -> tuple[int, int | 
 
 
 UPLOAD_PATH = "/upload/image"
+# The multipart field the upload carries its file in: the last segment of the path.
+UPLOAD_FIELD = UPLOAD_PATH.rpartition("/")[2]
 
 
 class InputRefused(ProtocolError):
@@ -561,7 +563,7 @@ class NodeGraphAdapter:
     async def stage_input(self, conn: Connection, *, filename: str, data: bytes, media_type: str) -> str:
         """Hand one input file to the engine and return the name the engine holds it under, for the run's body."""
         async with self._use(conn, None) as session:
-            reply = await session.upload({UPLOAD_PATH.rpartition("/")[2]: (filename, data, media_type)})  # the form field is the path's last segment
+            reply = await session.upload({UPLOAD_FIELD: (filename, data, media_type)})
         name = reply.json().get("name") if reply.status == 200 else None
         if not isinstance(name, str) or not name:
             raise UpstreamError(reply.status, "The engine did not take the input file.")
