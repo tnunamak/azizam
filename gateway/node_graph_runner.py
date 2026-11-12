@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
-from gateway import generated_defaults, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
+from gateway import asset_types, generated_defaults, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
 from gateway.engine_protocol import graph_round
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
@@ -73,7 +73,8 @@ def output_kind(outputs: Mapping[str, Any]) -> str:
 def output_noun(outputs: Mapping[str, Any]) -> str:
     """The plural of ``output_kind`` for a no-result message; a workflow that declares none produces images, as before."""
     kind = output_kind(outputs)
-    return f"{kind}s" if kind else "images"
+    word = asset_types.kind_names(kind or "image")["plural"]
+    return word[:1].lower() + word[1:]
 
 
 class RunFailed(Exception):
@@ -175,19 +176,23 @@ def retry_reason_of(kind: str, binding_key: str) -> str | None:
             graph_round.SUBMIT_TIMEOUT: f"{binding_key}_timeout", graph_round.WAIT_EXCEEDED: f"{binding_key}_timeout"}.get(kind)
 
 
-def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, binding_key: str) -> RunFailed:
+def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, binding_key: str,
+               outputs: Mapping[str, Any] | None = None) -> RunFailed:
     """The job failure a round that produced no files becomes (its HTTP status is the one the old route answered with)."""
     from gateway import client_errors
     kind = failed.kind
     reason = retry_reason_of(kind, binding_key)
     engine = adapter.label
+    label = asset_types.kind_names(output_kind(outputs or {}) or "image")["label"]
+    noun = label[:1].lower() + label[1:]
+    article = "an" if noun[:1] in "aeiou" else "a"
     if kind == graph_round.SUBMIT_TIMEOUT:
         return RunFailed("upstream_timeout", "timeout", f"{engine} request timeout", upstream_status=504, retryable=True, retry_reason=reason)
     if kind == graph_round.UNREACHABLE:
         return RunFailed("upstream_unavailable", "upstream", adapter.unavailable_message(conn), upstream_status=502, retryable=True,
                          retry_reason=reason)
     if kind == graph_round.DROPPED:
-        return RunFailed("upstream_dropped", "upstream", "Image backend connection dropped", upstream_status=502)
+        return RunFailed("upstream_dropped", "upstream", f"{label} backend connection dropped", upstream_status=502)
     if kind == graph_round.REFUSED:
         out = graph_round.says_out_of_memory(failed.excerpt, plain=True)
         text = client_errors.REASONS["upstream_out_of_memory" if out else "upstream_refused"]
@@ -201,7 +206,7 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
         return RunFailed("upstream_job_failed", "upstream", failed.detail or "The upstream job did not succeed.", upstream_status=502)
     if kind == graph_round.WAIT_EXCEEDED:
         suffix = f" (queue_position={failed.queue_position})" if failed.queue_position is not None else ""
-        return RunFailed("image_generation_timeout", "timeout", f"Image generation timed out before {engine} returned an image{suffix}",
+        return RunFailed("image_generation_timeout", "timeout", f"{label} generation timed out before {engine} returned {article} {noun}{suffix}",
                          upstream_status=504, retryable=True, retry_reason=reason, queue_position=failed.queue_position)
     code = failed.code or "result_refused"
     return RunFailed(code, "upstream", RESULT_REFUSED_MESSAGE,
@@ -408,7 +413,7 @@ class NodeGraphRunner:
                 return None
             if failed.queue_position is not None:       # a timed-out caller is told where its job stood in the engine's queue
                 ctx.record_result_metadata({"queue_position": failed.queue_position})
-            raise failure_of(failed, adapter, conn, failure_binding) from failed
+            raise failure_of(failed, adapter, conn, failure_binding, outputs) from failed
         finally:
             if probe is not None:
                 try:
