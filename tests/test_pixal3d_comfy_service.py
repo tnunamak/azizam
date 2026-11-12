@@ -122,7 +122,10 @@ def test_bad_upstream_reply_is_a_json_502(fake_upstreams, step, path, reply) -> 
     steps = full_run([DONE])
     index = next(i for i, item in enumerate(steps) if item["id"] == step)
     steps[index]["response"] = reply
-    _, app = serve(fake_upstreams, steps[:index + 1])
+    steps = steps[:index + 1]
+    if step == "history0":      # the prompt was accepted: the service cancels it
+        steps += [exchange("delete", "POST", "/queue", {"json": {}}), exchange("cleanup-queue", "GET", "/queue", {"json": IDLE})]
+    _, app = serve(fake_upstreams, steps)
     response = post(app)
     assert response.status_code == 502
     assert isinstance(response.json()["error"], str)
@@ -163,7 +166,8 @@ def test_json_bytes_are_not_a_glb(fake_upstreams) -> None:
 def test_history_becomes_non_json_mid_wait(fake_upstreams) -> None:
     steps = full_run([{}], view=False) + [
         exchange("bad-history", "GET", "/history/p1",
-                 {"body": [{"hex": "6e6f74204a534f4e"}]})]
+                 {"body": [{"hex": "6e6f74204a534f4e"}]}),
+        exchange("delete", "POST", "/queue", {"json": {}}), exchange("cleanup-queue", "GET", "/queue", {"json": IDLE})]
     _, app = serve(fake_upstreams, steps)
     response = post(app)
     assert response.status_code == 502
