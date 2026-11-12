@@ -309,3 +309,14 @@ def test_member_word_maps_are_immutable(tmp_path, name):
             table["chat"] = "Changed"
         with pytest.raises(TypeError):
             del table["chat"]
+
+
+def test_generated_capability_words_are_current():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/generate-capability-words-ts.py"), "--check"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
