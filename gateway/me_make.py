@@ -38,8 +38,9 @@ JOB_MODE = "session_make"
 CANCEL_REQUESTED = "cancel_requested"
 _CANCELED = describe("canceled")[1]
 ROUTE_PATH = "/me/api/make/jobs"
-# The edit operation's declared intent is the one that takes a source picture.
+# What a workflow's input contract says about a source picture (see source_input_of_contract).
 SourceInput = Literal["required", "optional", "none"]
+# The edit operation's declared intent; with no workflow record it is the one that takes a source picture.
 EDIT_INTENT = operation_intent("image_edits")
 SUPPORTED_INTENTS = frozenset({operation_intent("images"), EDIT_INTENT})
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
