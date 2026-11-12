@@ -154,6 +154,11 @@ skips lends no metadata. The loaded model maps to declarations of that backend o
   engine for it: `upstream_model`, else `deployment`, else `model`, else `id`, the same rule that
   builds the deployment. Ids compare without surrounding spaces and ignoring case, as model ids do
   elsewhere in the gateway.
+  The engine may also name other ids that serve the same loaded model, for example an old id kept as an
+  alias after the weights changed. The loaded entry's own `aliases`, and the id of every listed entry
+  whose `alias_of` is the loaded id, match too. They come from the same model-list read that found the
+  loaded id, are cached with it, and cost no request. Both fields are read only when the engine sends
+  them; without them, matching is exactly as above. An id the engine does not list never matches.
 
 A listing that includes neither alias makes no observation.
 
