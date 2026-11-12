@@ -11,7 +11,8 @@ Parts:
   `POST /generate` (`image`, `seed`, `resolution`) that returns raw GLB bytes. It copies the picture to ComfyUI,
   patches the shipped API prompt (`engines/pixal3d_prompt.json`), waits for the run and returns the textured GLB. It
   answers 503 while ComfyUI has queued or running work. Start it with
-  `COMFYUI_URL=<comfyui address> uvicorn engines.pixal3d_comfy_service:app --port 8892`. `PIXAL3D_POLL_SECONDS` and
+  `COMFYUI_URL=<comfyui address> uvicorn engines.pixal3d_comfy_service:app --port 8892`, or install the systemd user unit
+  `docs/ops/pixal3d.service`. `PIXAL3D_POLL_SECONDS` and
   `PIXAL3D_TIMEOUT_SECONDS` tune polling and the history-wait limit: `PIXAL3D_TIMEOUT_SECONDS` bounds how long the service
   waits for the prompt to finish after it is submitted. It is not a total deadline: the queue check, the upload, the submit and
   the download each have the 60 second HTTP limit of the client and do not count against it.
