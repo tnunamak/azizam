@@ -8,6 +8,8 @@ export interface WorkflowFacts {
   readonly resource_tier: string;
   readonly resource_class: string;
   readonly tags: readonly string[];
+  /** Place among rivals for one route (lower is first); the view keeps it as stored and does not edit it. */
+  readonly selection_rank?: number | null;
 }
 
 /** Values come from the list response, never a second policy vocabulary in the web app. */

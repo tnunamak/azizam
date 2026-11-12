@@ -26,6 +26,8 @@ POLICY_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow_po
 FACT_NAMES = ("exposure", "trust_tier", "resource_tier", "resource_class", "tags")
 RESOURCE_CLASS_DATA_PATH = Path(__file__).resolve().parent / "migration_data" / "workflow_resource_class.json"
 BUNDLED_PACKAGES_DIR = Path(__file__).resolve().parent.parent / "extensions" / "bundled"
+SELECTION_RANK_KEY = "selection_rank"  # an optional fact: the place of a record among rivals for one route (lower is first)
+MAX_SELECTION_RANK = 1_000_000
 PACKAGE_KEY = "package"  # an optional key of a policy row: the id of the one package the row was written for
 NEEDS_CONFIGURATION_CODE = "needs_configuration"
 NEEDS_CONFIGURATION_MESSAGE = "This workflow needs configuration: its policy facts are not set."
@@ -54,20 +56,23 @@ class PolicyFacts:
     resource_tier: str
     resource_class: str
     tags: tuple[str, ...] = ()
+    selection_rank: int | None = None
 
 
-# A workflow that competes with others for the same route states its place as a tag, ``rank:1`` the first choice. A route that
-# is not told which workflow to run runs the lowest rank; a tie goes to the lower id. An owner changes a rank by editing the
-# record's tags, like any other fact.
-RANK_TAG_PREFIX = "rank:"
+# A workflow that competes with others for the same route states its place as the optional fact ``selection_rank`` (0 to
+# ``MAX_SELECTION_RANK``; 0 or 1 is the first choice, lower is first). A route that is not told which workflow to run runs the
+# lowest rank; a tie goes to the lower id; a record with no rank comes last. An owner changes it like any other fact.
 UNRANKED = float("inf")
 
 
+def valid_selection_rank(value: Any) -> bool:
+    """A whole number from 0 to ``MAX_SELECTION_RANK`` (a bool is not one)."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_SELECTION_RANK
+
+
 def rank_of(facts: PolicyFacts | None) -> int | float:
-    """The place a record's tags give it among its rivals (lower is first); a record with no valid rank tag comes last."""
-    ranks = [int(tag[len(RANK_TAG_PREFIX):]) for tag in (facts.tags if facts else ())
-             if tag.startswith(RANK_TAG_PREFIX) and tag[len(RANK_TAG_PREFIX):].isdecimal()]
-    return min(ranks) if ranks else UNRANKED
+    """The place a record's ``selection_rank`` gives it among its rivals (lower is first); no rank comes last."""
+    return UNRANKED if facts is None or facts.selection_rank is None else facts.selection_rank
 
 
 def facts_from_mapping(raw: Any) -> PolicyFacts | None:
@@ -81,8 +86,11 @@ def facts_from_mapping(raw: Any) -> PolicyFacts | None:
     if not isinstance(tags, (list, tuple)) or not all(isinstance(tag, str) and tag.strip() for tag in tags) \
             or len(set(tags)) != len(tags):
         return None
+    rank = raw.get(SELECTION_RANK_KEY)
+    if rank is not None and not valid_selection_rank(rank):
+        return None
     return PolicyFacts(exposure=texts[0], trust_tier=texts[1], resource_tier=texts[2], resource_class=texts[3],
-                       tags=tuple(tags))
+                       tags=tuple(tags), selection_rank=rank)
 
 
 @lru_cache(maxsize=1)
@@ -132,11 +140,13 @@ def parse_policy_rows(text: str, source: str = "workflow_policy.yml") -> tuple[d
     for workflow_id, raw in rows.items():
         if not isinstance(workflow_id, str) or not workflow_id:
             raise PolicyFileError(f"{source}: a workflow id must be text")
-        if not isinstance(raw, Mapping) or not set(FACT_NAMES) <= set(raw) <= {*FACT_NAMES, PACKAGE_KEY}:
-            raise PolicyFileError(f"{source}: {workflow_id} must state exactly {', '.join(FACT_NAMES)} (and may name a package)")
-        facts = facts_from_mapping({name: raw[name] for name in FACT_NAMES})
+        if not isinstance(raw, Mapping) or not set(FACT_NAMES) <= set(raw) <= {*FACT_NAMES, SELECTION_RANK_KEY, PACKAGE_KEY}:
+            raise PolicyFileError(f"{source}: {workflow_id} must state exactly {', '.join(FACT_NAMES)} (and may name a package "
+                                  f"and a {SELECTION_RANK_KEY})")
+        facts = facts_from_mapping({name: raw[name] for name in (*FACT_NAMES, SELECTION_RANK_KEY) if name in raw})
         if facts is None:
-            raise PolicyFileError(f"{source}: {workflow_id} has a fact that is not valid text (tags: a list of distinct text)")
+            raise PolicyFileError(f"{source}: {workflow_id} has a fact that is not valid text (tags: a list of distinct text; "
+                                  f"{SELECTION_RANK_KEY}: a whole number from 0 to {MAX_SELECTION_RANK})")
         if PACKAGE_KEY in raw:
             if not isinstance(raw[PACKAGE_KEY], str) or not raw[PACKAGE_KEY].strip():
                 raise PolicyFileError(f"{source}: {workflow_id} must name its package as text")

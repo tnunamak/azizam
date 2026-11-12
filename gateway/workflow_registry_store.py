@@ -36,7 +36,7 @@ from gateway.job_envelope import canonical_bytes
 from gateway.manifests import ContractError, ContractErrors, ManifestError
 from gateway.workflow_contract import Report, check_contract
 from gateway.workflow_kernel import name_clashes
-from gateway.workflow_policy import facts_from_mapping
+from gateway.workflow_policy import MAX_SELECTION_RANK, facts_from_mapping
 from gateway.workflow_runtime_types import (
     BOUND_EXCEEDED, KEEP, WORKFLOW_EXISTS, WORKFLOW_NOT_FOUND, Actor, Commit, EntryState, HistoryEntry, Keep,
     NameOwner, RegistryConflict, RegistryRefused, RegistrySnapshot, WorkflowFacts,
@@ -232,8 +232,11 @@ def _selector_save_problems(contract: Mapping[str, Any], descriptors: Mapping[st
 
 def facts_record(facts: WorkflowFacts) -> dict[str, Any]:
     """The ``policy`` mapping of a stored record."""
-    return {"exposure": facts.exposure, "trust_tier": facts.trust_tier, "resource_tier": facts.resource_tier,
-            "tags": list(facts.tags), service_registry.RESOURCE_CLASS_KEY: facts.resource_class}
+    record = {"exposure": facts.exposure, "trust_tier": facts.trust_tier, "resource_tier": facts.resource_tier,
+              "tags": list(facts.tags), service_registry.RESOURCE_CLASS_KEY: facts.resource_class}
+    if facts.selection_rank is not None:
+        record["selection_rank"] = facts.selection_rank   # absent when unranked, so an unranked record stores as before
+    return record
 
 
 def facts_problems(facts: Any) -> list[ContractError]:
@@ -244,7 +247,8 @@ def facts_problems(facts: Any) -> list[ContractError]:
     stated = facts_record(facts)
     if facts_from_mapping(stated) is None or not isinstance(facts.resource_class, str) or not facts.resource_class.strip():
         return [ContractError(("facts",), FACTS_INVALID,
-                              "each fact is non-empty text, and tags are a list of distinct text")]
+                              "each fact is non-empty text, tags are a list of distinct text, and selection_rank is a whole number from 0 to "
+                              f"{MAX_SELECTION_RANK}")]
     return []
 
 
