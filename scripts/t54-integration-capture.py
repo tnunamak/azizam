@@ -13,8 +13,14 @@ if sys.argv[1:] == ['--catalog-proof']:
         if isinstance(value, dict) and set(value) == {'models', 'capabilities', 'engine'}:
             wanted = 'f358d972e72f0a2ad15acdb6b89ff724b6c8743643afa7724803b2aff82e5517'
             rows = value['models']
-            retired = ('face-likeness', 'image', {'input_modalities': ['image'], 'output_modalities': ['text']})
-            matches = [i for i in range(len(rows)+1) if original({**value, 'models': [*rows[:i], retired, *rows[i:]]}) == wanted]
+            possibilities = [(kind, inputs, outputs) for kind in ('image', 'language', None) for inputs in (['image'], ['text','image'], ['text']) for outputs in (['text'], ['image'], [])]
+            matched = []
+            for kind, inputs, outputs in possibilities:
+                retired = ('face-likeness', kind, {'input_modalities': inputs, 'output_modalities': outputs})
+                for i in range(len(rows)+1):
+                    if original({**value, 'models': [*rows[:i], retired, *rows[i:]]}) == wanted:
+                        matched.append((i, retired))
+            matches = matched
             print('CATALOG_PROOF=' + json.dumps({'old_digest_restored_by_face_likeness_only': matches}))
             assert len(matches) == 1
         return original(value)
