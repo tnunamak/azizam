@@ -229,6 +229,8 @@ def test_user_action_requires_current_session_nonempty_csrf(monkeypatch):
     token_b = proxy._csrf_token_for_oidc_session(b)
     assert token_a and token_b and token_a != token_b
 
+    # Each request comes from the gateway's own page, so only the CSRF rules decide.
+    SAME_ORIGIN = {"sec-fetch-site": "same-origin"}
     cases = [
         ({}, "user_action_header_required"),
         ({"x-azizam-user-action": "0", "x-azizam-csrf": token_a},
@@ -240,17 +242,17 @@ def test_user_action_requires_current_session_nonempty_csrf(monkeypatch):
          "user_csrf_required"),
     ]
     for headers, code in cases:
-        denied = proxy._require_user_action_header(request(headers=headers), a)
+        denied = proxy._require_user_action_header(request(headers={**SAME_ORIGIN, **headers}), a)
         assert denied.status_code == 403
         assert json.loads(denied.body)["error"]["code"] == code
     valid = {"x-azizam-user-action": "1", "x-azizam-csrf": token_a}
-    assert proxy._require_user_action_header(request(headers=valid), a) is None
+    assert proxy._require_user_action_header(request(headers={**SAME_ORIGIN, **valid}), a) is None
 
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", None)
     assert proxy._csrf_token_for_oidc_session(a) == ""
     for supplied in ("", token_a):
         denied = proxy._require_user_action_header(request(headers={
-            "x-azizam-user-action": "1", "x-azizam-csrf": supplied,
+            **SAME_ORIGIN, "x-azizam-user-action": "1", "x-azizam-csrf": supplied,
         }), a)
         assert denied.status_code == 403
         assert json.loads(denied.body)["error"]["code"] == "user_csrf_required"

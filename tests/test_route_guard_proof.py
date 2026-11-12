@@ -50,6 +50,7 @@ OWNER_ROUTES = [row for row in WRITES if row["auth"] == "owner-bearer"]
 OWNER_ONLY = [row for row in OWNER_ROUTES if "owner role required" in row["gate"]]
 SESSION_ROUTES = [row for row in WRITES if row["auth"] == "session-only" or _key(row) in {
     "POST /auth/api/reauth", "POST /auth/api/sign-out-everywhere"}]
+MEMBER_WRITES = [row for row in WRITES if row["path"].startswith("/me/api/")]
 
 
 def test_every_mutating_route_is_in_exactly_one_class():
@@ -138,6 +139,15 @@ def test_a_call_with_no_credential_is_refused_and_changes_nothing(row, principal
 def test_an_app_key_is_refused_by_a_route_that_takes_a_browser_session(row, principals, gateway_test_state_dir):
     with _Unchanged(principals, gateway_test_state_dir):
         _refused(_send(principals, row, headers={"Authorization": f"Bearer {principals.app_key}"}), row)
+
+
+@pytest.mark.parametrize("row", MEMBER_WRITES, ids=_key)
+def test_a_member_session_write_from_another_site_is_refused_and_changes_nothing(row, principals, gateway_test_state_dir):
+    with _Unchanged(principals, gateway_test_state_dir):
+        response = _send(principals, row, cookie=principals.member_cookie,
+                         headers={**principals.member_headers, "Origin": "https://evil.example"})
+        assert response.status_code == 403, (_key(row), response.status_code, response.text[:200])
+        assert response.json()["error"]["code"] == "member_origin_forbidden", (_key(row), response.text[:200])
 
 
 # Owner-only routes whose owner check sits below the route's own lookups, so the probe has to reach it with a body that

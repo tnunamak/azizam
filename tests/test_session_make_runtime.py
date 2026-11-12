@@ -81,6 +81,24 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         return Response(content=json.dumps({"data": [{"asset_id": OUTPUT, "url": "http://x/y"}]}),
                         status_code=200, media_type="application/json")
 
+    def test_source_input_reads_the_found_record_contract(self) -> None:
+        for intent, expected in (("image.edit", "required"), ("image.generate", "none")):
+            with self.subTest(intent=intent):
+                self.assertEqual(self.runtime.source_input(intent, "flux2-klein-4b"), expected)
+        # An owner graph with no record keeps the intent rule.
+        self.assertEqual(self.runtime.source_input("image.edit", "no-such-graph"), "required")
+        self.assertEqual(self.runtime.source_input("image.generate", "no-such-graph"), "none")
+
+    def test_contract_inputs_say_required_optional_or_none(self) -> None:
+        picture = {"type": "asset", "accepts": ["image/*"]}
+        for inputs, expected in (
+            ({"prompt": {"type": "string", "required": True}}, "none"),
+            ({"clip": {"type": "asset", "accepts": ["audio/*"], "required": True}}, "none"),
+            ({"p": {**picture}, "q": {**picture, "required": True}}, "required"),
+            ({"p": {**picture}}, "optional"),
+        ):
+            self.assertEqual(me_make.source_input_of_contract(inputs), expected)
+
     def test_edit_replays_the_source_picture_as_the_session_person(self) -> None:
         seen = {}
 

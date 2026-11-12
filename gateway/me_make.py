@@ -18,7 +18,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping, Protocol
+from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -38,7 +38,9 @@ JOB_MODE = "session_make"
 CANCEL_REQUESTED = "cancel_requested"
 _CANCELED = describe("canceled")[1]
 ROUTE_PATH = "/me/api/make/jobs"
-# The edit operation's declared intent is the one that takes a source picture.
+# What a workflow's input contract says about a source picture (see source_input_of_contract).
+SourceInput = Literal["required", "optional", "none"]
+# The edit operation's declared intent; with no workflow record it is the one that takes a source picture.
 EDIT_INTENT = operation_intent("image_edits")
 SUPPORTED_INTENTS = frozenset({operation_intent("images"), EDIT_INTENT})
 _SOURCE_FIELDS = ("source_asset_id", "source_job_id")
@@ -87,6 +89,22 @@ class MakeLimits:
     household: int = 12
 
 
+def source_input_of_contract(inputs: Mapping[str, Any]) -> SourceInput:
+    """What a workflow contract's ``inputs`` say about a source picture.
+
+    An image input is an ``asset`` input that accepts images. A required one means
+    the job needs a source; only optional ones mean it may take one.
+    """
+    image_inputs = [
+        spec for spec in inputs.values()
+        if isinstance(spec, Mapping) and spec.get("type") == "asset"
+        and any(str(kind).startswith("image/") for kind in spec.get("accepts") or ())
+    ]
+    if any(spec.get("required") for spec in image_inputs):
+        return "required"
+    return "optional" if image_inputs else "none"
+
+
 class MakeRuntime(Protocol):
     """How the gateway runs a make job. Payloads hold the prompt."""
 
@@ -108,6 +126,15 @@ class MakeRuntime(Protocol):
         """The id of the workflow record ``model`` names under ``intent``.
 
         With no record (an owner graph with no manifest) it is ``intent.model``.
+        """
+        ...
+
+    def source_input(self, intent: str, model: str) -> SourceInput:
+        """Whether the workflow record ``model`` names under ``intent`` takes a source picture.
+
+        ``required``: its contract declares a required image input. ``optional``: it declares
+        only optional ones. ``none``: it declares no image input. With no record (an owner
+        graph with no manifest) the intent decides: required for the edit intent, else none.
         """
         ...
 
@@ -415,9 +442,12 @@ def _submit(
     request_id = _idempotent_request_id(app_id, key, forget=forget) if key else new_request_id()
     source_asset_id = _owned_source(request, body, user_id=user_id, find_owned_asset=find_owned_asset,
                                     admin_path=admin_path, jobs_path=jobs_path)
-    if (intent == EDIT_INTENT) != (source_asset_id is not None):
-        raise PublicFailure("invalid_source", 400, intent=intent,
-                            copy="edit_needs_source" if intent == EDIT_INTENT else "generate_takes_no_source")
+    # The selected workflow's input contract decides, not the intent word.
+    source_input = runtime.source_input(intent, model)
+    if source_input == "required" and source_asset_id is None:
+        raise PublicFailure("invalid_source", 400, intent=intent, copy="edit_needs_source")
+    if source_input == "none" and source_asset_id is not None:
+        raise PublicFailure("invalid_source", 400, intent=intent, copy="generate_takes_no_source")
     if source_asset_id is not None:
         backend_body["source_asset_id"] = source_asset_id
 

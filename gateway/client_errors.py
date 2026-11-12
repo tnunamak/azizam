@@ -75,6 +75,7 @@ _SERVER_REASON = "The engine failed while handling the request."
 
 # Machine codes a client branches on, with the gateway's own sentence for each. An engine's wording is never relayed.
 CODE_REASONS: dict[str, str] = {
+    "member_origin_forbidden": "Use your account page on this gateway to make changes.",
     "context_length_exceeded": "The request is longer than the model's context window.",
     "model_not_found": "The model was not found.",
     "model_not_deployed": "The model is not deployed.",
