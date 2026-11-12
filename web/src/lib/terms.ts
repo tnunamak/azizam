@@ -1,3 +1,5 @@
+import { capabilityTaskNames } from "./capability-words";
+
 /** Capability labels use the gateway capability IDs and VOICE.md vocabulary. */
 export const capabilityLabels = {
   chat: "Chat",
@@ -46,19 +48,20 @@ export function capabilityLabelFor(key: string | null | undefined): string | und
  * kind of request (Usage rows, chart legends) use these, so one thing keeps
  * one name across the app.
  */
+// The words live in registry/capability_words.yml (task_name, else member_label, else label); this keeps the client's keys.
 export const taskNames = {
-  chat: capabilityLabels.chat,
-  image: "Make a picture",
-  video: "Make a video",
-  mesh: "Make a 3D model",
-  speech: "Read text aloud",
-  transcribe: "Transcribe a recording",
-  music: "Make music",
-  sound_effects: "Make a sound effect",
-  audio: "Make music or sounds",
-  decisions: "Choose an option",
-  embeddings: "Turn text into numbers",
-  reranking: "Sort search results",
+  chat: capabilityTaskNames.chat,
+  image: capabilityTaskNames.image,
+  video: capabilityTaskNames.video,
+  mesh: capabilityTaskNames.mesh,
+  speech: capabilityTaskNames.speech,
+  transcribe: capabilityTaskNames.transcribe,
+  music: capabilityTaskNames.music,
+  sound_effects: capabilityTaskNames.sfx,
+  audio: capabilityTaskNames.audio,
+  decisions: capabilityTaskNames.decide,
+  embeddings: capabilityTaskNames.embed,
+  reranking: capabilityTaskNames.rerank,
 } as const;
 
 /**

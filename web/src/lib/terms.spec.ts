@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { capabilityLabels } from "./terms";
+import { capabilityLabels, taskNames } from "./terms";
 import { capabilityMeta } from "@/components/product/readiness";
 import { humanCapabilities, humanCapability } from "@/app/engines/engine-groups";
 import { capabilityLabel as homeCapabilityLabel } from "@/app/_home/home-model";
@@ -37,4 +37,21 @@ it.each(Object.entries(capabilityLabels))(
 it("resolves known protocol spellings through the shared capability label", () => {
   expect(humanCapabilities(["speech", "tts"])).toEqual([capabilityLabels.speech]);
   expect(capabilityLabel("voice")).toBe(capabilityLabels.speech);
+});
+
+it("preserves the complete member task-name contract", () => {
+  expect(taskNames).toEqual({
+    chat: "Chat",
+    image: "Make a picture",
+    video: "Make a video",
+    mesh: "Make a 3D model",
+    speech: "Read text aloud",
+    transcribe: "Transcribe a recording",
+    music: "Make music",
+    sound_effects: "Make a sound effect",
+    audio: "Make music or sounds",
+    decisions: "Choose an option",
+    embeddings: "Turn text into numbers",
+    reranking: "Sort search results",
+  });
 });
