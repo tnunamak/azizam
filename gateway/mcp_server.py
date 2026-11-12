@@ -23,7 +23,7 @@ per model):
 
 * ``capabilities``: list or describe workflows, stable aliases and operations
   with typed inputs. Generated from ``x-azizam-workflows``.
-* ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
+* ``run``: start a workflow or an OpenAI-style media operation. Returns
   the result, or a job id when the work outlives ``wait_seconds``.
 * ``job``: poll, wait for, or cancel a job; fetches the result.
 * ``view_asset``: view a reduced preview of one of the caller's image assets,
@@ -51,9 +51,14 @@ import binascii
 import copy
 import io
 import json
+import re
 import time
 import warnings
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
 from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
@@ -92,7 +97,7 @@ SERVER_NAME = "azizam"
 INSTRUCTIONS = (
     "Media generation gateway. Call `capabilities` to see workflows and aliases "
     "(image, video, music, sfx, speech), `capabilities` with `target` for typed "
-    "inputs, `run` to generate, `job` to poll slow work, and `view_asset` to inspect "
+    "inputs, `run` to generate or transcribe, `job` to poll slow work, and `view_asset` to inspect "
     "a reduced image preview. Results are signed URLs. "
     "`rename_app` and `rename_key` rename the signed-in person's own apps and keys. "
     + REPORT_INSTRUCTION
@@ -110,21 +115,233 @@ MCP_PREVIEW_TOTAL_IMAGE_BYTES = 512 * 1024
 MCP_PREVIEW_MAX_COUNT = 4
 MCP_PREVIEW_MAX_CANDIDATES = 8
 
-SPEECH_TARGET = "speech"
-SPEECH_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "input": {"type": "string", "description": "Text to speak."},
-        "voice": {"type": "string", "description": "Voice name or custom voice id. Optional."},
-        "model": {"type": "string", "description": "Speech alias or engine, e.g. tts, tts-fast, tts-quality."},
-        "speed": {"type": "number", "minimum": 0.25, "maximum": 4.0},
-        "instructions": {"type": "string", "description": "Style hint, for engines that take one."},
-        "response_format": {"type": "string", "enum": ["mp3", "wav", "opus", "aac", "flac"], "default": "mp3"},
-    },
-    "required": ["input"],
-    "additionalProperties": False,
-}
+@dataclass(frozen=True)
+class McpTarget:
+    """Immutable wire descriptor; JSON fields thaw to fresh objects for each call."""
+    target: str
+    intent: str
+    operation: str
+    method: str
+    path: str
+    body: str
+    mode: str
+    description: str
+    summary: str
+    input_schema_json: str
+    defaults_json: str
+    forced_json: str
+    outputs_json: str
+    response_kind: str
+    accepted_modes: tuple[str, ...]
+    filter_by_intent: bool
+    choices_json: str
+    file_input_json: str
 
+
+@dataclass(frozen=True)
+class McpJobProfile:
+    family: str
+    poll: tuple[str, str]
+    content: tuple[str, str]
+    cancel: tuple[str, str]
+    wrap_intent: bool
+
+
+@dataclass(frozen=True)
+class McpRegistry:
+    targets: tuple[McpTarget, ...]
+    jobs: tuple[McpJobProfile, ...]
+
+
+def _mcp_object(value: Any, label: str, allowed: set[str] | None = None) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or any(not isinstance(key, str) for key in value):
+        raise ValueError(f"{label}: expected an object")
+    if allowed is not None and set(value) - allowed:
+        raise ValueError(f"{label}: unknown fields {sorted(set(value) - allowed)}")
+    return value
+
+
+def _mcp_text(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label}: expected nonempty text")
+    return value
+
+
+def _mcp_path(value: Any, label: str) -> str:
+    value = _mcp_text(value, label)
+    if not value.startswith("/") or value.startswith("//") or any(char.isspace() or char in "?#" for char in value):
+        raise ValueError(f"{label}: expected a local route path")
+    return value
+
+
+def _mcp_json(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":"), allow_nan=False)
+
+
+def compile_mcp_registry(document: Mapping[str, Any]) -> McpRegistry:
+    """Compile only inert frontend data; no imports, handlers or target-specific branches."""
+    records = document.get("records")
+    if not isinstance(records, list):
+        raise ValueError("protocol frontends: expected records")
+    targets: list[McpTarget] = []
+    jobs: list[McpJobProfile] = []
+    names: set[str] = set()
+    families: set[str] = set()
+    metadata_keys = {
+        "target", "mode", "description", "summary", "input_schema", "defaults", "outputs",
+        "response_kind", "accepted_modes", "filter_by_intent", "forced", "choices", "file_input",
+    }
+    for record in records:
+        record = _mcp_object(record, "frontend")
+        if record.get("enabled") is False:
+            continue
+        for raw in record.get("mcp_jobs") or []:
+            raw = _mcp_object(raw, "MCP job profile", {"family", "poll", "content", "cancel", "wrap_intent"})
+            family = _mcp_text(raw.get("family"), "job family")
+            if family in families:
+                raise ValueError(f"duplicate MCP job family {family!r}")
+            routes = []
+            for action in ("poll", "content", "cancel"):
+                route = _mcp_object(raw.get(action), f"{family}.{action}", {"method", "path"})
+                method = _mcp_text(route.get("method"), "job method")
+                if method not in (("GET",) if action != "cancel" else ("POST", "DELETE")):
+                    raise ValueError(f"{family}.{action}: unsupported method")
+                path = _mcp_path(route.get("path"), "job path")
+                if path.count("{job_id}") != 1 or re.search(r"[{}]", path.replace("{job_id}", "")):
+                    raise ValueError(f"{family}.{action}: expected one job_id placeholder")
+                routes.append((method, path))
+            if type(raw.get("wrap_intent", False)) is not bool:
+                raise ValueError(f"{family}.wrap_intent: expected boolean")
+            jobs.append(McpJobProfile(family, *routes, raw.get("wrap_intent", False)))
+            families.add(family)
+        for row in record.get("registered_routes") or []:
+            row = _mcp_object(row, "registered route")
+            meta, reason = row.get("mcp"), row.get("mcp_not_exposed")
+            if meta is not None and reason is not None:
+                raise ValueError("a route cannot be both exposed and not exposed over MCP")
+            if meta is None:
+                if record.get("protocol") == "openai":
+                    _mcp_text(reason, f"{row.get('canonical')}: mcp_not_exposed")
+                continue
+            meta = _mcp_object(meta, "MCP target", metadata_keys)
+            target = _mcp_text(meta.get("target"), "MCP target")
+            if target in names:
+                raise ValueError(f"duplicate MCP target {target!r}")
+            methods = row.get("methods")
+            if not isinstance(methods, list) or len(methods) != 1 or methods[0] not in ("GET", "POST"):
+                raise ValueError(f"{target}: expected one supported HTTP method")
+            body = row.get("body", "json")
+            if body not in ("json", "multipart") or meta.get("mode") != "sync":
+                raise ValueError(f"{target}: unsupported body or mode")
+            response_kind = meta.get("response_kind")
+            if response_kind not in ("binary_asset", "json_result"):
+                raise ValueError(f"{target}: unsupported response kind")
+            schema = _mcp_object(meta.get("input_schema"), f"{target}.input_schema")
+            properties = _mcp_object(schema.get("properties"), f"{target}.properties")
+            if schema.get("type") != "object" or schema.get("additionalProperties") is not False:
+                raise ValueError(f"{target}: expected a closed object input schema")
+            required = schema.get("required", [])
+            if not isinstance(required, list) or any(name not in properties for name in required):
+                raise ValueError(f"{target}: required input is not declared")
+            defaults = _mcp_object(meta.get("defaults", {}), f"{target}.defaults")
+            forced = _mcp_object(meta.get("forced", {}), f"{target}.forced")
+            if (set(defaults) | set(forced)) - set(properties):
+                raise ValueError(f"{target}: default or forced input is not declared")
+            outputs = meta.get("outputs")
+            modes = meta.get("accepted_modes", ["auto", "sync"])
+            if not isinstance(outputs, list) or not isinstance(modes, list) or not modes or any(mode not in ("auto", "sync", "async") for mode in modes):
+                raise ValueError(f"{target}: invalid outputs or accepted modes")
+            choices = _mcp_object(meta.get("choices", {}), f"{target}.choices")
+            if choices:
+                _mcp_object(choices, f"{target}.choices", {"name", "method", "path", "default_field", "items_field", "id_field"})
+                if choices.get("method") != "GET":
+                    raise ValueError(f"{target}: choices must be a read")
+                _mcp_path(choices.get("path"), f"{target}.choices.path")
+                for key in ("name", "default_field", "items_field", "id_field"):
+                    _mcp_text(choices.get(key), f"{target}.choices.{key}")
+            file_input = _mcp_object(meta.get("file_input", {}), f"{target}.file_input")
+            if file_input:
+                _mcp_object(file_input, f"{target}.file_input", {"field", "asset_prefix", "media_prefix", "max_bytes"})
+                if body != "multipart" or file_input.get("field") not in required:
+                    raise ValueError(f"{target}: multipart file must be a required input")
+                for key in ("asset_prefix", "media_prefix"):
+                    _mcp_text(file_input.get(key), f"{target}.file_input.{key}")
+                maximum = file_input.get("max_bytes")
+                if type(maximum) is not int or not 0 < maximum <= MAX_ASSET_BYTES:
+                    raise ValueError(f"{target}: invalid file byte limit")
+            elif body == "multipart":
+                raise ValueError(f"{target}: multipart requires a file input")
+            filter_by_intent = meta.get("filter_by_intent", True)
+            if type(filter_by_intent) is not bool:
+                raise ValueError(f"{target}: filter_by_intent must be boolean")
+            targets.append(McpTarget(
+                target, _mcp_text(row.get("intent"), "route intent"),
+                _mcp_text(row.get("operation"), "route operation"), methods[0],
+                _mcp_path(row.get("canonical"), "route path"), body, meta["mode"],
+                _mcp_text(meta.get("description"), "description"), _mcp_text(meta.get("summary"), "summary"),
+                _mcp_json(schema), _mcp_json(defaults), _mcp_json(forced), _mcp_json(outputs),
+                response_kind, tuple(modes), filter_by_intent, _mcp_json(choices), _mcp_json(file_input),
+            ))
+            names.add(target)
+    if not jobs:
+        raise ValueError("MCP job profiles are not declared")
+    return McpRegistry(tuple(targets), tuple(jobs))
+
+
+@lru_cache(maxsize=1)
+def load_mcp_registry() -> McpRegistry:
+    path = Path(__file__).resolve().parents[1] / "registry" / "protocol_frontends.yml"
+    return compile_mcp_registry(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def _mcp_operation_body(descriptor: McpTarget, inputs: Mapping[str, Any], model: str | None) -> dict[str, Any]:
+    defaults = json.loads(descriptor.defaults_json)
+    body = {"model": model or inputs.get("model") or defaults.get("model"),
+            **{key: value for key, value in inputs.items() if key != "model"}}
+    if body["model"] is None:
+        body.pop("model")
+    for key, value in defaults.items():
+        body.setdefault(key, value)
+    body.update(json.loads(descriptor.forced_json))
+    return body
+
+
+async def _mcp_file(deps: McpDeps, request: Request, auth: Any, value: Any,
+                    spec: Mapping[str, Any]) -> tuple[str, bytes, str]:
+    """Resolve only an owned full asset ID or bounded inline data, never a path/URL."""
+    maximum = spec["max_bytes"]
+    if not isinstance(value, str):
+        raise CallError("file must be an owned asset id or a bounded data URI")
+    if re.fullmatch(re.escape(spec["asset_prefix"]) + r"[0-9a-f]{64}", value):
+        raw = await asyncio.to_thread(deps.read_asset, request, auth, value)
+        if raw is None:
+            raise CallError("the asset is missing or is not owned by this caller")
+        hint = ""
+    elif value.startswith("data:"):
+        header, separator, encoded = value.partition(",")
+        match = re.fullmatch(r"data:([A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+);base64", header)
+        if not separator or not match or not match[1].startswith(spec["media_prefix"]):
+            raise CallError("file must be a base64 data URI of the declared media kind")
+        if len(encoded) > ((maximum + 2) // 3) * 4:
+            raise CallError("inline file exceeds the byte limit")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            raise CallError("file contains invalid base64") from None
+        hint = match[1]
+    else:
+        raise CallError("file must be an owned asset id or a bounded data URI; paths and URLs are not accepted")
+    if not isinstance(raw, bytes) or not raw or len(raw) > maximum:
+        raise CallError("file is empty or exceeds the byte limit")
+    media_type, suffix = sniff(raw, hint)
+    # Container magic is ambiguous (for example audio-only ISO-BMFF), and some
+    # supported audio formats have no magic. The owned namespace / URI declares
+    # the input kind; the HTTP route remains responsible for audio validation.
+    if hint:
+        media_type = hint
+    elif not media_type.startswith(spec["media_prefix"]):
+        media_type = "application/octet-stream"
+    return ("input" + suffix, raw, media_type)
 
 @dataclass
 class McpDeps:
@@ -211,13 +428,13 @@ TOOLS: list[dict[str, Any]] = [
         "title": "List gateway capabilities",
         "description": (
             "List the media workflows, stable aliases (image, video, music, sfx, ...) and operations "
-            "(speech) this gateway can run. Pass `target` for one entry's typed inputs, outputs and "
+            "(speech and transcription) this gateway can run. Pass `target` for one entry's typed inputs, outputs and "
             "expected run time. Pass `query` to filter."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "target": {"type": "string", "description": "Workflow id, short id, alias, or `speech`. Returns its typed inputs."},
+                "target": {"type": "string", "description": "Workflow id, short id, alias, or an operation target. Returns its typed inputs."},
                 "query": {"type": "string", "description": "Case-insensitive filter on id, alias, intent and description."},
                 "intent": {"type": "string", "description": "Filter by intent, e.g. image.generate, video.generate, audio.generate."},
             },
@@ -229,7 +446,7 @@ TOOLS: list[dict[str, Any]] = [
         "name": "run",
         "title": "Run a workflow or media operation",
         "description": (
-            "Run a workflow, stable alias or `speech`. `inputs` follow the schema from `capabilities` "
+            "Run a workflow, stable alias or operation. `inputs` follow the schema from `capabilities` "
             "with `target`. Fast work returns the result. Slow work (video, long music) returns a "
             "`job_id` after `wait_seconds`; call `job` to continue. Media comes back as signed URLs; "
             "available image assets also have reduced image previews. "
@@ -238,7 +455,7 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "target": {"type": "string", "description": "Workflow id, short id, alias (image, video, music, sfx, ...), or `speech`."},
+                "target": {"type": "string", "description": "Workflow id, short id, alias, or an operation target from capabilities."},
                 "inputs": {"type": "object", "description": "Typed inputs for the target. See `capabilities`."},
                 "mode": {"type": "string", "enum": ["auto", "sync", "async"], "default": "auto"},
                 "wait_seconds": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_SECONDS, "default": DEFAULT_WAIT_SECONDS,
@@ -259,6 +476,7 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "job_id": {"type": "string"},
+                "job_profile": {"type": "string", "description": "Declared lifecycle profile returned by run or job; pass it back unchanged."},
                 "wait_seconds": {"type": "integer", "minimum": 0, "maximum": MAX_WAIT_SECONDS, "default": 0},
                 "cancel": {"type": "boolean", "default": False},
             },
@@ -582,17 +800,19 @@ _STATUS_MAP = {"queued": "queued", "running": "running", "in_progress": "running
                "canceled": "canceled", "cancelled": "canceled"}
 
 
-def _job_family(job_id: str) -> str:
-    return "video" if job_id.startswith("video_") else "media_job"
+def _job_profile(family: str) -> McpJobProfile:
+    for profile in load_mcp_registry().jobs:
+        if profile.family == family:
+            return profile
+    raise CallError("unknown job profile; use the profile returned by run or job")
 
 
 def _job_paths(family: str, job_id: str) -> dict[str, tuple[str, str]]:
-    if family == "video":
-        return {"poll": ("GET", f"/v1/videos/{job_id}"), "content": ("GET", f"/v1/videos/{job_id}/content"),
-                "cancel": ("DELETE", f"/v1/videos/{job_id}")}
-    return {"poll": ("GET", f"/gateway/v1/media/jobs/{job_id}"),
-            "content": ("GET", f"/gateway/v1/media/jobs/{job_id}/content"),
-            "cancel": ("POST", f"/gateway/v1/media/jobs/{job_id}/cancel")}
+    profile = _job_profile(family)
+    encoded = quote(job_id, safe="")
+    return {action: (method, path.format(job_id=encoded))
+            for action in ("poll", "content", "cancel")
+            for method, path in (getattr(profile, action),)}
 
 
 def _normalize_job(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -614,28 +834,32 @@ class Tools:
     def __init__(self, deps: McpDeps, request: Request, auth: Any) -> None:
         self.deps, self.request, self.auth = deps, request, auth
         self._tag: str | None = None
+        self.registry = load_mcp_registry()
+        self._job_profiles: dict[str, str] = {}
 
     # -- resolution -----------------------------------------------------
 
-    def _speech_names(self) -> list[str]:
-        section = (self.deps.aliases().get("operations") or self.deps.aliases()).get("speech") or {}
-        return [str(a["alias"]) for a in section.get("stable") or [] if a.get("alias")
-                and self.deps.visible(self.request, self.auth, {"id": str(a["alias"]), "operation": "speech"})]
+    def _operation_names(self, descriptor: McpTarget) -> list[str]:
+        section = (self.deps.aliases().get("operations") or self.deps.aliases()).get(descriptor.operation) or {}
+        return [str(item["alias"]) for item in section.get("stable") or [] if item.get("alias")
+                and self.deps.visible(self.request, self.auth,
+                                      {"id": str(item["alias"]), "operation": descriptor.operation})]
 
     def _catalog(self) -> list[dict[str, Any]]:
         """The workflows this caller may see: what discovery lists, and no hidden ones."""
         return [entry for entry in self.deps.catalog()
                 if self.deps.visible(self.request, self.auth, {"id": entry["id"], "intent": entry["intent"]})]
 
-    def resolve(self, target: str, inputs: Mapping[str, Any] | None = None) -> tuple[str, dict[str, Any] | None, str | None]:
-        """(kind, catalog entry, speech model). kind is ``workflow`` or ``speech``.
+    def resolve(self, target: str, inputs: Mapping[str, Any] | None = None) -> tuple[str, dict[str, Any] | McpTarget | None, str | None]:
+        """(kind, workflow/operation descriptor, selected model alias).
 
         An alias can name a generate and an edit workflow (``image``). The caller's
         inputs pick the one that accepts them all; ties go to the generate workflow.
         """
         t = target.strip()
-        if t == SPEECH_TARGET or t in self._speech_names():
-            return "speech", None, None if t == SPEECH_TARGET else t
+        for descriptor in self.registry.targets:
+            if t == descriptor.target or t in self._operation_names(descriptor):
+                return "operation", descriptor, None if t == descriptor.target else t
         entries = self._catalog()
         matches = [e for e in entries if t in (e["id"], e["short_id"]) or t in (e.get("aliases") or [])]
         if matches:
@@ -646,7 +870,8 @@ class Tools:
             return "workflow", min(matches, key=rank), None
         names = sorted({e["short_id"] for e in entries} | {a for e in entries for a in e.get("aliases") or []})
         raise CallError(f"unknown target {target!r}; call `capabilities` to list valid targets",
-                        targets=names + [SPEECH_TARGET] + self._speech_names())
+                        targets=names + [name for descriptor in self.registry.targets
+                                         for name in (descriptor.target, *self._operation_names(descriptor))])
 
     # -- capabilities -----------------------------------------------------
 
@@ -654,21 +879,25 @@ class Tools:
         target = args.get("target")
         if target:
             kind, entry, model = self.resolve(str(target))
-            if kind == "speech":
+            if kind == "operation":
+                assert isinstance(entry, McpTarget)
                 detail: dict[str, Any] = {
-                    "target": SPEECH_TARGET, "intent": "audio.speech", "aliases": self._speech_names(),
-                    "description": "Text to speech through the OpenAI-style speech route.",
-                    "inputs": SPEECH_SCHEMA, "outputs": [{"name": "audio", "media_type": "audio/mpeg"}],
-                    "mode": "sync",
+                    "target": entry.target, "intent": entry.intent, "aliases": self._operation_names(entry),
+                    "description": entry.description, "inputs": json.loads(entry.input_schema_json),
+                    "outputs": json.loads(entry.outputs_json), "mode": entry.mode,
                 }
-                try:
-                    resp = await self.deps.call(self.request, "GET", "/v1/audio/voices")
-                    if resp.status_code == 200:
-                        listing = resp.json()
-                        detail["voices"] = {"default": listing.get("default_voice"),
-                                            "ids": [v.get("voice_id") for v in listing.get("voices") or []]}
-                except Exception:  # noqa: BLE001 - voices are a nicety
-                    pass
+                choices = json.loads(entry.choices_json)
+                if choices:
+                    try:
+                        resp = await self.deps.call(self.request, choices["method"], choices["path"])
+                        if resp.status_code == 200:
+                            listing = resp.json()
+                            detail[choices["name"]] = {
+                                "default": listing.get(choices["default_field"]),
+                                "ids": [item.get(choices["id_field"]) for item in listing.get(choices["items_field"]) or []],
+                            }
+                    except Exception:  # noqa: BLE001 - optional discovery supplement
+                        pass
                 return detail
             return self._describe(entry)
         query = str(args.get("query") or "").lower()
@@ -686,10 +915,19 @@ class Tools:
                 "typical_seconds": entry.get("typical_seconds"), "mode": self._mode_for(entry, "auto"),
                 "availability": health.get(entry["id"]),
             })
-        if not intent and (not query or query in SPEECH_TARGET):
-            rows.append({"target": SPEECH_TARGET, "intent": "audio.speech", "aliases": self._speech_names(),
-                          "description": "Text to speech.", "typical_seconds": None, "mode": "sync"})
-        return {"workflows": rows, "hint": "Call capabilities with `target` for typed inputs; run with `target` and `inputs`."}
+        for descriptor in self.registry.targets:
+            if query and query not in descriptor.target.lower():
+                continue
+            if intent and (not descriptor.filter_by_intent or intent != descriptor.intent):
+                continue
+            rows.append({"target": descriptor.target, "intent": descriptor.intent,
+                         "aliases": self._operation_names(descriptor), "description": descriptor.summary,
+                         "typical_seconds": None, "mode": descriptor.mode})
+        return {"workflows": rows, "hint": (
+            "Call capabilities with `target` for typed inputs; run with `target` and `inputs`. "
+            "Speech and transcription also run over the OpenAI-shaped routes. "
+            "GET /health at the gateway root is the public health route."
+        )}
 
     async def _availability(self, workflow_ids: list[str]) -> Mapping[str, Mapping[str, Any]]:
         """Each workflow's availability from the host's engine health record; empty when the host has none or it fails."""
@@ -735,9 +973,10 @@ class Tools:
             raise CallError("`mode` must be auto, sync or async")
         wait = self._wait(args.get("wait_seconds"), DEFAULT_WAIT_SECONDS)
         self._tag = self._run_tag(args.get("tag"))
-        kind, entry, speech_model = self.resolve(target, inputs)
-        if kind == "speech":
-            return await self._speech(inputs, speech_model)
+        kind, entry, model = self.resolve(target, inputs)
+        if kind == "operation":
+            assert isinstance(entry, McpTarget)
+            return await self._operation(entry, inputs, model, mode)
         assert entry is not None
         validate_inputs(effective_schema(entry), inputs)
         chosen = self._mode_for(entry, mode)
@@ -755,7 +994,8 @@ class Tools:
                 return await self._await(job_id, wait, entry)
             return self._done(entry, assets, result)
         route = execution["async"]
-        wrap = route["submit"]["body"]["intent"] if route["kind"] == "media_job" else None
+        profile = _job_profile(route["kind"])
+        wrap = route["submit"]["body"]["intent"] if profile.wrap_intent else None
         submit = {**route["submit"], "fields": route["fields"], "content_type": route["submit"].get("content_type", "")}
         built = await build_request(self.deps.read_asset, self.request, self.auth, entry, submit, inputs, wrap_intent=wrap)
         resp = await self._send(built, 60.0)
@@ -765,18 +1005,33 @@ class Tools:
         job_id = payload.get("job_id") or payload.get("id")
         if not job_id:
             raise CallError("the gateway accepted the job but returned no id")
-        return await self._await(str(job_id), wait, entry)
+        return await self._await(str(job_id), wait, entry, profile.family)
 
-    async def _speech(self, inputs: Mapping[str, Any], model: str | None) -> dict[str, Any]:
-        validate_inputs(SPEECH_SCHEMA, inputs)
-        body = {"model": model or inputs.get("model") or "tts", **{k: v for k, v in inputs.items() if k != "model"}}
-        body.setdefault("response_format", "mp3")
-        built = BuiltRequest("POST", "/v1/audio/speech", json=body)
+    async def _operation(self, descriptor: McpTarget, inputs: Mapping[str, Any],
+                         model: str | None, mode: str) -> dict[str, Any]:
+        if mode not in descriptor.accepted_modes:
+            raise CallError(f"mode {mode!r} is not available for {descriptor.target}; available: {[descriptor.mode]}")
+        validate_inputs(json.loads(descriptor.input_schema_json), inputs)
+        body = _mcp_operation_body(descriptor, inputs, model)
+        if descriptor.body == "multipart":
+            file_input = json.loads(descriptor.file_input_json)
+            field = file_input["field"]
+            upload = await _mcp_file(self.deps, self.request, self.auth, body.pop(field), file_input)
+            data = {key: str(value).lower() if isinstance(value, bool) else str(value) for key, value in body.items()}
+            built = BuiltRequest(descriptor.method, descriptor.path, data=data, files=[(field, upload)])
+        else:
+            built = BuiltRequest(descriptor.method, descriptor.path, json=body)
         resp = await self._send(built, SYNC_TIMEOUT_SECONDS)
         if resp.status_code >= 400:
             raise error_from(resp)
-        assets, _ = await _assets_from_response(self.deps, self.request, self.auth, resp, "speech")
-        return {"status": "succeeded", "target": SPEECH_TARGET, "assets": assets}
+        if descriptor.response_kind == "binary_asset":
+            assets, _ = await _assets_from_response(self.deps, self.request, self.auth, resp, descriptor.target)
+            return {"status": "succeeded", "target": descriptor.target, "assets": assets}
+        try:
+            result = resp.json()
+        except (ValueError, TypeError):
+            raise CallError("the gateway returned a non-JSON result for this operation") from None
+        return {"status": "succeeded", "target": descriptor.target, "assets": [], "result": result}
 
     async def _send(self, built: BuiltRequest, timeout: float) -> Any:
         kwargs: dict[str, Any] = {}
@@ -819,21 +1074,47 @@ class Tools:
 
     # -- jobs -------------------------------------------------------------
 
-    async def _poll(self, job_id: str) -> dict[str, Any]:
-        method, path = _job_paths(_job_family(job_id), job_id)["poll"]
-        resp = await self.deps.call(self.request, method, path)
-        if resp.status_code >= 400:
-            raise error_from(resp)
+    async def _poll(self, job_id: str, family: str | None = None) -> dict[str, Any]:
+        family = family or self._job_profiles.get(job_id)
+        if family is not None:
+            method, path = _job_paths(family, job_id)["poll"]
+            resp = await self.deps.call(self.request, method, path)
+            if resp.status_code >= 400:
+                raise error_from(resp)
+        else:
+            # Old callers have only an opaque id. Resolve by authenticated reads,
+            # never by id spelling, and never choose between colliding families.
+            matches = []
+            missing = None
+            for profile in self.registry.jobs:
+                method, path = _job_paths(profile.family, job_id)["poll"]
+                candidate = await self.deps.call(self.request, method, path)
+                if candidate.status_code == 404:
+                    missing = candidate
+                    continue
+                if candidate.status_code >= 400:
+                    raise error_from(candidate)
+                matches.append((profile.family, candidate))
+            if len(matches) > 1:
+                raise CallError("job id is ambiguous; supply the declared job_profile returned by run")
+            if not matches:
+                if missing is not None:
+                    raise error_from(missing)
+                raise CallError("no declared job profiles are available")
+            family, resp = matches[0]
+        self._job_profiles[job_id] = family
         payload = resp.json()
         return {**_normalize_job(payload), "raw": payload}
 
-    async def _await(self, job_id: str, wait: int, entry: Mapping[str, Any] | None) -> dict[str, Any]:
+    async def _await(self, job_id: str, wait: int, entry: Mapping[str, Any] | None,
+                     family: str | None = None) -> dict[str, Any]:
         deadline = time.monotonic() + wait
-        state = await self._poll(job_id)
+        state = await self._poll(job_id, family)
         while not is_terminal(state["status"]) and time.monotonic() < deadline:
             await asyncio.sleep(min(self.deps.poll_interval, max(0.0, deadline - time.monotonic())))
             state = await self._poll(job_id)
-        out: dict[str, Any] = {"status": state["status"], "job_id": job_id}
+        out: dict[str, Any] = {"status": state["status"], "job_id": job_id,
+                               "job_profile": self._job_profiles[job_id]}
         out.update({name: state["raw"].get(name) for name in (*PHASE_FIELDS, "attempt_number", "previous_attempts", "queue_position")})
         if entry:
             out["target"] = entry["short_id"]
@@ -858,10 +1139,11 @@ class Tools:
             out.update({name: state["raw"][name] for name in (*ERROR_FIELDS, "last_healthy_at") if state["raw"].get(name) is not None})
         else:
             out["next"] = "Call `job` with this job_id to keep waiting (set wait_seconds)."
+            out["next_arguments"] = {"job_id": job_id, "job_profile": self._job_profiles[job_id]}
         return out
 
     async def _job_assets(self, job_id: str, stem: str) -> list[dict[str, Any]]:
-        method, path = _job_paths(_job_family(job_id), job_id)["content"]
+        method, path = _job_paths(self._job_profiles[job_id], job_id)["content"]
         resp = await self.deps.call(self.request, method, path)
         if resp.status_code >= 400:
             raise error_from(resp)
@@ -873,13 +1155,19 @@ class Tools:
         if not isinstance(job_id, str) or not job_id:
             raise CallError("`job_id` is required")
         wait = self._wait(args.get("wait_seconds"), 0)
+        family = args.get("job_profile")
+        if family is not None:
+            if not isinstance(family, str):
+                raise CallError("job_profile must be text")
+            _job_profile(family)
         if args.get("cancel"):
-            method, path = _job_paths(_job_family(job_id), job_id)["cancel"]
+            await self._poll(job_id, family)  # resolve ownership and ambiguity before any mutation
+            method, path = _job_paths(self._job_profiles[job_id], job_id)["cancel"]
             resp = await self.deps.call(self.request, method, path)
             if resp.status_code >= 400:
                 raise error_from(resp)
             return await self._await(job_id, 0, None)
-        return await self._await(job_id, wait, None)
+        return await self._await(job_id, wait, None, family)
 
 
     async def rename(self, tool: str, args: Mapping[str, Any]) -> dict[str, Any]:

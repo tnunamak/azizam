@@ -1384,3 +1384,238 @@ def test_run_reports_a_queued_sync_job_as_not_finished_when_the_wait_ends():
     env.core.polls["/gateway/v1/media/jobs/mj_9"] = [{"status": "running", "progress": 5}]
     out = call(env, "run", {"target": "mux", "inputs": {"source_video": "x"}, "wait_seconds": 0})["structuredContent"]
     assert out["status"] == "running" and out["job_id"] == "mj_9" and not out.get("assets")
+
+
+
+# --------------------------------------------- row-compiled operation contracts
+
+# Captured from the pre-refactor speech capability/result formatter at the pinned base.
+_SPEECH_DETAIL_WIRE = "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"target\\\":\\\"speech\\\",\\\"intent\\\":\\\"audio.speech\\\",\\\"aliases\\\":[\\\"tts\\\",\\\"tts-fast\\\"],\\\"description\\\":\\\"Text to speech through the OpenAI-style speech route.\\\",\\\"inputs\\\":{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"input\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Text to speak.\\\"},\\\"voice\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Voice name or custom voice id. Optional.\\\"},\\\"model\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Speech alias or engine, e.g. tts, tts-fast, tts-quality.\\\"},\\\"speed\\\":{\\\"type\\\":\\\"number\\\",\\\"minimum\\\":0.25,\\\"maximum\\\":4.0},\\\"instructions\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"Style hint, for engines that take one.\\\"},\\\"response_format\\\":{\\\"type\\\":\\\"string\\\",\\\"enum\\\":[\\\"mp3\\\",\\\"wav\\\",\\\"opus\\\",\\\"aac\\\",\\\"flac\\\"],\\\"default\\\":\\\"mp3\\\"}},\\\"required\\\":[\\\"input\\\"],\\\"additionalProperties\\\":false},\\\"outputs\\\":[{\\\"name\\\":\\\"audio\\\",\\\"media_type\\\":\\\"audio/mpeg\\\"}],\\\"mode\\\":\\\"sync\\\",\\\"voices\\\":{\\\"default\\\":\\\"alloy\\\",\\\"ids\\\":[\\\"alloy\\\"]}}\"}],\"structuredContent\":{\"target\":\"speech\",\"intent\":\"audio.speech\",\"aliases\":[\"tts\",\"tts-fast\"],\"description\":\"Text to speech through the OpenAI-style speech route.\",\"inputs\":{\"type\":\"object\",\"properties\":{\"input\":{\"type\":\"string\",\"description\":\"Text to speak.\"},\"voice\":{\"type\":\"string\",\"description\":\"Voice name or custom voice id. Optional.\"},\"model\":{\"type\":\"string\",\"description\":\"Speech alias or engine, e.g. tts, tts-fast, tts-quality.\"},\"speed\":{\"type\":\"number\",\"minimum\":0.25,\"maximum\":4.0},\"instructions\":{\"type\":\"string\",\"description\":\"Style hint, for engines that take one.\"},\"response_format\":{\"type\":\"string\",\"enum\":[\"mp3\",\"wav\",\"opus\",\"aac\",\"flac\"],\"default\":\"mp3\"}},\"required\":[\"input\"],\"additionalProperties\":false},\"outputs\":[{\"name\":\"audio\",\"media_type\":\"audio/mpeg\"}],\"mode\":\"sync\",\"voices\":{\"default\":\"alloy\",\"ids\":[\"alloy\"]}}}"
+_SPEECH_RUN_WIRE = "{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"status\\\":\\\"succeeded\\\",\\\"target\\\":\\\"speech\\\",\\\"assets\\\":[{\\\"asset_id\\\":\\\"aud_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"url\\\":\\\"https://gw.test/v1/assets/aud_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/content?sig=x\\\",\\\"media_type\\\":\\\"x\\\",\\\"size_bytes\\\":23,\\\"kind\\\":\\\"x\\\",\\\"name\\\":\\\"speech.mp3\\\"}]}\"},{\"type\":\"resource_link\",\"uri\":\"https://gw.test/v1/assets/aud_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/content?sig=x\",\"name\":\"speech.mp3\",\"mimeType\":\"x\",\"size\":23}],\"structuredContent\":{\"status\":\"succeeded\",\"target\":\"speech\",\"assets\":[{\"asset_id\":\"aud_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"url\":\"https://gw.test/v1/assets/aud_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/content?sig=x\",\"media_type\":\"x\",\"size_bytes\":23,\"kind\":\"x\",\"name\":\"speech.mp3\"}]}}"
+_SPEECH_LIST_WIRE = "{\"target\":\"speech\",\"intent\":\"audio.speech\",\"aliases\":[\"tts\",\"tts-fast\"],\"description\":\"Text to speech.\",\"typical_seconds\":null,\"mode\":\"sync\"}"
+
+
+def _mcp_frontend_document():
+    from pathlib import Path
+    import yaml
+    return yaml.safe_load((Path(__file__).resolve().parents[1] / "registry" / "protocol_frontends.yml").read_text())
+
+
+def test_mcp_speech_capabilities_and_result_keep_exact_wire_bytes(env):
+    env.core.routes[("GET", "/v1/audio/voices")] = httpx.Response(
+        200, json={"default_voice": "alloy", "voices": [{"voice_id": "alloy", "name": "Alloy"}]})
+    detail = call(env, "capabilities", {"target": "tts"})
+    assert json.dumps(detail, separators=(",", ":")) == _SPEECH_DETAIL_WIRE
+    row = next(row for row in call(env, "capabilities", {})["structuredContent"]["workflows"]
+               if row["target"] == "speech")
+    assert json.dumps(row, separators=(",", ":")) == _SPEECH_LIST_WIRE
+    env.core.routes[("POST", "/v1/audio/speech")] = httpx.Response(
+        200, content=b"ID3" + b"\x00" * 20, headers={"content-type": "audio/mpeg"})
+    result = call(env, "run", {"target": "tts-fast", "inputs": {"input": "hello", "voice": "alloy"}})
+    assert json.dumps(result, separators=(",", ":")) == _SPEECH_RUN_WIRE
+
+
+@pytest.mark.parametrize("target,inputs,mode,model", [
+    ("speech", {"input": "hello", "model": ""}, "auto", "tts"),
+    ("speech", {"input": "hello", "model": "chosen"}, "sync", "chosen"),
+    ("tts-fast", {"input": "hello", "model": "ignored"}, "async", "tts-fast"),
+])
+def test_mcp_speech_keeps_model_precedence_and_legacy_mode(env, target, inputs, mode, model):
+    env.core.routes[("POST", "/v1/audio/speech")] = httpx.Response(
+        200, content=b"ID3" + b"\x00" * 20, headers={"content-type": "audio/mpeg"})
+    result = call(env, "run", {"target": target, "inputs": inputs, "mode": mode})
+    assert not result.get("isError")
+    assert env.core.calls[-1][2]["json"] == {"model": model, "input": "hello", "response_format": "mp3"}
+    # Legacy speech listings deliberately do not join intent-filtered workflow lists.
+    assert call(env, "capabilities", {"intent": "audio.speech"})["structuredContent"]["workflows"] == []
+
+
+def test_mcp_targets_are_immutable_and_do_not_retain_mutable_input_data():
+    import copy
+    from dataclasses import FrozenInstanceError
+    document = _mcp_frontend_document()
+    compiled = mcp_server.compile_mcp_registry(document)
+    target = compiled.targets[0]
+    original = target.input_schema_json
+    with pytest.raises(FrozenInstanceError):
+        target.target = "changed"
+    next(row for row in document["records"][0]["registered_routes"] if row.get("mcp"))["mcp"]["input_schema"].clear()
+    decoded = json.loads(target.input_schema_json)
+    decoded.clear()
+    assert target.input_schema_json == original
+    assert copy.deepcopy(compiled) == compiled
+
+
+def test_every_served_openai_route_has_an_mcp_exposure_decision():
+    import copy
+    document = _mcp_frontend_document()
+    rows = [row for record in document["records"]
+            if record.get("protocol") == "openai" and record.get("enabled") is not False
+            for row in record.get("registered_routes", [])]
+    assert rows
+    assert all(("mcp" in row) != ("mcp_not_exposed" in row) for row in rows)
+    assert all(row.get("mcp") or isinstance(row.get("mcp_not_exposed"), str) and row["mcp_not_exposed"].strip()
+               for row in rows)
+    mcp_server.compile_mcp_registry(document)
+    missing = copy.deepcopy(document)
+    row = next(row for record in missing["records"] if record.get("protocol") == "openai"
+               for row in record["registered_routes"] if row.get("mcp_not_exposed"))
+    del row["mcp_not_exposed"]
+    with pytest.raises(ValueError, match="mcp_not_exposed"):
+        mcp_server.compile_mcp_registry(missing)
+
+
+def test_new_row_supplies_a_target_and_route_without_a_code_branch(monkeypatch, env):
+    import copy
+    document = _mcp_frontend_document()
+    row = copy.deepcopy(next(row for row in document["records"][0]["registered_routes"] if row.get("mcp")))
+    row.update(canonical="/v1/test-echo", intent="test.echo", operation="test_echo")
+    row["mcp"].update(target="test-echo", description="Echo.", summary="Echo.", defaults={},
+                      response_kind="json_result", outputs=[{"name": "echo", "media_type": "application/json"}])
+    row["mcp"].pop("choices", None)
+    document["records"][0]["registered_routes"].append(row)
+    compiled = mcp_server.compile_mcp_registry(document)
+    monkeypatch.setattr(mcp_server, "load_mcp_registry", lambda: compiled)
+    env.core.routes[("POST", "/v1/test-echo")] = httpx.Response(200, json={"echo": "hello"})
+    result = call(env, "run", {"target": "test-echo", "inputs": {"input": "hello"}})
+    assert result["structuredContent"]["result"] == {"echo": "hello"}
+    assert env.core.calls[-1] == ("POST", "/v1/test-echo", {"json": {"input": "hello"}})
+
+
+@pytest.mark.parametrize("change,match", [
+    ({"target": "transcription"}, "duplicate MCP target"),
+    ({"mode": "async"}, "unsupported body or mode"),
+    ({"response_kind": "python_handler"}, "unsupported response kind"),
+    ({"unexpected": True}, "unknown fields"),
+])
+def test_mcp_compiler_rejects_ambiguous_or_unsupported_metadata(change, match):
+    document = _mcp_frontend_document()
+    row = next(row for row in document["records"][0]["registered_routes"] if row.get("mcp"))
+    row["mcp"].update(change)
+    with pytest.raises(ValueError, match=match):
+        mcp_server.compile_mcp_registry(document)
+
+
+def test_mcp_transcription_uses_caller_owned_bytes_and_forces_non_streaming(env):
+    asset_id = "aud_" + "a" * 64
+    raw = b"ID3" + b"\x00" * 20
+    env.core.assets[asset_id] = raw
+    env.core.routes[("POST", "/v1/audio/transcriptions")] = httpx.Response(200, json={"text": "hello"})
+    result = call(env, "run", {"target": "transcription", "inputs": {"file": asset_id, "stream": True}})
+    assert result["structuredContent"] == {
+        "status": "succeeded", "target": "transcription", "assets": [], "result": {"text": "hello"}}
+    assert [(asset, auth.identity) for asset, auth in env.core.read_calls] == [(asset_id, "k")]
+    method, path, kwargs = env.core.calls[-1]
+    assert (method, path) == ("POST", "/v1/audio/transcriptions")
+    assert kwargs["data"] == {"model": "stt", "response_format": "json", "stream": "false"}
+    assert kwargs["files"] == [("file", ("input.mp3", raw, "audio/mpeg"))]
+
+
+@pytest.mark.parametrize("value", [
+    "/tmp/recording.mp3", "https://example.test/recording.mp3", "file:///tmp/audio.mp3",
+    "https://example.test/aud_" + "a" * 64, "prefix-aud_" + "a" * 64,
+    "aud_" + "a" * 64 + "/suffix", "img_" + "a" * 64,
+])
+def test_mcp_transcription_refuses_paths_urls_and_partial_ids_before_dispatch(env, value):
+    result = call(env, "run", {"target": "transcription", "inputs": {"file": value}})
+    assert result["isError"]
+    assert not env.core.calls and not env.core.read_calls
+
+
+@pytest.mark.parametrize("asset_id", ["aud_" + "b" * 64, "aud_" + "c" * 64])
+def test_mcp_transcription_missing_or_foreign_asset_is_refused_before_dispatch(env, asset_id):
+    # The owner-scoped read contract returns None for either absence or foreign ownership.
+    result = call(env, "run", {"target": "transcription", "inputs": {"file": asset_id}})
+    assert result["isError"] and not env.core.calls
+    assert [(asset, auth.identity) for asset, auth in env.core.read_calls] == [(asset_id, "k")]
+
+
+def test_mcp_transcription_accepts_bounded_audio_data_uri(env):
+    raw = b"ID3" + b"\x00" * 20
+    env.core.routes[("POST", "/v1/audio/transcriptions")] = httpx.Response(200, json={"text": "inline"})
+    result = call(env, "run", {"target": "transcription", "inputs": {
+        "file": "data:audio/mpeg;base64," + base64.b64encode(raw).decode("ascii")}})
+    assert not result.get("isError") and not env.core.read_calls
+    assert env.core.calls[-1][2]["files"][0][1][1] == raw
+
+
+@pytest.mark.parametrize("uri", ["data:image/png;base64,AAAA", "data:audio/mpeg,plain", "data:audio/mpeg;base64,%%%"])
+def test_mcp_transcription_refuses_invalid_data_uri_before_dispatch(env, uri):
+    result = call(env, "run", {"target": "transcription", "inputs": {"file": uri}})
+    assert result["isError"] and not env.core.calls and not env.core.read_calls
+
+
+def test_mcp_transcription_bounds_encoded_data_before_decoding(monkeypatch):
+    def decode(_value, **_kwargs):
+        pytest.fail("oversized encoded input must be rejected before decoding")
+    monkeypatch.setattr(mcp_server, "base64", SimpleNamespace(b64decode=decode))
+    spec = {"field": "file", "asset_prefix": "aud_", "media_prefix": "audio/", "max_bytes": 3}
+    with pytest.raises(mcp_server.CallError, match="byte limit"):
+        asyncio.run(mcp_server._mcp_file(None, None, None, "data:audio/mpeg;base64," + "A" * 8, spec))
+
+
+def test_mcp_transcription_refuses_async_before_read_or_dispatch(env):
+    result = call(env, "run", {"target": "transcription", "mode": "async",
+                               "inputs": {"file": "aud_" + "a" * 64}})
+    assert result["isError"] and "mode" in result["structuredContent"]["error"]
+    assert not env.core.calls and not env.core.read_calls
+
+
+def test_mcp_capabilities_hint_names_http_operations_and_root_health(env):
+    hint = call(env, "capabilities", {})["structuredContent"]["hint"]
+    assert "Speech and transcription" in hint and "OpenAI-shaped" in hint and "GET /health" in hint
+
+
+def test_mcp_declared_job_profile_handles_an_opaque_id_without_prefix(env):
+    env.core.routes[("POST", "/v1/videos")] = httpx.Response(202, json={"id": "opaque-123"})
+    env.core.polls["/v1/videos/opaque-123"] = [{"status": "running"}]
+    out = call(env, "run", {"target": "video", "inputs": {"prompt": "waves"}, "wait_seconds": 0})["structuredContent"]
+    assert out["job_id"] == "opaque-123" and out["job_profile"] == "video"
+    assert out["next_arguments"] == {"job_id": "opaque-123", "job_profile": "video"}
+    assert not any(path.startswith("/gateway/v1/media/jobs/") for _, path, _ in env.core.calls)
+    env.core.routes[("DELETE", "/v1/videos/opaque-123")] = httpx.Response(200, json={})
+    call(env, "job", {**out["next_arguments"], "cancel": True})
+    assert ("DELETE", "/v1/videos/opaque-123") in [(method, path) for method, path, _ in env.core.calls]
+
+
+def test_mcp_legacy_job_id_resolution_refuses_ambiguous_cancel_without_mutating(env):
+    for path in ("/v1/videos/shared", "/gateway/v1/media/jobs/shared"):
+        env.core.polls[path] = [{"status": "running"}]
+    result = call(env, "job", {"job_id": "shared", "cancel": True})
+    assert result["isError"] and "ambiguous" in result["structuredContent"]["error"]
+    assert env.core.calls and all(method == "GET" for method, _, _ in env.core.calls)
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_mcp_job_resolution_never_falls_back_after_a_non_404_error(env, status):
+    first = mcp_server.load_mcp_registry().jobs[0]
+    path = first.poll[1].format(job_id="opaque")
+    env.core.routes[("GET", path)] = httpx.Response(status, json={"error": {"message": "refused", "code": "refused"}})
+    result = call(env, "job", {"job_id": "opaque", "cancel": True})
+    assert result["isError"] and result["structuredContent"]["http_status"] == status
+    assert env.core.calls == [("GET", path, {})]
+
+
+def test_mcp_job_id_is_encoded_as_one_route_segment():
+    assert mcp_server._job_paths("video", "../other?x=y")["poll"] == ("GET", "/v1/videos/..%2Fother%3Fx%3Dy")
+
+
+
+@pytest.mark.parametrize("raw", [MP4, b"format-without-a-magic-signature"])
+def test_mcp_transcription_leaves_ambiguous_owned_audio_validation_to_http(env, raw):
+    asset_id = "aud_" + "d" * 64
+    env.core.assets[asset_id] = raw
+    env.core.routes[("POST", "/v1/audio/transcriptions")] = httpx.Response(200, json={"text": "audio"})
+    result = call(env, "run", {"target": "transcription", "inputs": {"file": asset_id}})
+    assert not result.get("isError")
+    upload = env.core.calls[-1][2]["files"][0][1]
+    assert upload[1] == raw and upload[2] == "application/octet-stream"
+
+
+def test_mcp_transcription_preserves_audio_mp4_uri_media_type(env):
+    env.core.routes[("POST", "/v1/audio/transcriptions")] = httpx.Response(200, json={"text": "audio"})
+    result = call(env, "run", {"target": "transcription", "inputs": {
+        "file": "data:audio/mp4;base64," + base64.b64encode(MP4).decode("ascii")}})
+    assert not result.get("isError")
+    upload = env.core.calls[-1][2]["files"][0][1]
+    assert upload[1] == MP4 and upload[2] == "audio/mp4"
