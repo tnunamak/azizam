@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
 
 from engines import pixal3d_comfy_service as svc
-from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401 - fixture
+from tests.support.fake_upstream import HandlerTransport, fake_upstreams, scenario_from_data  # noqa: F401 - fixture
 
 GLB = b"glTF\x02\x00\x00\x00fake-model-bytes"
 PROVENANCE = {"source": "hand-written", "reference": "ComfyUI server routes GET /queue, POST /upload/image, POST /prompt, GET /history/{id}, GET /view"}
@@ -144,17 +145,12 @@ def test_timeout_cancels_only_its_prompt(fake_upstreams, running) -> None:
         exchange("history", "GET", "/history/p1", {"json": {}}, repeat=True),
         exchange("delete", "POST", "/queue", {"json": {}}),
         exchange("cleanup-queue", "GET", "/queue", {"json": queue})]
-    if running:
-        steps.append(exchange("interrupt", "POST", "/interrupt", {"json": {}}))
     fake, app = serve(fake_upstreams, steps, timeout=0.005)
     response = post(app)
     assert response.status_code == 504
     assert response.json()["error"] == "ComfyUI did not finish in time"
     assert fake.calls("delete")[0].json == {"delete": ["p1"]}
-    if running:
-        assert fake.calls("interrupt")[0].json == {}
-    else:
-        assert not [r for r in fake.requests if r.path == "/interrupt"]
+    assert not [r for r in fake.requests if r.path == "/interrupt"]
 
 
 def test_json_bytes_are_not_a_glb(fake_upstreams) -> None:
@@ -172,3 +168,95 @@ def test_history_becomes_non_json_mid_wait(fake_upstreams) -> None:
     response = post(app)
     assert response.status_code == 502
     assert "history" in response.json()["error"]
+
+
+def test_timeout_does_not_interrupt_the_next_clients_prompt(caplog) -> None:
+    async def scenario():
+        running = "p1"
+        interrupted = []
+
+        async def upstream(request):
+            nonlocal running
+            if request.method == "POST" and request.url.path == "/queue":
+                assert json.loads(request.content) == {"delete": ["p1"]}
+                return httpx.Response(200, json={})
+            if request.url.path == "/queue":
+                snapshot = {"queue_running": [[0, running]], "queue_pending": []}
+                running = "other"
+                return httpx.Response(200, json=snapshot)
+            if request.url.path == "/interrupt":
+                interrupted.append(running)
+            return httpx.Response(200, json={})
+
+        async with httpx.AsyncClient(transport=HandlerTransport(upstream)) as client:
+            service = svc.Pixal3DService("http://comfy.test", {}, lambda: client)
+            await service._cancel_prompt(client, "p1")
+        assert running == "other" and interrupted == []
+
+    asyncio.run(scenario())
+    assert "could not be cancelled safely" in caplog.text
+
+
+@pytest.mark.parametrize("stall_request", [1, 2])
+def test_cleanup_has_one_total_deadline_and_releases_busy(stall_request, caplog) -> None:
+    async def scenario():
+        cleanup_requests = 0
+        submitted = 0
+        started = asyncio.get_running_loop().time()
+
+        async def upstream(request):
+            nonlocal cleanup_requests, submitted
+            path = request.url.path
+            if path == "/queue" and (request.method == "POST" or cleanup_requests):
+                cleanup_requests += 1
+                if cleanup_requests == stall_request:
+                    await asyncio.Event().wait()
+                # The second request must share the first request's elapsed time.
+                await asyncio.sleep(0.15)
+                return httpx.Response(200, json=IDLE)
+            if path == "/queue":
+                return httpx.Response(200, json=IDLE)
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                submitted += 1
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                return httpx.Response(200, json={} if submitted == 1 else DONE)
+            if path == "/view":
+                return httpx.Response(200, content=GLB)
+            raise AssertionError(path)
+
+        transport = HandlerTransport(upstream)
+        service = svc.Pixal3DService("http://comfy.test", svc.load_prompt(),
+                                    lambda: httpx.AsyncClient(transport=transport), timeout=-1, cleanup_timeout=0.2)
+        with pytest.raises(svc.Refusal) as failure:
+            await service.generate(b"image", None, None)
+        elapsed = asyncio.get_running_loop().time() - started
+        assert failure.value.status == 504
+        assert 0.18 <= elapsed < 0.3
+        assert not service._busy
+        cleanup_requests = 0
+        assert await service.generate(b"image", None, None) == GLB
+
+    asyncio.run(scenario())
+    assert "cleanup deadline exceeded" in caplog.text
+
+
+def test_cleanup_does_not_swallow_caller_cancellation() -> None:
+    async def scenario():
+        entered = asyncio.Event()
+
+        async def upstream(request):
+            entered.set()
+            await asyncio.Event().wait()
+
+        async with httpx.AsyncClient(transport=HandlerTransport(upstream)) as client:
+            service = svc.Pixal3DService("http://comfy.test", {}, lambda: client)
+            task = asyncio.create_task(service._cancel_prompt(client, "p1"))
+            await entered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(scenario())
