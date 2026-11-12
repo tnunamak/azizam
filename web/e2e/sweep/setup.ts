@@ -23,7 +23,7 @@ async function waitForFile(file: string, timeoutMs = 60_000) {
 }
 
 async function signIn(base: string, email: string, password: string, file: string) {
-  const api = await request.newContext({ baseURL: base });
+  const api = await request.newContext({ baseURL: base, extraHTTPHeaders: { origin: base } });
   const response = await api.post("/auth/api/login", { data: { email, password } });
   if (!response.ok()) throw new Error(`Sweep sign-in for ${email} returned HTTP ${response.status()}`);
   await api.storageState({ path: file });

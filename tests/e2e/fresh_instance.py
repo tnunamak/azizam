@@ -303,7 +303,9 @@ def run(compose):
             launch([sys.executable, str(REPO / "tests/e2e/fake_engine.py"), "--port", str(engine_port)])
             engine_url = f"http://127.0.0.1:{engine_port}/v1"
 
-        client = stack.enter_context(httpx.Client(base_url=f"http://127.0.0.1:{gateway_port}",
+        gateway_url = f"http://127.0.0.1:{gateway_port}"
+        # A browser sends Origin on every write; setup and signed-in writes refuse one without it.
+        client = stack.enter_context(httpx.Client(base_url=gateway_url, headers={"origin": gateway_url},
                                                  trust_env=False, timeout=10, follow_redirects=False))
         wait_ready(client, "/health")
         print("PASS fresh gateway health", flush=True)

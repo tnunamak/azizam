@@ -159,6 +159,7 @@ def test_all_eight_rows_are_present() -> None:
         ("native", "sync"),
         ("intent", "mesh.generate", "sync"),
         ("intent", "video.edit", "sync"),
+        ("intent", "mesh.edit", "sync"),
         ("intent", "image.generate", "any"),
         ("intent", "image.edit", "any"),
         ("intent", "audio.generate", "any"),

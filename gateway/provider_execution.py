@@ -18,7 +18,7 @@ import httpx
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from gateway import category_enforcement, client_errors, providers
+from gateway import category_enforcement, client_errors, protocol_family, providers
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders, LlmExecutionPredispatchError,
     LiteLlmRuntimeConfig, LlmExecutionRequest, RequestDisconnectWatcher,
@@ -519,7 +519,7 @@ def _provider_model_facts(
     provider: providers.ProviderRef,
     model: str,
 ) -> Mapping[str, Any] | None:
-    if not set(provider.protocols) & {"openai", "openai-chat", "openai-compatible", "anthropic-messages"}:
+    if not set(provider.protocols) & {"openai", "openai-chat", protocol_family.chat_protocol_id(), "anthropic-messages"}:
         return None
     registry = {"services": {provider.id: {
         "id": provider.id, "kind": "provider", "capabilities": ["openai"],

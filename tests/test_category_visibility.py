@@ -308,7 +308,7 @@ def test_the_capability_list_leaves_out_the_hidden_item(http_gate):
 
 def test_a_hidden_category_hides_the_mesh_row_like_any_other_capability(http_gate):
     _hide(http_gate, MESH_WORKFLOW)
-    catalog = [proxy._mesh_facts({})]
+    catalog = proxy._mesh_facts({})
     with patch.object(proxy, "_gateway_catalog_base", lambda: ({}, [])), \
             patch.object(proxy, "_gateway_catalog_finish", lambda *_a: catalog), \
             patch.object(proxy, "_remote_decision_models", lambda *_a: []):

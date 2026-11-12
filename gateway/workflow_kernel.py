@@ -149,7 +149,8 @@ def run_identity(owner_scope: str, maker: str, req: RunRequest) -> str:
 # The closed selector schema. A row selects explicit ids, or every workflow whose contract matches:
 #   {"inputs": {<name>: {"type": <input type>} | {"media_type": <type or family/*>}},
 #    "outputs": {"kind": "json" | "assets", "media_type": <type or family/*>}}
-# ``match`` holds at least one of inputs and outputs, each present section holds at least one predicate, and every value
+# ``intent`` (a string) selects the workflows that declare that intent; it may stand with inputs and outputs.
+# ``match`` holds at least one of intent, inputs and outputs, each present section holds at least one predicate, and every value
 # is checked here, so ``selector_matches`` is total over every selector that ``selector_problems`` accepts.
 _INPUT_KEYS = frozenset({"type", "media_type"})
 _OUTPUT_KEYS = frozenset({"kind", "media_type"})
@@ -174,10 +175,12 @@ def selector_problems(selector: Mapping[str, Any]) -> tuple[ContractError, ...]:
         problems.append(ContractError(("selects", "ids"), "selector_ids", "ids is a non-empty list of workflow ids"))
     match = selector.get("match")
     if "match" in selector:
-        if not isinstance(match, Mapping) or not match or set(match) - {"inputs", "outputs"}:
+        if not isinstance(match, Mapping) or not match or set(match) - {"intent", "inputs", "outputs"}:
             problems.append(ContractError(("selects", "match"), "selector_match",
-                                          "match holds inputs and/or outputs, and is not empty"))
+                                          "match holds intent, inputs and/or outputs, and is not empty"))
         else:
+            if "intent" in match and not (isinstance(match["intent"], str) and match["intent"]):
+                problems.append(ContractError(("selects", "match", "intent"), "selector_match", "intent is a non-empty string"))
             if "inputs" in match:
                 inputs = match["inputs"]
                 if not isinstance(inputs, Mapping) or not inputs or not all(
@@ -218,6 +221,8 @@ def selector_matches(selector: Mapping[str, Any], workflow_id: str, contract: Ma
     if "ids" in selector:
         return workflow_id in selector["ids"]
     match = selector["match"]
+    if "intent" in match and contract.get("intent") != match["intent"]:
+        return False
     declared_inputs = contract.get("inputs") or {}
     for name, want in (match.get("inputs") or {}).items():
         spec = declared_inputs.get(name)

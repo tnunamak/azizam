@@ -81,5 +81,37 @@ class SyncMediaIngestionTests(unittest.TestCase):
         self.assertEqual(media_jobs.count(path=self.db), 0)
 
 
+
+
+
+class RegistryAssetKindTests(unittest.TestCase):
+    def test_shipped_prefix_maps_and_recognized_kinds_keep_their_values(self):
+        from gateway import asset_types, me_media
+        expected = {"img": "image", "vid": "video", "aud": "audio"}
+        self.assertEqual(media_ingestion._KIND_BY_PREFIX, expected)
+        self.assertEqual(me_media._KINDS_BY_PREFIX, expected)
+        self.assertEqual(asset_types.asset_kind_names_by_prefix(), expected)
+        for prefix, kind in expected.items():
+            asset = prefix + "_" + "a" * 64
+            self.assertTrue(media_ingestion._valid_asset_id(asset))
+            self.assertEqual(media_ingestion._kind_for_asset(asset, {}), kind)
+
+    def test_unfamiliar_prefix_and_kind_follow_the_loaded_map(self):
+        from unittest.mock import patch
+        with patch.object(media_ingestion, "_KIND_BY_PREFIX", {"olf": "scent"}):
+            asset = "olf_" + "a" * 64
+            self.assertTrue(media_ingestion._valid_asset_id(asset))
+            self.assertEqual(media_ingestion._kind_for_asset(asset, {}), "scent")
+            self.assertEqual(media_ingestion._kind_for_asset("unknown", {"kind": "scent"}), "scent")
+            self.assertFalse(media_ingestion._valid_asset_id("aud_" + "a" * 64))
+
+    def test_unknown_video_model_does_not_create_a_provenance_identity(self):
+        self.assertIsNone(media_ingestion._safe_video_workflow({"resolved_model": "unregistered-custom-name"}))
+        self.assertEqual(
+            media_ingestion._safe_video_workflow({"provenance": {"workflow_id": "owner.record"}}),
+            "owner.record",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ import httpx
 import proxy
 from gateway import mesh_api
 from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
-from tests.support.mesh_harness import OBSERVER_URL, TRELLIS_URL, Harness
+from tests.support.mesh_harness import OBSERVER_URL, PIXAL3D_URL, TRELLIS_URL, Harness
 
 MESH_WORKFLOW = "mesh.generate.trellis-2"
 MESH_KEY = ("mesh.generate", MESH_WORKFLOW)
@@ -43,11 +43,13 @@ def _capability_listing(headers) -> dict:
 
 
 def _probe_with(monkeypatch, harness: Harness) -> None:
-    monkeypatch.setitem(proxy.LIVE_PROBES, "mesh", lambda: mesh_api.pool_evidence(harness.deps()))
+    monkeypatch.setitem(proxy.LIVE_PROBES, "mesh", lambda: mesh_api.records_evidence(
+        harness.deps(), proxy.current_mesh_workflows(), proxy._mesh_present))
 
 
 def _mesh_rows(catalog: dict) -> list[dict]:
-    return [row for row in catalog["workflows"] if row["capability"] == "mesh"]
+    # The harness is the TRELLIS.2 service; the other mesh workflow is covered by tests/test_mesh_two_workflows.py.
+    return [row for row in catalog["workflows"] if row["capability"] == "mesh" and row["id"] == MESH_WORKFLOW]
 
 
 def test_a_healthy_pool_puts_the_mesh_workflow_in_the_member_catalog_as_ready(gateway, monkeypatch):  # noqa: F811
@@ -103,7 +105,9 @@ def test_a_listing_probes_the_pool_once_however_many_views_it_builds(gateway, mo
     _member_catalog(gateway["cookies"])
 
     assert urls.count(f"{TRELLIS_URL}/health") == 1
-    assert urls.count(f"{OBSERVER_URL}/facts") == 1
+    assert urls.count(f"{PIXAL3D_URL}/health") == 1
+    # Each engine is probed once with the pool's observer, however many views the listing builds.
+    assert urls.count(f"{OBSERVER_URL}/facts") == 2
 
 
 def test_both_listings_draw_the_mesh_row_from_the_shared_catalog_for_the_same_caller(gateway, monkeypatch):  # noqa: F811

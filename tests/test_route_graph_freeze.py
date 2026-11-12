@@ -190,10 +190,14 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
              "image.generate.flux2-klein-snofs",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
-             "mesh.generate.trellis-2", "video.edit.video-mux"}
+             "mesh.generate.trellis-2", "mesh.generate.pixal3d", "video.edit.video-mux",
+             "mesh.edit.retopo", "mesh.edit.rig-auto", "mesh.edit.rig-humanoid",
+             "mesh.edit.texture-refine", "mesh.edit.uv-unwrap"}
     records = {record.id: record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records() if record.id not in added}
     with monkeypatch.context() as patch:
         patch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(rs.build({}, rs.BundledRelease(records, ()), generation=1)))
+        # The 3D rows also list the bundled mesh records the live registry lacks, so the additions leave that list too.
+        patch.setattr(proxy, "_BUNDLED_MESH_RECORDS", {key: record for key, record in proxy._BUNDLED_MESH_RECORDS.items() if key not in added})
         proxy.app.openapi_schema = None
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
@@ -271,7 +275,16 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-11 for GET, PUT and DELETE /admin/api/engine-protocols/{protocol_id} (see ADDED_PATHS): only that
         # path is new (tests/fixtures/headless_openapi.json shows the same addition and nothing else). Before it the digest was
         # 145ba35107145b77c73cebbfd8cc0beb3b79dad245b19e7a0f3fbfbc67032d06.
-        assert route_graph.openapi_digest(proxy.app) == "0dc822c7d41ec205ce192fd68f286a6e2ef7bb5265998618be5a6df152448999"
+        # Re-captured 2026-11-12 for the optional ``tag`` query parameter of GET /gateway/v1/requests and the yue2-song help
+        # text (train 54, L3); only that one operation and that one input schema moved (tests/fixtures/headless_openapi.json
+        # shows the same two changes). Before it the digest was 0dc822c7d41ec205ce192fd68f286a6e2ef7bb5265998618be5a6df152448999.
+        # Re-captured 2026-11-12 for the train 54 integration: every workflow-list entry gains ``status`` and
+        # ``superseded_by`` (memo M5), and the ace-step input schema publishes its keyscale, language and timesignature
+        # choices (memo M2); no path, operation or other schema moved (tests/fixtures/headless_openapi.json shows the same).
+        # Before it the digest was 738e100d24ecf08ff89af488ba8c4a950e73cb8a789aafca2d066a1c3412d5b1.
+        # Re-captured 2026-11-12 for the tags help/description split: only the yue2-song tags description changes.
+        # Restoring its old text recovers eda3623f3ef8ff74c1669284e7c874458611f7f6a6d9ba16a82bdc6881964bd6 exactly.
+        assert route_graph.openapi_digest(proxy.app) == "edc09ca0a021187cca165df63dc2f61656dddf52d7eb02ff9e20f2f2a0d5e7ff"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -328,4 +341,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # output entry moved. Before it the frozen digest was 90a6a005c57d01b1092479448f948571aecf0ccc7bfd1c4a90c17136367069d3.
     # Re-captured 2026-11-11 for the protocol description item routes: only that path differs. Before it the frozen digest was
     # dc5901a47a554ab6ad138535e2218107798fa5847830d173048a08c2057812d8.
+    # Re-captured 2026-11-12 for the optional ``tag`` filter of GET /gateway/v1/requests and the yue2-song help text (train 54,
+    # L3). Before it the frozen digest was e0ced55193c55dc91c29855089e549e72237db7b8417357427e8c7b0bb3fb390.
+    # Re-captured 2026-11-12 for the same tags copy split; the full document changes only that input description.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

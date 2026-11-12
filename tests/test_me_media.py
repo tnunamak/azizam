@@ -1676,13 +1676,15 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(me_media._capability({"intent": "audio.speech"}), "voice")
         self.assertEqual(me_media._capability({"intent": "speech.synthesis"}), "voice")
         self.assertEqual(me_media._capability({"path": "/v1/audio/speech"}), "voice")
-        self.assertEqual(me_media._capability({"intent": "audio.music"}), "audio")
+        self.assertEqual(me_media._capability({"intent": "audio.generate"}), "audio")
         self.assertIsNone(usage["receipts"][0]["remote_spend"])
         for invalid in ("NaN", "Infinity", "-1", "bad", True):
             self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
 
     def test_usage_summary_omits_route_when_model_is_not_recorded(self) -> None:
-        self.assertEqual(me_media._capability({"intent": "default"}), "chat")
+        # An intent word no row declares is classified by the route row of its exact path, never by its spelling.
+        self.assertEqual(me_media._capability({"intent": "default", "path": "/v1/chat/completions"}), "chat")
+        self.assertEqual(me_media._capability({"intent": "default"}), "other")
         self.assertEqual(me_media._capability({"intent": "stt"}), "transcribe")
         self._receipt(
             self.app_a["id"],
@@ -2191,8 +2193,8 @@ class MeMediaRouterTests(unittest.TestCase):
                       route_path="/v1/audio/speech", requested_model="voice", resolved_model="voice")
         self._receipt(self.app_a["id"], "req_speech_path", intent="",
                       route_path="/v1/audio/speech", requested_model="tts-1", resolved_model="tts-1")
-        self._receipt(self.app_a["id"], "req_music", intent="audio.music",
-                      route_path="/v1/audio/music", requested_model="music", resolved_model="music")
+        self._receipt(self.app_a["id"], "req_music", intent="audio.generate",
+                      route_path="/v1/audio/generate", requested_model="music", resolved_model="music")
         usage = self.client.get("/me/api/usage/summary")
         self.assertEqual(usage.status_code, 200, usage.text)
         rows = {row["model"]: row["capability"] for row in usage.json()["by_model"]}

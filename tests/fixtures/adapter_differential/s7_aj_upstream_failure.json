@@ -19,10 +19,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<641 after normalisation>",
+          "content-length": "<690 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:1>"
         },
@@ -43,10 +43,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":null,\"finished_at\":\"<time>\",\"error_code\":\"upstream_error\",\"error_category\":\"upstream\",\"retryable\":true,\"upstream_http_status\":502,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":\"Media generation failed (upstream HTTP 502).\",\"intent\":\"audio.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"duration\":4,\"last_http_status\":502,\"mode\":\"async_audio_generation\",\"model\":\"tangoflux\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":5,\"request_id\":\"<job:2>\",\"status\":\"failed\",\"updated_at\":\"<time>\",\"workflow\":\"audio.generate.tangoflux\",\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":null,\"finished_at\":\"<time>\",\"error_code\":\"upstream_error\",\"error_category\":\"upstream\",\"retryable\":true,\"upstream_http_status\":502,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":\"Media generation failed (upstream HTTP 502).\",\"intent\":\"audio.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"duration\":4,\"last_http_status\":502,\"mode\":\"async_audio_generation\",\"model\":\"tangoflux\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":5,\"request_id\":\"<job:2>\",\"status\":\"failed\",\"updated_at\":\"<time>\",\"workflow\":\"audio.generate.tangoflux\",\"asset_url_ttl_s\":3600}"
         },
         "headers": {
-          "content-length": "<804 after normalisation>",
+          "content-length": "<849 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -316,6 +316,7 @@
           "input_hash": "<digest>",
           "intent": "audio.generate",
           "job_id": "<job:1>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -331,6 +332,7 @@
           "parent_request_id": "<job:2>",
           "previous_attempts": [],
           "progress": 5,
+          "queue_position": null,
           "queued_at": "<time>",
           "request_id": "<job:2>",
           "retryable": true,

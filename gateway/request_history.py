@@ -777,16 +777,19 @@ def preview_of(accepted_body: Any) -> str | None:
 
 
 def summarize(route: str, accepted_body: Any, status: int | None, latency_ms: int,
-              run: Mapping[str, Any] | None = None) -> dict[str, Any]:
+              run: Mapping[str, Any] | None = None, tag: str | None = None) -> dict[str, Any]:
     """The structural summary a kept record keeps after its receipt is gone: route, model, status, latency and the
     preview of what was asked. ``run`` is what the route says it ran (see ``run_facts``); it is kept as ``run``
-    only when the route named something, so a summary without it reads as it always did."""
+    only when the route named something, so a summary without it reads as it always did. ``tag`` is the caller's run
+    tag (gateway/run_tag.py), kept only when the request carried one."""
     model = _model_of(accepted_body)
     summary = {"route": route, "model": model[:200] if isinstance(model, str) else None,
                "status": status, "latency_ms": int(latency_ms), "preview": preview_of(accepted_body)}
     facts = run_facts(run)
     if facts:
         summary["run"] = facts
+    if tag is not None:
+        summary["tag"] = tag
     return summary
 
 
@@ -924,16 +927,19 @@ _METADATA = ("record_id, request_id, kind, person_id, app_id, origin_kind, origi
 
 
 def page_for_person(person_id: str, *, after: int, now: int, before: tuple[int, str] | None, limit: int,
-                    path: Path | None = None) -> list[dict[str, Any]]:
+                    tag: str | None = None, path: Path | None = None) -> list[dict[str, Any]]:
     """One page of the person's kept requests that are not expired and not erased, newest first, cut in SQL.
 
     ``before`` is the (created_at, record_id) of the last row of the previous page. Ownership is applied to the
     page by the caller, so a page can hold rows the viewer may not read; the caller reads further pages until it
-    has enough rows it may read.
+    has enough rows it may read. ``tag`` keeps only the requests that carried that run tag.
     """
     sql = (f"SELECT {_METADATA} FROM kept_requests WHERE person_id=? AND kind=? AND created_at>? "
            "AND (kept_until IS NULL OR kept_until>?)")
     params: list[Any] = [person_id, KIND, after, now]
+    if tag is not None:
+        sql += " AND json_extract(summary_json, '$.tag')=?"
+        params.append(tag)
     if before is not None:
         sql += " AND (created_at<? OR (created_at=? AND record_id<?))"
         params += [before[0], before[0], before[1]]

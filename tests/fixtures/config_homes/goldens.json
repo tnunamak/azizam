@@ -117,7 +117,6 @@
     "ids": [
      "ace-step-1.5-xl-turbo",
      "anima-turbo",
-     "face-likeness",
      "fibo-2-edit-turbo",
      "flux2-klein",
      "flux2-klein-4b",
@@ -1734,7 +1733,6 @@
      "default",
      "default-fast",
      "embed",
-     "face-likeness",
      "fast",
      "fibo-2-edit-turbo",
      "flux2-klein",
@@ -3359,7 +3357,6 @@
      "decide-quality",
      "default",
      "embed",
-     "face-likeness",
      "fast",
      "fibo-2-edit-turbo",
      "flux2-klein",

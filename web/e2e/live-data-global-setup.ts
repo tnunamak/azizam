@@ -7,7 +7,7 @@ const memberEmail = "member-live-data@example.test";
 const password = "Live data browser password 2026";
 
 async function login(baseURL: string, email: string, path: string, owner = false) {
-  const api = await request.newContext({ baseURL });
+  const api = await request.newContext({ baseURL, extraHTTPHeaders: { origin: baseURL } });
   const response = await api.post("/auth/api/login", {
     data: { email, password },
   });

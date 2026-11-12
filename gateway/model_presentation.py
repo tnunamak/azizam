@@ -96,6 +96,14 @@ def _load_presentation_words(path: Path) -> Mapping[str, Any]:
 
 
 PRESENTATION_WORDS = _load_presentation_words(_PRESENTATION_WORDS_PATH)
+
+
+def unclassified_capability_words() -> tuple[str, str]:
+    """Read the generic capability label and icon from the loaded vocabulary."""
+    row = PRESENTATION_WORDS["unclassified"]
+    return row["label"], row["icon"]
+
+
 # Words are literal; only technical_patterns contains authored regex syntax.
 _ENGINE_PREFIX = re.compile(r"^(?:" + "|".join(map(re.escape, PRESENTATION_WORDS["engine_prefixes"])) + r")\s+")
 _ENGINE_TAIL = re.compile(r"\s+(?:" + "|".join(map(re.escape, PRESENTATION_WORDS["engine_tails"])) + r")$", re.IGNORECASE)

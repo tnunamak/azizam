@@ -1,41 +1,100 @@
-# Choosing between mesh workflows (follow-up, not built)
+# Choosing between mesh workflows
 
-## Today
+## Built
 
-The image-to-3D routes serve exactly one workflow record. `proxy.py` reads the id of `mesh.generate.trellis-2.yml` once at
-import (`_MESH_WORKFLOW_ID`). `current_mesh_workflow()`, the "record is present" check, the catalog listing and the pool
-probe all use that one id. To use another engine, an owner saves a different contract under the same id
-(`docs/examples/mesh-pixal3d/`). That swaps engines. It cannot offer two engines at once.
+The image-to-3D routes serve every registry record that has the mesh intent and passes the mesh profile. Two ship:
+`mesh.generate.trellis-2` and `mesh.generate.pixal3d`. Gateway code names neither.
 
-A second bundled mesh record under another id does not work. The 3D rows would never run it, and the generic catalog
-would list it as a job capability that no route can start.
+- **Lookup.** `proxy._mesh_records()` takes the live registry's mesh records plus the bundled ones the live registry lacks,
+  sorted by `(rank, id)`. `current_mesh_workflows()` and `current_mesh_workflow(id)` convert them once per record object.
+- **Choice (option A).** A request names a record with the optional `model` field on `POST /v1/3d/generations` and
+  `/glb`. The field holds a workflow id (or its short form, `pixal3d`). A name that is not a mesh record is a 404.
+- **First choice is data.** A request with no `model` runs the record with the lowest `selection_rank` in its policy facts
+  (`registry/workflow_policy.yml`; `workflow_policy.rank_of`). `selection_rank` is an optional typed fact: a whole number from
+  0 to 1,000,000 (a bool, a negative, a fraction or text is refused), one per record. A record with no rank sorts last; a tie
+  goes to the lower id. The release file and the stored record validate it the same way (`facts_from_mapping`). An owner changes
+  the first choice by writing `facts.selection_rank` on the record: `PUT /admin/api/workflows/{id}` (a bundled id is first
+  overridden with `POST /admin/api/workflows` and `overrides`), tested in `tests/test_workflow_owner_api.py`. The web owner view
+  keeps the stored value and does not edit it yet. The shape asks `DEFAULT_WORKFLOWS` for it (`proxy._mesh_default_workflow`,
+  the first ranked record the live registry holds), and `choose_workflow(prefer=...)` applies it only when more than one
+  record fits the request. It never hides a missing-input refusal.
+- **Shipped value.** Pixal3D is `selection_rank: 1`, TRELLIS.2 is `selection_rank: 2`. This is the owner’s declared default until a
+  side-by-side comparison of the same pictures says otherwise. No comparative quality result is claimed here.
+- **Availability, facts, probe.** `_mesh_present(id)`, `_mesh_facts` (one catalog row per record) and
+  `mesh_api.records_evidence` work per record. A service is available when any of its records is present and its health
+  and pool answer. A Pixal3D health failure leaves TRELLIS.2 available.
+- **One card.** Both services declare `pool_id: gpu0` with the same observer, so one request at a time holds the card. The
+  probe cache is keyed by (health URL, observer URL), so each engine is probed once per listing, each with one observer read.
+- **Receipt.** A receipt and a media job name the workflow that ran (`name_receipt(owner, entry.id, ...)`), so two records
+  give two names.
 
-## What a side-by-side change needs
+Option B (query or header) and option C (an owner setting for the default only) were not built. C is now the `selection_rank` fact.
 
-1. Replace the single id with a lookup of registry records whose `capability` is `mesh` and which pass the mesh profile.
-   The route keeps no workflow name in code. A default is the first record in a fixed order (bundled first, then by id).
-2. Let a request name the record. Options:
-   - A. An optional `model` field on `POST /v1/3d/generations` and `/glb`, holding the record id. Fits the OpenAI-style
-     routes and the existing model discovery. Omitted means the default.
-   - B. A query parameter or header. Simpler to parse, but hidden from clients that read the model list.
-   - C. An owner setting that picks the default record, with no per-request choice. Smallest change, still one engine at a time.
-   Recommendation: A, with C as the default rule.
-3. Make the "workflow available", catalog skip (`_gateway_catalog_finish`), facts (`_mesh_facts`) and pool probe
-   (`mesh_api.pool_evidence`) work per record. Each record names its own service, so each can have its own pool.
-   Two records on one GPU need one shared pool id, or the second request meets the first one's claim.
-4. Tests: the existing second-workflow tests (`tests/mesh_workflows.py`) already build a data-only second document. Serve
-   it beside the bundled one and prove each request reaches its own service.
+## Snapshots that moved
 
-## Snapshots that would move
+Each through its documented command.
 
-Each changes only through its documented regeneration command, never by hand.
+- `tests/fixtures/c2d_parity/{models_catalog,openapi,workflows_catalog}.json`: `tests/fixtures/c2d_parity/capture.py`. Additive.
+- `tests/fixtures/headless_openapi.json`: `scripts/run-hermetic-pytest.sh --python-script scripts/generate_headless_fixtures.py`
+  (review the `HEADLESS_OPENAPI_JSON` line; see `docs/ops/HEADLESS_ACCESS.md`).
+- `tests/fixtures/workflows_v1_converted/converted.json`: `scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_converter_fixture.py`.
+  Six synthetic schema 1 test examples exercise the converter for the new records. The production migration’s historical
+  schema 1 release copy stays unchanged; the new records never shipped in that release.
+- `tests/fixtures/workflow_reader_outputs.json.gz`: `scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py --readers`.
+  Six added records; the existing generator changes only its rank (the `rank:N` tag became the `selection_rank` fact).
+- `tests/fixtures/engine_protocol/legacy-wire.json`: `scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py --legacy-wire`.
+  Only the two added services enter the seeded projection; existing projections, compiled configurations and request wires are unchanged.
+- `tests/fixtures/category_discovery_ungoverned.json`: `scripts/run-hermetic-pytest.sh -s tests/test_route_policy_inventory.py::test_ungoverned_discovery_snapshot`.
+  Apply the printed `CATEGORY_SNAPSHOT_DIFF` only for the reviewed workflow listing changes.
+- `tests/test_route_graph_freeze.py`: the `added` set names the record, so the stripped document is unchanged.
 
-- OpenAPI and headless fixtures (`tests/fixtures/headless_openapi.json`, `tests/fixtures/c2d_parity/openapi.json`) with option A.
-- Catalog and discovery fixtures (`tests/fixtures/c2d_parity/workflows_catalog.json`, `models_catalog.json`,
-  `tests/fixtures/category_discovery_ungoverned.json`) once a second record can list.
-- `tests/fixtures/route_graph_frozen.json` only if a route or its parameters change. Option A adds a parameter to existing
-  routes. Do not regenerate it to make a test pass; the route-graph test names the review it needs.
-- The test case ceiling in `tests/budgets.toml`, for the added cases.
+`tests/fixtures/route_graph_frozen.json` is unchanged from the train base. The freeze test removes the reviewed added
+workflow records before it compares the original document.
 
-Open questions for the owner: the choice between A, B and C; whether two mesh services may share one GPU pool; and how a
-receipt records which record ran.
+## Later 3D stages
+
+Texture refine, retopology, UV unwrap and rigging each take a model and return a model. Each is one record with the
+intent `mesh.edit`, an `asset` input that accepts `model/gltf-binary`, one `model/gltf-binary` output, and the same
+`http-multipart` binding the picture-to-3D records use. They run through the generic run route
+(`POST /gateway/v1/workflows/{id}/run`), not the `/v1/3d/generations` rows: the mesh profile needs a picture input, so a
+stage never matches those rows (`tests/test_mesh_edit_stage.py`).
+
+Data changes that carry them: the asset sniffer (`workflow_call.sniff`) names a binary glTF by its magic and version, so a
+record may accept that type; `registry/capability_words.yml` maps `mesh.edit` to the `mesh` word, so plans grant it;
+the frontend selector grammar accepts `match.intent`, so the 3D rows pick `mesh.generate` records by intent and output
+type and never pick a stage.
+
+Shipped records (`manifests/workflows/mesh.edit.*.yml`): `retopo`, `uv-unwrap`, `rig-auto`, `rig-humanoid` and
+`texture-refine`. All five use the `local3d-stages` service (`engines/local3d_stages_service.py`), one small wrapper
+that runs the engine call for the path it is given (headless Blender script, UniRig command line, or a ComfyUI graph for
+the texture refine) and answers 503 while its card is busy. The service record shares pool `gpu0` with the generators.
+
+Open: Kimodo text-to-motion (text in, a motion file out, no model input), bake (several output files) and motion
+retarget (a BVH motion file input, which the sniffer has no type for). Each needs a contract shape the one-asset,
+one-output stage record does not state.
+
+## Calling the stages
+
+Use an App key with mesh access. Send multipart form data to
+`POST /gateway/v1/workflows/{workflow_id}/run` with `Prefer: wait=10` (or poll the returned job).
+The `mesh` file part is a binary glTF model. The workflow id in the path selects the stage; no `model` form field is needed.
+
+| Workflow id | Extra form fields | Service path |
+| --- | --- | --- |
+| `mesh.edit.retopo` | `target_faces` (default 8000) | `/retopo` |
+| `mesh.edit.uv-unwrap` | none | `/uv` |
+| `mesh.edit.rig-auto` | none | `/rig` |
+| `mesh.edit.rig-humanoid` | none | `/rigify` |
+| `mesh.edit.texture-refine` | `reference` image file; optional `seed`, `resolution`, `steps` | `/refine` |
+
+Read the resulting model through the job's result links. Mesh generation remains
+`POST /v1/3d/generations` or `/v1/3d/generations/glb`, with `model=pixal3d` or `model=trellis-2`.
+
+The wrapper services and their engine dependencies must be installed and registered by the owner. The deployment
+fixture provides sample service data; bundling a workflow does not install or start a service. Configure the stage
+wrapper paths and shared scratch directory described in `engines/local3d_stages_service.py`. ComfyUI must be able to
+read that directory. Set `HF_HOME` for the rigging process's installed weights.
+
+Measured stage limits: retopology may return decimated triangles when QuadriFlow fails; humanoid rigging fits by
+bounds and does not provide a fitted control rig. Texture refinement was proven on a roughly 16k-face mesh, with
+the installed EGL patch. Bake, motion generation and retarget remain outside these five contracts.

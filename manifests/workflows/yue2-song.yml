@@ -13,7 +13,8 @@ typical_seconds: 30
 inputs:
   tags:
     label: Musical style
-    help: Describe the genre, instruments, and mood.
+    help: Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.
+    description: Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.
     type: string
     required: true
   lyrics:
@@ -21,8 +22,8 @@ inputs:
     help: Words to sing.
     type: string
   duration:
-    label: Maximum length
-    help: Maximum length in seconds; the song may be shorter.
+    label: Length
+    help: Length in seconds. The model can stop early on long prompts.
     type: number
     minimum: 10
     maximum: 360

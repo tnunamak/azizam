@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from gateway import asset_types
+from gateway.discovery_metadata import frontend_request_fields
 from gateway.public_failure import describe
 from gateway.workflow_openapi import WORKFLOW_EXTENSION_NAMESPACE
 
@@ -98,7 +99,7 @@ def effective_schema(entry: Mapping[str, Any]) -> dict[str, Any]:
 # top-level type of one of them (workflow_contract, ``accepts_unknown_type``). A test keeps it equal to what ``sniff`` returns.
 SNIFFED_MEDIA_TYPES = frozenset({
     "image/png", "image/jpeg", "image/gif", "image/webp", "video/mp4",
-    "audio/wav", "audio/mpeg", "audio/flac", "audio/ogg",
+    "audio/wav", "audio/mpeg", "audio/flac", "audio/ogg", "model/gltf-binary",
 })
 
 
@@ -122,6 +123,8 @@ def sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
         return "audio/flac", ".flac"
     if data[:4] == b"OggS":
         return "audio/ogg", ".ogg"
+    if data[:4] == b"glTF" and data[4:8] == b"\x02\x00\x00\x00":      # a binary glTF 2 file starts with its magic and version
+        return "model/gltf-binary", ".glb"
     hint = (hint or "").split(";")[0].strip().lower()
     return hint or "application/octet-stream", {
         "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "video/mp4": ".mp4",
@@ -237,7 +240,11 @@ async def build_request(
     model = route.get("model")
     if model:
         body = {"model": model, **body}
-    if response_format and entry["intent"].startswith("image."):
+    carries_response_format = any(
+        field.get("in") in {"body", "form"} and field.get("field") == "response_format"
+        for field in mapping.values()
+    ) or "response_format" in frontend_request_fields(route.get("method", "POST"), route["path"])
+    if response_format and carries_response_format:
         body.setdefault("response_format", response_format)
     if ext:
         body["extensions"] = {WORKFLOW_EXTENSION_NAMESPACE: ext}

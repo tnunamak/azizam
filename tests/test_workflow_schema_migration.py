@@ -230,13 +230,17 @@ def test_a_patch_over_a_release_record_with_no_known_schema_1_form_is_kept_disab
 # -- the frozen copy -------------------------------------------------------------------------------------------------------
 
 
-def test_the_frozen_schema_1_copy_is_the_bundled_set():
+def test_the_frozen_schema_1_copy_excludes_workflows_introduced_in_schema_two():
     bundled = {}
     for path in sorted((ROOT / "manifests" / "workflows").glob("*.yml")):
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         bundled[document["id"]] = document
     frozen = {record_id: record["manifest"] for record_id, record in migration.frozen_release_records().items()}
-    assert set(frozen) == set(bundled)
+    assert len(frozen) == 39
+    assert set(bundled) - set(frozen) == {
+        "mesh.generate.pixal3d", "mesh.edit.retopo", "mesh.edit.rig-auto",
+        "mesh.edit.rig-humanoid", "mesh.edit.texture-refine", "mesh.edit.uv-unwrap"}
+    assert set(frozen) <= set(bundled)
     assert all(document["schema_version"] == 1 for document in frozen.values())
     for record_id, document in bundled.items():
         if document["schema_version"] == 1:  # until the files are rewritten, the copy is the file
@@ -827,7 +831,22 @@ def test_every_frozen_release_document_converts_to_the_bundled_schema_2_file():
         plan = _plan({record_id: _owner_record(record_id, record["manifest"])})
         assert _rows(plan)[record_id].action == migration.CONVERT_WHOLE, record_id
         stored = plan.stored["workflows"][record_id]["manifest"]
-        assert stored == without_section_additions(bundled[record_id], stored), record_id
+        expected = without_section_additions(bundled[record_id], stored)
+        # Later bundled edits do not rewrite an owner's frozen schema-1 definitions. Pin both sides exactly.
+        edits = json.loads((Path(__file__).parent / "fixtures/workflow_post_schema_edits.json").read_text())
+        for change in edits.get(record_id, []):
+            original, current = stored, expected
+            for key in change["path"][:-1]:
+                original, current = original[key], current[key]
+            key = change["path"][-1]
+            assert (key in original) is change["before_present"], (record_id, change["path"])
+            assert original.get(key) == change["before"], (record_id, change["path"])
+            assert current.get(key) == change["after"], (record_id, change["path"])
+            if key in original:
+                current[key] = original[key]
+            else:
+                del current[key]
+        assert stored == expected, record_id
 
 
 def test_the_ace_fix_is_data_and_removes_only_a_value_the_record_still_holds_from_the_release():
@@ -1159,7 +1178,7 @@ except Exception as error:  # reported, not raised: the test reads it
 reloaded = {key: registry.get(key) is not None for key in json.loads(os.environ["BOOT_IDS"])}
 evidence = asyncio.run(proxy._live_probe_evidence())
 print("RESULT" + json.dumps({"booted": booted, "reloaded": reloaded, "reload_error": reloaded_error,
-                             "mesh": proxy.current_mesh_workflow().id, "evidence": evidence}))
+                             "mesh": [workflow.id for workflow in proxy.current_mesh_workflows()], "evidence": evidence}))
 """
 
 
@@ -1214,7 +1233,7 @@ def test_a_disabled_quarantined_mesh_override_does_not_stop_the_gateway_and_the_
     assert json.loads(_row(db)[0])["workflows"][mesh_id]["migration"]["step"] == migration.STEP  # quarantined, owner-disabled
     result = _boot(tmp_path, db, [mesh_id])
     assert result["booted"] == {mesh_id: True} and result["reload_error"] is None and result["reloaded"] == {mesh_id: True}
-    assert result["mesh"] == mesh_id  # whether the engine behind it is up is another question: the workflow record is there
+    assert mesh_id in result["mesh"]  # whether the engine behind it is up is another question: the workflow record is there
 
 
 # -- the loader reads the stored registry once ------------------------------------------------------------------------------

@@ -29,7 +29,7 @@ from tests.test_domain_literal_ratchet import vocabulary
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLED = sorted((ROOT / "manifests" / "workflows").glob("*.yml"))
-# The 39 bundled files as they were in schema 1, frozen for the converter tests.
+# The 45 bundled files as they were in schema 1, frozen for the converter tests.
 V1_FIXTURES = sorted((ROOT / "tests" / "fixtures" / "workflows_v1").glob("*.yml"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import workflow_contract as command  # noqa: E402
@@ -344,7 +344,7 @@ def test_an_asset_has_no_default():
 def test_the_sniffed_type_table_is_what_the_sniffer_returns():
     samples = [
         b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF89a", b"RIFF\x00\x00\x00\x00WEBP", b"\x00\x00\x00\x00ftyp",
-        b"RIFF\x00\x00\x00\x00WAVE", b"ID3", b"fLaC", b"OggS",
+        b"RIFF\x00\x00\x00\x00WAVE", b"ID3", b"fLaC", b"OggS", b"glTF\x02\x00\x00\x00",
     ]
     assert {workflow_call.sniff(sample)[0] for sample in samples} == set(workflow_call.SNIFFED_MEDIA_TYPES)
 
@@ -493,7 +493,7 @@ def test_value_problems_is_the_one_value_check():
 
 
 def test_the_corpus_is_what_was_counted():
-    assert len(BUNDLED) == 39
+    assert len(BUNDLED) == 45
 
 
 @pytest.mark.parametrize("path", BUNDLED, ids=lambda p: p.stem)
@@ -529,6 +529,24 @@ def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but
         if path.stem == "video-mux":                    # the length rule added to the release description
             assert bundled["description"].startswith(converted["description"])
             converted["description"] = bundled["description"]
+        if path.stem.startswith("mesh.edit."):          # the 3D stage service's upload caps, added with the stages
+            for name, spec in bundled["inputs"].items():
+                cap = spec.pop("max_bytes", None)
+                assert cap is None or (isinstance(cap, int) and cap > 0 and "max_bytes" not in converted["inputs"][name])
+        if path.stem == "yue2-song":                    # the measured length and instrumental help (film agent memo M7, M10)
+            # Pin the shortened help and full description through the same named edits as the release migration.
+            edits = json.loads((ROOT / "tests/fixtures/workflow_post_schema_edits.json").read_text())
+            for change in edits[bundled["id"]]:
+                original, current = converted, bundled
+                for key in change["path"][:-1]:
+                    original, current = original[key], current[key]
+                key = change["path"][-1]
+                assert (key in original) is change["before_present"], change["path"]
+                assert original.get(key) == change["before"], change["path"]
+                assert current[key] == change["after"], change["path"]
+                original[key] = current[key]
+        if path.stem == "tangoflux":                    # replaced by the sound-effect default (film agent memo M5)
+            assert (bundled.pop("status"), bundled.pop("superseded_by")) == ("superseded", "audio.generate.sa3-small-sfx")
         if path.stem not in named:
             assert without_section_additions(bundled, converted) == converted, path.name
     ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))
@@ -542,10 +560,10 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
         _doc, notes = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         for note in notes:
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
-    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 39
+    assert counts["trusted:remove"] == counts["source:remove"] == counts["schema_version:set"] == 45
     assert counts["capability:backfill"] == 34
     assert counts["requires:move"] == 30
-    assert counts["accepts:add"] == 32
+    assert counts["accepts:add"] == 37
     assert counts["seed:add"] == 2
     assert counts["generate:add"] == 34  # the design said 33: 31 declared and mapped, and 2 added
 
@@ -845,7 +863,7 @@ def test_the_contract_names_no_model_engine_service_workflow_or_modality(path):
 def test_the_command_checks_the_bundled_directory(capsys):
     assert command.main(["check", str(ROOT / "manifests" / "workflows")]) == 0
     out = capsys.readouterr().out
-    assert out.count("0 errors") == 39 and "converted from schema 1" not in out
+    assert out.count("0 errors") == 45 and "converted from schema 1" not in out
 
 
 def test_the_command_reports_every_error_with_path_and_code(tmp_path, capsys):

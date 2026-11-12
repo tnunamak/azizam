@@ -80,6 +80,7 @@ test.beforeAll(async ({ baseURL }) => {
     .toBe(200);
   registryApi = await request.newContext({
     baseURL,
+    extraHTTPHeaders: { origin: baseURL! },
     storageState: `test-results/auth-${new URL(baseURL!).port}.json`,
   });
   const session = await (await registryApi.get("/admin/api/session")).json();

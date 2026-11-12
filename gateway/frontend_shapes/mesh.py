@@ -159,6 +159,12 @@ class _OnePicture(Shape):
     def profile(self, contract: Mapping[str, Any]) -> tuple[str, ...]:
         return tuple(mesh_profile(contract))
 
+    def preferred_target(self) -> str | None:
+        """The workflow a request that names no model runs when several fit: the deployment's first choice (installed at start)."""
+        from gateway.frontend_shapes import shapes
+        resolver = shapes.DEFAULT_WORKFLOWS.get(self.shape_id)
+        return resolver() if resolver is not None else None
+
     def model_ref(self, view: RunJobView):
         refs = self.media_refs(view)
         return refs[0] if len(refs) == 1 else None

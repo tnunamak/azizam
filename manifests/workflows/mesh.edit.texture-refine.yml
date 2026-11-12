@@ -1,0 +1,63 @@
+schema_version: 2
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: mesh.edit.texture-refine
+intent: mesh.edit
+capability: mesh
+display_name: Refine the texture of a 3D model
+purpose: Paint a 3D model from a reference picture
+description: Repaints the texture of a 3D model so it follows a reference picture, and returns the model as a binary glTF.
+technical_description: Fixed 3D stage bound to the local3d-stages service over one multipart POST. The service runs the texture graph in ComfyUI and returns raw GLB bytes.
+summary: Send a model and a reference picture; receive the model with a new texture (model/gltf-binary).
+inputs:
+  mesh:
+    label: model
+    help: The 3D model to work on, as a binary glTF (.glb) file.
+    type: asset
+    accepts:
+      - model/gltf-binary
+    max_bytes: 268435456
+    required: true
+  reference:
+    label: reference picture
+    help: The picture the new texture should follow. A cut-out on a plain background works best.
+    type: asset
+    accepts:
+      - image/png
+      - image/jpeg
+      - image/webp
+    max_bytes: 33554432
+    required: true
+  seed:
+    label: variation number
+    help: Reuse this number with the same inputs for a similar result.
+    type: integer
+    minimum: 0
+    maximum: 4294967295
+  resolution:
+    label: detail
+    help: Size of the painted views. Higher is slower.
+    type: integer
+    minimum: 512
+    maximum: 2048
+    default: 1024
+  steps:
+    label: steps
+    help: Painting steps. More steps are slower.
+    type: integer
+    minimum: 10
+    maximum: 50
+    default: 25
+outputs:
+  mesh:
+    media_type: model/gltf-binary
+bindings:
+  http-multipart:
+    map:
+      mesh: mesh
+      reference: reference
+      seed: seed
+      resolution: resolution
+      steps: steps
+    service: local3d-stages
+    path: /refine

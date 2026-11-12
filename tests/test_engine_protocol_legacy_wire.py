@@ -1,4 +1,9 @@
-"""Frozen wires made on r65 plus W4 before W6a, with no operator data."""
+"""Frozen wires made on r65 plus W4 before W6a, with no operator data.
+
+Capture reviewed additive service projections with
+``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py --legacy-wire``.
+Parse LEGACY_WIRE_JSON, review existing values, then save sorted two-space JSON with a final newline.
+"""
 import asyncio
 import copy
 import hashlib

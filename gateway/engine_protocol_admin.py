@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from gateway import egress, protocol_description_store as store
+from gateway.session_guard import BrowserSession, SessionEnded
 from gateway.engine_admin import _is_owner
 from gateway.engine_protocol import description
 
@@ -107,9 +108,12 @@ def _unavailable() -> JSONResponse:
     return _refuse(503, "protocol_store_unavailable", "The stored protocol descriptions cannot be read now. Try again.")
 
 
-def _write(protocol_id: str, text: str, kind: str, expect: int | None, owner: str | None, declares: Any) -> JSONResponse:
+def _write(protocol_id: str, text: str, kind: str, expect: int | None, owner: str | None, declares: Any,
+           session: BrowserSession | None = None) -> JSONResponse:
     try:
-        revision = store.put(protocol_id, text, expect=expect, updated_by=owner, declares=declares)
+        revision = store.put(protocol_id, text, expect=expect, updated_by=owner, declares=declares, session=session)
+    except SessionEnded as ended:
+        return _refuse(ended.status_code, ended.code, ended.message)
     except store.StoreConflict as conflict:
         if conflict.kind == "operations":
             return _refuse(409, "protocol_in_use", "Engines still offer tasks this description would no longer declare: "
@@ -121,9 +125,11 @@ def _write(protocol_id: str, text: str, kind: str, expect: int | None, owner: st
     return _item(protocol_id, text, "user", _tag(revision), status_code=201 if kind == "create" else 200)
 
 
-def _remove(protocol_id: str, expect: int) -> JSONResponse:
+def _remove(protocol_id: str, expect: int, session: BrowserSession | None = None) -> JSONResponse:
     try:
-        store.delete(protocol_id, expect=expect)
+        store.delete(protocol_id, expect=expect, session=session)
+    except SessionEnded as ended:
+        return _refuse(ended.status_code, ended.code, ended.message)
     except store.StoreConflict as conflict:
         if conflict.kind == "referenced":
             return _refuse(409, "protocol_in_use", f"Engines still use this description: {conflict.detail}. Change them first.")
@@ -187,7 +193,8 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
         if isinstance(parsed, JSONResponse):
             return parsed
         kind, expect = condition
-        return await asyncio.to_thread(_write, protocol_id, text, kind, expect, getattr(ctx, "audit_actor_id", None), set(parsed.operations))
+        return await asyncio.to_thread(_write, protocol_id, text, kind, expect, getattr(ctx, "audit_actor_id", None), set(parsed.operations),
+                                     getattr(ctx, "browser_session", None))
 
     @router.delete("/engine-protocols/{protocol_id}")
     async def delete_engine_protocol(protocol_id: str, request: Request) -> JSONResponse:
@@ -211,4 +218,4 @@ def register_engine_protocol_routes(router: APIRouter, *, guard: Callable[[Reque
             return condition
         if condition[0] != "match":
             return _refuse(428, "protocol_revision_required", "Send If-Match with the current ETag.")
-        return await asyncio.to_thread(_remove, protocol_id, condition[1])
+        return await asyncio.to_thread(_remove, protocol_id, condition[1], getattr(ctx, "browser_session", None))

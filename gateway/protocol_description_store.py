@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Collection, Iterable, Mapping
 
-from gateway import admin_store
+from gateway import admin_store, session_guard
 
 GENERATION_KEY = "protocol_descriptions"
 
@@ -167,7 +167,7 @@ def _operations_of(text: str, protocol_id: str) -> set[str]:
 
 
 def put(protocol_id: str, text: str, *, expect: int | None, updated_by: str | None = None, path: Path | None = None,
-        declares: Iterable[str] | None = None) -> int:
+        declares: Iterable[str] | None = None, session: session_guard.BrowserSession | None = None) -> int:
     """Create (``expect`` None) or replace (``expect`` the current revision) one row; the new revision.
 
     Raises ``StoreConflict``: ``exists`` when a create finds the row, ``missing`` when a replace finds none, ``stale``
@@ -175,9 +175,13 @@ def put(protocol_id: str, text: str, *, expect: int | None, updated_by: str | No
 
     A replace names the operations the new document ``declares``. It is refused (``operations``) when an engine that names
     this description still advertises an operation the stored document declared and the new one does not; the engine
-    writes recheck the description under the same writer lock, so the two cannot interleave."""
+    writes recheck the description under the same writer lock, so the two cannot interleave.
+
+    ``session`` is the browser sign-in that asked, checked inside the write transaction as registry writes do (decision
+    D41): a sign-out that committed first must not be outrun. ``SessionEnded`` then; None for a write no browser started."""
     with admin_store.transaction(path or db_path()) as tx:
         conn = tx.conn
+        session_guard.require_live(conn, session)
         current = conn.execute("SELECT revision, document_text FROM protocol_descriptions WHERE id=?", (protocol_id,)).fetchone()
         if expect is None and current is not None:
             raise StoreConflict("exists")
@@ -208,10 +212,14 @@ def _set_generation(conn: sqlite3.Connection, value: int) -> None:
         (GENERATION_KEY, value))
 
 
-def delete(protocol_id: str, *, expect: int, path: Path | None = None) -> None:
-    """Delete one row at its revision. ``referenced`` when an engine names it (``detail`` lists the engine ids)."""
+def delete(protocol_id: str, *, expect: int, path: Path | None = None,
+           session: session_guard.BrowserSession | None = None) -> None:
+    """Delete one row at its revision. ``referenced`` when an engine names it (``detail`` lists the engine ids).
+
+    ``session`` is checked inside the transaction, as for ``put``."""
     with admin_store.transaction(path or db_path()) as tx:
         conn = tx.conn
+        session_guard.require_live(conn, session)
         current = conn.execute("SELECT revision FROM protocol_descriptions WHERE id=?", (protocol_id,)).fetchone()
         if current is None:
             raise StoreConflict("missing")

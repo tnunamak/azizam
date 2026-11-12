@@ -479,6 +479,10 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
   storageState: async ({ storageState }, use, testInfo) => {
     await use(poolProject(testInfo)?.use.storageState ?? storageState);
   },
+  // Origin names the server the test talks to, as a browser's would; the project's own port is wrong for a pool server.
+  extraHTTPHeaders: async ({ extraHTTPHeaders }, use, testInfo) => {
+    await use(poolProject(testInfo)?.use.extraHTTPHeaders ?? extraHTTPHeaders);
+  },
   globalStateGuard: [
     async ({ request }, use, testInfo) => {
       const global = testInfo.tags.includes(GLOBAL_STATE_TAG);

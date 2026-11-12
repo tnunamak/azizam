@@ -9,6 +9,8 @@ purpose: Create a sound effect from text
 prompt_hint: Describe the sound you want
 description: Create a sound effect from a text prompt.
 typical_seconds: 4
+status: superseded
+superseded_by: audio.generate.sa3-small-sfx
 inputs:
   prompt:
     type: string

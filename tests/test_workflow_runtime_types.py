@@ -85,7 +85,10 @@ class KernelRules(unittest.TestCase):
     def test_the_closed_selector_schema(self):
         self.assertEqual(selector_problems({"ids": ["a"]}), ())
         self.assertTrue(selector_problems({"ids": ["a"], "match": {"inputs": {}}}))
-        self.assertTrue(selector_problems({"match": {"intent": "poster.generate"}}))
+        by_intent = {"match": {"intent": "poster.generate"}}
+        self.assertEqual(selector_problems(by_intent), ())
+        self.assertTrue(selector_matches(by_intent, DOC["id"], DOC))
+        self.assertFalse(selector_matches({"match": {"intent": "poster.edit"}}, DOC["id"], DOC))
         by_media = {"match": {"inputs": {"photo": {"media_type": "image/png"}}, "outputs": {"kind": "assets"}}}
         self.assertEqual(selector_problems(by_media), ())
         self.assertTrue(selector_matches(by_media, DOC["id"], DOC))
@@ -93,7 +96,8 @@ class KernelRules(unittest.TestCase):
         self.assertFalse(selector_matches({"match": {"inputs": {"photo": {"media_type": "audio/*"}}}}, DOC["id"], DOC))
 
     def test_the_selector_validator_accepts_only_selectors_the_matcher_can_decide(self):
-        refused = [{"match": {"inputs": {"photo": {"media_type": 7}}}}, {"match": {"inputs": {}}},
+        refused = [{"match": {"intent": 7}}, {"match": {"intent": ""}}, {"match": {"unknown": "x"}},
+                   {"match": {"inputs": {"photo": {"media_type": 7}}}}, {"match": {"inputs": {}}},
                    {"match": {"outputs": {}}}, {"match": {"inputs": {"photo": {"type": "png"}}}},
                    {"match": {"inputs": {"photo": {"type": []}}}}, {"match": {"inputs": {"photo": {"type": {}}}}},
                    {"match": {"outputs": {"media_type": "image"}}}, {"ids": []}, {"ids": ["a"], "extra": 1}]

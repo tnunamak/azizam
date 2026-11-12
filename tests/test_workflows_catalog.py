@@ -1343,6 +1343,11 @@ _BASE_RESPONSE_RENDERERS = r'''def _execution(record: WorkflowRecord, typical_se
             "fields": request_mapping(record, "sync"),
             "output": "202 with a media job (Location, Preference-Applied: respond-async)",
         }
+    elif intent == "mesh.edit":
+        sync = {"method": "POST", "path": f"/gateway/v1/workflows/{record.id}/run",
+                "content_type": _MULTIPART, "fields": request_mapping(record, "sync"),
+                "output": "a media job; its content is the model",
+                "response": {"kind": "media_job", "poll": JOB_POLL, "content": JOB_CONTENT}}
     elif intent.startswith("video."):
         async_ = {
             "kind": "video",
@@ -1457,7 +1462,7 @@ def _example_body(
     mapping = request_mapping(record, mode)
     values = {str(item.get("name")): _example_value(item) for item in inputs if item.get("accepted")}
     body: dict[str, Any] = {}
-    if model or not str(record.intent).startswith("video.edit"):
+    if model or not str(record.intent).startswith(("video.edit", "mesh.edit")):
         body["model"] = model or short_id(record)
     extension: dict[str, Any] = {}
     combined: dict[str, list[str]] = {}

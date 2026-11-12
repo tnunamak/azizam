@@ -38,10 +38,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"video.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"video.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<641 after normalisation>",
+          "content-length": "<690 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:1>"
         },
@@ -62,10 +62,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99\",\"content_url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\",\"filename\":\"clip.mp4\",\"kind\":\"video\",\"media_type\":\"video/mp4\",\"asset_url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"idempotency\":\"request\",\"last_http_status\":200,\"mode\":\"async_video_generation\",\"model\":\"ltx-2.5-t2v\",\"request_hash\":\"<random-hash>\",\"seconds\":5.0,\"size\":\"1280x720\",\"started_at\":\"<time>\",\"upstream_video_id\":\"video_p1\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video-ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99\",\"content_url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\",\"filename\":\"clip.mp4\",\"kind\":\"video\",\"media_type\":\"video/mp4\",\"asset_url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"idempotency\":\"request\",\"last_http_status\":200,\"mode\":\"async_video_generation\",\"model\":\"ltx-2.5-t2v\",\"request_hash\":\"<random-hash>\",\"seconds\":5.0,\"size\":\"1280x720\",\"started_at\":\"<time>\",\"upstream_video_id\":\"video_p1\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video-ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
         },
         "headers": {
-          "content-length": "<1538 after normalisation>",
+          "content-length": "<1583 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -410,6 +410,7 @@
           "input_hash": "<digest>",
           "intent": "video.generate",
           "job_id": "<job:1>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -430,6 +431,7 @@
           "parent_request_id": "<job:2>",
           "previous_attempts": [],
           "progress": 100,
+          "queue_position": null,
           "queued_at": "<time>",
           "request_id": "<job:2>",
           "retryable": null,

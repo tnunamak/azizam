@@ -2198,15 +2198,9 @@ def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:
 # derived and locked; rename/enable/note are still allowed; removal is blocked.
 # ---------------------------------------------------------------------------
 
-# Per-protocol fields beyond the generic openai-compatible set.  Each entry
-# lists fields that service_form_to_raw should accept and round-trip for that
-# protocol.  Fields not listed here for a given protocol pass through the
-# generic path unchanged.
-_PROTOCOL_FIELDS: dict[str, tuple[str, ...]] = {
-    "comfyui": ("workflows_dir", "video_workflows_dir", "default_model"),
-    # openai-compatible uses the generic path; listed here for documentation.
-    "openai-compatible": (),
-}
+# Extra string fields service_form_to_raw accepts and round-trips whatever protocol label the form sends (the fields
+# registry/engine_record_defaults.yml documents).  Fields not listed here pass through the generic path unchanged.
+_PROTOCOL_STR_FIELDS: tuple[str, ...] = ("workflows_dir", "video_workflows_dir", "default_model")
 
 
 def refuse_unoffered_kinds(
@@ -2559,14 +2553,9 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     if models:
         raw["models"] = models
 
-    # Protocol-specific string fields (e.g. comfyui directory paths, default_model).
-    # Each protocol declares its extra string fields in _PROTOCOL_FIELDS; we also
-    # accept them unconditionally so an explicit key always wins regardless of
-    # what protocol label the form sends.
-    _all_protocol_str_fields: set[str] = set()
-    for _fields in _PROTOCOL_FIELDS.values():
-        _all_protocol_str_fields.update(_fields)
-    for key in _all_protocol_str_fields:
+    # Extra string fields (engine directory paths, default_model): accepted unconditionally so an explicit key always
+    # wins regardless of what protocol label the form sends.
+    for key in _PROTOCOL_STR_FIELDS:
         value = form.get(key)
         if value not in (None, ""):
             raw[key] = str(value).strip()
@@ -2716,6 +2705,8 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
     if stated is not None:
         # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
         normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
+        if stated.selection_rank is not None:
+            normalized["policy"]["selection_rank"] = stated.selection_rank
         if isinstance(policy.get(RESOURCE_CLASS_KEY), str) and policy[RESOURCE_CLASS_KEY]:
             normalized["policy"][RESOURCE_CLASS_KEY] = policy[RESOURCE_CLASS_KEY]
     normalized.update(run_control_of(raw))

@@ -281,6 +281,9 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
         "resource_tier": facts.resource_tier if facts else None,
         "tags": list(facts.tags) if facts else [],
         "typical_seconds": _manifest_number(contract, "typical_seconds"),
+        # Whether to choose this workflow today (workflow.schema.json); a superseded one still runs.
+        "status": contract.get("status") or "current",
+        "superseded_by": contract.get("superseded_by"),
         "inputs": _portable_inputs(settable_inputs(contract)),
         "outputs": _portable_outputs(contract.get("outputs") or {}),
         "supported_backends": record.supported_backends,

@@ -8,6 +8,7 @@ the session make routes it mounts live in ``gateway.me_make``.
 
 from __future__ import annotations
 
+import functools
 import base64
 import json
 import logging
@@ -32,6 +33,8 @@ from gateway.runtime_auth import RuntimeIdentity
 from gateway import asset_types, content_makers, directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, record_ownership, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
+from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES
+from gateway.media_job_intents import MODALITY_BY_INTENT
 from gateway.public_failure import PublicFailure
 from gateway.user_runtime import UserPortalError
 
@@ -49,20 +52,10 @@ MEDIA_DEFAULT_LIMIT = 24
 MEDIA_MAX_LIMIT = 100
 USAGE_RECEIPT_LIMIT = 50
 
-_KINDS_BY_PREFIX = {"img": "image", "vid": "video", "aud": "audio"}
-_CAPABILITY_BY_INTENT_PREFIX = {
-    "default": "chat",
-    "chat": "chat",
-    "image": "image",
-    "video": "video",
-    "audio": "audio",
-    "speech": "voice",
-    "stt": "transcribe",
-    "transcription": "transcribe",
-    "embedding": "embeddings",
-    "rerank": "rerank",
-    "decision": "decide",
-}
+_KINDS_BY_PREFIX = asset_types.asset_kind_names_by_prefix()
+# Published usage keys differ from the registry's canonical capability ids.
+# These are presentation compatibility spellings, never task selectors.
+_USAGE_CAPABILITY_IDS = {"speech": "voice", "embed": "embeddings"}
 
 # Asset id prefixes. ``img``, ``aud`` and ``vid`` fix the suffixes they hold; ``ast`` holds any other stored file,
 # whatever its suffix, and its kind comes from the media type (gateway/asset_types.py).
@@ -2479,26 +2472,36 @@ def _receipt_served_locally(receipt: Mapping[str, Any]) -> bool:
     return served and _receipt_cost(receipt) in (None, 0)
 
 
+@functools.lru_cache(maxsize=1)
+def _route_intents() -> dict[str, str]:
+    """Exact route path (canonical and alias) -> the execution intent its first registered frontend row declares."""
+    from gateway.discovery_metadata import registered_frontend_routes
+
+    found: dict[str, str] = {}
+    for row in registered_frontend_routes():
+        intent = (row.get("runtime_policy") or {}).get("intent") or row.get("intent")
+        if not intent:
+            continue
+        for path in (row.get("canonical"), row.get("alias")):
+            if path and "{" not in path:
+                found.setdefault(str(path), str(intent))
+    return found
+
+
 def _capability(receipt: Mapping[str, Any]) -> str:
+    """Classify the recorded execution intent by its declared capability, never its spelling or URL."""
     intent = str(receipt.get("intent") or "")
-    path = str(receipt.get("path") or "")
-    if intent.startswith("audio.transcri") or path.startswith(("/v1/audio/transcriptions", "/v1/audio/translations")):
-        return "transcribe"
-    # Text to speech is its own task ("Read text aloud"), not music or sounds.
-    if intent.startswith("audio.speech") or path.startswith("/v1/audio/speech"):
-        return "voice"
-    prefix = intent.split(".", 1)[0]
-    if prefix in _CAPABILITY_BY_INTENT_PREFIX:
-        return _CAPABILITY_BY_INTENT_PREFIX[prefix]
-    if "/images" in path:
-        return "image"
-    if "/videos" in path:
-        return "video"
-    if "/audio" in path:
-        return "audio"
-    if "/embeddings" in path:
-        return "embeddings"
-    return prefix or "other"
+    capability = INTENT_CAPABILITIES.get(intent)
+    if capability is None:
+        # Some internal jobs declare only their modality. Read that exact row;
+        # an unregistered intent still has no capability, regardless of spelling.
+        capability = INTENT_CAPABILITIES.get(MODALITY_BY_INTENT.get(intent, ""))
+    if capability is None:
+        # A receipt without a known intent (older rows) is classified by the route row that serves its exact path.
+        capability = INTENT_CAPABILITIES.get(_route_intents().get(str(receipt.get("path") or ""), ""))
+    if capability is None:
+        return "other"
+    return _USAGE_CAPABILITY_IDS.get(capability, capability)
 
 
 def _usage_model(receipt: Mapping[str, Any]) -> str:
@@ -2512,16 +2515,16 @@ def _usage_model(receipt: Mapping[str, Any]) -> str:
 
 
 def _capability_label(capability: str) -> str:
+    if capability in _KINDS_BY_PREFIX.values():
+        return asset_types.kind_names(capability)["label"]
     return {
-        "chat": "Chat",
-        "image": "Image",
-        "video": "Video",
-        "audio": "Audio",
-        "voice": "Voice",
-        "transcribe": "Transcription",
+        "chat": CAPABILITY_LABELS["chat"],
+        "voice": CAPABILITY_LABELS["speech"],
+        "transcribe": CAPABILITY_LABELS["transcribe"],
+        # Preserve the published usage labels, distinct from catalog presentation.
         "embeddings": "Embeddings",
         "rerank": "Rerank",
-        "decide": "Decisions",
+        "decide": CAPABILITY_LABELS["decide"],
     }.get(capability, capability.title())
 
 

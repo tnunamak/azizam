@@ -27,6 +27,8 @@ MIB = 1 << 20
 TOTAL = 24 * 1024 * MIB
 OBSERVER_URL = "http://vram-observer.test"
 TRELLIS_URL = "http://127.0.0.1:8890"
+PIXAL3D_URL = "http://127.0.0.1:8892"
+PIXAL3D_GLB = b"glTF\x02\x00\x00\x00" + b"pixal-model" * 8
 GOOD_CAPACITY = {
     "enabled": True,
     "mode": "exclusive-route-pool",
@@ -68,8 +70,13 @@ class Harness:
         self.frontends = list(route_registry.protocol_frontend_records(registry=None, proxy_config=cfg))
         trellis_raw = copy.deepcopy(cfg["backends"]["trellis"])
         trellis_raw["resource_capacity"] = dict(GOOD_CAPACITY)
+        pixal_raw = copy.deepcopy(cfg["backends"]["pixal3d"])
+        pixal_raw["resource_capacity"] = dict(GOOD_CAPACITY)  # the same pool as trellis: both run on one card
+        self.pixal_health_status = 200
+        self.pixal_downstream: list[httpx.Request] = []
         self.services: dict[str, dict[str, Any]] = {
             "trellis": service_registry.service_from_backend_config("trellis", trellis_raw, source="provisioned"),
+            "pixal3d": service_registry.service_from_backend_config("pixal3d", pixal_raw, source="provisioned"),
             "vram-observer": service_registry.service_from_backend_config(
                 "vram-observer", {"base_url": OBSERVER_URL, "capabilities": []}, source="provisioned"),
         }
@@ -80,7 +87,8 @@ class Harness:
         self.downstream_mode: Any = "ok"
         self.leases = ExclusivePoolLeaseManager()
         self.hook: Any = None  # stalls the upstream transport; see Upstream
-        self.current_manifest: Any = lambda: proxy.current_mesh_workflow()
+        # The harness is the TRELLIS.2 service, so the workflow it serves is that record, not the deployment's first choice.
+        self.current_manifest: Any = lambda: proxy.current_mesh_workflow("mesh.generate.trellis-2")
         # Whether the live registry holds the workflow record (an owner override may turn it off).
         self.workflow_present = True
 
@@ -101,6 +109,11 @@ class Harness:
             return httpx.Response(200, json=self.observer_body)
         if url == f"{TRELLIS_URL}/health":
             return httpx.Response(self.health_status, content=b"ok")
+        if url == f"{PIXAL3D_URL}/health":
+            return httpx.Response(self.pixal_health_status, content=b"ok")
+        if url == f"{PIXAL3D_URL}/generate":
+            self.pixal_downstream.append(request)
+            return httpx.Response(200, content=PIXAL3D_GLB, headers={"content-type": "model/gltf-binary"})
         if url == f"{TRELLIS_URL}/generate":
             self.downstream.append(request)
             mode = self.downstream_mode

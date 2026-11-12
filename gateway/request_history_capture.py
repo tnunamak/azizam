@@ -29,7 +29,7 @@ from typing import Any
 
 from starlette.responses import JSONResponse
 
-from gateway import media_jobs, receipt_store, request_history, request_history_slot, retention
+from gateway import media_jobs, receipt_store, request_history, request_history_slot, retention, run_tag
 from gateway.extensions import ExtensionError, multipart_extensions
 
 log = logging.getLogger("gateway.request_history")
@@ -446,7 +446,8 @@ class _Capture:
             omissions_by_part["received"] = sorted(found)
         latency_ms = int((time.monotonic() - self._began) * 1000)
         summary = request_history.summarize(self.route, accepted_body, self.reply_status, latency_ms,
-                                            run=self._state.get(RUN_STATE_KEY))
+                                            run=self._state.get(RUN_STATE_KEY),
+                                            tag=run_tag.valid_or_none(self.request_headers.get(run_tag.TAG_HEADER)))
         record = {
             "record_id": request_history.new_record_id(), "request_id": receipt_id, "person_id": decision.person_id,
             "app_id": getattr(identity, "app_id", None), "origin_kind": getattr(identity, "auth_kind", "app_key"),

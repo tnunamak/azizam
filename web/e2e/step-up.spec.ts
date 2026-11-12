@@ -292,6 +292,7 @@ test("sign out everywhere ends the person's sign-ins and returns to sign-in", as
   const withCookie = async () =>
     playwrightRequest.newContext({
       baseURL,
+      extraHTTPHeaders: { origin: baseURL! },
       storageState: { cookies: [session!], origins: [] },
     });
   const before = await withCookie();

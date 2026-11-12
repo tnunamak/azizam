@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, secret_commands, service_registry
+from gateway import admin_catalog, admin_store, browser_origin, config_fold, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, secret_commands, service_registry
 from gateway.session_guard import BrowserSession, SessionEnded
 
 __all__ = [
@@ -1286,8 +1286,25 @@ def _not_your_app(exc: Exception) -> JSONResponse:
     return _RouteError(status.HTTP_403_FORBIDDEN, "not_your_app", str(exc)).as_response()
 
 
+def _pinned_base_url(auth: AdminAuth) -> str:
+    """The instance's saved public address, or "" when the authenticator has no store behind it."""
+    path = getattr(getattr(auth, "store", None), "path", None)
+    if path is None:
+        return ""
+    try:
+        return str(config_fold.instance(path).get("base_url") or "")
+    except Exception:  # noqa: BLE001 - an unreadable setting trusts only the request's own host
+        return ""
+
+
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:
-    """Resolve admin context, returning a JSONResponse on failure."""
+    """Resolve admin context, returning a JSONResponse on failure.
+
+    A write made with a browser session must also say it came from this gateway (``browser_origin``): the sign-in
+    cookie rides along on a request any site starts, so the CSRF token alone is not the whole defence. A write made
+    with an admin key is exempt: a key is sent on purpose in a header, never by the browser on its own, so there is
+    no ambient credential for another site to borrow.
+    """
     try:
         ctx = auth(request)
     except AdminAuthError as exc:
@@ -1307,6 +1324,14 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
         ctx.auth_method == "session"
         and request.method not in {"GET", "HEAD", "OPTIONS"}
     ):
+        if not browser_origin.sent_from_this_gateway(request, _pinned_base_url(auth)):
+            return _auth_error_response(
+                AdminAuthError(
+                    "admin session mutation must come from this gateway's own pages",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    code="admin_origin_forbidden",
+                )
+            )
         if ctx.csrf_token:
             supplied = request.headers.get("x-azizam-csrf") or ""
             if not hmac.compare_digest(supplied, ctx.csrf_token):

@@ -56,7 +56,7 @@
         },
         "identity": {
           "id": "audio.generate.ace-step-1.5-xl-turbo",
-          "manifest_hash": "59c34430126f81b44f28e2080e5775a6d500b8eb41eafad06ff7a57d1de71f26",
+          "manifest_hash": "b918fc170b9eaac04a23a7674e6fb90019bf411279c2720b414b7ae783ab1a45",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -82,13 +82,13 @@
               "bpm": 1,
               "cfg_scale": 1.0,
               "duration": 1.0,
-              "keyscale": "sample",
-              "language": "sample",
+              "keyscale": "C major",
+              "language": "ar",
               "lyrics": "sample",
               "min_p": 1.0,
               "tags": "sample",
               "temperature": 1.0,
-              "timesignature": "sample",
+              "timesignature": "2",
               "top_k": 1,
               "top_p": 1.0
             }
@@ -103,8 +103,8 @@
           "cfg": 1.0,
           "cfg_scale": 1.0,
           "duration": 1.0,
-          "keyscale": "sample",
-          "language": "sample",
+          "keyscale": "C major",
+          "language": "ar",
           "lyrics": "sample",
           "min_p": 1.0,
           "sampler": "sample",
@@ -112,7 +112,7 @@
           "steps": 1,
           "tags": "sample",
           "temperature": 1.0,
-          "timesignature": "sample",
+          "timesignature": "2",
           "top_k": 1,
           "top_p": 1.0
         },
@@ -939,6 +939,60 @@
       "equal": true
     }
   },
+  "manifests/workflows/mesh.edit.retopo.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/mesh.edit.rig-auto.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/mesh.edit.rig-humanoid.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/mesh.edit.texture-refine.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/mesh.edit.uv-unwrap.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
+  "manifests/workflows/mesh.generate.pixal3d.yml": {
+    "extension": {
+      "error": "manifest has no binding for backend: comfyui"
+    },
+    "source": null,
+    "validation": {
+      "equal": true
+    }
+  },
   "manifests/workflows/mesh.generate.trellis-2.yml": {
     "extension": {
       "error": "manifest has no binding for backend: comfyui"
@@ -1669,7 +1723,7 @@
         },
         "identity": {
           "id": "audio.generate.tangoflux",
-          "manifest_hash": "a214e32f94c6db9dd9cfe24e1d93f98579d4c5295a685e84d9e646b50d1588a5",
+          "manifest_hash": "836bb24c7c722657d75951242d00c4d0782ce5b2f6e06206d63299f773b41798",
           "source": null,
           "trusted": false,
           "version": "0.1.0"
@@ -2884,7 +2938,7 @@
         },
         "identity": {
           "id": "audio.generate.yue2-song",
-          "manifest_hash": "f4ed4810dff8d7393dd74543482d0bce94811adad5830e841536d867bab2754e",
+          "manifest_hash": "963a05281c37a51022069941fef76f4fd4a0c1ea03d3390df169b791a408baf8",
           "source": null,
           "trusted": false,
           "version": "0.1.0"

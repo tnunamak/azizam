@@ -75,6 +75,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
+    extraHTTPHeaders: { origin: `http://127.0.0.1:${port}` },
     headless: true,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",

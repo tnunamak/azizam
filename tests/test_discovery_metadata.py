@@ -547,5 +547,78 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         )
 
 
+
+
+
+class FrontendLiteralProjectionTests(unittest.TestCase):
+    def test_operation_intents_are_the_existing_shipped_values(self):
+        from gateway import discovery_metadata as discovery
+        self.assertEqual(
+            [discovery.operation_intent(op) for op in ("images", "image_edits", "audio_generate", "videos")],
+            ["image.generate", "image.edit", "audio.generate", "video.generate"],
+        )
+
+    def test_operation_intents_follow_rows_without_a_name_fallback(self):
+        from gateway import discovery_metadata as discovery
+        row = {"operation": "opaque", "workflow_targets": {"route_intent": "unfamiliar.task"}}
+        with patch.object(discovery, "registered_frontend_routes", return_value=(row,)):
+            self.assertEqual(discovery.operation_intent("opaque"), "unfamiliar.task")
+            with self.assertRaises(ValueError):
+                discovery.operation_intent("images")
+        with patch.object(discovery, "registered_frontend_routes", return_value=(row, row)):
+            with self.assertRaises(ValueError):
+                discovery.operation_intent("opaque")
+
+    def test_capability_execution_intent_requires_explicit_unique_rows(self):
+        from gateway import discovery_metadata as discovery
+        rows = ({"capability": "unfamiliar", "runtime_policy": {"intent": "opaque"}},
+                {"capability": "unfamiliar", "runtime_policy": {"intent": "opaque"}})
+        with patch.object(discovery, "registered_frontend_routes", return_value=rows):
+            self.assertEqual(discovery.capability_execution_intent("unfamiliar"), "opaque")
+            with self.assertRaises(ValueError):
+                discovery.capability_execution_intent("missing")
+
+    def test_frontend_fields_require_exact_path_and_method(self):
+        from gateway import discovery_metadata as discovery
+        self.assertIn("response_format", discovery.frontend_request_fields("POST", "/v1/images/generations"))
+        self.assertIn("response_format", discovery.frontend_request_fields("POST", "/openai/v1/images/edits"))
+        self.assertNotIn("response_format", discovery.frontend_request_fields("GET", "/v1/images/generations"))
+        self.assertNotIn("response_format", discovery.frontend_request_fields("POST", "/v1/images/unknown"))
+        self.assertNotIn("response_format", discovery.frontend_request_fields("POST", "/v1/audio/generate"))
+
+    def test_workflow_input_inventory_does_not_authorize_automatic_adapter_fields(self):
+        from gateway import discovery_metadata as discovery
+        row = {"methods": ["POST"], "canonical": "/custom", "route_inputs": ["response_format"]}
+        with patch.object(discovery, "registered_frontend_routes", return_value=(row,)):
+            self.assertEqual(discovery.frontend_request_fields("POST", "/custom"), frozenset())
+        row["adapter_request_fields"] = ["response_format"]
+        with patch.object(discovery, "registered_frontend_routes", return_value=(row,)):
+            self.assertEqual(discovery.frontend_request_fields("POST", "/custom"), frozenset({"response_format"}))
+
+    def test_default_surface_paths_follow_the_default_row(self):
+        from gateway import discovery_metadata as discovery
+        protocols = ({"default": True, "canonical_base_path": "/new/canonical",
+                      "convenience_base_path": "/old/alias"},)
+        self.assertEqual(
+            discovery._default_surface_guidance(protocols),
+            "Use canonical /new/canonical endpoints for new OpenAI-compatible setup; "
+            "/old/alias remains a convenience route for existing clients.",
+        )
+        self.assertIn("/new/canonical", discovery._default_surface_guidance(protocols, numbered=True))
+        self.assertNotIn("/openai/v1", discovery._default_surface_guidance(()))
+
+    def test_shipped_default_surface_copy_is_unchanged(self):
+        from gateway import discovery_metadata as discovery
+        self.assertEqual(
+            discovery._default_surface_guidance(discovery.PUBLIC_PROTOCOLS),
+            "Use canonical /openai/v1 endpoints for new OpenAI-compatible setup; "
+            "/v1 remains a convenience route for existing clients.",
+        )
+        self.assertIn(
+            "4. Use /openai/v1 by default for new setup; /v1 remains available for existing OpenAI-compatible clients.",
+            discovery.build_llms_txt(),
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main(verbosity=2)

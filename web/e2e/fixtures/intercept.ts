@@ -112,6 +112,7 @@ function api(origin: string): Promise<APIRequestContext> {
           : path.join(path.dirname(projectState), `auth-${new URL(origin).port}.json`);
     found = request.newContext({
       baseURL: origin,
+      extraHTTPHeaders: { origin },
       ...(typeof storageState === "string" ? { storageState } : {}),
     });
     apis.set(origin, found);

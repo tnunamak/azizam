@@ -55,6 +55,7 @@ tests/test_request_history_reader.py	lan-address	synthetic LAN engine or client 
 tests/test_review_ov_step2_probes.py	lan-address	synthetic LAN engine or client address in test data
 tests/test_review_ov_step2_r3_probes.py	lan-address	synthetic LAN engine or client address in test data
 tests/test_review_w1_r3_cases.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_route_guard_proof.py	lan-address	synthetic LAN client address in test data
 tests/test_safe_restart.py	lan-address	synthetic LAN engine or client address in test data
 tests/test_secret_canary_matrix.py	lan-address	synthetic LAN engine or client address in test data
 tests/test_secret_review_r2.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one

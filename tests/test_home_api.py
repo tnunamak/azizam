@@ -1212,3 +1212,40 @@ def test_every_other_home_row_field_is_unchanged_for_all_shipped_workflows(monke
         assert len(before) == len(after) == 1, record.id
         assert {key: value for key, value in after[0].items() if key != "required_media_inputs"} == before[0], record.id
         assert "required_media_inputs" in after[0], record.id
+
+
+def test_usage_capability_follows_exact_recorded_execution_intent():
+    from gateway import me_media
+    expected = {
+        "image.generate": "image", "image.edit": "image", "image.identity": "image", "video.generate": "video",
+        "audio.generate": "audio", "audio.transcriptions": "transcribe",
+        "speech.transcription": "transcribe", "speech.translation": "transcribe",
+        "audio.speech": "voice", "speech.synthesis": "voice", "text.embeddings": "embeddings",
+    }
+    for intent, capability in expected.items():
+        assert me_media._capability({"intent": intent, "path": "/unrelated"}) == capability
+
+
+def test_usage_capability_does_not_guess_from_unknown_names_or_paths():
+    from gateway import me_media
+    for intent in ("audio.transcri-mystery", "audio.speech.unknown", "image.future", "opaque", ""):
+        assert me_media._capability({"intent": intent, "path": "/v1/audio/transcriptions-mystery"}) == "other"
+        # An unknown intent falls back to the route row that serves its exact path, never a path prefix.
+        assert me_media._capability({"intent": intent, "path": "/v1/audio/transcriptions"}) == "transcribe"
+    assert me_media._capability({"path": "/v1/images/unknown"}) == "other"
+
+
+def test_usage_capability_accepts_an_unfamiliar_declared_word():
+    from unittest.mock import patch
+    from gateway import me_media
+    with patch.object(me_media, "INTENT_CAPABILITIES", {"opaque": "new-capability"}):
+        assert me_media._capability({"intent": "opaque"}) == "new-capability"
+        assert me_media._capability({"intent": "audio.generate"}) == "other"
+
+
+def test_usage_published_keys_and_singular_labels_stay_compatible():
+    from gateway import me_media
+    expected = {"chat": "Chat", "image": "Image", "video": "Video", "audio": "Audio",
+                "voice": "Voice", "transcribe": "Transcription", "embeddings": "Embeddings",
+                "rerank": "Rerank", "decide": "Decisions"}
+    assert {key: me_media._capability_label(key) for key in expected} == expected

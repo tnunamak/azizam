@@ -353,7 +353,7 @@ def test_video_11b_an_unreachable_engine_fails_the_job_and_no_body_names_its_add
         failed = await await_status(world, video_id, "failed")
         content = await world.rig.call("GET", f"/v1/videos/{video_id}/content")
         assert failed["error"]["code"] == "video_generation_failed" and failed["error"]["message"] == "ComfyUI unavailable", failed
-        assert [json.loads(r["job_json"]).get("error_code") for r in rows(world.rig.media_jobs_db, "media_jobs")] == ["upstream_unavailable"]
+        assert [json.loads(r["job_json"]).get("error_code") for r in rows(world.rig.media_jobs_db, "media_jobs")] == ["engine_unavailable"]
         for text in (made.text, json.dumps(failed), content.text):
             assert HOST not in text and "comfy.fk.test" not in text, text
         assert content.status_code >= 400

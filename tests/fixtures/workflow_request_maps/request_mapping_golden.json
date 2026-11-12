@@ -3025,6 +3025,212 @@
       }
     ]
   ],
+  "mesh.edit.retopo async": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "extension"
+      }
+    ],
+    [
+      "target_faces",
+      {
+        "field": "target_faces",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.edit.retopo sync": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "file"
+      }
+    ],
+    [
+      "target_faces",
+      {
+        "field": "target_faces",
+        "in": "form"
+      }
+    ]
+  ],
+  "mesh.edit.rig-auto async": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.edit.rig-auto sync": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "file"
+      }
+    ]
+  ],
+  "mesh.edit.rig-humanoid async": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.edit.rig-humanoid sync": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "file"
+      }
+    ]
+  ],
+  "mesh.edit.texture-refine async": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "extension"
+      }
+    ],
+    [
+      "reference",
+      {
+        "field": "reference",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "extension"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.edit.texture-refine sync": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "file"
+      }
+    ],
+    [
+      "reference",
+      {
+        "field": "reference",
+        "in": "file"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "form"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "form"
+      }
+    ],
+    [
+      "steps",
+      {
+        "field": "steps",
+        "in": "form"
+      }
+    ]
+  ],
+  "mesh.edit.uv-unwrap async": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.edit.uv-unwrap sync": [
+    [
+      "mesh",
+      {
+        "field": "mesh",
+        "in": "file"
+      }
+    ]
+  ],
+  "mesh.generate.pixal3d async": [
+    [
+      "image",
+      {
+        "field": "image",
+        "in": "extension"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "extension"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "extension"
+      }
+    ]
+  ],
+  "mesh.generate.pixal3d sync": [
+    [
+      "image",
+      {
+        "field": "image",
+        "in": "file"
+      }
+    ],
+    [
+      "seed",
+      {
+        "field": "seed",
+        "in": "form"
+      }
+    ],
+    [
+      "resolution",
+      {
+        "field": "resolution",
+        "in": "form"
+      }
+    ]
+  ],
   "mesh.generate.trellis-2 async": [
     [
       "image",

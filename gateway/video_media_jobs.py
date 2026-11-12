@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 
+from gateway.discovery_metadata import operation_intent
 from gateway import media_jobs
 
-INTENT_VIDEO_GENERATE = "video.generate"
+INTENT_VIDEO_GENERATE = operation_intent("videos")
 VIDEO_OBJECT = "video"
 LEGACY_VIDEO_OBJECT = "video.generation"
 
@@ -241,7 +242,7 @@ def video_generation_payload(
         "progress": _progress(job.get("progress", 0)),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
-        **{name: job.get(name) for name in (*media_jobs.PHASE_FIELDS, "attempt_number", "previous_attempts")},
+        **{name: job.get(name) for name in (*media_jobs.PHASE_FIELDS, "attempt_number", "previous_attempts", "queue_position")},
         "completed_at": job.get("updated_at") if internal_status == media_jobs.STATUS_SUCCEEDED else None,
         "expires_at": metadata.get("expires_at"),
         "prompt": metadata.get("prompt"),
@@ -274,7 +275,7 @@ def video_generation_payload(
                 payload["content_url"] = content_url
     return {key: value for key, value in payload.items() if value is not None or key in {
         "completed_at", "expires_at", "prompt", "remixed_from_video_id", "error",
-        *media_jobs.PHASE_FIELDS, "attempt_number", "previous_attempts",
+        *media_jobs.PHASE_FIELDS, "attempt_number", "previous_attempts", "queue_position",
     }}
 
 

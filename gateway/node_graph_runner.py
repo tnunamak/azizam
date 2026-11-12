@@ -25,12 +25,14 @@ import io
 import logging
 import time
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Protocol
 
 from gateway import asset_types, generated_defaults, media_delivery, media_jobs, media_metadata, pinned_runtime, result_bundle
 from gateway.engine_protocol import graph_round
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.errors import ProtocolError
+from gateway.engine_protocol.node_validation import input_refusals
 from gateway.engine_protocol.types import AssetsResult, CanonicalRequest, ResultBundle, ResultContext
 from gateway.workflow_run import REQUEST_FACTS_KEY, AdapterIdentity, RunContext, with_wire_id
 from gateway.workflow_runtime_types import AUDIO_FACT, RESULT_REFUSED_MESSAGE
@@ -175,8 +177,30 @@ def retry_reason_of(kind: str, binding_key: str) -> str | None:
             graph_round.SUBMIT_TIMEOUT: f"{binding_key}_timeout", graph_round.WAIT_EXCEEDED: f"{binding_key}_timeout"}.get(kind)
 
 
+def _input_bindings(binding: Mapping[str, Any]) -> Mapping[tuple[str, str], str]:
+    """Reverse only unambiguous pinned node/input bindings; paths cannot prove node attribution."""
+    mapping = binding.get("map")
+    owners: dict[tuple[str, str], set[str]] = {}
+    if not isinstance(mapping, Mapping):
+        return MappingProxyType({})
+    for name, targets in mapping.items():
+        if not isinstance(name, str) or not name or not isinstance(targets, list) or not targets:
+            return MappingProxyType({})
+        for target in targets:
+            # A path could alias any node input. Without interpreting it, no reverse index is safe for this binding.
+            if not isinstance(target, Mapping) or "path" in target:
+                return MappingProxyType({})
+            node_id, input_name = target.get("node"), target.get("input")
+            if not isinstance(node_id, str) or not node_id or not isinstance(input_name, str) or not input_name:
+                return MappingProxyType({})
+            owners.setdefault((node_id, input_name), set()).add(name)
+    return MappingProxyType({target: next(iter(names)) for target, names in owners.items() if len(names) == 1})
+
+
 def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, binding_key: str,
-               outputs: Mapping[str, Any] | None = None) -> RunFailed:
+               outputs: Mapping[str, Any] | None = None, *,
+               input_bindings: Mapping[tuple[str, str], str] | None = None,
+               supplied_inputs: frozenset[str] = frozenset()) -> RunFailed:
     """The job failure a round that produced no files becomes (its HTTP status is the one the old route answered with)."""
     from gateway import client_errors
     kind = failed.kind
@@ -193,6 +217,14 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
     if kind == graph_round.DROPPED:
         return RunFailed("upstream_dropped", "upstream", f"{label} backend connection dropped", upstream_status=502)
     if kind == graph_round.REFUSED:
+        facts = input_refusals(failed.refusal_body) if failed.status in (400, 422) else ()
+        names = {input_bindings.get((fact.node_id, fact.input_name)) for fact in facts} if input_bindings else set()
+        if len(names) == 1:
+            name = next(iter(names))
+            if name in supplied_inputs:
+                return RunFailed("invalid_input", "invalid_input",
+                                 f"Input {name!r} is not accepted. Choose a value from the workflow input schema.",
+                                 upstream_status=failed.status, retryable=False)
         out = graph_round.says_out_of_memory(failed.excerpt, plain=True)
         text = client_errors.REASONS["upstream_out_of_memory" if out else "upstream_refused"]
         return RunFailed("upstream_out_of_memory" if out else "upstream_refused", "upstream", f"{engine}: {text}",
@@ -275,8 +307,8 @@ class NodeGraphRunner:
         facts: Mapping[str, Any] = variant.facts if variant is not None else {}
         try:
             made = await self._collect(ctx, adapter, runtime, op, staged, variant.edit if variant is not None else None, resume)
-        except RunFailed:
-            if variant is None or not variant.fallback_facts or resume is not None:
+        except RunFailed as failed:
+            if failed.category == "invalid_input" or variant is None or not variant.fallback_facts or resume is not None:
                 raise
             # The second graph failed: the same request is made again once, with the cutout turned off in the graph explicitly.
             facts = variant.fallback_facts
@@ -353,7 +385,7 @@ class NodeGraphRunner:
                 if not round_files:
                     plan.warnings.append(f"round {rounds} produced 0 files")
                     if rounds >= 2 and not collected:
-                        raise RunFailed("upstream_empty", "upstream", f"{adapter.label} returned no images", upstream_status=502)
+                        raise RunFailed("upstream_empty", "upstream", f"{adapter.label} returned no {output_noun(outputs)}", upstream_status=502)
                     continue
                 collected.extend(round_files)
                 remaining -= len(round_files)
@@ -370,9 +402,32 @@ class NodeGraphRunner:
                          probe, headers, binding, outputs, limits, poll, label, failure_binding, conn, *, retry_freed, staged, edit=None, resume=None):
         host = self.host
         values = generated_defaults.offset_values(manifest_inputs, dict(ctx.generated), offset)
-        round_body = {**dict(ctx.inputs), **staged, **values, **(dict(batching.round_inputs(plan, target)) if batching is not None else {})}
+        batch_inputs = dict(batching.round_inputs(plan, target)) if batching is not None else {}
+        round_body = {**dict(ctx.inputs), **staged, **values, **batch_inputs}
+        media_inputs = frozenset(getattr(ctx, "media", {}) or {})
+        supplied_inputs = (((frozenset(ctx.inputs) | media_inputs) & frozenset(round_body))
+                           - frozenset(values) - frozenset(batch_inputs) - (frozenset(staged) - media_inputs))
+        input_bindings = dict(_input_bindings(binding))
+
+        def edit_with_provenance(graph: dict[str, Any]) -> None:
+            before = {node: copy.deepcopy(graph.get(node)) for node, _field in input_bindings}
+            edit(graph)
+            for target in tuple(input_bindings):
+                if graph.get(target[0]) != before[target[0]]:
+                    del input_bindings[target]
+
         request = CanonicalRequest(op=op, body=copy.deepcopy(round_body), params=template_request.params)
-        graph, payload = adapter.compile(op, request, edit=edit)
+        graph, payload = adapter.compile(op, request, edit=edit_with_provenance if edit is not None else None)
+        # Only an unchanged caller value at the mapped target is evidence. The map and presence set stay fixed while
+        # the round awaits the engine; generated values, batching overrides and edited nodes cannot blame the caller.
+        verified_bindings: dict[tuple[str, str], str] = {}
+        for target, name in input_bindings.items():
+            node = graph.get(target[0])
+            inputs = node.get("inputs") if isinstance(node, Mapping) else None
+            if (name in supplied_inputs and isinstance(inputs, Mapping) and target[1] in inputs
+                    and type(inputs[target[1]]) is type(round_body[name]) and inputs[target[1]] == round_body[name]):
+                verified_bindings[target] = name
+        attribution = MappingProxyType(verified_bindings)
         if resume is None:
             media_jobs.update_status(ctx.job_id, media_jobs.STATUS_RUNNING, metadata_patch={"protocol_submitting": True},
                                      path=media_jobs.DB_PATH)
@@ -407,12 +462,14 @@ class NodeGraphRunner:
                                          path=media_jobs.DB_PATH)
             if failed.kind == graph_round.DISCONNECTED:
                 raise media_jobs.CancellationPending() from failed
-            if (batching is not None and failed.out_of_memory and not retry_freed()
+            failure = failure_of(failed, adapter, conn, failure_binding, outputs,
+                                 input_bindings=attribution, supplied_inputs=supplied_inputs)
+            if (failure.category != "invalid_input" and batching is not None and failed.out_of_memory and not retry_freed()
                     and await batching.free_after_refusal(plan, session)):
                 return None
             if failed.queue_position is not None:       # a timed-out caller is told where its job stood in the engine's queue
                 ctx.record_result_metadata({"queue_position": failed.queue_position})
-            raise failure_of(failed, adapter, conn, failure_binding, outputs) from failed
+            raise failure from failed
         finally:
             if probe is not None:
                 try:

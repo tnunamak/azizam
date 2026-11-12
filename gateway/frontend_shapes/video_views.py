@@ -36,7 +36,7 @@ def public_failure_message(failure: Any) -> str:
     """The failure text a caller reads. A job that failed because the engine could not be reached names the engine and not its
     address: the text reaches every caller who can read the job (the sync routes keep the address for the owner's own call)."""
     message = failure.message
-    return _ADDRESS.sub("", message) if failure.code == "upstream_unavailable" else message
+    return _ADDRESS.sub("", message) if failure.code in ("upstream_unavailable", "engine_unavailable") else message
 
 
 NO_RESULT = "no_result"              # the run core's failure code for a run that ended without a result file

@@ -39,10 +39,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:1>\", \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:1>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:1>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:1>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:2>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:1>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:2>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<641 after normalisation>",
+          "content-length": "<690 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:1>"
         },
@@ -68,10 +68,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:3>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:3>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:3>\", \"object\": \"media.job\", \"parent_request_id\": \"<job:4>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:3>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"<job:4>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:3>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:3>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:3>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:4>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:3>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:4>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<641 after normalisation>",
+          "content-length": "<690 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:3>"
         },
@@ -97,10 +97,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:5>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:5>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:5>\", \"object\": \"media.job\", \"parent_request_id\": \"<job:6>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:5>\", \"previous_attempts\": [], \"progress\": 0, \"queued_at\": \"<time>\", \"request_id\": \"<job:6>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
+          "text": "{\"accepted_at\": \"<time>\", \"assets\": [], \"attempt_number\": 1, \"cancel_requested\": false, \"content_url\": \"/gateway/v1/media/jobs/<job:5>/content\", \"created_at\": \"<time>\", \"error\": null, \"error_category\": null, \"error_code\": null, \"finished_at\": null, \"first_output_at\": null, \"id\": \"<job:5>\", \"intent\": \"audio.generate\", \"job_id\": \"<job:5>\", \"last_healthy_at\": null, \"object\": \"media.job\", \"parent_request_id\": \"<job:6>\", \"poll_url\": \"/gateway/v1/media/jobs/<job:5>\", \"previous_attempts\": [], \"progress\": 0, \"queue_position\": null, \"queued_at\": \"<time>\", \"request_id\": \"<job:6>\", \"retryable\": null, \"started_at\": null, \"status\": \"queued\", \"updated_at\": \"<time>\", \"upstream_http_status\": null}"
         },
         "headers": {
-          "content-length": "<641 after normalisation>",
+          "content-length": "<690 after normalisation>",
           "content-type": "application/json",
           "location": "/gateway/v1/media/jobs/<job:5>"
         },
@@ -511,6 +511,7 @@
           "input_hash": "<digest>",
           "intent": "audio.generate",
           "job_id": "<job:1>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -524,6 +525,7 @@
           "parent_request_id": "<job:2>",
           "previous_attempts": [],
           "progress": 0,
+          "queue_position": null,
           "queued_at": "<time>",
           "request_id": "<job:2>",
           "retryable": null,
@@ -578,6 +580,7 @@
           "input_hash": "<digest>",
           "intent": "audio.generate",
           "job_id": "<job:3>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -593,6 +596,7 @@
           "parent_request_id": "<job:4>",
           "previous_attempts": [],
           "progress": 100,
+          "queue_position": null,
           "queued_at": "<time>",
           "request_id": "<job:4>",
           "retryable": null,
@@ -639,6 +643,7 @@
           "input_hash": "<digest>",
           "intent": "audio.generate",
           "job_id": "<job:5>",
+          "last_healthy_at": null,
           "maker_connection_id": null,
           "maker_credential_id": "sha256:test",
           "maker_person_id": null,
@@ -652,6 +657,7 @@
           "parent_request_id": "<job:6>",
           "previous_attempts": [],
           "progress": 0,
+          "queue_position": null,
           "queued_at": "<time>",
           "request_id": "<job:6>",
           "retryable": null,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,64 @@ def _load_protocol_frontend_records(
     if not isinstance(records, list):
         return ()
     return tuple(dict(record) for record in records if isinstance(record, Mapping))
+
+
+@lru_cache(maxsize=1)
+def registered_frontend_routes() -> tuple[Mapping[str, Any], ...]:
+    """The bundled route declarations, loaded once through the existing frontend reader."""
+    return tuple(
+        route for record in _load_protocol_frontend_records()
+        for route in record.get("registered_routes", ())
+        if isinstance(route, Mapping)
+    )
+
+
+def registered_operation(operation: str) -> Mapping[str, Any]:
+    """One declared operation; absence or ambiguity is a registry error, not a spelling fallback."""
+    rows = [row for row in registered_frontend_routes() if row.get("operation") == operation]
+    if len(rows) != 1:
+        raise ValueError(f"expected one frontend operation {operation!r}, found {len(rows)}")
+    return rows[0]
+
+
+def operation_intent(operation: str) -> str:
+    """The execution intent explicitly selected by the operation's workflow target row."""
+    return str(registered_operation(operation)["workflow_targets"]["route_intent"])
+
+
+def capability_execution_intent(capability: str) -> str:
+    """The unique execution intent explicitly declared by routes requiring this capability."""
+    intents = {row["runtime_policy"]["intent"] for row in registered_frontend_routes()
+               if row.get("capability") == capability and row.get("runtime_policy", {}).get("intent")}
+    if len(intents) != 1:
+        raise ValueError(f"expected one execution intent for capability {capability!r}")
+    return next(iter(intents))
+
+
+def frontend_request_fields(method: str, path: str) -> frozenset[str]:
+    """Automatic adapter fields declared by the exact frontend route; unknown routes grant none."""
+    return frozenset(
+        field for row in registered_frontend_routes()
+        if method.upper() in row.get("methods", ())
+        and path in (row.get("canonical"), row.get("alias"))
+        for field in row.get("adapter_request_fields", ())
+    )
+
+
+def _default_surface_guidance(protocols: Sequence[Mapping[str, Any]], *, numbered: bool = False) -> str:
+    defaults = [row for row in protocols if row.get("default") is True]
+    if len(defaults) != 1 or not defaults[0].get("canonical_base_path"):
+        return ("4. " if numbered else "") + "Choose a declared protocol surface from discovery."
+    row = defaults[0]
+    canonical = row["canonical_base_path"]
+    convenience = row.get("convenience_base_path")
+    if numbered:
+        text = f"4. Use {canonical} by default for new setup"
+        return text + (f"; {convenience} remains available for existing OpenAI-compatible clients."
+                       if convenience else ".")
+    text = f"Use canonical {canonical} endpoints for new OpenAI-compatible setup"
+    return text + (f"; {convenience} remains a convenience route for existing clients."
+                   if convenience else ".")
 
 
 def _route_path(route: Any) -> str:
@@ -185,6 +244,7 @@ def build_gateway_discovery_metadata(
         Mapping,
     ):
         protocol_frontends = registry["protocol_frontends"]
+    protocols = build_public_protocols(protocol_frontends)
     links = {
         "health": "/health",
         "login": "/login",
@@ -260,7 +320,7 @@ def build_gateway_discovery_metadata(
         },
         "protocols": [
             copy.deepcopy(protocol)
-            for protocol in build_public_protocols(protocol_frontends)
+            for protocol in protocols
         ],
         "recipes": build_public_recipes(
             root=root,
@@ -298,7 +358,7 @@ def build_gateway_discovery_metadata(
                 "Use /gateway/v1/capabilities with a bearer token before assuming a modality.",
                 "Read x-azizam-workflows in /openapi.json for typed workflow inputs, sync/async routes and aliases, then call the route with curl or an OpenAI SDK.",
             ],
-            "default_surface": "Use canonical /openai/v1 endpoints for new OpenAI-compatible setup; /v1 remains a convenience route for existing clients.",
+            "default_surface": _default_surface_guidance(protocols),
             "protocol_aliases": "Use /anthropic/v1 for Anthropic Messages and /ollama/api for Ollama-compatible clients; /api remains an Ollama convenience route.",
             "native_passthrough": "Use /gateway/v1/providers and /gateway/v1/providers/{provider} for policy-projected provider discovery facts. Use /gateway/v1/providers/{provider}/{path...} only when the App profile explicitly allows provider-native native_passthrough. Do not guess root provider prefixes.",
             "ollama_lifecycle": "Ollama create, pull, push, copy, and delete are intentionally unsupported through the protocol frontend.",
@@ -349,7 +409,7 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
         "1. GET /health.",
         "2. GET /.well-known/azizam.",
         "3. GET /gateway/v1/capabilities with bearer auth.",
-        "4. Use /openai/v1 by default for new setup; /v1 remains available for existing OpenAI-compatible clients.",
+        _default_surface_guidance(PUBLIC_PROTOCOLS, numbered=True),
         "5. Use /anthropic/v1 or /ollama/api only for clients that require those protocols; /api remains an Ollama convenience route.",
         "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough.",
         "7. Ollama lifecycle routes create/pull/push/copy/delete return unsupported_operation and do not mutate model files.",

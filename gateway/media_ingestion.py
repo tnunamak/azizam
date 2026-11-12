@@ -16,13 +16,17 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import Request
 from starlette.responses import Response
 
-from gateway import media_delivery, media_jobs, provenance, receipt_store
+from gateway import asset_types, media_delivery, media_jobs, provenance, receipt_store
+from gateway.capability_ids import AUDIO_RULE
+from gateway.discovery_metadata import operation_intent, registered_operation
 from gateway.receipts import RouteReceipt, new_request_id, record_retention_fact_failure, run_receipt_write
 from gateway.ownership import owner_key
 from gateway.runtime_auth import plan_ref
 from gateway.video_limits import workflow_id_for_video_key
 
-_KIND_BY_PREFIX = {"img": "image", "aud": "audio", "vid": "video"}
+_KIND_BY_PREFIX = asset_types.asset_kind_names_by_prefix()
+_AUDIO_KIND = AUDIO_RULE["type"]
+_VIDEO_OPERATION = registered_operation("videos")
 _MEDIA_TYPE_BY_SUFFIX = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -228,10 +232,10 @@ def index_video_delivery(
     owner_key_hash = _safe_string(safe_record.get("owner_key_hash"))
     job = index_sync_assets(
         request_id=video_id,
-        intent="video.generate",
+        intent=operation_intent("videos"),
         assets=[{
             "asset_id": asset_id,
-            "kind": "video",
+            "kind": _VIDEO_OPERATION["model_metadata"]["type"],
             "media_type": media_type,
             "filename": Path(filename).name,
         }],
@@ -309,15 +313,15 @@ def store_audio_response(
     stored = media_delivery.attach_provenance(stored, suffix, provenance_record)
     asset_id = store_asset(
         stored,
-        kind="aud",
+        kind=asset_types.ASSET_PREFIX_BY_TOP_TYPE[_AUDIO_KIND],
         suffix=suffix,
         owner_key_hash=receipt.owner_key_hash,
     )
     asset = {
         "asset_id": asset_id,
-        "kind": "audio",
+        "kind": _AUDIO_KIND,
         "media_type": normalized_media_type,
-        "filename": f"audio{suffix}",
+        "filename": f"{_AUDIO_KIND}{suffix}",
         "size_bytes": len(stored),
     }
     index_receipt_assets(receipt, [asset])
@@ -377,7 +381,7 @@ def _valid_asset_id(asset_id: str) -> bool:
 
 def _kind_for_asset(asset_id: str, asset: Mapping[str, Any]) -> str:
     raw = str(asset.get("kind") or "")
-    if raw in {"image", "video", "audio"}:
+    if raw in _KIND_BY_PREFIX.values():
         return raw
     return _KIND_BY_PREFIX.get(asset_id.split("_", 1)[0], "asset")
 
@@ -461,7 +465,7 @@ def _pcm16_to_wav(content: bytes, *, sample_rate: int = 24000) -> bytes:
 def _audio_provenance_record(receipt: RouteReceipt, media_type: str) -> dict[str, Any]:
     return provenance.build_provenance_record(
         receipt=receipt,
-        kind="audio",
+        kind=_AUDIO_KIND,
         workflow_id=receipt.resolved_workflow or receipt.requested_workflow,
         backend=receipt.backend,
         parameters={"media_type": media_type},

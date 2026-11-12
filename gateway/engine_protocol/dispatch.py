@@ -10,6 +10,8 @@ import secrets
 import time
 from typing import Any, Mapping
 
+from gateway.capability_ids import capability_of_word
+from gateway.discovery_metadata import operation_intent
 from gateway.engine_contract_view import address_for_class, connection_config, observations_config, offerings_config
 from gateway.engine_credentials import CredentialOriginMismatch, CredentialUnavailable, credential_headers
 from gateway.engine_control import EngineControlRuntime
@@ -83,7 +85,7 @@ def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
         raise UnknownOperation(f"The description declares no generation operation '{op}'.")
     # A declared task limits the operation; an absent task list is not a grant.
     tasks = {row.get('task') for row in offering.get('tasks') or [] if isinstance(row, Mapping)}
-    aliases = {'images': {'image', 'image.generate'}, 'speech': {'speech', 'speech.synthesis'},
+    aliases = {'images': {capability_of_word(operation_intent('images')), operation_intent('images')}, 'speech': {'speech', 'speech.synthesis'},
                'embeddings': {'embeddings', 'text.embeddings'}, 'chat': {'chat', 'chat.generate'}}
     if not tasks.intersection(aliases.get(op, {op})):
         raise UnknownOperation('The offering does not declare this task.')

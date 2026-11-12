@@ -522,6 +522,8 @@ def workflow_catalog(
             "description": " ".join(str(record.contract.get("summary") or record.contract.get("description") or "").split()),
             "aliases": alias_map.get(record.id, []),
             "typical_seconds": typical,
+            "status": record.contract.get("status") or "current",
+            "superseded_by": record.contract.get("superseded_by"),
             "inputs_schema": _ref(_schema_name(record)),
             "outputs": outputs,
             "route_inputs": route_inputs(record),

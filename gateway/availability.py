@@ -171,6 +171,60 @@ def _project_required_dependencies(
     )
 
 
+def last_healthy_at(service_id: str | None, evidence: Mapping[str, Mapping[str, Any]] | None) -> int | None:
+    """The latest time this service was seen answering (epoch seconds), or ``None`` when its evidence holds none.
+
+    It reads ``last_success_at_s`` as it stands: absent means no success is known to this process, not that none happened.
+    """
+    value = ((evidence or {}).get(service_id or "") or {}).get("last_success_at_s")
+    return int(value) if _is_epoch(value) else None
+
+
+def workflow_availability(
+    record: WorkflowRecord,
+    *,
+    service_records: Mapping[str, Any],
+    evidence: Mapping[str, Mapping[str, Any]],
+    records: Mapping[str, WorkflowRecord] | None = None,
+) -> dict[str, Any]:
+    """What a capability row says about whether its workflow can run now, from the shared health record.
+
+    ``{"available": bool, "reason": str | None, "last_healthy_at": int | None}``. ``available`` is false only when the
+    engine is known to be unreachable, off or not set up; an engine that is idle, busy, starting or not measured yet is
+    available (the job waits or the engine starts). ``reason`` says why it is not, or that it is not measured yet.
+    ``last_healthy_at`` is when the engine last answered, when the record knows. A workflow built on several engines
+    follows the one that limits it; one that can run on several takes the best of them.
+    """
+    services = _services_mapping(service_records)
+    groups = _dependency_groups(record, records or {}, set())
+    if not any(groups):
+        return {"available": True, "reason": "Not measured yet", "last_healthy_at": None}
+    priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3, "unknown": 4, "idle": 5, "ready": 6}
+    rank = lambda item: priority.get(item.status, 4)
+    # Each group is a set of interchangeable engines: the best one serves it. The worst served group limits the workflow.
+    best = [max((project_service(service, service_records=service_records, evidence=evidence, services=services)
+                 for service in group), key=rank) for group in groups if group]
+    pick = min(best, key=rank)
+    down = pick.status == "unavailable"
+    reason = None if pick.status in {"ready", "idle", "busy"} else (
+        _dependency_reason(pick, services.get(pick.service_id) or {}) if down else pick.reason)
+    return {"available": not down, "reason": reason, "last_healthy_at": last_healthy_at(pick.service_id, evidence)}
+
+
+def _dependency_groups(record: WorkflowRecord, records: Mapping[str, WorkflowRecord], seen: set[str]) -> list[list[str]]:
+    """The engines a workflow needs, as groups of interchangeable engines: each required service is a group of one; a
+    required workflow adds its own groups (recursively); a workflow with no requirements is one group of its backends."""
+    requirements = requirements_of(record.contract)
+    if not isinstance(requirements, Mapping):
+        return [list(dict.fromkeys(record.supported_backends))]
+    groups = [[str(service)] for service in dict.fromkeys(requirements.get("services") or ())]
+    for workflow_id in requirements.get("workflows") or ():
+        needed = records.get(str(workflow_id))
+        if needed is not None and needed.id not in seen:
+            groups += _dependency_groups(needed, records, seen | {record.id})
+    return groups
+
+
 # A name is servable when its service is ready, startable on demand, busy or degraded.
 MODEL_LIST_SERVING_STATUSES = frozenset({"ready", "idle", "busy", "degraded"})
 

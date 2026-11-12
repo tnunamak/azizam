@@ -119,7 +119,7 @@ from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
 from gateway import request_history, request_history_api, request_history_capture, request_history_slot
 from gateway.http_tls import tls_context
-from gateway import asset_types, declared_operation_job, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
+from gateway import asset_types, declared_operation_job, domain_rows, policy_protocol, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
@@ -130,6 +130,7 @@ from gateway import pinned_runtime, request_spool, workflow_run
 from gateway.engine_protocol import graph_round
 from gateway import frontend_shapes
 from gateway.frontend_shapes import shapes as frontend_wire_shapes
+from gateway.frontend_shapes import mesh as frontend_mesh_shapes
 from gateway.frontend_shapes import video_create as frontend_video_create
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import (
@@ -258,6 +259,7 @@ from gateway.admin_runtime import (
 )
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
+from gateway import availability
 from gateway.availability import availability_evidence_snapshot, evidence_with_current_receipts, model_availability, project_capabilities
 from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
@@ -359,6 +361,7 @@ from gateway.toolcall_detection import (
     ToolcallStreamDetector as _ToolcallStreamDetector,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway import workflow_policy
 from gateway.workflow_policy import (
     NEEDS_CONFIGURATION_CODE, NEEDS_CONFIGURATION_MESSAGE, NeedsConfiguration, PolicyFacts)
 from gateway.video_limits import limits_for_workflow, video_limits, workflow_id_for_video_key
@@ -1055,9 +1058,20 @@ def service_for_capability(capability: str) -> tuple[str, Mapping[str, Any]] | N
 
 # The speech, transcription and embeddings services are the services selected for these capabilities, never records of
 # a fixed id.
-_SPEECH_CAPABILITY = "audio.speech"
-_TRANSCRIPTION_CAPABILITY = "audio.transcriptions"
+_SPEECH_CAPABILITY = domain_rows.route_intent("/v1/audio/speech")
+_TRANSCRIPTION_CAPABILITY = domain_rows.route_intent("/v1/audio/transcriptions")
 _EMBEDDINGS_CAPABILITY = "embeddings"
+# Public wire names the gateway answers to: the multipart field and parameter that carry an image or a video, and the
+# object discriminator of a video resource (OpenAI Images and Videos APIs). Reviewed in tests/domain_literal_reviewed.yml.
+_IMAGE_FIELD = "image"
+_VIDEO_FIELD = "video"
+_VIDEO_OBJECT = "video"
+# The input name of a LoadImage node in a workflow graph that receives the uploaded file name.
+_NODE_IMAGE_INPUT = "image"
+# The ``stream_format`` value of POST /v1/audio/speech that asks for raw audio chunks (OpenAI Audio API: ``audio`` or ``sse``).
+_STREAM_FORMAT_AUDIO = "audio"
+# The frontend row whose result headers and receipt names the image routes answer with (registry/protocol_frontends.yml).
+_IMAGE_RESULT_ROW = "images-generations"
 
 
 def _selected_service(backends: Mapping[str, Any], capability: str) -> tuple[str, Mapping[str, Any]] | None:
@@ -1216,7 +1230,7 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
 # (``DERIVED._GRAPH_BINDING``) is protocol data; the release defaults are keyed by capability (``_record_default``).
 _GRAPH_CAPABILITY = "images"
 _VIDEO_GRAPH_CAPABILITY = "videos"
-_AUDIO_GRAPH_CAPABILITY = "audio.generate"
+_AUDIO_GRAPH_CAPABILITY = domain_rows.route_intent("/v1/audio/generate")
 _GRAPH_FAMILIES = (_GRAPH_CAPABILITY, _VIDEO_GRAPH_CAPABILITY, _AUDIO_GRAPH_CAPABILITY)
 # What a finished prompt names, read by the adapter that knows the engine's answers.
 _queue_prompt_ids = node_graph.queue_prompt_ids
@@ -2136,7 +2150,7 @@ def _aux_grants_vision(backend: str) -> bool:
     cfg = (config.get("backends") or {}).get(backend)
     aux = cfg.get("aux") if isinstance(cfg, Mapping) else None
     grants = aux.get("grants_input_modalities") if isinstance(aux, Mapping) else None
-    return isinstance(grants, (list, tuple)) and "image" in grants
+    return isinstance(grants, (list, tuple)) and domain_rows.IMAGE in grants
 
 
 def _aux_from_process(backend: str, aux: Mapping[str, Any]) -> Optional[str]:
@@ -3518,7 +3532,7 @@ OPERATION_COMPATIBLE_CATEGORIES = {
     "image_edits": {"images", "unknown"},
     # `video` is an OpenAI family named in registry/openai_model_families.yml.
     # Local Wan/LTX names without an OpenAI category fall through as "unknown".
-    "videos": {"video", "unknown"},
+    "videos": {domain_rows.VIDEO, "unknown"},
 }
 OPENAI_PUBLIC_MODEL_OWNERS = {"openai", "openai-internal", "system"}
 
@@ -4297,7 +4311,7 @@ async def _first_servable_loaded_llm_target(
         refusal: Response | None
         if backend not in DERIVED.LLM_BACKEND_HOSTS:
             refusal = openai_error_response(
-                f"model 'current' requested, but active backend {backend!r} is not an OpenAI-compatible LLM backend.",
+                f"model 'current' requested, but active backend {backend!r} is not a language model backend.",
                 status_code=503,
                 error_type="service_unavailable",
                 code="current_model_unavailable",
@@ -4523,11 +4537,16 @@ def _service_resource_probe_config(service_id: str) -> Mapping[str, Any] | None:
     return None
 
 
+def _graph_engine_label(derived: Mapping[str, Any]) -> str:
+    """The name the graph engine's protocol description gives the engine the images family selected."""
+    return reviewed_adapters.adapter_for_backend(derived["GRAPH_SERVICES"][_GRAPH_CAPABILITY].record, _GRAPH_CAPABILITY).label
+
+
 def _backend_banner_lines(derived: Mapping[str, Any]) -> list[str]:
     """The startup lines for the speech, transcription and ComfyUI backends; each address is shown without user info or query."""
     return [
         f"[proxy] {label} backend: {projection.public_url(str(derived[key + '_HOST'] or ''))} (enabled: {derived[key + '_ENABLED']})"
-        for label, key in (("TTS", "TTS"), ("STT", "STT"), ("ComfyUI", "COMFY"))
+        for label, key in (("TTS", "TTS"), ("STT", "STT"), (_graph_engine_label(derived), "COMFY"))
     ]
 
 
@@ -5247,7 +5266,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         )
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=default_service_id,
-        service_available=DERIVED.TTS_ENABLED or alias_service is not None, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or alias_service is not None, resource_class=domain_rows.AUDIO, receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5285,7 +5304,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         requested_response_format = response_format
         if body_json.get("stream_format") is not None:
             stream_format = str(body_json["stream_format"]).lower()
-            if stream_format not in {"audio", "sse"}:
+            if stream_format not in {_STREAM_FORMAT_AUDIO, "sse"}:
                 return openai_error_response(
                     "stream_format must be audio or sse.",
                     status_code=400,
@@ -5335,7 +5354,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             if tts_service_id != default_service_id:
                 admission = _dispatch_admission_response(
                     "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-                    resource_class="audio", receipt=receipt,
+                    resource_class=domain_rows.AUDIO, receipt=receipt,
                 )
                 if admission is not None:
                     return admission
@@ -5348,12 +5367,12 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         engine_streams = engine is not None and bool_from_config(engine.get("streaming"), False)
         if engine_streams:
             native_rate = int(engine.get("native_sample_rate") or speech_stream.OPENAI_PCM_RATE)
-            if stream_format == "sse" or stream_format == "audio" or requested_response_format == "pcm":
-                stream_mode = stream_format or "audio"
+            if stream_format == "sse" or stream_format == _STREAM_FORMAT_AUDIO or requested_response_format == "pcm":
+                stream_mode = stream_format or _STREAM_FORMAT_AUDIO
         if stream_mode:
             # Engines of this kind speak one contract: raw PCM, chunked.
             body_json["response_format"] = "pcm"
-            body_json["stream_format"] = "audio"
+            body_json["stream_format"] = _STREAM_FORMAT_AUDIO
         else:
             body_json["response_format"] = "wav"
             body_json.pop("stream_format", None)
@@ -5365,7 +5384,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class=domain_rows.AUDIO, receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5380,7 +5399,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         return _tts_error("The speech engine is not configured on this gateway.", 503, "tts_not_configured")
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED or tts_service_id != default_service_id, resource_class=domain_rows.AUDIO, receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5552,7 +5571,7 @@ def _stt_execution_snapshot(
         if not isinstance(service_config, Mapping):
             return None
     else:
-        selected = service_for_capability(f"audio.{operation}")
+        selected = service_for_capability(f"{domain_rows.AUDIO}.{operation}")
         if selected is None:
             return None
         service_id, service_config = selected
@@ -5857,7 +5876,7 @@ async def _dispatch_selected_stt_route(
             admission = _dispatch_admission_response(
                 "speech.transcription" if operation == "transcriptions" else "speech.translation",
                 auth_context=auth_context, service_id=execution.service_id,
-                resource_class="audio", receipt=receipt,
+                resource_class=domain_rows.AUDIO, receipt=receipt,
             )
             if admission is not None:
                 return admission
@@ -5948,7 +5967,7 @@ def _stt_receipt(
     return RouteReceipt(
         protocol="openai.audio",
         path=request.url.path,
-        intent=f"audio.{operation}",
+        intent=f"{domain_rows.AUDIO}.{operation}",
         backend=service_id,
         app_profile=plan_ref(auth_context.identity),
         app_id=auth_context.identity.app_id if auth_context.identity else None,
@@ -7194,7 +7213,8 @@ def _resolve_comfy_pids() -> set[int]:
             cwd = os.readlink(f"/proc/{pid}/cwd")
         except Exception:
             continue
-        if "ComfyUI" in cwd:
+        engine_label = _graph_adapter(_GRAPH_CAPABILITY).label
+        if engine_label and engine_label in cwd:
             roots.add(pid)
     if not roots:
         return roots
@@ -7363,7 +7383,7 @@ class _VramProbe:
             self._gpu0_uuid = await asyncio.to_thread(_resolve_gpu0_uuid)
             self._comfy_pids = await asyncio.to_thread(_resolve_comfy_pids)
             if not self._comfy_pids:
-                self.error = "no ComfyUI PIDs resolved"
+                self.error = f"no {_graph_adapter(_GRAPH_CAPABILITY).label} PIDs resolved"
                 # Continue sampling anyway — at least the whole-GPU fields
                 # will be populated for the legacy fallback path.
 
@@ -8345,7 +8365,7 @@ def has_vision_content(messages) -> bool:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type")
-            if btype in ("image_url", "input_image", "image"):
+            if btype in ("image_url", "input_image", domain_rows.IMAGE):
                 return True
     return False
 
@@ -8732,7 +8752,7 @@ def _image_provenance_record(
     seeds = delivery.seeds if delivery is not None else []
     return provenance.build_provenance_record(
         receipt=delivery.receipt if delivery is not None else None,
-        kind="image",
+        kind=domain_rows.IMAGE,
         model_alias=delivery.model_alias if delivery is not None else None,
         seed=seeds[index] if index < len(seeds) else None,
         parameters=parameters,
@@ -9200,7 +9220,7 @@ async def _generate_images_with_adaptive_batching(
 
 
 # The wire operation of POST /v1/audio/generate (the key of its operation table entry), named once for its two handlers.
-_AUDIO_GENERATE_OPERATION = "audio.generate"
+_AUDIO_GENERATE_OPERATION = domain_rows.AUDIO_GENERATE
 
 
 def _acts_for(translator: str, operation: str):
@@ -9395,7 +9415,7 @@ async def proxy_graph_image_request(
                 manifest_hash=identity.manifest_hash,
             )
     else:
-        _attach_image_manifest_if_available(receipt, "image.generate", str(model))
+        _attach_image_manifest_if_available(receipt, intents.require_admission(), str(model))
     if receipt is not None:
         decision = _apply_image_route_policy(
             receipt,
@@ -9605,7 +9625,7 @@ async def _identity_edit_alias(
     try:
         photos = [await item.read() for item in image_files]
         if not photos or len(photos) > identity_api.MAX_PHOTOS or not all(photos):
-            raise identity_scene.IdentityError(f"send 1 to {identity_api.MAX_PHOTOS} reference photos", param="image")
+            raise identity_scene.IdentityError(f"send 1 to {identity_api.MAX_PHOTOS} reference photos", param=_IMAGE_FIELD)
         unknown = set(options) - identity_api.SCENE_OPTION_NAMES
         if unknown:
             raise identity_scene.IdentityError(f"unknown identity option: {sorted(unknown)[0]}", param="extensions")
@@ -9796,13 +9816,13 @@ async def proxy_graph_image_edit_request(
         model = model_resolution.effective_model
 
     if not image_file:
-        _record_image_input(receipt, "image", rejected_reason="missing")
+        _record_image_input(receipt, _IMAGE_FIELD, rejected_reason="missing")
         return Response(
             content=json.dumps({"error": {"message": "image is required", "type": "invalid_request_error"}}),
             status_code=400,
             media_type="application/json"
         )
-    _record_image_input(receipt, "image[]" if form.get("image[]") else "image")
+    _record_image_input(receipt, "image[]" if form.get("image[]") else _IMAGE_FIELD)
 
     model = _select_edit_workflow(
         str(model),
@@ -9897,7 +9917,7 @@ async def proxy_graph_image_edit_request(
                 manifest_hash=identity.manifest_hash,
             )
     else:
-        _attach_image_manifest_if_available(receipt, "image.edit", str(model))
+        _attach_image_manifest_if_available(receipt, intents.require_admission(), str(model))
     required_mask_input = _manifest_required_route_mask_input(manifest)
     if not mask_file and required_mask_input:
         _record_image_input(receipt, "mask", rejected_reason="missing")
@@ -9969,7 +9989,7 @@ async def proxy_graph_image_edit_request(
             if mask_context is not None and _manifest_uses_source_alpha_mask(manifest):
                 image_content = _apply_edit_mask_as_source_alpha(mask_context)
 
-            files = {"image": (image_file.filename or "input.png", image_content, "image/png")}
+            files = {node_graph.UPLOAD_FIELD: (image_file.filename or "input.png", image_content, "image/png")}
             graph = _graph(client, _GRAPH_CAPABILITY)
             upload_resp = await graph.upload(files, headers=headers)
 
@@ -10032,7 +10052,7 @@ async def proxy_graph_image_edit_request(
             for extra_file, extra_content in zip(image_files[1:], uploaded_contents[1:]):
                 made_from.append(_upload_as_output_input(extra_file, extra_content))
                 extra_upload_resp = await graph.upload(
-                    {"image": (extra_file.filename or "input.png", extra_content, "image/png")},
+                    {node_graph.UPLOAD_FIELD: (extra_file.filename or "input.png", extra_content, "image/png")},
                     headers=headers,
                 )
                 if extra_upload_resp.status != 200:
@@ -10050,7 +10070,7 @@ async def proxy_graph_image_edit_request(
 
             for slot_node, filename in zip(image_slots, image_filenames):
                 if slot_node in workflow:
-                    workflow[slot_node]["inputs"]["image"] = filename
+                    workflow[slot_node]["inputs"][_NODE_IMAGE_INPUT] = filename
 
             mask_input_name = _manifest_route_managed_mask_input(manifest)
             mask_uses_workflow = bool(
@@ -10058,7 +10078,7 @@ async def proxy_graph_image_edit_request(
                 and _manifest_uses_source_alpha_mask(manifest)
             )
             if mask_context is not None and mask_input_name and mask_content is not None:
-                mask_files = {"image": ("normalized-mask.png", mask_context.edit_mask, "image/png")}
+                mask_files = {node_graph.UPLOAD_FIELD: ("normalized-mask.png", mask_context.edit_mask, "image/png")}
                 mask_upload_resp = await graph.upload(mask_files, headers=headers)
                 if mask_upload_resp.status != 200:
                     return client_errors.client_error(502, "mask_upload_failed", error_type="api_error")
@@ -10313,7 +10333,7 @@ async def proxy_graph_image_variations_request(
 
     image_files = _collect_edit_image_uploads(form)
     if not image_files:
-        _record_image_input(receipt, "image", rejected_reason="missing")
+        _record_image_input(receipt, _IMAGE_FIELD, rejected_reason="missing")
         return Response(
             content=json.dumps({"error": {"message": "image is required", "type": "invalid_request_error"}}),
             status_code=400,
@@ -10323,7 +10343,7 @@ async def proxy_graph_image_variations_request(
         # OpenAI's variations endpoint takes exactly one input image. Reject
         # clearly rather than silently using only the first (the same
         # silent-drop bug class this media-refresh fixes for edits).
-        _record_image_input(receipt, "image", rejected_reason="too_many_images")
+        _record_image_input(receipt, _IMAGE_FIELD, rejected_reason="too_many_images")
         return Response(
             content=json.dumps({
                 "error": {
@@ -10332,14 +10352,14 @@ async def proxy_graph_image_variations_request(
                         f"{len(image_files)} were provided"
                     ),
                     "type": "invalid_request_error",
-                    "param": "image",
+                    "param": _IMAGE_FIELD,
                     "code": "too_many_images",
                 }
             }),
             status_code=400,
             media_type="application/json",
         )
-    _record_image_input(receipt, "image")
+    _record_image_input(receipt, _IMAGE_FIELD)
 
     requested_model_raw = form.get("model")
     requested_model = str(requested_model_raw) if requested_model_raw else ""
@@ -10685,7 +10705,7 @@ def _openai_video_payload(
     tracked = _tracked_video_fields(prompt_id, auth_context)
     payload: dict[str, Any] = {
         "id": video_id,
-        "object": "video",
+        "object": _VIDEO_OBJECT,
         "azizam_object": "video.generation",
         "status": _openai_video_status(status),
         "azizam_status": status,
@@ -11111,7 +11131,7 @@ def _load_video_workflow_file(workflow_cfg: dict) -> Optional[dict]:
     errors = validate_workflow_graph(workflow)
     if errors:
         print(
-            f"[proxy] invalid video ComfyUI workflow {p}: {'; '.join(errors)}",
+            f"[proxy] invalid video {_graph_adapter(_VIDEO_GRAPH_CAPABILITY).label} workflow {p}: {'; '.join(errors)}",
             flush=True,
         )
         return None
@@ -11658,7 +11678,7 @@ async def _load_completed_video_bytes(
     falls through to ComfyUI's history, as the status route does.
     """
     await _warm_video_owner_keys(auth_context)
-    param = "video"
+    param = _VIDEO_FIELD
     prompt_id = _prompt_id_from_video_id(video_id)
     if not prompt_id:
         raise _VideoAssetError("invalid video_id", param=param)
@@ -11738,7 +11758,7 @@ async def _resolve_video_workflow_asset(
     video inputs only), an `asset_id` (images only), an http(s) URL, a data:
     URI, or a base64 string.
     """
-    if kind == "video":
+    if kind == domain_rows.VIDEO:
         video_id = _asset_reference_video_id(value)
         if video_id:
             try:
@@ -11827,7 +11847,7 @@ async def _resolve_video_workflow_assets(
             or name in ROUTE_MANAGED_VIDEO_INPUTS  # owned by standard route fields
         ):
             continue
-        kind = "video" if name == source_input else "image"
+        kind = domain_rows.VIDEO if name == source_input else domain_rows.IMAGE
         data, filename, mime = await _resolve_video_workflow_asset(
             value, kind=kind, param=f"{ext_param}.{name}", auth_context=auth_context, request=request,
             holder=holder, accepts=accepts_of(spec),
@@ -11867,7 +11887,7 @@ async def _upload_video_workflow_assets(
         async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
             graph = _graph(client, "videos")
             for name, (data, filename, mime) in assets.items():
-                resp = await graph.upload({"image": (filename, data, mime)}, headers=headers)
+                resp = await graph.upload({node_graph.UPLOAD_FIELD: (filename, data, mime)}, headers=headers)
                 uploaded = resp.json().get("name") if resp.status == 200 else None
                 if not uploaded:
                     # What the engine said about the file is never passed on (decisions D44, D45b).
@@ -12032,7 +12052,7 @@ async def _submit_video_graph(
                         "metadata_mode": (media_delivery.current().requested_mode if media_delivery.current() else None),
                         "provenance": provenance.build_provenance_record(
                             receipt=media_delivery.current().receipt if media_delivery.current() else None,
-                            kind="video",
+                            kind=domain_rows.VIDEO,
                             requested_model=public_model,
                             resolved_model=workflow_name,
                             workflow_id=workflow_id_for_video_key(workflow_name),
@@ -12080,7 +12100,7 @@ async def _submit_video_graph(
                 immediate_prompt = prompt
             payload = {
                 "id": video_id,
-                "object": "video",
+                "object": _VIDEO_OBJECT,
                 "model": public_model,
                 "azizam_resolved_model": workflow_name,
                 "status": "queued",
@@ -12140,7 +12160,7 @@ async def _proxy_graph_video_create(
     if receipt is None:
         from gateway import media_ingestion
         receipt = await media_ingestion.start_receipt(
-            request, auth_context, intent="video.generate", protocol="openai.video",
+            request, auth_context, intent=domain_rows.VIDEO_GENERATE, protocol="openai.video",
             route_path=str(getattr(getattr(request, "url", None), "path", "/v1/videos")),
         )
         try:
@@ -12154,7 +12174,7 @@ async def _proxy_graph_video_create(
         return await run_receipt_write(media_ingestion.finish_response, receipt, response)
 
     # Create has no mounted row to read this from (see registry/README.md, "Execution intents"): it stays spelled here.
-    admission_intent = "video.generate"
+    admission_intent = domain_rows.VIDEO_GENERATE
     admission = _graph_media_admission(
         admission_intent, auth_context=auth_context,
     )
@@ -12674,7 +12694,7 @@ async def _proxy_graph_video_create(
         upload_headers = configured_downstream_headers(auth_context, _graph_service_id(_VIDEO_GRAPH_CAPABILITY))
         try:
             async with engine_egress.async_client(timeout=httpx.Timeout(60, connect=10)) as upload_client:
-                files = {"image": (image_filename, image_bytes, "image/png")}
+                files = {node_graph.UPLOAD_FIELD: (image_filename, image_bytes, "image/png")}
                 upload_resp = await _graph(upload_client, "videos").upload(files, headers=upload_headers)
         except Exception:
             return client_errors.client_error(502, "upload_failed", error_type="api_error")
@@ -12696,7 +12716,7 @@ async def _proxy_graph_video_create(
 
         # Wire the uploaded filename into the LoadImage node.
         image_node = meta["image_node"]
-        if not _set_field(image_node, ["image"], uploaded_filename):
+        if not _set_field(image_node, [_NODE_IMAGE_INPUT], uploaded_filename):
             return Response(
                 content=json.dumps({
                     "error": {
@@ -12801,7 +12821,7 @@ async def _proxy_graph_video_create(
     if subject_record:
         record_extra["subject"] = subject_record
     if audio_disabled:
-        record_extra["audio"] = False
+        record_extra[domain_rows.AUDIO] = False
     return await _submit_video_graph(
         record_extra=record_extra or None,
         workflow=workflow,
@@ -12982,7 +13002,7 @@ async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_contex
     engine = _graph_adapter("videos").label
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
-            resp = await _graph(client, "videos").upload({"image": (filename, data, mime)}, headers=headers)
+            resp = await _graph(client, "videos").upload({node_graph.UPLOAD_FIELD: (filename, data, mime)}, headers=headers)
     except TransportFailure as exc:
         raise _VideoAssetError(f"{engine} upload failed.", status=502) from exc
     name = resp.json().get("name") if resp.status == 200 else None
@@ -13044,16 +13064,16 @@ async def _submit_video_chain(
     if extending:
         try:
             source_bytes, source_name, _mime = await _resolve_video_workflow_asset(
-                source, kind="video", param="video", auth_context=auth_context, request=request)
+                source, kind=domain_rows.VIDEO, param=_VIDEO_FIELD, auth_context=auth_context, request=request)
         except _VideoAssetError as exc:
             return _video_asset_error_response(exc)
         if not source_bytes or len(source_bytes) > video_inputs.MAX_SOURCE_VIDEO_BYTES:
-            return _json_error(400, "video is empty or larger than the size limit", param="video")
+            return _json_error(400, "video is empty or larger than the size limit", param=_VIDEO_FIELD)
         probe = await private_tmp.run_worker(
             video_inputs.probe_video, source_bytes, video_inputs.suffix_for_video(source_name, _mime),
             workdir=private_tmp.current() / "video_inputs")
         if probe is None:
-            return _json_error(400, "video is not a readable video", param="video")
+            return _json_error(400, "video is not a readable video", param=_VIDEO_FIELD)
 
     fps = float(probe.fps) if probe is not None else float(workflow_cfg.get("frame_rate", 24))
     if probe is not None:
@@ -13066,7 +13086,7 @@ async def _submit_video_chain(
     if probe is not None and probe.frames < tail_frames:
         return _json_error(
             400, f"the source video has {probe.frames} frames; extending needs at least {tail_frames} "
-            f"for context_seconds={context_seconds:g}", param="video", code="video_too_short")
+            f"for context_seconds={context_seconds:g}", param=_VIDEO_FIELD, code="video_too_short")
 
     try:
         segments = engine.plan_segments(
@@ -13164,7 +13184,7 @@ async def _submit_video_chain(
         duration_adjustment_reason=reason,
         record_extra={"chain": chain_info, "extended_from_video_id": source_video_id,
                       "seconds": _seconds_text(total_seconds), "total_seconds": round(total_seconds, 3),
-                      **({"audio": False} if audio_disabled else {})},
+                      **({domain_rows.AUDIO: False} if audio_disabled else {})},
         payload_extra={"extended_from_video_id": source_video_id, "total_seconds": round(total_seconds, 3),
                        "segments": len(segments), "seconds": _seconds_text(total_seconds)},
         progress_units=built.units,
@@ -13220,16 +13240,16 @@ async def proxy_graph_video_extend(
             501, "Video extension is not configured on this gateway. Set videos.extend_workflow "
             "in proxy_config.yml to enable it.", code="video_extend_not_configured")
     try:
-        body = await _read_video_request_body(request, id_reference_fields=("video",))
+        body = await _read_video_request_body(request, id_reference_fields=(_VIDEO_FIELD,))
     except _VideoFormParseError as exc:
         return _json_error(400, str(exc))
     _begin_media_delivery(auth_context, receipt)
     memory_error = _note_media_metadata_body(body)
     if memory_error is not None:
         return memory_error
-    video = body.pop("video", None)
+    video = body.pop(_VIDEO_FIELD, None)
     if video is None:
-        return _json_error(400, "video is required: pass {\"id\": \"video_...\"} or upload a file", param="video")
+        return _json_error(400, "video is required: pass {\"id\": \"video_...\"} or upload a file", param=_VIDEO_FIELD)
     unknown = detect_unknown_top_level_fields(body, STANDARD_VIDEO_EXTEND_FIELDS)
     if unknown:
         name, reason = next(iter(unknown.items()))
@@ -13241,7 +13261,7 @@ async def proxy_graph_video_extend(
     if source_id:
         prompt_id = _prompt_id_from_video_id(source_id)
         if not prompt_id:
-            return _json_error(400, "invalid video id", param="video")
+            return _json_error(400, "invalid video id", param=_VIDEO_FIELD)
         async with _video_progress_lock:
             if await _video_source_unknown(source_id, prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
@@ -13502,7 +13522,7 @@ async def proxy_graph_video_content(
             }.get(ext, "application/octet-stream")
 
             record = _video_job_records.get(prompt_id) or {}
-            if record.get("audio") is False:
+            if record.get(domain_rows.AUDIO) is False:
                 # The request asked for a video-only asset: remove the track
                 # before the prompt metadata is captured, before storage, and
                 # before delivery, so the Library copy and the returned file
@@ -14097,14 +14117,14 @@ async def proxy_graph_video_edit(
         return _json_error(400, str(exc))
     if not isinstance(body.get("prompt"), str) or not body["prompt"].strip():
         return _json_error(400, "prompt is required", param="prompt")
-    video = body.pop("video", None)
+    video = body.pop(_VIDEO_FIELD, None)
     if video is None:
-        return _json_error(400, "video is required: upload a file or pass {\"id\": \"video_...\"}", param="video")
+        return _json_error(400, "video is required: upload a file or pass {\"id\": \"video_...\"}", param=_VIDEO_FIELD)
     source_id = _asset_reference_video_id(video)
     if source_id:
         prompt_id = _prompt_id_from_video_id(source_id)
         if not prompt_id:
-            return _json_error(400, "invalid video id", param="video")
+            return _json_error(400, "invalid video id", param=_VIDEO_FIELD)
         async with _video_progress_lock:
             if await _video_source_unknown(source_id, prompt_id, auth_context):
                 return _json_error(404, "video_id not found", kind="not_found")
@@ -14356,7 +14376,7 @@ async def _serve(app: FastAPI):
             flush=True,
         )
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] firehose replay failed: {e}", flush=True)
+        print(f"[proxy] firehose replay failed: {log_scrub.describe_error(e)}", flush=True)
 
     # Engines are reached lazily. A declared process driver may start one on
     # the first request when the owner has enabled host command execution.
@@ -14373,7 +14393,7 @@ async def _serve(app: FastAPI):
     video_reconcile_task = None
     if _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         comfy_ws_task = asyncio.create_task(_graph_ws_listener(comfy_ws_stop))
-        print(f"[proxy] ComfyUI ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
+        print(f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
 
         # Startup reconciliation: safety net for any persisted/hydrated
         # _video_progress (currently in-memory only, so this is usually a
@@ -14387,7 +14407,7 @@ async def _serve(app: FastAPI):
                     flush=True,
                 )
             except Exception as e:  # noqa: BLE001
-                print(f"[proxy] video progress startup reconcile failed: {e}", flush=True)
+                print(f"[proxy] video progress startup reconcile failed: {log_scrub.describe_error(e)}", flush=True)
 
         video_reconcile_task = asyncio.create_task(
             _reconcile_video_progress_loop(video_reconcile_stop)
@@ -14418,7 +14438,7 @@ async def _serve(app: FastAPI):
         metrics_task = asyncio.create_task(metrics_sampler.sampler_loop(lambda: config))
         print(f"[proxy] Metrics sampler started (db={metrics_store.DB_PATH})", flush=True)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
+        print(f"[proxy] Metrics sampler failed to start: {log_scrub.describe_error(e)}", flush=True)
 
     # Saved /v1/responses conversations survive until explicit deletion.
     print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
@@ -14439,7 +14459,7 @@ async def _serve(app: FastAPI):
         )
         _recover_media_jobs()
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Media job store failed to start: {e}", flush=True)
+        print(f"[proxy] Media job store failed to start: {log_scrub.describe_error(e)}", flush=True)
 
     try:
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
@@ -14461,7 +14481,7 @@ async def _serve(app: FastAPI):
                 flush=True,
             )
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Admin store failed to start: {e}", flush=True)
+        print(f"[proxy] Admin store failed to start: {log_scrub.describe_error(e)}", flush=True)
 
     prompt_memory_stop = asyncio.Event()
     prompt_memory_task = asyncio.create_task(_prompt_memory_maintenance_loop(prompt_memory_stop))
@@ -14826,7 +14846,7 @@ def _workflow_target_ids(
     manifest: Mapping[str, Any] | None = None,
     extra_ids: Iterable[str] = (),
 ) -> set[str]:
-    ids = {str(item).strip() for item in extra_ids if str(item).strip()}
+    ids = {str(item).strip() for item in extra_ids if item is not None and str(item).strip()}
     for item in (requested, resolved):
         if item:
             ids.add(str(item).strip())
@@ -14982,10 +15002,19 @@ async def _current_loaded_model_policy_decision(
     )
 
 
+# The configured workflow key a model name leads to, and the workflow id of that key, for the intents whose model ids are
+# configuration keys rather than workflow ids. Keyed by the route rows' intents.
+def _configured_workflow_keys() -> dict[str, tuple[Callable[[str], tuple], Callable[[str], str | None]]]:
+    return {
+        domain_rows.VIDEO_GENERATE: (_resolve_video_workflow, workflow_id_for_video_key),
+        domain_rows.AUDIO_GENERATE: (_resolve_audio_workflow, _audio_workflow_id),
+    }
+
+
 _DISCOVERY_OPERATION_INTENTS = {
     "chat": "chat.completions", "embeddings": "text.embeddings",
-    "images": "image.generate", "image_edits": "image.edit",
-    "videos": "video.generate", "audio_generate": "audio.generate",
+    "images": domain_rows.IMAGE_GENERATE, "image_edits": domain_rows.IMAGE_EDIT,
+    "videos": domain_rows.VIDEO_GENERATE, "audio_generate": domain_rows.AUDIO_GENERATE,
     "speech": "speech.synthesis", "transcriptions": "speech.transcription",
     "rerank": "text.embeddings", "decisions": "decision.systemone",
 }
@@ -15025,28 +15054,34 @@ def _category_entry_visible(auth_context: AuthContext, entry: Mapping[str, Any])
             return discovery_allows(auth_context.identity, make_policy_request())
         else:
             target = (resolution.alias.target if resolution.alias else resolution.effective_model) or model
-        if intent.startswith("image."):
-            manifest = _find_image_manifest(intent, target)
-            if manifest is not None:
-                workflow = manifest["id"]
+        manifest = _find_image_manifest(intent, target)
+        if manifest is not None:
+            workflow = manifest["id"]
     # Media model routes use configured workflow keys. Gateway workflow
     # discovery uses manifest IDs because its run route accepts those IDs.
     if operation or entry.get("azizam_workflow_id"):
-        if intent == INTENT_VIDEO_GENERATE:
-            name, _ = _resolve_video_workflow(target)
+        keyed = _configured_workflow_keys().get(intent)
+        if keyed is not None:
+            resolve_key, id_for_key = keyed
+            name, _ = resolve_key(target)
             if name:
-                workflow = workflow_id_for_video_key(name)
-        elif intent == INTENT_AUDIO_GENERATE:
-            name, _ = _resolve_audio_workflow(target)
-            if name:
-                workflow = _audio_workflow_id(name) or workflow
-    protocol = str(entry.get("azizam_protocol") or _protocol_for_intent(intent))
+                workflow = id_for_key(name) or workflow
     # One request, built the way the request route builds it: the model the
     # name resolves to, plus the name the client sent. A plan may grant either;
     # owner category rules follow the model (and a restricted category hides both).
-    policy_request = make_policy_request(
-        protocol=protocol, intent=intent, model=target, requested_model=model, workflow=workflow,
-    )
+    record = GATEWAY_WORKFLOW_REGISTRY.get(workflow) if workflow else None
+    try:
+        if record is not None and not entry.get("azizam_protocol"):
+            # A workflow record is judged as the run path judges it: its selected protocol and its record facts.
+            policy_request = _workflow_policy_request(
+                record.id, record.contract, record.facts, intent=intent, model=target, requested_model=model)
+        else:
+            policy_request = make_policy_request(
+                protocol=str(entry.get("azizam_protocol") or _protocol_for_intent(intent)),
+                intent=intent, model=target, requested_model=model, workflow=workflow,
+            )
+    except policy_protocol.ProtocolUnresolved:
+        return False
     if not evaluate(_access_for_auth_context(auth_context), policy_request).allowed:
         return False
     return category_enforcement.visible(auth_context.identity, policy_request)
@@ -15111,19 +15146,27 @@ async def _filter_model_list_for_profile(
 
 
 def _protocol_for_intent(intent: str) -> str:
-    if intent == "decision.systemone":
-        return "typesafe.systemone"
-    if intent == mesh_api.MESH_INTENT:
-        return mesh_api.MESH_PROTOCOL
-    if intent.startswith("image."):
-        return "openai.images"
-    if intent.startswith("video."):
-        return "openai.video"
-    if intent.startswith(("audio.", "speech.", "sound.", "music.")):
-        return "openai.audio"
-    if intent.startswith("responses."):
-        return "openai.responses"
-    return "openai.chat"
+    """The policy protocol the rows declare for an intent (gateway/policy_protocol.py).
+
+    An intent no row declares raises ``ProtocolUnresolved``; it never becomes chat. A workflow is judged under the
+    protocol of the frontend row that selects it (``_workflow_policy_request``), not under its intent's.
+    """
+    return policy_protocol.protocol_for_intent(intent)
+
+
+def _workflow_policy_request(workflow_id: str, contract: Mapping[str, Any], facts: Any = None, **fields: Any):
+    """The policy request of one workflow, built one way for a run and for discovery.
+
+    The protocol is the one of the frontend row that selects the workflow's contract; the exposure, trust and resource
+    tiers and the tags are the facts of its record. Raises ``ProtocolUnresolved`` when no row declares a protocol.
+    """
+    intent = fields.pop("intent", None) or str(contract.get("intent") or "")
+    extra = ({} if facts is None else {
+        "capability_exposure": facts.exposure, "capability_trust_tier": facts.trust_tier,
+        "capability_resource_tier": facts.resource_tier, "capability_tags": facts.tags})
+    return make_policy_request(
+        protocol=policy_protocol.protocol_for_workflow(workflow_id, contract), intent=intent, workflow=workflow_id,
+        **extra, **fields)
 
 
 def _capability_for_access(
@@ -15150,11 +15193,16 @@ def _capability_for_access(
     # a plan may also grant the name itself (requested_model).
     policy_model = next((tag.removeprefix("resolves_to:") for tag in capability.tags
                          if tag.startswith("resolves_to:")), capability.model)
+    try:
+        declared_protocol = protocol or _protocol_for_intent(capability.intent)
+    except policy_protocol.ProtocolUnresolved:
+        return replace(capability, policy_available=False,
+                       policy_reasons=("The policy protocol of this capability is not declared.",))
     viewed = capability_with_policy_view(
         capability,
         access,
         request=make_policy_request(
-            protocol=protocol or _protocol_for_intent(capability.intent),
+            protocol=declared_protocol,
             intent=capability.intent,
             workflow=capability.resolved_workflow or capability.workflow,
             model=policy_model,
@@ -15226,7 +15274,7 @@ def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
             "stt": DERIVED.STT_ENABLED,
             "images": _graph_service(_GRAPH_CAPABILITY).enabled,
             "videos": _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled,
-            "audio": _graph_service(_AUDIO_GRAPH_CAPABILITY).enabled,
+            domain_rows.AUDIO: _graph_service(_AUDIO_GRAPH_CAPABILITY).enabled,
         },
         backends=_live_backends,
     ))
@@ -15243,8 +15291,8 @@ def _gateway_catalog_finish(
     capabilities = [*base, *remote]
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        if record.id == _MESH_WORKFLOW_ID:
-            continue  # The mesh route's manifest lists once, with the route's own facts (_mesh_facts, below).
+        if _is_mesh_record(record):
+            continue  # A mesh workflow lists once, with the route's own facts (_mesh_facts, below).
         for backend in record.supported_backends:
             try:
                 capabilities.append(capability_from_workflow_record(
@@ -15274,7 +15322,7 @@ def _gateway_catalog_finish(
     ]
 
     # The mesh row's facts. Its state joins later as live evidence (LIVE_PROBES), like every other row's.
-    capabilities.append(_mesh_facts(live_registry))
+    capabilities.extend(_mesh_facts(live_registry))
     return capabilities
 
 
@@ -15542,7 +15590,7 @@ async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
                 if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
                     selected[0]
-                    for capability in (_SPEECH_CAPABILITY, _TRANSCRIPTION_CAPABILITY, "audio.translations", _EMBEDDINGS_CAPABILITY)
+                    for capability in (_SPEECH_CAPABILITY, _TRANSCRIPTION_CAPABILITY, domain_rows.AUDIO_TRANSLATIONS, _EMBEDDINGS_CAPABILITY)
                     if (selected := service_for_capability(capability)) is not None
                 ] + [service_id for service_id in [_highest_priority_chat_backend()] if service_id]
                 + [str(route["service_id"])
@@ -16106,7 +16154,7 @@ class _SessionMakeRuntime:
         auth_context = AuthContext(identity=identity)
         body = copy.deepcopy(dict(payload.get("body") or {}))
         body["response_format"] = "url"
-        if payload.get("intent") == "image.edit":
+        if payload.get("intent") == domain_rows.IMAGE_EDIT:
             source_asset_id = str(body.pop("source_asset_id", ""))
             # The person may have deleted the picture since asking, and a
             # shared copy can stay in the cache, so recheck the Library itself.
@@ -16119,7 +16167,7 @@ class _SessionMakeRuntime:
                 (key, json.dumps(value) if isinstance(value, (dict, list)) else str(value))
                 for key, value in body.items()
             ]
-            fields.append(("image", UploadFile(
+            fields.append((_IMAGE_FIELD, UploadFile(
                 io.BytesIO(source.read_bytes()), filename=source.name,
                 headers=Headers({"content-type": asset_media_type(source_asset_id, source)}),
             )))
@@ -16408,6 +16456,17 @@ def _mcp_catalog() -> list[dict[str, Any]]:
     return [{**entry, "inputs": advertised_inputs_schema(by_id[entry["id"]])} for entry in entries]
 
 
+async def _mcp_availability(request: Request, workflow_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """The availability of each listed workflow, from the same engine health record the capability list reads."""
+    capabilities = await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request))
+    service_records = await asyncio.to_thread(lambda: _workflow_availability_services(ADMIN_STORE.get_service_registry()))
+    evidence = await _capabilities_availability_evidence(capabilities, service_records)
+    records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+    return {workflow_id: availability.workflow_availability(
+        records[workflow_id], service_records=service_records, evidence=evidence, records=records)
+        for workflow_id in workflow_ids if workflow_id in records}
+
+
 def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suffix: str) -> dict[str, Any]:
     owner = _asset_owner_key(auth if isinstance(auth, AuthContext) else None)
     asset_id = store_asset_bytes(content, kind=kind, suffix=suffix, owner_key_hash=owner)
@@ -16577,6 +16636,7 @@ def _mount_mcp(app: FastAPI) -> None:
             stt_measurement=_mcp_stt_measurement,
             owner_visible=_mcp_stt_measurement_visible,
             catalog=_mcp_catalog,
+            availability=_mcp_availability,
             aliases=lambda: _gateway_aliases_provider(),
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
             store_asset=_mcp_store_asset,
@@ -16804,32 +16864,61 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 ))
 
 # --- Image to 3D: the 3D rows over the run core (gateway/row_routes.py, gateway/multipart_adapter.py) ---
-# The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
-_MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
-# The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
-# (CODE_TO_DATA_S3, D9). The file names the record; the route holds no copy of its content.
-_MESH_WORKFLOW_ID = str(yaml.safe_load(_MESH_MANIFEST_PATH.read_text(encoding="utf-8"))["id"])
-# The live registry may hold no mesh record (the owner turned an override off, or it is left out): the route then answers
-# unavailable (``MESH_DEPS.workflow_available``). Its identity for the catalog and receipts then comes from the bundled file.
-_BUNDLED_MESH_RECORD = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).get(_MESH_WORKFLOW_ID)
-if _BUNDLED_MESH_RECORD is None:
-    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not bundled")
-# The last record converted, with the record it came from. A listing or request that meets the same record object again
-# reuses the conversion; an adopted change brings a new record object and converts once.
-_mesh_workflow_cache: tuple[Any, Any] | None = None
+# The workflows are records (the schema 2 contract): every record of the 3D intent that passes the mesh frontend profile
+# is a choice, bundled or stored by the owner. A request names one with ``model``; with none the route runs the first choice
+# (``workflow_policy.rank_of``, then id). The lease manager is one per process (one gateway worker per physical pool).
+# Bundled mesh records, read once. The live registry may hold none of them (the owner turned an override off, or left it
+# out): the route then answers unavailable (``_mesh_present``), and the record's identity for the catalog comes from here.
+_BUNDLED_MESH_RECORDS = {
+    record.id: record for record in WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).records()
+    if record.contract.get("intent") == mesh_api.MESH_INTENT and not mesh_api.mesh_profile_errors(record.contract)}
+if not _BUNDLED_MESH_RECORDS:
+    raise mesh_manifest.MeshManifestError("no mesh workflow is bundled")
+# Records converted, by record id, with the record each came from. A listing or request that meets the same record object
+# again reuses the conversion; an adopted change brings a new record object and converts once.
+_mesh_workflow_cache: dict[str, tuple[Any, Any]] = {}
 
 
-def current_mesh_workflow() -> "mesh_api.MeshWorkflow":
-    """The mesh workflow for the registry's record now, else for the bundled record. Called on every request and listing
-    (never captured at import), so a record the owner changes is used by the next one."""
-    global _mesh_workflow_cache
-    record = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) or _BUNDLED_MESH_RECORD
-    cached = _mesh_workflow_cache
+def _is_mesh_record(record: Any) -> bool:
+    return record.contract.get("intent") == mesh_api.MESH_INTENT and not mesh_api.mesh_profile_errors(record.contract)
+
+
+def _mesh_workflow_of(record: Any) -> "mesh_api.MeshWorkflow":
+    cached = _mesh_workflow_cache.get(record.id)
     if cached is not None and cached[0] is record:
         return cached[1]
     workflow = mesh_api.mesh_workflow_from_record(record)
-    _mesh_workflow_cache = (record, workflow)
+    _mesh_workflow_cache[record.id] = (record, workflow)
     return workflow
+
+
+def _mesh_records() -> list[Any]:
+    """The mesh records now, first choice first: the live registry's, then the bundled ones it does not hold. Called on
+    every request and listing (never captured at import), so a record the owner changes is used by the next one."""
+    found = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records() if _is_mesh_record(record)}
+    for record_id, record in _BUNDLED_MESH_RECORDS.items():
+        found.setdefault(record_id, record)
+    return sorted(found.values(), key=lambda record: (workflow_policy.rank_of(record.facts), record.id))
+
+
+def _mesh_present(workflow_id: str) -> bool:
+    return GATEWAY_WORKFLOW_REGISTRY.get(workflow_id) is not None
+
+
+def current_mesh_workflows() -> "list[mesh_api.MeshWorkflow]":
+    return [_mesh_workflow_of(record) for record in _mesh_records()]
+
+
+def current_mesh_workflow(workflow_id: str | None = None) -> "mesh_api.MeshWorkflow":
+    """The named mesh workflow, or the first choice among them (what a request that names none runs while it is in the
+    registry)."""
+    workflows = current_mesh_workflows()
+    return next(w for w in workflows if w.id == workflow_id) if workflow_id else workflows[0]
+
+
+def _mesh_default_workflow() -> str | None:
+    """The workflow id a 3D request that names no model runs: the first choice the live registry holds."""
+    return next((record.id for record in _mesh_records() if _mesh_present(record.id)), None)
 
 
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
@@ -16892,7 +16981,7 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 
 MESH_DEPS = mesh_api.MeshApiDeps(
     current_manifest=current_mesh_workflow,
-    workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
+    workflow_available=lambda: _mesh_present(current_mesh_workflow().id),
     frontend_records=lambda: route_registry.protocol_frontend_records(
         registry=_live_service_registry(), proxy_config=runtime().config),
     services=lambda: (_live_service_registry() or {}).get("services") or {},
@@ -16922,7 +17011,7 @@ def _mount_3d_rows(app: FastAPI) -> None:
     row_routes.mount_rows(app, _ROW_ROUTE_DEPS, _MOUNTED_ROW_IDS)
 
 
-FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
+FRONTEND_TRANSLATORS.register_owned(domain_rows.MESH, _mount_3d_rows)
 
 
 def _mount_video_rows(app: FastAPI) -> None:
@@ -16932,16 +17021,21 @@ def _mount_video_rows(app: FastAPI) -> None:
 FRONTEND_TRANSLATORS.register_owned("videos", _mount_video_rows)
 
 
-def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
-    """The mesh row's facts, read from the same registry snapshot as the catalog around it (the route's own tiers)."""
-    return mesh_api.discovery_facts(current_mesh_workflow(), route_registry.protocol_frontend_records(
-        registry=live_registry, proxy_config=config))
+def _mesh_facts(live_registry: Mapping[str, Any] | None) -> list[Capability]:
+    """One row of facts for each mesh workflow, read from the same registry snapshot as the catalog around it (the route's
+    own tiers)."""
+    frontends = route_registry.protocol_frontend_records(registry=live_registry, proxy_config=config)
+    return [mesh_api.discovery_facts(workflow, frontends) for workflow in current_mesh_workflows()]
+
+
+def _mesh_pool_evidence() -> Awaitable[dict[str, dict[str, Any]]]:
+    return mesh_api.records_evidence(MESH_DEPS, current_mesh_workflows(), _mesh_present)
 
 
 # Live probes whose answers are availability evidence, by name. Each returns evidence keyed by service ID. A service with
 # a probe is judged by that probe alone (availability_evidence_snapshot), and each listing asks it once.
 LIVE_PROBES: dict[str, Callable[[], Awaitable[dict[str, dict[str, Any]]]]] = {
-    "mesh": lambda: mesh_api.pool_evidence(MESH_DEPS),
+    domain_rows.MESH: _mesh_pool_evidence,
 }
 
 
@@ -17056,9 +17150,9 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
                 raise cause if isinstance(cause, Exception) else failure
             if upload_error is not None:
                 raise RuntimeError(f"{engine} image upload failed")
-            graph[node_id]["inputs"]["image"] = name
+            graph[node_id]["inputs"][_NODE_IMAGE_INPUT] = name
         admission = _graph_media_admission(
-            "image.edit", auth_context=auth_context,
+            domain_rows.IMAGE_EDIT, auth_context=auth_context,
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
@@ -17104,7 +17198,7 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
     mode = delivery.mode
     record = provenance.build_provenance_record(
         receipt=delivery.receipt,
-        kind="image",
+        kind=domain_rows.IMAGE,
         workflow_id=IDENTITY_MANIFEST_ID,
         resolved_model=IDENTITY_MODEL_ID,
         backend=_graph_service_id(_GRAPH_CAPABILITY),
@@ -17148,7 +17242,7 @@ async def _identity_submit_job(
 ) -> Response:
     """Queue an identity scene as a media job: poll /gateway/v1/media/jobs/{id}, fetch .../content."""
     admission = _media_job_admission_response(
-        "image.generate", auth_context=auth_context,
+        domain_rows.IMAGE_GENERATE, auth_context=auth_context,
         path=getattr(request.url, "path", identity_api.IDENTITY_PATH),
     )
     if admission is not None:
@@ -17200,7 +17294,7 @@ async def _run_identity_job(
 ) -> None:
     async with _identity_job_semaphore:
         admission = _media_job_admission_response(
-            "image.edit", count_queue=False, auth_context=auth_context,
+            domain_rows.IMAGE_EDIT, count_queue=False, auth_context=auth_context,
         )
         if admission is not None:
             _identity_job_failed(job_id, _admission_refusal_message(admission))
@@ -17289,11 +17383,11 @@ def _identity_payload_from_media_job(job: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _identity_admission(auth: AuthContext, path: str) -> Response | None:
-    denied = _enforce_runtime_route_policy(auth, path, policy={"protocol": "openai.images", "intent": "image.edit", "backend": _graph_service_id(_GRAPH_CAPABILITY)})
+    denied = _enforce_runtime_route_policy(auth, path, policy={"protocol": "openai.images", "intent": domain_rows.IMAGE_EDIT, "backend": _graph_service_id(_GRAPH_CAPABILITY)})
     if denied is not None:
         return denied
     return _graph_media_admission(
-        "image.edit", auth_context=auth,
+        domain_rows.IMAGE_EDIT, auth_context=auth,
     )
 
 
@@ -17946,7 +18040,7 @@ def _category_service_catalog() -> list[dict[str, Any]]:
             add(model, label, "model", intent)
     capabilities = build_local_capabilities(
         config, backends=backends,
-        enabled_flags={"images": False, "videos": False, "audio": False},
+        enabled_flags={"images": False, "videos": False, domain_rows.AUDIO: False},
     )
     for capability in capabilities:
         if not capability.model or capability.workflow:
@@ -19739,7 +19833,8 @@ def _origin_header_allowed_for_request(request: Request) -> bool:
         return False
     supplied = request.headers.get("origin") or request.headers.get("referer")
     if not supplied:
-        return True
+        # No Origin and no Referer: only a browser's Sec-Fetch-Site: same-origin vouches for the request.
+        return request.headers.get("sec-fetch-site", "").strip().lower() == "same-origin"
     try:
         parsed = urlsplit(supplied)
     except ValueError:
@@ -20477,7 +20572,7 @@ async def admin_config_reload(request: Request):
                     "tts": public(updates["TTS_HOST"]),
                     "stt": public(updates["STT_HOST"]),
                     "embeddings": public(updates["EMBEDDINGS_HOST"]),
-                    "comfyui": public(updates["COMFY_HOST"]),
+                    updates["_GRAPH_BINDING"]: public(updates["COMFY_HOST"]),
                 },
             },
         )
@@ -20496,9 +20591,9 @@ async def admin_config_reload(request: Request):
 
 _DRAIN_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"})
 
-DRAIN_STATE.register_job_counter("image", lambda: len(_image_media_job_tasks))
-DRAIN_STATE.register_job_counter("audio", lambda: len(_audio_media_job_tasks))
-DRAIN_STATE.register_job_counter("video", lambda: len(_video_media_job_tasks))
+DRAIN_STATE.register_job_counter(domain_rows.IMAGE, lambda: len(_image_media_job_tasks))
+DRAIN_STATE.register_job_counter(domain_rows.AUDIO, lambda: len(_audio_media_job_tasks))
+DRAIN_STATE.register_job_counter(domain_rows.VIDEO, lambda: len(_video_media_job_tasks))
 
 
 def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
@@ -21310,7 +21405,7 @@ async def _handle_realtime(websocket: WebSocket) -> None:
             or not bool_from_config(service.get("enabled"), True) or not service_registry.engine_base_address(service)):
         return await _deny_realtime(websocket, _tts_error("Realtime is not configured on this gateway.", 503, "realtime_not_configured"))
     admission = _dispatch_admission_response(
-        "audio.realtime", auth_context=auth_context, resource_class="audio",
+        f"{domain_rows.AUDIO_PREFIX}realtime", auth_context=auth_context, resource_class=domain_rows.AUDIO,
         service_id=_REALTIME_SERVICE_ID, service_available=True,
     )
     if admission is not None:
@@ -21517,7 +21612,7 @@ def _enforce_runtime_route_policy(
     return None
 
 
-_SAFE_IMAGE_INPUT_NAMES = ("model", "size", "n", "response_format", "background", "prompt", "image")
+_SAFE_IMAGE_INPUT_NAMES = ("model", "size", "n", "response_format", "background", "prompt", _IMAGE_FIELD)
 _MASK_ROUTE_MANAGED_MANIFEST_INPUTS = ("source_mask", "mask_asset", "mask")
 
 
@@ -21592,7 +21687,7 @@ def _prepare_image_edit_mask_context(
 ) -> tuple[ImageEditMaskContext | None, Response | None]:
     source_image, source_error = _open_image_for_route(
         source_image_content,
-        param="image",
+        param=_IMAGE_FIELD,
     )
     if source_error is not None:
         return None, source_error
@@ -21737,7 +21832,7 @@ async def _upload_graph_image_bytes(
     filename: str,
     media_type: str = "image/png",
 ) -> tuple[str | None, Response | None]:
-    files = {"image": (filename, content, media_type)}
+    files = {node_graph.UPLOAD_FIELD: (filename, content, media_type)}
     upload_resp = await _graph(client, _GRAPH_CAPABILITY).upload(files, headers=dict(headers))
     if upload_resp.status != 200:
         return None, client_errors.client_error(502, "upload_failed", error_type="api_error")
@@ -23040,8 +23135,8 @@ def finish_image_route_receipt(
     request has no response."""
     status_code = int(getattr(response, "status_code", 0) or 0)
     response_headers = getattr(response, "headers", {})
-    if response_headers.get("X-ComfyUI-Models-Freed") == "true":
-        receipt.metadata["comfyui_models_freed_for_vram"] = True
+    if response_headers.get(domain_rows.result_header(_IMAGE_RESULT_ROW, "models_freed")) == "true":
+        receipt.metadata[domain_rows.result_receipt_name(_IMAGE_RESULT_ROW, "models_freed")] = True
     receipt.finish(status or _image_receipt_status(status_code))
     try:
         _record_retention_receipt(receipt)
@@ -23788,9 +23883,9 @@ def _image_media_job_request_id(
 def _image_job_body_with_short_model(body: Mapping[str, Any]) -> Mapping[str, Any]:
     """A full workflow id names the same workflow as its short name; the job runs it by the short name the image route takes."""
     requested_name = body.get("model")
-    if isinstance(requested_name, str) and requested_name.startswith("image.generate."):
-        short_name = requested_name.removeprefix("image.generate.")
-        if _find_image_manifest("image.generate", short_name) is not None:
+    if isinstance(requested_name, str) and requested_name.startswith(f"{domain_rows.IMAGE_GENERATE}."):
+        short_name = requested_name.removeprefix(f"{domain_rows.IMAGE_GENERATE}.")
+        if _find_image_manifest(domain_rows.IMAGE_GENERATE, short_name) is not None:
             return {**body, "model": short_name}
     return body
 
@@ -23974,14 +24069,14 @@ def _image_media_job_retry_decision(
     reason: str | None = None
     if status_code == 503 and (code == "vram_exhausted" or "vram" in text):
         reason = "vram_exhausted"
-    elif status_code == 502 and "comfyui unavailable" in text:
-        reason = "comfyui_unavailable"
+    elif status_code == 502 and f"{_graph_adapter(_GRAPH_CAPABILITY).label.lower()} unavailable" in text:
+        reason = f"{DERIVED._GRAPH_BINDING}_unavailable"
     elif status_code == 502 and "gateway tile composition error" in text:
         reason = "tile_composition_error"
     elif status_code == 502 and "no prompt_id returned" in text:
         reason = "missing_prompt_id"
     elif status_code == 504:
-        reason = "comfyui_timeout"
+        reason = f"{DERIVED._GRAPH_BINDING}_timeout"
     elif status_code == 503 and "unavailable" in text:
         reason = "service_unavailable"
 
@@ -24096,7 +24191,7 @@ def _openai_video_payload_from_media_job(
 
 def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | None:
     intent = str(job.get("intent") or "")
-    if intent in ("image.generate", _IDENTITY_JOB_INTENT):
+    if intent in (domain_rows.IMAGE_GENERATE, _IDENTITY_JOB_INTENT):
         return DERIVED._RUNTIME_ROUTE_POLICY["/gateway/v1/media/jobs/{job_id}/content"]
     if intent in _AUDIO_MEDIA_JOB_INTENTS:
         return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("aud")
@@ -24342,7 +24437,7 @@ async def _run_image_media_job(job_id: str) -> None:
             return
         request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
-            "image.generate", count_queue=False, auth_context=auth_context,
+            domain_rows.IMAGE_GENERATE, count_queue=False, auth_context=auth_context,
         )
         if admission is not None:
             message, error_info = _media_job_failure(admission)
@@ -24594,7 +24689,7 @@ def _schedule_image_media_job(job_id: str) -> bool:
 def _resume_pending_image_media_jobs() -> int:
     resumed = 0
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
-        if job.get("intent") != "image.generate":
+        if job.get("intent") != domain_rows.IMAGE_GENERATE:
             continue
         metadata = job.get("metadata") or {}
         if not isinstance(metadata, Mapping) or metadata.get("mode") != "async_image_generation":
@@ -24627,7 +24722,7 @@ def _resume_pending_image_media_jobs() -> int:
 def _image_generation_body_from_media_job_payload(
     payload: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    if payload.get("intent") != "image.generate":
+    if payload.get("intent") != domain_rows.IMAGE_GENERATE:
         return None
     request_body = payload.get("request")
     if not isinstance(request_body, Mapping):
@@ -24660,7 +24755,7 @@ _MEDIA_JOB_QUEUE_KEY = "comfyui-media"
 # Every intent the gateway runs as a media job, and its admission resource
 # class. Jobs with these intents count toward the media queue depth.
 # The resource classes of media job, each served by one graph family.
-_RESOURCE_IMAGE, _RESOURCE_VIDEO, _RESOURCE_AUDIO = "image", "video", "audio"
+_RESOURCE_IMAGE, _RESOURCE_VIDEO, _RESOURCE_AUDIO = domain_rows.IMAGE, domain_rows.VIDEO, domain_rows.AUDIO
 _GRAPH_FAMILY_BY_RESOURCE_CLASS = {
     _RESOURCE_IMAGE: _GRAPH_CAPABILITY, _RESOURCE_VIDEO: _VIDEO_GRAPH_CAPABILITY, _RESOURCE_AUDIO: _AUDIO_GRAPH_CAPABILITY,
 }
@@ -25105,7 +25200,7 @@ async def _run_audio_media_job(job_id: str) -> None:
             return
         request_shim.scope["auth_context"] = auth_context
         admission = _media_job_admission_response(
-            str(job.get("intent") or "audio.generate"), count_queue=False, auth_context=auth_context,
+            str(job.get("intent") or domain_rows.AUDIO_GENERATE), count_queue=False, auth_context=auth_context,
         )
         if admission is not None:
             message, error_info = _media_job_failure(admission)
@@ -25147,7 +25242,7 @@ async def _run_audio_media_job(job_id: str) -> None:
             try:
                 from gateway import media_ingestion
                 receipt = await media_ingestion.start_receipt(
-                    request_shim, auth_context, intent=str(job.get("intent") or "audio.generate"), protocol="openai.audio",
+                    request_shim, auth_context, intent=str(job.get("intent") or domain_rows.AUDIO_GENERATE), protocol="openai.audio",
                     request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                 )
                 generated_token = _JOB_GENERATED.set(stored_generated)
@@ -25701,7 +25796,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 try:
                     from gateway import media_ingestion
                     receipt = await media_ingestion.start_receipt(
-                        request_shim, auth_context, intent="video.generate", protocol="openai.video",
+                        request_shim, auth_context, intent=domain_rows.VIDEO_GENERATE, protocol="openai.video",
                         request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                     )
                     try:
@@ -26139,6 +26234,13 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
         intent=intent, model=str(model), backend=target.engine_id))
     if decision.denied:
         return _policy_denied_response(decision)
+    # The owner's controls come before a job exists: a service in maintenance or a disabled intent or resource class
+    # refuses here, as it does for a synchronous protocol call. A declared job is "media" work and is not counted in
+    # the media queue (its intent is not one of the queued modality jobs).
+    admission = _dispatch_admission_response(
+        intent, auth_context=auth_context, service_id=target.engine_id, service_available=True, resource_class="media")
+    if admission is not None:
+        return admission
     caller = auth_context.identity
     request_id = f"decljob_{uuid.uuid4().hex}"
     job = media_jobs.MediaJob(
@@ -26160,9 +26262,24 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
 
     async def work() -> None:
         job_id = created.job_id
+        lease = None
         try:
             runtime = await asyncio.to_thread(
                 protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
+            # The same lifecycle as a synchronous protocol call: check the operation's key before a selection call can
+            # change state, then hold the serving lease (the transition domain's, or the offering's selection) for the
+            # whole run. The finally releases it on success, failure and cancellation.
+            await asyncio.to_thread(runtime.connection_for, intent)
+            transition = _transition_policy(target.engine_id)
+            if transition.enabled:
+                require_supported(transition, target.engine_id)
+                if offering_effect(target.offering) is not None:
+                    raise TransitionUnavailable(transition.domain, reason="activation_not_supported", service=target.engine_id)
+                async with _admission_lock(target.engine_id):
+                    lease = _swap_drain.lease(target.engine_id)
+            else:
+                lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
+                                            may_switch=_target_activation(auth_context) != "existing_only")
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
                                      path=media_jobs.DB_PATH)
             await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
@@ -26175,6 +26292,9 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
             await receipt_owner.settle(asyncio.CancelledError() if canceled else exc)
             if isinstance(exc, asyncio.CancelledError):
                 raise
+        finally:
+            if lease is not None:
+                lease.release()
 
     task = asyncio.create_task(work())
     _declared_operation_job_tasks.add(task)
@@ -26204,7 +26324,7 @@ async def _dispatch_gateway_media_job_submission(
     if video_body is not None:
         return await _submit_video_media_job(request=request, body=video_body)
     if body is None:
-        if intent == "image.generate":
+        if intent == domain_rows.IMAGE_GENERATE:
             return None
         declared = await _submit_declared_operation_job(request=request, payload=payload, intent=intent)
         if declared is not None:
@@ -26339,7 +26459,7 @@ async def gateway_image_generations_media_job(request: Request):
         response = _policy_denied_response(decision)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
-    admission_response = _media_job_admission_response("image.generate", receipt=receipt)
+    admission_response = _media_job_admission_response(domain_rows.IMAGE_GENERATE, receipt=receipt)
     if admission_response is not None:
         await run_receipt_write(finish_image_route_receipt, receipt, admission_response)
         return admission_response
@@ -26361,8 +26481,8 @@ async def gateway_image_generations_media_job(request: Request):
         return response
 
     job = media_jobs.MediaJob(
-        intent="image.generate",
-        workflow=_image_job_workflow_id("image.generate", model),
+        intent=domain_rows.IMAGE_GENERATE,
+        workflow=_image_job_workflow_id(domain_rows.IMAGE_GENERATE, model),
         backend=receipt.backend,
         request_id=request_id,
         app_profile=plan_ref(auth_context.identity),
@@ -26582,7 +26702,7 @@ async def gateway_media_job_content(job_id: str, request: Request):
         return _mesh_job_content(job)  # the plan was checked above, with the other kinds
     if (job.get("metadata") or {}).get("mode") == declared_operation_job.MODE:
         return _declared_operation_job_content(job)
-    if intent == "image.generate":
+    if intent == domain_rows.IMAGE_GENERATE:
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"
     elif intent == _IDENTITY_JOB_INTENT:
@@ -27142,12 +27262,12 @@ def _workflow_policy_denial(entry: Any, auth_context: AuthContext) -> PolicyDeci
     facts = entry.facts
     if facts is None:
         return None
-    decision = evaluate_and_apply(
-        auth_context.identity,
-        make_policy_request(
-            protocol=_protocol_for_intent(entry.intent), intent=entry.intent, workflow=entry.id,
-            capability_exposure=facts.exposure, capability_trust_tier=facts.trust_tier,
-            capability_resource_tier=facts.resource_tier, capability_tags=facts.tags))
+    try:
+        policy_request = _workflow_policy_request(entry.id, entry.contract, facts)
+    except policy_protocol.ProtocolUnresolved:
+        return PolicyDecision(decision=DENIED, sources=("policy:workflow-protocol",),
+                              reasons=("The policy protocol of this workflow is not declared.",))
+    decision = evaluate_and_apply(auth_context.identity, policy_request)
     if decision.denied:
         return decision
     runnable = any(_workflow_binding_problem(b) is None for b in entry.bindings.values())
@@ -27272,6 +27392,11 @@ class _WorkflowRunPort:
 
     def resume_on_start(self) -> bool:
         return _image_media_job_resume_on_start()
+
+    def engine_last_healthy_at(self, job: Mapping[str, Any]) -> int | None:
+        """When the gateway's engine health record last saw this job's engine answer; None when it holds no time."""
+        evidence = _cached_status_payload_for_availability().get("_availability_evidence")
+        return availability.last_healthy_at(str(job.get("backend") or ""), evidence if isinstance(evidence, Mapping) else None)
 
     # running
     def schedule(self, job_id: str) -> None:
@@ -27581,6 +27706,8 @@ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipar
 frontend_wire_shapes.DEFAULT_WORKFLOWS[
     frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+for _mesh_shape in (frontend_mesh_shapes.LocalAI3D, frontend_mesh_shapes.RawGlb):
+    frontend_wire_shapes.DEFAULT_WORKFLOWS[_mesh_shape.shape_id] = _mesh_default_workflow
 def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
     """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
     # A picture that is no readable file is refused as the upload check refuses it, before the mask is read.
@@ -28376,7 +28503,7 @@ def _audio() -> Mapping[str, Any]:
 
 
 def _audio_default_workflow() -> str:
-    return required_text_setting(_audio(), "default_workflow", "audio.default_workflow")
+    return required_text_setting(_audio(), "default_workflow", f"{_AUDIO_SECTION}.default_workflow")
 
 
 def _audio_workflow_table() -> Mapping[str, Any]:
@@ -28629,7 +28756,12 @@ async def proxy_audio_generate(
             manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
             workflow_id = str(manifest.get("id") or "")
-            if pinned_workflow != workflow_id or not (workflow_id == workflow_name or workflow_id.endswith(f".{workflow_name}")):
+            # A graph file can back several workflows. If the caller named this pinned identity,
+            # an alias must not redirect it to the artifact's workflow. Filename-based owner keys still work.
+            identity_names = (workflow_id, workflow_id.rsplit(".", 1)[-1])
+            identity_redirected = str(model) in identity_names and workflow_name not in identity_names
+            if (pinned_workflow != workflow_id or identity_redirected
+                    or not _manifest_names_audio_workflow(manifest, workflow_name)):
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:
@@ -28730,7 +28862,7 @@ async def proxy_audio_generate(
     headers = configured_downstream_headers(auth_context, _graph_service_id(_AUDIO_GRAPH_CAPABILITY))
     try:
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
-            graph = _graph(client, "audio.generate")
+            graph = _graph(client, _AUDIO_GRAPH_CAPABILITY)
             admission = _graph_media_admission(intents.require_admission(), auth_context=auth_context)
             if admission is not None:
                 return admission
@@ -28814,7 +28946,7 @@ async def proxy_audio_generate(
                                         audio_suffix,
                                         provenance.build_provenance_record(
                                             receipt=media_delivery.current().receipt,
-                                            kind="audio",
+                                            kind=domain_rows.AUDIO,
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
                                             workflow_id=workflow_id,
@@ -29490,9 +29622,6 @@ def _workflow_model_entry_created(workflow_artifact: str) -> int:
         return int(time.time())
 
 
-_MODEL_LISTED_MEDIA_INTENTS = frozenset({"video.generate", "audio.generate"})
-
-
 def _build_workflow_model_entries(
     registry: WorkflowRegistry = GATEWAY_WORKFLOW_REGISTRY,
 ) -> list[dict]:
@@ -29509,7 +29638,7 @@ def _build_workflow_model_entries(
         # Image workflows plus the video/audio generators: their `model` ids
         # (video `videos.workflows` keys, audio `audio.workflows` keys) equal the
         # workflow file basename, so the id listed here is the id the route accepts.
-        if not (record.intent.startswith("image.") or record.intent in _MODEL_LISTED_MEDIA_INTENTS):
+        if not policy_protocol.lists_as_model(record.id, record.contract):
             continue
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, dict):
@@ -33975,7 +34104,7 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
             idempotency_key=request.headers.get("idempotency-key"), fallback_request_id=receipt.request_id,
         )
         caller = auth_context.identity
-        job = media_jobs.MediaJob(intent="image.generate", backend=runtime.target.engine_id,
+        job = media_jobs.MediaJob(intent=domain_rows.IMAGE_GENERATE, backend=runtime.target.engine_id,
             request_id=request_id, parent_request_id=receipt.request_id,
             app_id=caller.app_id if caller else None, owner_key_hash=_asset_owner_key(auth_context),
             api_key_name=caller.name if caller else None, app_profile=plan_ref(caller))
@@ -34020,7 +34149,7 @@ async def _protocol_image_result(runtime, body, request, auth_context, receipt, 
                 refs = tuple(refs_list)
         if not refs:
             raise ProtocolError("The engine returned no image assets.", code="malformed_response")
-        assets = [{"asset_id":ref.id, "kind":"image", "media_type":ref.content_type,
+        assets = [{"asset_id":ref.id, "kind":domain_rows.IMAGE, "media_type":ref.content_type,
                    "size_bytes":ref.size, "url":build_signed_asset_url(request, ref.id)} for ref in refs]
         if owned:
             media_jobs.update_status(job_id, media_jobs.STATUS_SUCCEEDED, add_assets=assets,
@@ -34079,7 +34208,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
             return error_response
         if dimensions is not None:
             body = {k: v for k, v in body.items() if k != "dimensions"}
-    intents = {"chat":"chat.generate", "embeddings":"text.embeddings", "images":"image.generate", "speech":"speech.synthesis"}
+    intents = {"chat":"chat.generate", "embeddings":"text.embeddings", "images":domain_rows.IMAGE_GENERATE, "speech":"speech.synthesis"}
     intent = intents[op]
     owns_receipt = receipt is None
     if receipt is None:
@@ -34120,7 +34249,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         response = _policy_denied_response(decision)
         return await run_receipt_write(media_ingestion.finish_response, receipt, response) if owns_receipt else response
     admission = _dispatch_admission_response(intent, auth_context=auth_context, service_id=target.engine_id,
-        service_available=True, resource_class={"images":"image", "speech":"audio"}.get(op, op), receipt=receipt,
+        service_available=True, resource_class={"images":domain_rows.IMAGE, "speech":domain_rows.AUDIO}.get(op, op), receipt=receipt,
         queue_key=_MEDIA_JOB_QUEUE_KEY if op == "images" else None)
     if admission is not None:
         return await run_receipt_write(media_ingestion.finish_response, receipt, admission) if owns_receipt else admission
@@ -34200,7 +34329,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
                     raise ProtocolError("The engine returned binary data for a JSON operation.", code="malformed_response")
                 content = await store.read(reply.asset, max_bytes=target.description.budgets.max_asset_bytes)
                 from gateway import media_ingestion
-                media_ingestion.index_receipt_assets(receipt, [{"asset_id":reply.asset.id, "kind":"audio",
+                media_ingestion.index_receipt_assets(receipt, [{"asset_id":reply.asset.id, "kind":domain_rows.AUDIO,
                     "media_type":reply.asset.content_type, "size_bytes":reply.asset.size}])
                 response = Response(content=content, media_type=reply.asset.content_type)
             else:
@@ -35718,13 +35847,13 @@ FRONTEND_TRANSLATORS.register("identity", {
     "models.list": SelfAuthOp(list_models, frozenset({"GET"}), openapi_extra=MODELS_LIST_OPENAPI, auth=operation_security.APP_KEY),
     "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
     "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI, auth=operation_security.APP_KEY),
-    "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
+    domain_rows.route_intent("/v1/audio/speech"): SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
                                response_class=Response, auth=operation_security.APP_KEY),
-    "audio.transcriptions": SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
+    domain_rows.route_intent("/v1/audio/transcriptions"): SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
                                        openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI, auth=operation_security.APP_KEY),
-    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI, auth=operation_security.APP_KEY),
-    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI, auth=operation_security.APP_KEY),
-    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI, auth=operation_security.APP_KEY),
+    domain_rows.AUDIO_TRANSLATIONS: SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    domain_rows.AUDIO_GENERATE: SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI, auth=operation_security.APP_KEY),
+    domain_rows.route_intent("/v1/audio/models"): SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI, auth=operation_security.APP_KEY),
     "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI, auth=operation_security.APP_KEY),
     "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI, auth=operation_security.APP_KEY),
     "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI, auth=operation_security.APP_KEY),

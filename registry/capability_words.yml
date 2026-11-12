@@ -10,6 +10,7 @@ capabilities:
     display_order: 0
     label: Chat
     recommended_alias: default
+    alias_hides_declared_names: true   # a chat alias shows its own name, not the title its target model declares
   - id: image
     display_order: 1
     label: Images
@@ -124,6 +125,7 @@ route_intents:
   "video.extend": "video"
   "image.analyze": "image"
   "mesh.generate": "mesh"
+  "mesh.edit": "mesh"
   "embedding": "embed"
   "images.generate": "image"
   "images.generations": "image"
