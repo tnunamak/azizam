@@ -260,3 +260,27 @@ def test_cleanup_does_not_swallow_caller_cancellation() -> None:
                 await task
 
     asyncio.run(scenario())
+
+
+def test_timeout_is_the_history_wait_limit_not_a_total_deadline() -> None:
+    """Documented in the module docstring and the example README: the upload and the download do not count against it."""
+    async def scenario():
+        async def upstream(request):
+            path = request.url.path
+            if path == "/upload/image":
+                await asyncio.sleep(0.15)        # longer than ``timeout``
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                return httpx.Response(200, json=DONE)
+            if path == "/view":
+                return httpx.Response(200, content=GLB)
+            return httpx.Response(200, json=IDLE)
+
+        transport = HandlerTransport(upstream)
+        service = svc.Pixal3DService("http://comfy.test", svc.load_prompt(), lambda: httpx.AsyncClient(transport=transport), timeout=0.05)
+        return await service.generate(b"image", None, None)
+
+    assert asyncio.run(scenario()) == GLB
+    assert "not a total deadline" in svc.__doc__

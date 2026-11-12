@@ -9,6 +9,9 @@ raw GLB bytes back. This service keeps that contract and turns each request into
 3. patch the prompt (picture, seed, resolution, output name) and submit it with ``/prompt``;
 4. poll ``/history/<id>`` until it finishes, then download the textured GLB with ``/view``.
 
+``timeout`` (``PIXAL3D_TIMEOUT_SECONDS``) is the history-wait limit, not a total deadline: it starts when the prompt is
+submitted and bounds only the polling. Each other HTTP call has its own 60 second client limit.
+
 The prompt is the data file ``pixal3d_prompt.json`` next to this script. The node ids below name nodes of that file.
 Run: ``COMFYUI_URL=http://127.0.0.1:8188 uvicorn engines.pixal3d_comfy_service:app --port 8892``
 """
