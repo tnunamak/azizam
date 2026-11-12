@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Emit parity captures from a committed hermetic checkout without writing fixtures.
 
-Run ``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py [name ...]``.
+Run ``scripts/run-hermetic-pytest.sh --python-script scripts/generate_workflow_parity_fixtures.py [name ...]``
+(or ``--headless-openapi``, ``--readers``, ``--legacy-wire``).
 Each WORKFLOW_PARITY_JSON line contains a name and data from the documented
 ``tests/fixtures/c2d_parity/capture.py`` capture functions. Review the emitted
 data before saving it with that module's canonical serializer.
@@ -36,6 +37,13 @@ def main() -> None:
                 for key, value in profile()[section].items():
                     assert result[name][section].pop(key) == value
         print("LEGACY_WIRE_JSON=" + json.dumps(result, sort_keys=True))
+        return
+    if sys.argv[1:] == ["--headless-openapi"]:
+        # The document tests/fixtures/headless_openapi.json pins (tests/test_headless_access.py); save it with
+        # json.dumps(..., indent=2, sort_keys=True) + "\n" after reviewing the diff.
+        import proxy
+        proxy.app.openapi_schema = None
+        print("HEADLESS_OPENAPI_JSON=" + json.dumps(proxy.app.openapi(), sort_keys=True))
         return
     if sys.argv[1:] == ["--readers"]:
         from gateway.discovery import BUNDLED_WORKFLOWS_DIR, WorkflowRegistry

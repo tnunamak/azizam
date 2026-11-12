@@ -1455,7 +1455,7 @@
   },
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
-      "bytes": 7662,
+      "bytes": 9604,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1664,6 +1664,8 @@
           ],
           "route_inputs": [],
           "short_id": "ace-step-1.5-xl-turbo",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -1694,9 +1696,98 @@
                 "type": "number"
               },
               "keyscale": {
+                "enum": [
+                  "C major",
+                  "C# major",
+                  "Db major",
+                  "D major",
+                  "D# major",
+                  "Eb major",
+                  "E major",
+                  "F major",
+                  "F# major",
+                  "Gb major",
+                  "G major",
+                  "G# major",
+                  "Ab major",
+                  "A major",
+                  "A# major",
+                  "Bb major",
+                  "B major",
+                  "C minor",
+                  "C# minor",
+                  "Db minor",
+                  "D minor",
+                  "D# minor",
+                  "Eb minor",
+                  "E minor",
+                  "F minor",
+                  "F# minor",
+                  "Gb minor",
+                  "G minor",
+                  "G# minor",
+                  "Ab minor",
+                  "A minor",
+                  "A# minor",
+                  "Bb minor",
+                  "B minor"
+                ],
                 "type": "string"
               },
               "language": {
+                "enum": [
+                  "ar",
+                  "az",
+                  "bg",
+                  "bn",
+                  "ca",
+                  "cs",
+                  "da",
+                  "de",
+                  "el",
+                  "en",
+                  "es",
+                  "fa",
+                  "fi",
+                  "fr",
+                  "he",
+                  "hi",
+                  "hr",
+                  "ht",
+                  "hu",
+                  "id",
+                  "is",
+                  "it",
+                  "ja",
+                  "ko",
+                  "la",
+                  "lt",
+                  "ms",
+                  "ne",
+                  "nl",
+                  "no",
+                  "pa",
+                  "pl",
+                  "pt",
+                  "ro",
+                  "ru",
+                  "sa",
+                  "sk",
+                  "sr",
+                  "sv",
+                  "sw",
+                  "ta",
+                  "te",
+                  "th",
+                  "tl",
+                  "tr",
+                  "uk",
+                  "ur",
+                  "vi",
+                  "yue",
+                  "zh",
+                  "unknown"
+                ],
                 "type": "string"
               },
               "lyrics": {
@@ -1735,6 +1826,12 @@
                 "type": "number"
               },
               "timesignature": {
+                "enum": [
+                  "2",
+                  "3",
+                  "4",
+                  "6"
+                ],
                 "type": "string"
               },
               "top_k": {
@@ -1764,10 +1861,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo",
         "run_path": null
       },
-      "sha256": "565ebb778b418668028be8f4ffce15f5d783e4cfb4ff8344986b2fc7ba80b3ee"
+      "sha256": "e499ebf85942a31215103b784d7e9f36aba369f7d2bc85730e6368822b9cc9cf"
     },
     "audio.generate.sa3-small-sfx": {
-      "bytes": 3367,
+      "bytes": 3419,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -1864,6 +1961,8 @@
           ],
           "route_inputs": [],
           "short_id": "sa3-small-sfx",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 1.0
         },
         "components": {
@@ -1904,10 +2003,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_sa3_small_sfx",
         "run_path": null
       },
-      "sha256": "155c03d81ffbf392a2cd4775fa39657cb1a50d6da2d8c8d12d9a62725da6ce52"
+      "sha256": "992dd625fd034b719ef115e56a67788f48d2fa54eae09a7425c67801bdad9455"
     },
     "audio.generate.tangoflux": {
-      "bytes": 4245,
+      "bytes": 4326,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -2030,6 +2129,8 @@
           ],
           "route_inputs": [],
           "short_id": "tangoflux",
+          "status": "superseded",
+          "superseded_by": "audio.generate.sa3-small-sfx",
           "typical_seconds": 4.0
         },
         "components": {
@@ -2084,10 +2185,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_tangoflux",
         "run_path": null
       },
-      "sha256": "e6b46fe41b5b2b1b00a6f1e668e20f3e40c348983f60c33aa57c244e16022564"
+      "sha256": "b262cdf713686ebc1cad293b7b9860d35c3c58a1d1d06cd361dcd6ba0be2d610"
     },
     "audio.generate.yue2-song": {
-      "bytes": 3997,
+      "bytes": 4049,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2192,6 +2293,8 @@
           ],
           "route_inputs": [],
           "short_id": "yue2-song",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 30.0
         },
         "components": {
@@ -2239,10 +2342,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song",
         "run_path": null
       },
-      "sha256": "e7a8a66c3979dfed262edbb62d8732a843dd7d590cba9cda19716844c371bbdf"
+      "sha256": "98ac70c04913dbb48e85253c495c7283d72e2cd395f8d27c68b7d56ff36c8540"
     },
     "image.analyze.face-likeness": {
-      "bytes": 2724,
+      "bytes": 2776,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2292,6 +2395,8 @@
           ],
           "route_inputs": [],
           "short_id": "face-likeness",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 2.0
         },
         "components": {
@@ -2331,10 +2436,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_analyze_face_likeness",
         "run_path": null
       },
-      "sha256": "687446a0cd5ccab98ed5e37e059e2737866c6bd4fac4cb28c7935138f086a7fd"
+      "sha256": "25107acf9802ecf939e1e52fb3fd7e81175885dd85190e94c85dead8267834a0"
     },
     "image.edit.fibo-2-edit-turbo": {
-      "bytes": 3243,
+      "bytes": 3295,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2404,6 +2509,8 @@
             }
           ],
           "short_id": "fibo-2-edit-turbo",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 7.0
         },
         "components": {
@@ -2444,10 +2551,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_fibo_2_edit_turbo",
         "run_path": null
       },
-      "sha256": "6363d0a79408487cf2e53202c8e670edbab931d7364bba77abda4da1030c9f71"
+      "sha256": "5be150b258c2fc3e92e554e49e2165b17d60bb056a7dcc1b08af79db2d843f4e"
     },
     "image.edit.flux2-klein": {
-      "bytes": 3814,
+      "bytes": 3866,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2530,6 +2637,8 @@
             }
           ],
           "short_id": "flux2-klein",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 27.0
         },
         "components": {
@@ -2588,10 +2697,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein",
         "run_path": null
       },
-      "sha256": "fe73eddda87bf8dc39988344dbcce1ff494fc72a93985239b2a445bbc25f9858"
+      "sha256": "fe3cffb8649d83e1430303f85831edb518a98c635c991b243eae6b446b694a6c"
     },
     "image.edit.flux2-klein-4b": {
-      "bytes": 4139,
+      "bytes": 4191,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -2680,6 +2789,8 @@
             }
           ],
           "short_id": "flux2-klein-4b",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -2745,10 +2856,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein_4b",
         "run_path": null
       },
-      "sha256": "a37317d19a1ab2116cec6bc76088e49da0eeb132962387b48871c87ae2bd8b43"
+      "sha256": "948574e5a0c90f5be4567c75c052caf1ba5c8580655ab20513480f89c7a2bdc9"
     },
     "image.edit.flux2-klein-4b-inpaint": {
-      "bytes": 5322,
+      "bytes": 5374,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2847,6 +2958,8 @@
             }
           ],
           "short_id": "flux2-klein-4b-inpaint",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -2934,10 +3047,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_flux2_klein_4b_inpaint",
         "run_path": null
       },
-      "sha256": "25425b9d8e788d46bb62d78d65c6482cc13c6ce51724ba1507162d801f4d49b1"
+      "sha256": "e63fec25fd0ae4ba9c735d2cdb2c55fd3ef1cca6b5cf2e8227fe4ef8a4b6a08b"
     },
     "image.edit.image-identity": {
-      "bytes": 7218,
+      "bytes": 7270,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3053,6 +3166,8 @@
           ],
           "route_inputs": [],
           "short_id": "image-identity",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 100.0
         },
         "components": {
@@ -3189,10 +3304,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_image_identity",
         "run_path": null
       },
-      "sha256": "edd558e96cedd7743cc34b39083d5367a06b370f5e59fc12efe881f069b48d44"
+      "sha256": "a52cf5de60b9d07205cc6909e7b28ee06a76df062c342dbeb4daccd3d50caa7d"
     },
     "image.edit.qwen-image-2.1-edit": {
-      "bytes": 3891,
+      "bytes": 3943,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3274,6 +3389,8 @@
             }
           ],
           "short_id": "qwen-image-2.1-edit",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 20.0
         },
         "components": {
@@ -3332,10 +3449,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit",
         "run_path": null
       },
-      "sha256": "11dff41b7d1db84d02ed33060f78ca48db91e5387f5d5d92b87716515fb19b1f"
+      "sha256": "9b408aa1a509a2b45c03cb22d10b29cb7ef2c77a96806ef59c28e97b586d0e7d"
     },
     "image.edit.qwen-image-2.1-edit-multiref": {
-      "bytes": 4189,
+      "bytes": 4241,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3421,6 +3538,8 @@
             }
           ],
           "short_id": "qwen-image-2.1-edit-multiref",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 26.0
         },
         "components": {
@@ -3483,10 +3602,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_edit_multiref",
         "run_path": null
       },
-      "sha256": "31d0370ccc9ba443dd66c3197a862a00def64a2e8ee58c8afdb4a39919c440ae"
+      "sha256": "c3bb168b435ba233d5420e9dc96071cb8fcdb825bf2abf35a3ab3a7f0213958c"
     },
     "image.edit.qwen-image-2.1-inpaint": {
-      "bytes": 5122,
+      "bytes": 5174,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3580,6 +3699,8 @@
             }
           ],
           "short_id": "qwen-image-2.1-inpaint",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 33.0
         },
         "components": {
@@ -3658,10 +3779,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_qwen_image_2_1_inpaint",
         "run_path": null
       },
-      "sha256": "c7e95bc11804e99c6ac43ee6addef0e948f0807acad7510bddffe00a097fdcdf"
+      "sha256": "9331670520161f267ec89df80010e4ba7cb441bd75d15ed9daeec5936868c669"
     },
     "image.edit.seedvr2-upscale": {
-      "bytes": 3240,
+      "bytes": 3292,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3731,6 +3852,8 @@
             }
           ],
           "short_id": "seedvr2-upscale",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 3.0
         },
         "components": {
@@ -3779,10 +3902,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_edit_seedvr2_upscale",
         "run_path": null
       },
-      "sha256": "6fbe17f39f1f13399e7719cb464bfd79d178ca973fb3e44c98fa9b2e7b7cc4c1"
+      "sha256": "a4e99bf28018d10038e4c2ca2abaaba75993969995c63e364b67d4666c291f13"
     },
     "image.generate.anima-turbo": {
-      "bytes": 5226,
+      "bytes": 5278,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -3930,6 +4053,8 @@
             }
           ],
           "short_id": "anima-turbo",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 4.0
         },
         "components": {
@@ -3987,10 +4112,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_anima_turbo",
         "run_path": null
       },
-      "sha256": "b2c0b85585d8ba638d4f4d5962ad54e665238419645e1fc6325bd58b754bee84"
+      "sha256": "39b13162eb6882c6f1003f4751009464c79f5f92026ceec0553db1b9cfcbc977"
     },
     "image.generate.flux2-klein": {
-      "bytes": 5416,
+      "bytes": 5468,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4146,6 +4271,8 @@
             }
           ],
           "short_id": "flux2-klein",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 20.0
         },
         "components": {
@@ -4204,10 +4331,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein",
         "run_path": null
       },
-      "sha256": "8eb48fdff8781af2f7aed19a858c50e6323e9784afca6bde77dbba33050fad08"
+      "sha256": "e1e5e518d6f19684bb3368648e011acb40f2bb76f9d0d25809eb55a5dbd7d70e"
     },
     "image.generate.flux2-klein-4b": {
-      "bytes": 5461,
+      "bytes": 5513,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -4365,6 +4492,8 @@
             }
           ],
           "short_id": "flux2-klein-4b",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 6.0
         },
         "components": {
@@ -4423,10 +4552,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b",
         "run_path": null
       },
-      "sha256": "920316d014fd4fad6db9005ecd791f8d66be1953847f15df8791fc09b1f69972"
+      "sha256": "ced31d3207b8ea0f221f3fbc29aab9e9006e695172689848494a990544f2590f"
     },
     "image.generate.flux2-klein-4b-seamless-tile": {
-      "bytes": 8317,
+      "bytes": 8369,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4630,6 +4759,8 @@
             }
           ],
           "short_id": "flux2-klein-4b-seamless-tile",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -4729,10 +4860,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_4b_seamless_tile",
         "run_path": null
       },
-      "sha256": "022e18143f8df4355cbedf05f77ffaa5864de02e58bcad0427b5f89632c628a0"
+      "sha256": "f15e385446a7e3d41a47a16195827e1bd8dff439c40706bcec51addb221d6b3e"
     },
     "image.generate.flux2-klein-snofs": {
-      "bytes": 6011,
+      "bytes": 6063,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -4896,6 +5027,8 @@
             }
           ],
           "short_id": "flux2-klein-snofs",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 20.0
         },
         "components": {
@@ -4961,10 +5094,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_flux2_klein_snofs",
         "run_path": null
       },
-      "sha256": "26047fd1262ba45baba15e7648ab5cab1cfa2537bb11f5658dba0d503f2c601e"
+      "sha256": "5d0cb37008a6591ecb79e2a0faa9f9fd8df324177f0592f2ed8dfafaaeec24d0"
     },
     "image.generate.krea2-turbo": {
-      "bytes": 5062,
+      "bytes": 5114,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -5114,6 +5247,8 @@
             }
           ],
           "short_id": "krea2-turbo",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 9.0
         },
         "components": {
@@ -5169,10 +5304,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo",
         "run_path": null
       },
-      "sha256": "5cb7806745f4a646a1ba05acc771a90026a35fba745c75aaecb69c5cf9f82548"
+      "sha256": "05ccef5517c50092464b2e32ba977686166868c7b1a601ba698d12e9c75c7e94"
     },
     "image.generate.krea2-turbo-snofs": {
-      "bytes": 5846,
+      "bytes": 5898,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5328,6 +5463,8 @@
             }
           ],
           "short_id": "krea2-turbo-snofs",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 9.0
         },
         "components": {
@@ -5392,10 +5529,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_krea2_turbo_snofs",
         "run_path": null
       },
-      "sha256": "3d939d524187e48cd5435485fe7c254de79b389281a5c158f16c3d8035333957"
+      "sha256": "461359ae15b1811f2f52fe6f4d7a526822fbb6ba662bf2b0390eb73175b06418"
     },
     "image.generate.moss-image": {
-      "bytes": 4764,
+      "bytes": 4816,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5535,6 +5672,8 @@
             }
           ],
           "short_id": "moss-image",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 7.0
         },
         "components": {
@@ -5585,10 +5724,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image",
         "run_path": null
       },
-      "sha256": "71ba4cbb00845dabe19c95bc1cb3decf258c68d58445aaa47669934ada28e877"
+      "sha256": "53107e8b598a5cb1d3d7243cb28bbfd803fb3da8779a8f98e995195b50cda4d6"
     },
     "image.generate.moss-image-fast": {
-      "bytes": 4828,
+      "bytes": 4880,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5728,6 +5867,8 @@
             }
           ],
           "short_id": "moss-image-fast",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 5.0
         },
         "components": {
@@ -5778,10 +5919,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_fast",
         "run_path": null
       },
-      "sha256": "01c9479ecb4e3d00c2dd3b6258e5afe7832b78da13498f65dd8f7af2bb1d0052"
+      "sha256": "b531274946e36c92fe1d3fcda3fb982c770e6bfc132fecd3be745dcbcff40fd5"
     },
     "image.generate.moss-image-quality": {
-      "bytes": 5282,
+      "bytes": 5334,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -5929,6 +6070,8 @@
             }
           ],
           "short_id": "moss-image-quality",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 78.0
         },
         "components": {
@@ -5986,10 +6129,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_moss_image_quality",
         "run_path": null
       },
-      "sha256": "fe5d970bdceeaac0b08141dfa698716f3974aab28c29a808f9cb75e0c0022b23"
+      "sha256": "6c7f5d943ee3121b1503547ee3267b93728da98d0609fa5f8afbcd855b835539"
     },
     "image.generate.sdxl-seamless-tile": {
-      "bytes": 6631,
+      "bytes": 6683,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6177,6 +6320,8 @@
             }
           ],
           "short_id": "sdxl-seamless-tile",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -6258,10 +6403,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_image_generate_sdxl_seamless_tile",
         "run_path": null
       },
-      "sha256": "0ccaf1c3e3b9b880b61bf74db2fea84c71343ac5dd7b55a79a2acb1ffe37d022"
+      "sha256": "9c058769db65554d9b8aabc6c5caac0e9e8272dacc4c26c0b066e0f3f63dd242"
     },
     "mesh.edit.retopo": {
-      "bytes": 5049,
+      "bytes": 5101,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6305,6 +6450,8 @@
           ],
           "route_inputs": [],
           "short_id": "retopo",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -6439,10 +6586,10 @@
           }
         }
       },
-      "sha256": "283ed251dc317e7f09cc8776c39a1e0a9e566fdec2b721580ed14aa5168203a1"
+      "sha256": "8e5864e2380de62b5d8b9e9b9d67952c7f41161406da8196e2951d0181e506c1"
     },
     "mesh.edit.rig-auto": {
-      "bytes": 4815,
+      "bytes": 4867,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6482,6 +6629,8 @@
           ],
           "route_inputs": [],
           "short_id": "rig-auto",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -6609,10 +6758,10 @@
           }
         }
       },
-      "sha256": "3c0414e711aa3522778c43d752568563de9d9bb8855e503b99a0cc95a2470f18"
+      "sha256": "c24a87c7dd9a0c5870ee6afa9c4c4b83bcb7ae08d71bbe90089b83e4531f239f"
     },
     "mesh.edit.rig-humanoid": {
-      "bytes": 4837,
+      "bytes": 4889,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6652,6 +6801,8 @@
           ],
           "route_inputs": [],
           "short_id": "rig-humanoid",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -6779,10 +6930,10 @@
           }
         }
       },
-      "sha256": "1781b8ce1da5153016b7672cc3a09039de2fe88e41fb8a1ac52ce48907c8322e"
+      "sha256": "35abefa6eca0693801aaef91c21e27c8ca2c68459e8e4424b6af231b838005ba"
     },
     "mesh.edit.texture-refine": {
-      "bytes": 6198,
+      "bytes": 6250,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -6838,6 +6989,8 @@
           ],
           "route_inputs": [],
           "short_id": "texture-refine",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -6991,10 +7144,10 @@
           }
         }
       },
-      "sha256": "3ca7d68b7cc888421687cb9ea969b5714d2cb5e7dc629cbff41a3b1be2d9b796"
+      "sha256": "314e8606eb56a1bf7a4e0ff0e224b5cfafee997d89ba26a2dd08f9de785a27bd"
     },
     "mesh.edit.uv-unwrap": {
-      "bytes": 4813,
+      "bytes": 4865,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7034,6 +7187,8 @@
           ],
           "route_inputs": [],
           "short_id": "uv-unwrap",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -7161,10 +7316,10 @@
           }
         }
       },
-      "sha256": "d4fcfdaf927ded11d15ac788244365b83a23e42c7c80ea5386e42fa6b546006c"
+      "sha256": "4a0d73c343a41c5837036f0e174a7222206192375f0152a278452f43a0557e1a"
     },
     "mesh.generate.pixal3d": {
-      "bytes": 4003,
+      "bytes": 4055,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7270,6 +7425,8 @@
             }
           ],
           "short_id": "pixal3d",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -7311,10 +7468,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_mesh_generate_pixal3d",
         "run_path": null
       },
-      "sha256": "4bcec924a746008c81d7f1da3bde8bc3b9d619da703faae4def907faceab865f"
+      "sha256": "fc941bfdb2aec99f0c8791139472ce1989fc7dc9e8b66edf497b556311531889"
     },
     "mesh.generate.trellis-2": {
-      "bytes": 4555,
+      "bytes": 4607,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7434,6 +7591,8 @@
             }
           ],
           "short_id": "trellis-2",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -7483,10 +7642,10 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_mesh_generate_trellis_2",
         "run_path": null
       },
-      "sha256": "34ae51104e003cc27de38e2c5590927653db90470037f5d21b3a23f0cf5ae1af"
+      "sha256": "c820dae284396d1d4dd2cc0e5b15767a984ad64ff884b3db02037a630bbb51aa"
     },
     "video.edit.rife-interpolate": {
-      "bytes": 7920,
+      "bytes": 7972,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7570,6 +7729,8 @@
           ],
           "route_inputs": [],
           "short_id": "rife-interpolate",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 4.0
         },
         "components": {
@@ -7762,10 +7923,10 @@
           }
         }
       },
-      "sha256": "104c235bc54cfe39cdac3d90ca34f0d9d54f2b674b5cb1d3b7fa3a5d4d41e662"
+      "sha256": "88b6f9d5ef1b80c420b607c3dbbb14544b2856cb6ba9a5887c216a9e1fdf177b"
     },
     "video.edit.scail-2-replace": {
-      "bytes": 15773,
+      "bytes": 15825,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -7945,6 +8106,8 @@
           ],
           "route_inputs": [],
           "short_id": "scail-2-replace",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 231.0
         },
         "components": {
@@ -8284,10 +8447,10 @@
           }
         }
       },
-      "sha256": "c7e1c36f987190f85d5d167de66ff21f5fa8f54795aae4893f337818916dd071"
+      "sha256": "86c58b199a3b3bf6763d9ff7176a294e6b17a95dfe6ef237957283ec89900522"
     },
     "video.edit.video-mux": {
-      "bytes": 9014,
+      "bytes": 9066,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8371,6 +8534,8 @@
           ],
           "route_inputs": [],
           "short_id": "video-mux",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 5.0
         },
         "components": {
@@ -8552,10 +8717,10 @@
           }
         }
       },
-      "sha256": "52d53f6b8b8810e8e4975e54eae4f3d4e60b3f27348623f1b1da7e940e26536a"
+      "sha256": "81f7d78194caf955b353af86db1ec009da648f4829f946631884ffefedd6f9ca"
     },
     "video.generate.ltx-2.5-i2v": {
-      "bytes": 4740,
+      "bytes": 4792,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8654,6 +8819,8 @@
           ],
           "route_inputs": [],
           "short_id": "ltx-2.5-i2v",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 56.0
         },
         "components": {
@@ -8728,10 +8895,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_i2v",
         "run_path": null
       },
-      "sha256": "f697b8ea1ae4841dc3fd7a8a9525f93a3e7409bb2f07082d589be2100dd01080"
+      "sha256": "935f86a60d1f454e1487220b26ae93440c0c5fd398ae58d3184a2818775efd25"
     },
     "video.generate.ltx-2.5-keyframes": {
-      "bytes": 7252,
+      "bytes": 7304,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -8851,6 +9018,8 @@
             }
           ],
           "short_id": "ltx-2.5-keyframes",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 40.0
         },
         "components": {
@@ -8976,10 +9145,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes",
         "run_path": null
       },
-      "sha256": "858038c1e08e9628b3159cb73045d4c11c220a5c7f4f5bc380057f0eb7b94bec"
+      "sha256": "66a09b2ddbc8a96e7d85823c6363fa8d60017cc9d7e4257371b5b0e471bdea46"
     },
     "video.generate.ltx-2.5-keyframes-mid": {
-      "bytes": 9277,
+      "bytes": 9329,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -9111,6 +9280,8 @@
             }
           ],
           "short_id": "ltx-2.5-keyframes-mid",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 45.0
         },
         "components": {
@@ -9274,10 +9445,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_keyframes_mid",
         "run_path": null
       },
-      "sha256": "20e8252ff38c92b1bb2763ca2b1381adca1596d890bfe9e3abb3018104c5329c"
+      "sha256": "fd5dd6c6f12c339dac93d0e501322bca2198bacd621cc6a5faae0c83038e3a96"
     },
     "video.generate.ltx-2.5-long": {
-      "bytes": 3827,
+      "bytes": 3879,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -9376,6 +9547,8 @@
             }
           ],
           "short_id": "ltx-2.5-long",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -9426,10 +9599,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_long",
         "run_path": null
       },
-      "sha256": "bad20b8b0d1f1c0a7fa1bad24132abca4a1387fdbf8c95e9a1f80c0a6c55c205"
+      "sha256": "2690cee5c29efa18d8d8280f81f466cfa4e342aec8bc88914c0fb815a50371f2"
     },
     "video.generate.ltx-2.5-t2v": {
-      "bytes": 4005,
+      "bytes": 4057,
       "full": {
         "catalog_entry": {
           "aliases": [
@@ -9522,6 +9695,8 @@
           ],
           "route_inputs": [],
           "short_id": "ltx-2.5-t2v",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 49.0
         },
         "components": {
@@ -9583,10 +9758,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_ltx_2_5_t2v",
         "run_path": null
       },
-      "sha256": "2b5fb8529da2a9042f534eaff9299a660549076aa0ebb5fdfdae9dbea643bd76"
+      "sha256": "f23ccfcab2c4f4efdff0e63c1ab6a6bfae1606a5c46a2e56a485db02e2e17ca3"
     },
     "video.generate.minimax-h3-i2v": {
-      "bytes": 4662,
+      "bytes": 4714,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -9681,6 +9856,8 @@
           ],
           "route_inputs": [],
           "short_id": "minimax-h3-i2v",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 135.0
         },
         "components": {
@@ -9759,10 +9936,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_i2v",
         "run_path": null
       },
-      "sha256": "aa68aeb56d57c6b029eb769bb912ad2cbcd9ce84930c31b58fc01d0b8db012e4"
+      "sha256": "dce9b3018663d4ee549c431adcfd738dafac5f5607cef6d47f91d1026f180238"
     },
     "video.generate.minimax-h3-keyframes": {
-      "bytes": 5955,
+      "bytes": 6007,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -9870,6 +10047,8 @@
             }
           ],
           "short_id": "minimax-h3-keyframes",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 120.0
         },
         "components": {
@@ -9970,10 +10149,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes",
         "run_path": null
       },
-      "sha256": "5469953a21c20d1b596ee6c685eb68b1fafeccb6b084825e14b66e5357cab51e"
+      "sha256": "a34926ab04ea709e5d4e6ad1b567ec45db560dfc00fcca5b464bde303b89c450"
     },
     "video.generate.minimax-h3-keyframes-mid": {
-      "bytes": 7425,
+      "bytes": 7477,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10089,6 +10268,8 @@
             }
           ],
           "short_id": "minimax-h3-keyframes-mid",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 120.0
         },
         "components": {
@@ -10213,10 +10394,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_keyframes_mid",
         "run_path": null
       },
-      "sha256": "b7b5d1fbd8006a5a0de619eb3eec85b08bfcf21d89eb53ed4929a0aee2921870"
+      "sha256": "675ecae62734b4fd494acda04e3d87d10887317813a7a107faf7f84f076e72aa"
     },
     "video.generate.minimax-h3-long": {
-      "bytes": 3549,
+      "bytes": 3601,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10305,6 +10486,8 @@
             }
           ],
           "short_id": "minimax-h3-long",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": null
         },
         "components": {
@@ -10351,10 +10534,10 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_long",
         "run_path": null
       },
-      "sha256": "2fd9904c809ba0909e9e073e01ce05b995f8b6f3bcd6a591184a7698c781ba74"
+      "sha256": "4e8c02bcfeb4bc77ad9534e3fcff8964891fe2d716185cab3e4aeac2352d63ef"
     },
     "video.generate.minimax-h3-t2v": {
-      "bytes": 4243,
+      "bytes": 4295,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -10445,6 +10628,8 @@
           ],
           "route_inputs": [],
           "short_id": "minimax-h3-t2v",
+          "status": "current",
+          "superseded_by": null,
           "typical_seconds": 122.0
         },
         "components": {
@@ -10517,7 +10702,7 @@
         "extension_ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v",
         "run_path": null
       },
-      "sha256": "2667e41214de74a61770ad6bbc748cecc4e6d1665d756abec166bdc037d16ede"
+      "sha256": "f94a2b6978b7f06ea3f79ff66e7365287c24e04418497a2844e845c3c3d65be3"
     }
   }
 }

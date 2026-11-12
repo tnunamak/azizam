@@ -192,7 +192,7 @@
   "workflows": {
     "audio.generate.ace-step-1.5-xl-turbo": {
       "examples": {
-        "bytes": 5491,
+        "bytes": 5456,
         "full": {
           "example_request": {
             "body": {
@@ -204,14 +204,14 @@
                     "bpm": 0,
                     "cfg": 0.0,
                     "cfg_scale": 0.0,
-                    "keyscale": "value",
-                    "language": "value",
+                    "keyscale": "C major",
+                    "language": "ar",
                     "min_p": 0.0,
                     "sampler": "value",
                     "scheduler": "value",
                     "steps": 1,
                     "temperature": 0.0,
-                    "timesignature": "value",
+                    "timesignature": "2",
                     "top_k": 0,
                     "top_p": 0.0
                   }
@@ -223,24 +223,24 @@
               }
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"value\",\"language\":\"value\",\"keyscale\":\"value\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
+            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"2\",\"language\":\"ar\",\"keyscale\":\"C major\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"value\",\n        \"language\": \"value\",\n        \"keyscale\": \"value\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"2\",\n        \"language\": \"ar\",\n        \"keyscale\": \"C major\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/gateway/v1/media/jobs",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': 'value', 'language': 'value', 'keyscale': 'value', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': '2', 'language': 'ar', 'keyscale': 'C major', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"value\",\"language\":\"value\",\"keyscale\":\"value\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"value\",\n        \"language\": \"value\",\n        \"keyscale\": \"value\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': 'value', 'language': 'value', 'keyscale': 'value', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"2\",\"language\":\"ar\",\"keyscale\":\"C major\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"2\",\n        \"language\": \"ar\",\n        \"keyscale\": \"C major\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': '2', 'language': 'ar', 'keyscale': 'C major', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           }
         },
-        "sha256": "1d8c173f50d97c4c0f0da1d21b7f6cb4a9aea0ff0ea4e4f2527982bda2a593b7"
+        "sha256": "9c70945a333fc11373e3b5dbc000ce08e3dfff7d826e7d3f7c272fc9c661518f"
       },
       "row": {
-        "bytes": 17723,
+        "bytes": 19198,
         "full": {
           "aliases": [],
           "availability": {
@@ -316,14 +316,14 @@
                     "bpm": 0,
                     "cfg": 0.0,
                     "cfg_scale": 0.0,
-                    "keyscale": "value",
-                    "language": "value",
+                    "keyscale": "C major",
+                    "language": "ar",
                     "min_p": 0.0,
                     "sampler": "value",
                     "scheduler": "value",
                     "steps": 1,
                     "temperature": 0.0,
-                    "timesignature": "value",
+                    "timesignature": "2",
                     "top_k": 0,
                     "top_p": 0.0
                   }
@@ -335,18 +335,18 @@
               }
             },
             "content_type": "application/json",
-            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"value\",\"language\":\"value\",\"keyscale\":\"value\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
+            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"2\",\"language\":\"ar\",\"keyscale\":\"C major\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
             "files": {},
             "form": {},
-            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"value\",\n        \"language\": \"value\",\n        \"keyscale\": \"value\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"2\",\n        \"language\": \"ar\",\n        \"keyscale\": \"C major\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
             "method": "POST",
             "path": "/gateway/v1/media/jobs",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': 'value', 'language': 'value', 'keyscale': 'value', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': '2', 'language': 'ar', 'keyscale': 'C major', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "examples": {
-            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"value\",\"language\":\"value\",\"keyscale\":\"value\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
-            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"value\",\n        \"language\": \"value\",\n        \"keyscale\": \"value\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
-            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': 'value', 'language': 'value', 'keyscale': 'value', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
+            "curl": "curl 'https://gateway.example.test/gateway/v1/media/jobs' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"intent\":\"audio.generate\",\"request\":{\"model\":\"ace-step-1.5-xl-turbo\",\"tags\":\"value\",\"lyrics\":\"value\",\"duration\":1.0,\"seed\":0,\"extensions\":{\"com.azizam.workflow\":{\"bpm\":0,\"timesignature\":\"2\",\"language\":\"ar\",\"keyscale\":\"C major\",\"cfg_scale\":0.0,\"temperature\":0.0,\"top_p\":0.0,\"top_k\":0,\"min_p\":0.0,\"steps\":1,\"cfg\":0.0,\"sampler\":\"value\",\"scheduler\":\"value\"}}}}'",
+            "javascript": "const response = await fetch(\"https://gateway.example.test/gateway/v1/media/jobs\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"intent\": \"audio.generate\",\n  \"request\": {\n    \"model\": \"ace-step-1.5-xl-turbo\",\n    \"tags\": \"value\",\n    \"lyrics\": \"value\",\n    \"duration\": 1.0,\n    \"seed\": 0,\n    \"extensions\": {\n      \"com.azizam.workflow\": {\n        \"bpm\": 0,\n        \"timesignature\": \"2\",\n        \"language\": \"ar\",\n        \"keyscale\": \"C major\",\n        \"cfg_scale\": 0.0,\n        \"temperature\": 0.0,\n        \"top_p\": 0.0,\n        \"top_k\": 0,\n        \"min_p\": 0.0,\n        \"steps\": 1,\n        \"cfg\": 0.0,\n        \"sampler\": \"value\",\n        \"scheduler\": \"value\"\n      }\n    }\n  }\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());",
+            "python": "import os\nimport requests\n\nresponse = requests.request('POST', 'https://gateway.example.test/gateway/v1/media/jobs',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'intent': 'audio.generate', 'request': {'model': 'ace-step-1.5-xl-turbo', 'tags': 'value', 'lyrics': 'value', 'duration': 1.0, 'seed': 0, 'extensions': {'com.azizam.workflow': {'bpm': 0, 'timesignature': '2', 'language': 'ar', 'keyscale': 'C major', 'cfg_scale': 0.0, 'temperature': 0.0, 'top_p': 0.0, 'top_k': 0, 'min_p': 0.0, 'steps': 1, 'cfg': 0.0, 'sampler': 'value', 'scheduler': 'value'}}}}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())"
           },
           "id": "audio.generate.ace-step-1.5-xl-turbo",
           "inputs": [
@@ -418,6 +418,12 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
+              "enum": [
+                "2",
+                "3",
+                "4",
+                "6"
+              ],
               "ignored": false,
               "label": "time signature",
               "name": "timesignature",
@@ -428,6 +434,59 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
+              "enum": [
+                "ar",
+                "az",
+                "bg",
+                "bn",
+                "ca",
+                "cs",
+                "da",
+                "de",
+                "el",
+                "en",
+                "es",
+                "fa",
+                "fi",
+                "fr",
+                "he",
+                "hi",
+                "hr",
+                "ht",
+                "hu",
+                "id",
+                "is",
+                "it",
+                "ja",
+                "ko",
+                "la",
+                "lt",
+                "ms",
+                "ne",
+                "nl",
+                "no",
+                "pa",
+                "pl",
+                "pt",
+                "ro",
+                "ru",
+                "sa",
+                "sk",
+                "sr",
+                "sv",
+                "sw",
+                "ta",
+                "te",
+                "th",
+                "tl",
+                "tr",
+                "uk",
+                "ur",
+                "vi",
+                "yue",
+                "zh",
+                "unknown"
+              ],
               "ignored": false,
               "label": "language",
               "name": "language",
@@ -438,6 +497,42 @@
             {
               "accepted": true,
               "applies": "Workflow extension",
+              "enum": [
+                "C major",
+                "C# major",
+                "Db major",
+                "D major",
+                "D# major",
+                "Eb major",
+                "E major",
+                "F major",
+                "F# major",
+                "Gb major",
+                "G major",
+                "G# major",
+                "Ab major",
+                "A major",
+                "A# major",
+                "Bb major",
+                "B major",
+                "C minor",
+                "C# minor",
+                "Db minor",
+                "D minor",
+                "D# minor",
+                "Eb minor",
+                "E minor",
+                "F minor",
+                "F# minor",
+                "Gb minor",
+                "G minor",
+                "G# minor",
+                "Ab minor",
+                "A minor",
+                "A# minor",
+                "Bb minor",
+                "B minor"
+              ],
               "ignored": false,
               "label": "musical key",
               "name": "keyscale",
@@ -767,7 +862,7 @@
           "try_url": "/try/?workflow=audio.generate.ace-step-1.5-xl-turbo",
           "typical_seconds": null
         },
-        "sha256": "dcc0964a31514fd99997af99e6731aa4e4bdcc8b83b7025b2125188f88693263"
+        "sha256": "e9176231ed4159a37be53d95b4282cd11a43a0df0ab3c418a4832466ab0b4277"
       }
     },
     "audio.generate.sa3-small-sfx": {
