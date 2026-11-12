@@ -42,6 +42,10 @@ class Refusal(Exception):
         self.status, self.message, self.retry_after = status, message, retry_after
 
 
+class PromptEnded(Refusal):
+    """ComfyUI itself reported the prompt as failed: it is no longer queued or running, so there is nothing to cancel."""
+
+
 def upstream_object(response: httpx.Response, step: str) -> dict[str, Any]:
     """Only a successful JSON object is a usable ComfyUI answer."""
     try:
@@ -120,9 +124,11 @@ class Pixal3DService:
             raise Refusal(502, "ComfyUI prompt submit reply has no prompt id")
         try:
             entry = await self._wait(client, prompt_id)
+        except PromptEnded:
+            raise
         except Exception:
             # ComfyUI accepted the prompt; a wait that fails (timeout, a bad or failed history reply) must not leave
-            # it queued. A prompt that ComfyUI itself reported as failed is gone already; the cleanup is then a no-op.
+            # it queued.
             await self._cancel_prompt(client, prompt_id)
             raise
         ref = find_glb(entry.get("outputs") or {})
@@ -141,7 +147,7 @@ class Pixal3DService:
             if entry:
                 status = entry.get("status") or {}
                 if status.get("status_str") == "error":
-                    raise Refusal(502, "ComfyUI reported an error for the prompt")
+                    raise PromptEnded(502, "ComfyUI reported an error for the prompt")
                 if status.get("completed") or entry.get("outputs"):
                     return entry
             if asyncio.get_running_loop().time() > deadline:
@@ -166,7 +172,7 @@ class Pixal3DService:
         except Exception as exc:
             errors.append(type(exc).__name__)
         if errors:
-            logging.getLogger(__name__).warning("ComfyUI timeout cleanup failed: %s", ", ".join(errors))
+            logging.getLogger(__name__).warning("ComfyUI prompt cleanup failed: %s", ", ".join(errors))
 
 
 def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,

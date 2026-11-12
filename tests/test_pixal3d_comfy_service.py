@@ -22,6 +22,11 @@ def exchange(id_: str, method: str, path: str, response: dict, **extra) -> dict:
     return {"id": id_, "match": {"method": method, "path": path}, "response": response, **extra}
 
 
+# The calls a failed wait makes to take its accepted prompt off the queue.
+CLEANUP = [exchange("delete", "POST", "/queue", {"json": {}}),
+           exchange("cleanup-queue", "GET", "/queue", {"json": {"queue_running": [], "queue_pending": []}})]
+
+
 def full_run(history: list[dict], *, view: bool = True) -> list[dict]:
     steps = [exchange("queue", "GET", "/queue", {"json": IDLE}),
              exchange("upload", "POST", "/upload/image", {"json": {"name": "up.png", "subfolder": "", "type": "input"}}),
@@ -121,7 +126,10 @@ def test_bad_upstream_reply_is_a_json_502(fake_upstreams, step, path, reply) -> 
     steps = full_run([DONE])
     index = next(i for i, item in enumerate(steps) if item["id"] == step)
     steps[index]["response"] = reply
-    _, app = serve(fake_upstreams, steps[:index + 1])
+    steps = steps[:index + 1]
+    if step.startswith("history"):  # the prompt was accepted, so the failed wait cancels it
+        steps += CLEANUP
+    _, app = serve(fake_upstreams, steps)
     response = post(app)
     assert response.status_code == 502
     assert isinstance(response.json()["error"], str)
@@ -167,7 +175,7 @@ def test_json_bytes_are_not_a_glb(fake_upstreams) -> None:
 def test_history_becomes_non_json_mid_wait(fake_upstreams) -> None:
     steps = full_run([{}], view=False) + [
         exchange("bad-history", "GET", "/history/p1",
-                 {"body": [{"hex": "6e6f74204a534f4e"}]})]
+                 {"body": [{"hex": "6e6f74204a534f4e"}]})] + CLEANUP
     _, app = serve(fake_upstreams, steps)
     response = post(app)
     assert response.status_code == 502
