@@ -32,22 +32,87 @@ export type LibraryPick = Pick<
   "asset_id" | "media_type" | "size_bytes" | "prompt" | "derived_title" | "duration_s"
 >;
 
-/** When an item was made, as a short date ("Oct 20", with the year when it is not this year); null when unknown. */
-export function libraryDate(
-  createdAt: LibraryAsset["created_at"],
-  now: Date = new Date(),
-): string | null {
+function libraryTimestamp(createdAt: LibraryAsset["created_at"]): Date | null {
   if (createdAt == null || createdAt === "") return null;
   const date =
     typeof createdAt === "number"
       ? new Date(createdAt < 5_000_000_000 ? createdAt * 1000 : createdAt)
       : new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return null;
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** A short date ("Oct 20"), with the year when it is not this year. */
+function shortLibraryDate(date: Date, now: Date): string {
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
   });
+}
+
+// Calendar dates, rather than elapsed hours, keep yesterday correct across daylight-saving changes.
+function calendarDay(date: Date): number {
+  const day = new Date(0);
+  day.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+  return day.getTime() / 86_400_000;
+}
+
+function dayLabel(date: Date, now: Date): string {
+  const daysAgo = calendarDay(now) - calendarDay(date);
+  if (daysAgo === 0) return "Today";
+  if (daysAgo === 1) return "Yesterday";
+  if (daysAgo >= 2 && daysAgo <= 6) return date.toLocaleDateString("en-US", { weekday: "long" });
+  return shortLibraryDate(date, now);
+}
+
+/** A local-calendar day heading; unknown or invalid timestamps have no label. */
+export function libraryDayLabel(
+  createdAt: LibraryAsset["created_at"],
+  now: Date = new Date(),
+): string | null {
+  const date = libraryTimestamp(createdAt);
+  return date ? dayLabel(date, now) : null;
+}
+
+/** A group key (local YYYY-MM-DD) as a whole date, e.g. "Friday, November 6, 2026", for a day heading's tooltip. */
+export function libraryFullDate(dayKey: string): string {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+/** Keep dated runs in incoming order, with all unknown dates in one final group. */
+export function groupLibraryByDay<T extends Pick<LibraryAsset, "created_at">>(
+  assets: T[],
+  now: Date = new Date(),
+): { key: string; label: string; items: T[] }[] {
+  const groups: { key: string; label: string; items: T[] }[] = [];
+  const undated: T[] = [];
+  let previous: (typeof groups)[number] | undefined;
+  for (const asset of assets) {
+    const date = libraryTimestamp(asset.created_at);
+    if (!date) {
+      undated.push(asset);
+      previous = undefined;
+      continue;
+    }
+    const key = [
+      String(date.getFullYear()).padStart(4, "0"),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+    if (!previous || previous.key !== key) {
+      previous = { key, label: dayLabel(date, now), items: [] };
+      groups.push(previous);
+    }
+    previous.items.push(asset);
+  }
+  if (undated.length) groups.push({ key: "undated", label: "Undated", items: undated });
+  return groups;
 }
 
 /**
