@@ -1602,9 +1602,98 @@
             "type": "number"
           },
           "keyscale": {
+            "enum": [
+              "C major",
+              "C# major",
+              "Db major",
+              "D major",
+              "D# major",
+              "Eb major",
+              "E major",
+              "F major",
+              "F# major",
+              "Gb major",
+              "G major",
+              "G# major",
+              "Ab major",
+              "A major",
+              "A# major",
+              "Bb major",
+              "B major",
+              "C minor",
+              "C# minor",
+              "Db minor",
+              "D minor",
+              "D# minor",
+              "Eb minor",
+              "E minor",
+              "F minor",
+              "F# minor",
+              "Gb minor",
+              "G minor",
+              "G# minor",
+              "Ab minor",
+              "A minor",
+              "A# minor",
+              "Bb minor",
+              "B minor"
+            ],
             "type": "string"
           },
           "language": {
+            "enum": [
+              "ar",
+              "az",
+              "bg",
+              "bn",
+              "ca",
+              "cs",
+              "da",
+              "de",
+              "el",
+              "en",
+              "es",
+              "fa",
+              "fi",
+              "fr",
+              "he",
+              "hi",
+              "hr",
+              "ht",
+              "hu",
+              "id",
+              "is",
+              "it",
+              "ja",
+              "ko",
+              "la",
+              "lt",
+              "ms",
+              "ne",
+              "nl",
+              "no",
+              "pa",
+              "pl",
+              "pt",
+              "ro",
+              "ru",
+              "sa",
+              "sk",
+              "sr",
+              "sv",
+              "sw",
+              "ta",
+              "te",
+              "th",
+              "tl",
+              "tr",
+              "uk",
+              "ur",
+              "vi",
+              "yue",
+              "zh",
+              "unknown"
+            ],
             "type": "string"
           },
           "lyrics": {
@@ -1643,6 +1732,12 @@
             "type": "number"
           },
           "timesignature": {
+            "enum": [
+              "2",
+              "3",
+              "4",
+              "6"
+            ],
             "type": "string"
           },
           "top_k": {
@@ -38504,6 +38599,8 @@
       ],
       "route_inputs": [],
       "short_id": "ace-step-1.5-xl-turbo",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -38603,6 +38700,8 @@
       ],
       "route_inputs": [],
       "short_id": "sa3-small-sfx",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 1.0
     },
     {
@@ -38724,6 +38823,8 @@
       ],
       "route_inputs": [],
       "short_id": "tangoflux",
+      "status": "superseded",
+      "superseded_by": "audio.generate.sa3-small-sfx",
       "typical_seconds": 4.0
     },
     {
@@ -38831,6 +38932,8 @@
       ],
       "route_inputs": [],
       "short_id": "yue2-song",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 30.0
     },
     {
@@ -38881,6 +38984,8 @@
       ],
       "route_inputs": [],
       "short_id": "face-likeness",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 2.0
     },
     {
@@ -38951,6 +39056,8 @@
         }
       ],
       "short_id": "fibo-2-edit-turbo",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 7.0
     },
     {
@@ -39034,6 +39141,8 @@
         }
       ],
       "short_id": "flux2-klein",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 27.0
     },
     {
@@ -39124,6 +39233,8 @@
         }
       ],
       "short_id": "flux2-klein-4b",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -39223,6 +39334,8 @@
         }
       ],
       "short_id": "flux2-klein-4b-inpaint",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -39341,6 +39454,8 @@
       ],
       "route_inputs": [],
       "short_id": "image-identity",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 100.0
     },
     {
@@ -39426,6 +39541,8 @@
         }
       ],
       "short_id": "qwen-image-2.1-edit",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 20.0
     },
     {
@@ -39512,6 +39629,8 @@
         }
       ],
       "short_id": "qwen-image-2.1-edit-multiref",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 26.0
     },
     {
@@ -39606,6 +39725,8 @@
         }
       ],
       "short_id": "qwen-image-2.1-inpaint",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 33.0
     },
     {
@@ -39676,6 +39797,8 @@
         }
       ],
       "short_id": "seedvr2-upscale",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 3.0
     },
     {
@@ -39826,6 +39949,8 @@
         }
       ],
       "short_id": "anima-turbo",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 4.0
     },
     {
@@ -39982,6 +40107,8 @@
         }
       ],
       "short_id": "flux2-klein",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 20.0
     },
     {
@@ -40140,6 +40267,8 @@
         }
       ],
       "short_id": "flux2-klein-4b",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 6.0
     },
     {
@@ -40344,6 +40473,8 @@
         }
       ],
       "short_id": "flux2-klein-4b-seamless-tile",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -40508,6 +40639,8 @@
         }
       ],
       "short_id": "flux2-klein-snofs",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 20.0
     },
     {
@@ -40658,6 +40791,8 @@
         }
       ],
       "short_id": "krea2-turbo",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 9.0
     },
     {
@@ -40816,6 +40951,8 @@
         }
       ],
       "short_id": "krea2-turbo-snofs",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 9.0
     },
     {
@@ -40956,6 +41093,8 @@
         }
       ],
       "short_id": "moss-image",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 7.0
     },
     {
@@ -41096,6 +41235,8 @@
         }
       ],
       "short_id": "moss-image-fast",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 5.0
     },
     {
@@ -41244,6 +41385,8 @@
         }
       ],
       "short_id": "moss-image-quality",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 78.0
     },
     {
@@ -41432,6 +41575,8 @@
         }
       ],
       "short_id": "sdxl-seamless-tile",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41476,6 +41621,8 @@
       ],
       "route_inputs": [],
       "short_id": "retopo",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41516,6 +41663,8 @@
       ],
       "route_inputs": [],
       "short_id": "rig-auto",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41556,6 +41705,8 @@
       ],
       "route_inputs": [],
       "short_id": "rig-humanoid",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41612,6 +41763,8 @@
       ],
       "route_inputs": [],
       "short_id": "texture-refine",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41652,6 +41805,8 @@
       ],
       "route_inputs": [],
       "short_id": "uv-unwrap",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41758,6 +41913,8 @@
         }
       ],
       "short_id": "pixal3d",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41878,6 +42035,8 @@
         }
       ],
       "short_id": "trellis-2",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -41962,6 +42121,8 @@
       ],
       "route_inputs": [],
       "short_id": "rife-interpolate",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 4.0
     },
     {
@@ -42151,6 +42312,8 @@
       ],
       "route_inputs": [],
       "short_id": "scail-2-replace",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 231.0
     },
     {
@@ -42235,6 +42398,8 @@
       ],
       "route_inputs": [],
       "short_id": "video-mux",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 5.0
     },
     {
@@ -42344,6 +42509,8 @@
       ],
       "route_inputs": [],
       "short_id": "ltx-2.5-i2v",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 56.0
     },
     {
@@ -42471,6 +42638,8 @@
         }
       ],
       "short_id": "ltx-2.5-keyframes",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 40.0
     },
     {
@@ -42610,6 +42779,8 @@
         }
       ],
       "short_id": "ltx-2.5-keyframes-mid",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 45.0
     },
     {
@@ -42712,6 +42883,8 @@
         }
       ],
       "short_id": "ltx-2.5-long",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -42816,6 +42989,8 @@
       ],
       "route_inputs": [],
       "short_id": "ltx-2.5-t2v",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 49.0
     },
     {
@@ -42921,6 +43096,8 @@
       ],
       "route_inputs": [],
       "short_id": "minimax-h3-i2v",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 135.0
     },
     {
@@ -43036,6 +43213,8 @@
         }
       ],
       "short_id": "minimax-h3-keyframes",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 120.0
     },
     {
@@ -43159,6 +43338,8 @@
         }
       ],
       "short_id": "minimax-h3-keyframes-mid",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 120.0
     },
     {
@@ -43255,6 +43436,8 @@
         }
       ],
       "short_id": "minimax-h3-long",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": null
     },
     {
@@ -43358,6 +43541,8 @@
       ],
       "route_inputs": [],
       "short_id": "minimax-h3-t2v",
+      "status": "current",
+      "superseded_by": null,
       "typical_seconds": 122.0
     }
   ]
