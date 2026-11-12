@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 from gateway.engine_protocol import node_graph
 from gateway.engine_protocol.description import Poll
 from gateway.engine_protocol.errors import MalformedResponse, SelectionRefused, TransportFailure, UpstreamError
+from gateway.engine_protocol.node_validation import parse_refusal_body
 from gateway.engine_protocol.types import CanonicalRequest, JobRef, JobState
 
 # Why a round ended without files.
@@ -55,10 +56,12 @@ class RoundFailure(Exception):
     """A round that produced no files. ``kind`` is one of the constants above."""
 
     def __init__(self, kind: str, *, detail: str = "", excerpt: str = "", status: int | None = None, prompt_id: str | None = None,
-                 queue_position: int | None = None, code: str | None = None) -> None:
+                 queue_position: int | None = None, code: str | None = None,
+                 refusal_body: Mapping[str, Any] | None = None) -> None:
         super().__init__(f"{kind}: {detail}" if detail else kind)
         self.kind, self.detail, self.excerpt, self.status = kind, detail, excerpt, status
         self.prompt_id, self.queue_position, self.code = prompt_id, queue_position, code
+        self.refusal_body = refusal_body
 
     @property
     def out_of_memory(self) -> bool:
@@ -160,7 +163,8 @@ async def run_round(
             kind = {"timeout": SUBMIT_TIMEOUT, "unreachable": UNREACHABLE}.get(error.kind, DROPPED)
             raise RoundFailure(kind) from error
         except UpstreamError as error:
-            raise RoundFailure(REFUSED, excerpt=str(error.excerpt or ""), status=error.status) from error
+            raise RoundFailure(REFUSED, excerpt=str(error.excerpt or ""), status=error.status,
+                               refusal_body=parse_refusal_body(error.body)) from error
         except MalformedResponse as error:
             raise RoundFailure(NO_PROMPT_ID) from error
         prompt_id = ref.id
