@@ -45,6 +45,10 @@ class Refusal(Exception):
         self.status, self.message, self.retry_after = status, message, retry_after
 
 
+class PromptEnded(Refusal):
+    """ComfyUI itself reported that the submitted prompt ended in error: nothing is left to cancel."""
+
+
 def upstream_object(response: httpx.Response, step: str) -> dict[str, Any]:
     """Only a successful JSON object is a usable ComfyUI answer."""
     try:
@@ -122,7 +126,14 @@ class Pixal3DService:
         prompt_id = upstream_object(sub, "prompt submit").get("prompt_id")
         if not isinstance(prompt_id, str) or not prompt_id:
             raise Refusal(502, "ComfyUI prompt submit reply has no prompt id")
-        entry = await self._wait(client, prompt_id)
+        try:
+            entry = await self._wait(client, prompt_id)
+        except PromptEnded:
+            raise
+        except Exception:
+            # Every other failed wait (timeout, a failed or malformed poll) leaves the submitted prompt possibly running.
+            await self._cancel_prompt(client, prompt_id)
+            raise
         ref = find_glb(entry.get("outputs") or {})
         if ref is None:
             raise Refusal(502, "ComfyUI finished without a GLB")
@@ -139,11 +150,10 @@ class Pixal3DService:
             if entry:
                 status = entry.get("status") or {}
                 if status.get("status_str") == "error":
-                    raise Refusal(502, "ComfyUI reported an error for the prompt")
+                    raise PromptEnded(502, "ComfyUI reported an error for the prompt")
                 if status.get("completed") or entry.get("outputs"):
                     return entry
             if asyncio.get_running_loop().time() > deadline:
-                await self._cancel_prompt(client, prompt_id)
                 raise Refusal(504, "ComfyUI did not finish in time")
             await asyncio.sleep(self.poll_interval)
 

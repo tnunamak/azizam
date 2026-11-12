@@ -63,6 +63,10 @@ class Refusal(Exception):
         self.status, self.message, self.retry_after = status, message, retry_after
 
 
+class PromptEnded(Refusal):
+    """ComfyUI itself reported that the submitted prompt ended in error: nothing is left to settle."""
+
+
 def upstream_object(response: httpx.Response, step: str) -> dict[str, Any]:
     """Only a successful JSON object is a usable ComfyUI answer."""
     try:
@@ -230,6 +234,8 @@ class Stages:
                     if got.status_code != 200 or not got.content.startswith(GLB_MAGIC):
                         raise Refusal(502, f"ComfyUI would not return the model ({got.status_code})")
                     return got.content
+                except PromptEnded:
+                    raise
                 except BaseException:
                     # The graph reads the input model from the scratch directory: while the prompt may still run, neither the
                     # file nor the busy flag may go. The caller releases both after this returns.
@@ -245,7 +251,7 @@ class Stages:
             if entry:
                 status = entry.get("status") or {}
                 if status.get("status_str") == "error":
-                    raise Refusal(502, "ComfyUI reported an error for the graph")
+                    raise PromptEnded(502, "ComfyUI reported an error for the graph")
                 if status.get("completed") or entry.get("outputs"):
                     return entry
             await asyncio.sleep(self.poll_interval)

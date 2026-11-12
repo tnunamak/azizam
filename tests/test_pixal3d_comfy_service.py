@@ -284,3 +284,56 @@ def test_timeout_is_the_history_wait_limit_not_a_total_deadline() -> None:
 
     assert asyncio.run(scenario()) == GLB
     assert "not a total deadline" in svc.__doc__
+
+
+@pytest.mark.parametrize("poll", [httpx.Response(500, json={}), httpx.Response(200, content=b"<html>"), httpx.Response(200, json=[])])
+def test_a_failed_history_poll_cancels_the_submitted_prompt(poll) -> None:
+    deletes = []
+
+    async def scenario():
+        async def upstream(request):
+            path = request.url.path
+            if request.method == "POST" and path == "/queue":
+                deletes.append(json.loads(request.content))
+                return httpx.Response(200, json={})
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                return poll
+            return httpx.Response(200, json=IDLE)
+
+        transport = HandlerTransport(upstream)
+        service = svc.Pixal3DService("http://comfy.test", svc.load_prompt(), lambda: httpx.AsyncClient(transport=transport))
+        with pytest.raises(svc.Refusal) as failure:
+            await service.generate(b"image", None, None)
+        assert failure.value.status == 502
+
+    asyncio.run(scenario())
+    assert deletes == [{"delete": ["p1"]}]
+
+
+def test_a_prompt_comfyui_reported_as_errored_is_not_cancelled() -> None:
+    deletes = []
+
+    async def scenario():
+        async def upstream(request):
+            path = request.url.path
+            if request.method == "POST" and path == "/queue":
+                deletes.append(1)
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                return httpx.Response(200, json={"p1": {"status": {"status_str": "error"}}})
+            return httpx.Response(200, json=IDLE)
+
+        transport = HandlerTransport(upstream)
+        service = svc.Pixal3DService("http://comfy.test", svc.load_prompt(), lambda: httpx.AsyncClient(transport=transport))
+        with pytest.raises(svc.Refusal):
+            await service.generate(b"image", None, None)
+
+    asyncio.run(scenario())
+    assert deletes == []
