@@ -71,9 +71,9 @@ def output_kind(outputs: Mapping[str, Any]) -> str:
 
 
 def output_noun(outputs: Mapping[str, Any]) -> str:
-    """The plural of ``output_kind`` for a no-result message; a workflow that declares none produces images, as before."""
+    """The plural of ``output_kind`` for a no-result message; a workflow that declares no output gets the generic file words."""
     kind = output_kind(outputs)
-    word = asset_types.kind_names(kind or "image")["plural"]
+    word = asset_types.kind_names(kind)["plural"]
     return word[:1].lower() + word[1:]
 
 
@@ -183,7 +183,7 @@ def failure_of(failed: graph_round.RoundFailure, adapter: Any, conn: Any, bindin
     kind = failed.kind
     reason = retry_reason_of(kind, binding_key)
     engine = adapter.label
-    label = asset_types.kind_names(output_kind(outputs or {}) or "image")["label"]
+    label = asset_types.kind_names(output_kind(outputs or {}))["label"]
     noun = label[:1].lower() + label[1:]
     article = "an" if noun[:1] in "aeiou" else "a"
     if kind == graph_round.SUBMIT_TIMEOUT:

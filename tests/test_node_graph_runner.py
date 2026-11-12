@@ -250,11 +250,11 @@ def test_a_stage_the_run_does_not_know_still_fails_the_run():
     with pytest.raises(RunFailed):
         asyncio.run(runner()._stages(context(stages=["no_such_stage"]), [MP4]))
 
-# Declared output words come from the shared kind table; undeclared runs retain the image contract.
+# Declared output words come from the shared kind table; a run that declares no output gets the table's generic file words.
 @pytest.mark.parametrize("media_type,label,noun,plural,article", [
     ("video/mp4", "Video", "video", "video", "a"),
     ("image/png", "Image", "image", "images", "an"),
-    (None, "Image", "image", "images", "an"),
+    (None, "File", "file", "file", "a"),
     ("audio/wav", "Audio", "audio", "audio", "an"),
     ("smell/example", "Smell", "smell", "smell", "a"),
 ])
