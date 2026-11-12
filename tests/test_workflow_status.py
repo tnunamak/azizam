@@ -84,11 +84,11 @@ def _tools() -> Tools:
 
 def test_capabilities_lists_current_workflows_before_the_ones_they_replaced():
     rows = asyncio.run(_tools().capabilities({}))["workflows"]
-    statuses = [row["status"] for row in rows]
+    statuses = [row.get("status", "current") for row in rows]
     assert "superseded" in statuses
     first_superseded = statuses.index("superseded")
     assert all(status == "superseded" for status in statuses[first_superseded:]), statuses
-    tango = next(row for row in rows if row["status"] == "superseded")
+    tango = next(row for row in rows if row.get("status") == "superseded")
     sfx_rows = asyncio.run(_tools().capabilities({"intent": "audio.generate"}))["workflows"]
     assert sfx_rows[-1]["target"] == tango["target"]
     assert tango["superseded_by"] == "audio.generate.sa3-small-sfx"
@@ -96,6 +96,6 @@ def test_capabilities_lists_current_workflows_before_the_ones_they_replaced():
 
 def test_capabilities_for_one_target_names_its_replacement():
     rows = asyncio.run(_tools().capabilities({}))["workflows"]
-    tango = next(row for row in rows if row["status"] == "superseded")
+    tango = next(row for row in rows if row.get("status") == "superseded")
     detail = asyncio.run(_tools().capabilities({"target": tango["target"]}))
     assert (detail["status"], detail["superseded_by"]) == ("superseded", "audio.generate.sa3-small-sfx")

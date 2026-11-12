@@ -923,9 +923,9 @@ class Tools:
                 continue
             rows.append({"target": descriptor.target, "intent": descriptor.intent,
                          "aliases": self._operation_names(descriptor), "description": descriptor.summary,
-                         "typical_seconds": None, "mode": descriptor.mode, "status": "current", "superseded_by": None})
+                         "typical_seconds": None, "mode": descriptor.mode})
         # An agent asks "what should I use": everything to choose today comes before the workflows it replaced.
-        rows.sort(key=lambda row: row["status"] != "current")
+        rows.sort(key=lambda row: row.get("status") == "superseded")
         return {"workflows": rows, "hint": (
             "Call capabilities with `target` for typed inputs; run with `target` and `inputs`. "
             "Speech and transcription also run over the OpenAI-shaped routes. "
