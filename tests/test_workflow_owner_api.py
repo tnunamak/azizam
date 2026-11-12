@@ -703,6 +703,6 @@ def test_the_owner_route_refuses_a_selection_rank_that_is_not_a_bounded_integer(
 
 @pytest.mark.parametrize("api", ["real"], indirect=True)
 def test_an_owner_write_without_selection_rank_keeps_the_record_unranked(api):
-    assert _save_mesh(api).status_code == 200
+    r = _save_mesh(api); assert r.status_code == 200, r.text
     assert "selection_rank" not in api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"] \
         or api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"]["selection_rank"] is None
