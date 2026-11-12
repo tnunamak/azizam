@@ -26136,6 +26136,13 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
         intent=intent, model=str(model), backend=target.engine_id))
     if decision.denied:
         return _policy_denied_response(decision)
+    # The owner's controls come before a job exists: a service in maintenance or a disabled intent or resource class
+    # refuses here, as it does for a synchronous protocol call. A declared job is "media" work and is not counted in
+    # the media queue (its intent is not one of the queued modality jobs).
+    admission = _dispatch_admission_response(
+        intent, auth_context=auth_context, service_id=target.engine_id, service_available=True, resource_class="media")
+    if admission is not None:
+        return admission
     caller = auth_context.identity
     request_id = f"decljob_{uuid.uuid4().hex}"
     job = media_jobs.MediaJob(
@@ -26157,9 +26164,24 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
 
     async def work() -> None:
         job_id = created.job_id
+        lease = None
         try:
             runtime = await asyncio.to_thread(
                 protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
+            # The same lifecycle as a synchronous protocol call: check the operation's key before a selection call can
+            # change state, then hold the serving lease (the transition domain's, or the offering's selection) for the
+            # whole run. The finally releases it on success, failure and cancellation.
+            await asyncio.to_thread(runtime.connection_for, intent)
+            transition = _transition_policy(target.engine_id)
+            if transition.enabled:
+                require_supported(transition, target.engine_id)
+                if offering_effect(target.offering) is not None:
+                    raise TransitionUnavailable(transition.domain, reason="activation_not_supported", service=target.engine_id)
+                async with _admission_lock(target.engine_id):
+                    lease = _swap_drain.lease(target.engine_id)
+            else:
+                lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
+                                            may_switch=_target_activation(auth_context) != "existing_only")
             media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
                                      path=media_jobs.DB_PATH)
             await declared_operation_job.run(runtime, intent, dict(body), job_id=job_id)
@@ -26172,6 +26194,9 @@ async def _submit_declared_operation_job(*, request: Request, payload: Mapping[s
             await receipt_owner.settle(asyncio.CancelledError() if canceled else exc)
             if isinstance(exc, asyncio.CancelledError):
                 raise
+        finally:
+            if lease is not None:
+                lease.release()
 
     task = asyncio.create_task(work())
     _declared_operation_job_tasks.add(task)
@@ -28626,7 +28651,7 @@ async def proxy_audio_generate(
             manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
             workflow_id = str(manifest.get("id") or "")
-            if pinned_workflow != workflow_id or not (workflow_id == workflow_name or workflow_id.endswith(f".{workflow_name}")):
+            if pinned_workflow != workflow_id or not _manifest_names_audio_workflow(manifest, workflow_name):
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:

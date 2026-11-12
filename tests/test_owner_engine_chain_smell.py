@@ -276,6 +276,50 @@ def _enabled_engine(client):
     assert client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": True}).status_code == 200
 
 
+def _submit(gateway, key):
+    return gateway.client().post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
+                                 json={"intent": "smell.infer", "model": "smell-1", "input": {"vector": [0.25, -1.5, 3.0, 0.0]}})
+
+
+def _jobs_made() -> int:
+    from gateway import media_jobs
+    return len([job for job in media_jobs.recent(path=media_jobs.DB_PATH, audience="internal") if job["intent"] == "smell.infer"])
+
+
+def test_step4_an_engine_in_maintenance_refuses_a_declared_job_before_any_upstream_request(owner, smell_engine, gateway):
+    client, overlay, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    put = client.put("/admin/api/operator/service-availability", headers=csrf_for(client),
+                     json={"overrides": {"smell-box": {"state": "maintenance", "reason": "swap"}}})
+    assert put.status_code == 200, put.text
+    before = _jobs_made()
+    refused = _submit(gateway, key)
+    assert refused.status_code in {429, 503}, refused.text
+    assert smell_engine.posts == [] and _jobs_made() == before
+    # Clearing the override lets the same call through: the refusal was the owner's control, not the setup.
+    assert client.put("/admin/api/operator/service-availability", headers=csrf_for(client),
+                      json={"overrides": {"smell-box": {"state": "available"}}}).status_code == 200
+    with gateway.client() as public:
+        _submit_and_read(public, key, smell_engine)
+
+
+def test_step4_a_disabled_intent_refuses_a_declared_job_before_any_upstream_request(owner, smell_engine, gateway):
+    client, overlay, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    _enabled_engine(client)
+    key = _app_key(client, owner_id, plan_id)
+    from gateway import admin_store
+    revision = admin_store.read_config_section("resource_admission", path=gateway.path)["revision"]
+    put = client.put("/admin/api/operator/media-job-admission", headers={**csrf_for(client), "If-Match": revision}, json={"disabled_intents": ["smell.infer"]})
+    assert put.status_code == 200, put.text
+    before = _jobs_made()
+    refused = _submit(gateway, key)
+    assert refused.status_code in {429, 503}, refused.text
+    assert smell_engine.posts == [] and _jobs_made() == before
+
+
 def test_step4_an_intent_no_engine_declares_keeps_the_unsupported_refusal(owner, gateway):
     client, overlay, owner_id, plan_id = owner
     assert _install_description(client).status_code == 201
