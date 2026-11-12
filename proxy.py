@@ -29279,9 +29279,32 @@ async def _model_list_served_declarations() -> set[str]:
         return set()
 
 
+async def _served_declaration_windows(
+    served_ids: Iterable[str], data: list[Any], observed_windows: dict[str, int],
+) -> dict[str, int]:
+    """{declaration id: context window} the way the model's own row gets it.
+
+    A row already in `data` has been through `_annotate_model_context_windows`, so its window is
+    read as listed (record, then service, then the service's cached probe). An id with no row of
+    its own goes through the same lookup. A window the engine reported lands in `observed_windows`.
+    """
+    rows = {normalize_model_id(str(item.get("id"))): item for item in data
+            if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    windows: dict[str, int] = {}
+    for model_id in sorted(set(served_ids) - USE_LOADED_MODEL_ALIASES):
+        row = rows.get(normalize_model_id(model_id))
+        found = _context_window_from_mapping(row) if row is not None else None
+        if found is None:
+            found = await _context_window_for_model_id(model_id, row, observed_windows=observed_windows)
+        if found is not None:
+            windows[model_id] = found
+    return windows
+
+
 def _with_loaded_model_inheritance(
     sources: model_metadata.MetadataSources,
     loaded_ids: Iterable[str],
+    served_windows: Mapping[str, int] | None = None,
 ) -> tuple[model_metadata.MetadataSources, dict[str, int]]:
     """Let `current` / `current-fast` inherit the loaded model's declared metadata.
 
@@ -29306,13 +29329,8 @@ def _with_loaded_model_inheritance(
         alias: model_metadata.without_reasoning(loaded) if _policy_turns_reasoning_off(alias) else loaded
         for alias in sorted(USE_LOADED_MODEL_ALIASES)
     }
-    windows = [
-        window for window in (
-            _context_window_from_mapping(_configured_model_record_for_id(model_id)[1])
-            for model_id in declared_ids
-        )
-        if window is not None
-    ]
+    served_windows = served_windows or {}
+    windows = [served_windows[model_id] for model_id in declared_ids if model_id in served_windows]
     context_windows = {alias: min(windows) for alias in inherited} if windows else {}
     return replace(sources, inherited=inherited), context_windows
 
@@ -30167,13 +30185,19 @@ async def list_models(request: Request):
     served_ids: set[str] = set()
     if any(isinstance(item, dict) and item.get("id") in USE_LOADED_MODEL_ALIASES for item in data):
         served_ids = await _model_list_served_declarations()
+    served_windows = await _served_declaration_windows(served_ids, data, observed_alias_windows)
     sources, inherited_windows = _with_loaded_model_inheritance(
-        await asyncio.to_thread(_model_metadata_sources, origins), served_ids,
+        await asyncio.to_thread(_model_metadata_sources, origins), served_ids, served_windows,
     )
     # A live-observed context window is more exact than a declared one.
+    observed_served = [observed_alias_windows[i] for i in served_ids if i in observed_alias_windows]
     for item in data:
         if isinstance(item, dict) and item.get("id") in inherited_windows:
-            item["context_window"] = observed_alias_windows.get(item["id"], inherited_windows[item["id"]])
+            item["context_window"] = (
+                observed_alias_windows.get(item["id"])
+                or (min(observed_served) if observed_served else None)
+                or inherited_windows[item["id"]]
+            )
     model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
 
     # After the profile filter: `?available=true` hides only entries known to be down. Everything else stays.

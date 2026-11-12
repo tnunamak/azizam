@@ -1005,3 +1005,41 @@ class AliasLimitsTests(RequestLoadedMetadataTests):
             with self.subTest(alias=alias):
                 self.assertEqual(listed[alias].get("context_window"), 262144)
                 self.assertEqual(listed[alias].get("max_tokens"), 262144)
+
+    def test_a_model_swap_between_two_requests_changes_the_published_limits(self) -> None:
+        record = self._non_path_strata(window_at="record")
+        backend = self.backends["kobold"]
+        other = copy.deepcopy(record)
+        other.update(id="strata-small", upstream_model="strata-small", context_window=32768)
+        other["model_metadata"]["max_tokens"] = 4096
+        backend["models"].append(other)
+        for served, window, cap in ((record["id"], 262144, 262144), (other["id"], 32768, 4096),
+                                    (record["id"], 262144, 262144)):
+            async def selected(served=served):
+                return SimpleNamespace(backend="kobold", model=served), None
+
+            with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                    patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+                listed, _ = self._served()
+            for alias in sorted(DYNAMIC):
+                with self.subTest(served=served, alias=alias):
+                    self.assertEqual((listed[alias].get("context_window"), listed[alias].get("max_tokens")),
+                                     (window, cap))
+
+    def test_no_servable_backend_publishes_no_limit_the_alias_does_not_declare(self) -> None:
+        self._non_path_strata(window_at="backend")
+        self.healthy = set()
+        listed, _ = self._served()
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertNotEqual(listed[alias].get("context_window"), 262144)
+                self.assertNotIn("max_tokens", listed[alias])
+
+    def test_an_engine_observed_window_wins_over_the_configured_one(self) -> None:
+        record = self._non_path_strata(window_at="backend")
+        self.backends["kobold"]["context_window_probe"] = {"endpoint": "/v1/models"}
+        listed = self._list_serving(record)
+        self.assertEqual(listed[record["id"]]["context_window"], 262144)
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias].get("context_window"), 262144)
