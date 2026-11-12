@@ -62,6 +62,7 @@ def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int],
+    Mapping[str, str], Mapping[str, str],
 ]:
     """Validate capability, presentation and classification rows together."""
     def invalid(word: object, reason: str) -> ValueError:
@@ -92,6 +93,8 @@ def _load_capability_tables(path: Path) -> tuple[
     rows = document.get("capabilities")
     if not isinstance(rows, list) or not rows:
         raise invalid_row("capabilities", "must be a non-empty list")
+    member_labels: dict[str, str] = {}
+    task_names: dict[str, str] = {}
     labels: dict[str, str] = {}
     policy_protocols: dict[str, str] = {}
     icons: dict[str, str] = {}
@@ -103,7 +106,7 @@ def _load_capability_tables(path: Path) -> tuple[
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order", "member_label", "task_name"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -113,6 +116,13 @@ def _load_capability_tables(path: Path) -> tuple[
         label = row.get("label")
         if not isinstance(label, str) or not label.strip():
             raise invalid_row(index, "label must be a non-empty string")
+        for field in ("member_label", "task_name"):
+            if field in row:
+                value = row[field]
+                if not isinstance(value, str) or not value.strip() or value != value.strip():
+                    raise invalid_row(index, f"{field} must be a non-empty string without surrounding whitespace")
+        member_labels[capability] = row.get("member_label", label)
+        task_names[capability] = row.get("task_name", member_labels[capability])
         labels[capability] = label
         rank = row.get("display_order", index - 1)
         if type(rank) is not int or rank < 0:
@@ -205,7 +215,7 @@ def _load_capability_tables(path: Path) -> tuple[
             MappingProxyType(protocol), MappingProxyType({**protocol, **extra_intents}),
             MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
             MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by),
-            MappingProxyType(display_order))
+            MappingProxyType(display_order), MappingProxyType(member_labels), MappingProxyType(task_names))
 
 
 def _load_capability_data(path: Path) -> tuple[
@@ -234,6 +244,11 @@ def load_capability_display_order(path: Path = CAPABILITY_WORDS_PATH) -> Mapping
     return _load_capability_tables(path)[10]
 
 
+def load_capability_member_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
+    """Read effective member labels and task names, in capability row order."""
+    return _load_capability_tables(path)[11:13]
+
+
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
     """Read the word maps after validating their capability rows; preserve the two-map API."""
     _, _, protocol, intents = _load_capability_data(path)
@@ -242,7 +257,8 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
  CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
- TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+ TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER,
+ CAPABILITY_MEMBER_LABELS, CAPABILITY_TASK_NAMES) = _load_capability_tables(CAPABILITY_WORDS_PATH)
 
 MODALITY_WORDS = load_modality_words()
 MEDIA_TYPE_MODALITIES = load_media_type_modalities()

@@ -13,42 +13,49 @@ capabilities:
   - id: image
     display_order: 1
     label: Images
+    task_name: Make a picture
     recommended_alias: image
     summary: Generate or edit images from your prompts.
     policy_protocol: openai.images
   - id: video
     display_order: 2
     label: Video
+    task_name: Make a video
     recommended_alias: video
     summary: Video from a prompt or image.
     policy_protocol: openai.video
   - id: speech
     display_order: 6
     label: Voice
+    task_name: Read text aloud
     recommended_alias: tts
     summary: Turn text into spoken audio.
     policy_protocol: openai.audio
   - id: transcribe
     display_order: 8
     label: Transcription
+    task_name: Transcribe a recording
     recommended_alias: stt
     summary: Turn recorded speech into text.
     policy_protocol: openai.audio
   - id: music
     display_order: 4
     label: Music
+    task_name: Make music
     recommended_alias: music
     summary: Songs and instrumentals from a prompt.
     policy_protocol: openai.audio
   - id: sfx
     display_order: 5
     label: Sound effects
+    task_name: Make a sound effect
     recommended_alias: sfx
     summary: Sound effects from a description.
     policy_protocol: openai.audio
   - id: audio
     display_order: 7
     label: Audio
+    task_name: Make music or sounds
     hidden_by: [speech, transcribe, music, sfx]
     icon: sfx
     summary: Generate audio from your prompts.
@@ -56,22 +63,26 @@ capabilities:
   - id: decide
     display_order: 9
     label: Decisions
+    member_label: Choose an option
     recommended_alias: decide
     summary: Choose an outcome from your options.
   - id: embed
     display_order: 10
     label: Document search
+    member_label: Turn text into numbers
     recommended_alias: embed
     summary: Create vectors for search and similarity.
     policy_protocol: openai.embeddings
   - id: rerank
     display_order: 11
     label: Reranking
+    task_name: Sort search results
     recommended_alias: rerank
     summary: Order search results by relevance.
   - id: mesh
     display_order: 3
     label: 3D models
+    task_name: Make a 3D model
     summary: A 3D model from one picture.
     policy_protocol: openai.mesh
 protocol_words:
