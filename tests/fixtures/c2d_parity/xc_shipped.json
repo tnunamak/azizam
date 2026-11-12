@@ -2938,7 +2938,7 @@
         },
         "identity": {
           "id": "audio.generate.yue2-song",
-          "manifest_hash": "28b1c98bd197c1c63ec5121de7ce5c8170f7a4d34395bcd605b818153d6fa6b0",
+          "manifest_hash": "963a05281c37a51022069941fef76f4fd4a0c1ea03d3390df169b791a408baf8",
           "source": null,
           "trusted": false,
           "version": "0.1.0"

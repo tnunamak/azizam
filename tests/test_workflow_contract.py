@@ -534,9 +534,17 @@ def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but
                 cap = spec.pop("max_bytes", None)
                 assert cap is None or (isinstance(cap, int) and cap > 0 and "max_bytes" not in converted["inputs"][name])
         if path.stem == "yue2-song":                    # the measured length and instrumental help (film agent memo M7, M10)
-            assert bundled["inputs"]["tags"]["help"].startswith(converted["inputs"]["tags"]["help"])
-            for name, key in (("tags", "help"), ("duration", "help"), ("duration", "label")):
-                converted["inputs"][name][key] = bundled["inputs"][name][key]
+            # Pin the shortened help and full description through the same named edits as the release migration.
+            edits = json.loads((ROOT / "tests/fixtures/workflow_post_schema_edits.json").read_text())
+            for change in edits[bundled["id"]]:
+                original, current = converted, bundled
+                for key in change["path"][:-1]:
+                    original, current = original[key], current[key]
+                key = change["path"][-1]
+                assert (key in original) is change["before_present"], change["path"]
+                assert original.get(key) == change["before"], change["path"]
+                assert current[key] == change["after"], change["path"]
+                original[key] = current[key]
         if path.stem == "tangoflux":                    # replaced by the sound-effect default (film agent memo M5)
             assert (bundled.pop("status"), bundled.pop("superseded_by")) == ("superseded", "audio.generate.sa3-small-sfx")
         if path.stem not in named:

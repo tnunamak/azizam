@@ -2188,7 +2188,7 @@
       "sha256": "b262cdf713686ebc1cad293b7b9860d35c3c58a1d1d06cd361dcd6ba0be2d610"
     },
     "audio.generate.yue2-song": {
-      "bytes": 4049,
+      "bytes": 4009,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2319,7 +2319,7 @@
                 "type": "integer"
               },
               "tags": {
-                "description": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
+                "description": "Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.",
                 "type": "string"
               }
             },
@@ -2342,7 +2342,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song",
         "run_path": null
       },
-      "sha256": "98ac70c04913dbb48e85253c495c7283d72e2cd395f8d27c68b7d56ff36c8540"
+      "sha256": "405c2c4cb765139589c673d6ee14ce7e0faf9eaa3ba27dde2e120a52fa76f063"
     },
     "image.analyze.face-likeness": {
       "bytes": 2776,

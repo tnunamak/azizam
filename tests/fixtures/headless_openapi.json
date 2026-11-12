@@ -1840,7 +1840,7 @@
             "type": "integer"
           },
           "tags": {
-            "description": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
+            "description": "Describe genre, instruments, and mood. For instrumental music, name one instrument and exclude humming and human sounds.",
             "type": "string"
           }
         },
