@@ -483,6 +483,7 @@ def test_every_kind_rows_recent_flag_reaches_the_media_list(library, monkeypatch
                     + "  smell: {label: Aroma, plural: Aromas, untitled: Scent, input: aroma sample, recent: false}\n", encoding="utf-8")
     table = asset_types.load_kind_names(data)
     monkeypatch.setattr(asset_types, "KIND_NAMES", table)
+    monkeypatch.setitem(asset_types.SUFFIX_MEDIA_TYPES, ".aroma", "smell/aroma-bundle")
     # Image, video and audio bytes would need real media for the metadata step; their rows are checked against the table below.
     suffixes = {"smell": ".aroma", "model": ".glb", "text": ".txt", "file": ".zzunknown"}
     for suffix in suffixes.values():
