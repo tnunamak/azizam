@@ -7,6 +7,7 @@ seed, so no name, address or photo can reach it.
 from __future__ import annotations
 
 import secrets
+from gateway.discovery_metadata import operation_intent
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
 
 # Bump it when the template changes. A picture made from an older template is not shown (gateway/avatars.py).
 TEMPLATE_VERSION = "1"
-IMAGE_INTENT = "image.generate"
+IMAGE_INTENT = operation_intent("images")
 # The style is the only part of the prompt the seed chooses. A new attempt is a new seed, so a new style.
 STYLES = (
     "flat vector",

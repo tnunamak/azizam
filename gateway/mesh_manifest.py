@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from gateway.capability_ids import MEDIA_TYPE_MODALITIES
+from gateway.discovery_metadata import capability_execution_intent
+
 # The root module still compares intents with this name to choose the mesh protocol and job content; workflow readers use the contract intent.
-MESH_INTENT = "mesh.generate"
 MESH_MEDIA_TYPE = "model/gltf-binary"
+MESH_INTENT = capability_execution_intent(MEDIA_TYPE_MODALITIES[MESH_MEDIA_TYPE])
 
 
 class MeshManifestError(ValueError):

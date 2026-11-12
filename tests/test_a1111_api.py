@@ -601,3 +601,31 @@ def test_none_owner_callers_cannot_see_or_interrupt_each_others_generation():
         raise _AnonymousCallerIsolationError(
             f"anonymous cross-caller leak: B job_count={result.before_b['job_count']}; "
             f"A actually cancelled by B={result.cancelled}")
+
+
+def test_response_format_follows_frontend_fields_even_for_an_unfamiliar_intent():
+    import asyncio
+    from gateway.workflow_call import build_request
+    route = {"method": "POST", "path": "/v1/images/generations", "fields": {}}
+    built = asyncio.run(build_request(None, None, None, {"intent": "opaque", "route_inputs": []},
+                                     route, {}, wrap_intent=None, response_format="b64_json"))
+    assert built.json == {"response_format": "b64_json"}
+
+
+def test_image_like_spelling_does_not_grant_response_format_to_an_unknown_route():
+    import asyncio
+    from gateway.workflow_call import build_request
+    route = {"method": "POST", "path": "/owner/custom", "fields": {}}
+    built = asyncio.run(build_request(None, None, None, {"intent": "image.generate"},
+                                     route, {}, wrap_intent=None, response_format="b64_json"))
+    assert built.json == {}
+
+
+def test_response_format_can_be_declared_by_the_selected_request_map():
+    import asyncio
+    from gateway.workflow_call import build_request
+    route = {"method": "POST", "path": "/owner/custom",
+             "fields": {"format": {"in": "body", "field": "response_format"}}}
+    built = asyncio.run(build_request(None, None, None, {"intent": "opaque"},
+                                     route, {"format": "url"}, wrap_intent=None, response_format="b64_json"))
+    assert built.json == {"response_format": "url"}

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from gateway import asset_types
+from gateway.discovery_metadata import frontend_request_fields
 from gateway.public_failure import describe
 from gateway.workflow_openapi import WORKFLOW_EXTENSION_NAMESPACE
 
@@ -237,7 +238,11 @@ async def build_request(
     model = route.get("model")
     if model:
         body = {"model": model, **body}
-    if response_format and entry["intent"].startswith("image."):
+    carries_response_format = any(
+        field.get("in") in {"body", "form"} and field.get("field") == "response_format"
+        for field in mapping.values()
+    ) or "response_format" in frontend_request_fields(route.get("method", "POST"), route["path"])
+    if response_format and carries_response_format:
         body.setdefault("response_format", response_format)
     if ext:
         body["extensions"] = {WORKFLOW_EXTENSION_NAMESPACE: ext}
