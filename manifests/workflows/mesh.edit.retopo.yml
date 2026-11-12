@@ -16,6 +16,7 @@ inputs:
     type: asset
     accepts:
       - model/gltf-binary
+    max_bytes: 268435456
     required: true
   target_faces:
     label: face count
