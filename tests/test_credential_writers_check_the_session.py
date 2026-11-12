@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway import accounts, admin_store, mcp_oauth_store, secret_store, session_guard, signin_admin
+from gateway import accounts, admin_store, engine_protocol_admin, mcp_oauth_store, protocol_description_store, secret_store, session_guard, signin_admin
 from gateway.session_guard import BrowserSession, SessionEnded
 from tests.support import call_graph
 from tests.support.access import store_plan
@@ -409,7 +409,8 @@ REVIEWED_UNGUARDED_TABLES = {
 NOT_CREDENTIAL_TABLES = {
     # Owner-installed engine protocol descriptions (gateway/protocol_description_store.py): protocol text only. The parser
     # refuses a header whose name looks like a credential and an auth block names a kind (bearer, header, query, none),
-    # never a value. The writer route is owner-only.
+    # never a value. The writer route is owner-only, and both writers recheck the sign-in inside their transaction
+    # (the barrier tests below), as a registry save does.
     "protocol_descriptions",
     # Agent problem reports (gateway/problem_reports.py): untrusted report text, a fingerprint, a count and the
     # reporting App's id. A row grants nothing and holds no secret; text is scrubbed before it is stored.
@@ -918,3 +919,49 @@ def test_a_credential_write_with_an_id_in_its_grace_window_is_refused_and_works_
     retried = client.post(f"/me/api/apps/{app_id}/keys", json={"label": "late"}, headers=headers)
 
     assert retried.status_code == 201, retried.text
+
+
+# -- protocol descriptions: written by the owner's browser, checked in the same transaction --------------
+
+def _protocol_text(name="barrier-proto"):
+    import yaml
+    return yaml.safe_dump({
+        "protocol_version": 1, "id": name, "title": "Barrier protocol", "executor": "http-v1",
+        "operations": {"models": {"class": "inventory", "request": {"method": "GET", "path": "/models"},
+                                  "response": {"framing": "json", "select": {"ids": "/data/*/id"}}}}})
+
+
+def _protocol_state(sg):
+    return (sg.rows("SELECT id, revision FROM protocol_descriptions"),
+            sg.rows("SELECT * FROM operator_settings_generations WHERE setting_key=?", (protocol_description_store.GENERATION_KEY,)))
+
+
+def test_a_protocol_description_is_not_installed_after_sign_out_everywhere(sg, monkeypatch):
+    client = owner_client(sg)
+    before = _protocol_state(sg)
+    sign_out_just_before(sg, monkeypatch, protocol_description_store, "put", cookie_session(client).subject)
+
+    response = client.put("/admin/api/engine-protocols/barrier-proto", content=_protocol_text(),
+                          headers={**csrf(client), "Content-Type": "application/yaml", "If-None-Match": "*"})
+
+    assert response.status_code == 401, response.text
+    assert _protocol_state(sg) == before
+
+
+def test_a_protocol_description_is_not_removed_after_sign_out_everywhere(sg, monkeypatch):
+    protocol_description_store.put("barrier-proto", _protocol_text(), expect=None, path=sg.path)
+    client = owner_client(sg)
+    before = _protocol_state(sg)
+    revision = before[0][0]["revision"]
+    sign_out_just_before(sg, monkeypatch, protocol_description_store, "delete", cookie_session(client).subject)
+
+    response = client.delete("/admin/api/engine-protocols/barrier-proto",
+                             headers={**csrf(client), "If-Match": engine_protocol_admin._tag(revision)})
+
+    assert response.status_code == 401, response.text
+    assert _protocol_state(sg) == before
+
+
+def test_an_admin_key_still_writes_a_protocol_description_with_no_session(sg):
+    revision = protocol_description_store.put("barrier-proto", _protocol_text(), expect=None, path=sg.path, session=None)
+    assert revision >= 1

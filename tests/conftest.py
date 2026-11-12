@@ -384,3 +384,29 @@ def _restore_video_job_records() -> Iterator[None]:
         records.update(snapshot)
     elif records:
         records.clear()
+
+
+# A browser sends Origin on every same-origin POST, PUT, PATCH and DELETE, and the gateway refuses a signed-in write
+# that does not say it came from its own pages (gateway/browser_origin.py). A test client is the browser here, so it
+# sends its own base URL as Origin unless the test names one, or sends a bearer key (a script, which has none). A
+# test that needs the browser to send nothing adds the header below.
+NO_ORIGIN = "x-test-browser-sends-no-origin"
+
+
+@pytest.fixture(autouse=True)
+def _test_browser_sends_origin(monkeypatch) -> None:
+    import httpx
+    from starlette.testclient import TestClient
+
+    original = TestClient.request
+
+    def request(self, method, url, **kwargs):
+        headers = httpx.Headers(kwargs.get("headers") or {})
+        opted_out = headers.pop(NO_ORIGIN, None) is not None
+        if (not opted_out and method.upper() not in {"GET", "HEAD", "OPTIONS"} and "authorization" not in headers
+                and not {"origin", "referer", "sec-fetch-site"} & set(headers.keys())):
+            headers["origin"] = str(self.base_url).rstrip("/")
+        kwargs["headers"] = headers
+        return original(self, method, url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request)

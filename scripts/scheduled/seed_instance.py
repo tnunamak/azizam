@@ -24,7 +24,7 @@ class Client:
         self.csrf: str | None = None
 
     def request(self, method: str, path: str, *, json_body=None, form=None, headers=None):
-        data, sent = None, dict(headers or {})
+        data, sent = None, {"origin": self.base_url, **(headers or {})}   # a browser sends Origin on every write
         if json_body is not None:
             data = json.dumps(json_body).encode()
             sent["content-type"] = "application/json"

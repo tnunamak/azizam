@@ -147,6 +147,7 @@ export default defineConfig({
       workers: 1,
       use: {
         baseURL: `http://127.0.0.1:${globalPort}`,
+        extraHTTPHeaders: { origin: `http://127.0.0.1:${globalPort}` },
         storageState: `${results}/auth-${globalPort}.json`,
       },
     },
@@ -159,6 +160,7 @@ export default defineConfig({
             workers: 1,
             use: {
               baseURL: `http://127.0.0.1:${secondGlobalPort}`,
+              extraHTTPHeaders: { origin: `http://127.0.0.1:${secondGlobalPort}` },
               storageState: `${results}/auth-${secondGlobalPort}.json`,
             },
           },
@@ -172,6 +174,7 @@ export default defineConfig({
       workers: 1,
       use: {
         baseURL: `http://127.0.0.1:${port}`,
+        extraHTTPHeaders: { origin: `http://127.0.0.1:${port}` },
         storageState: `${results}/auth-${port}.json`,
       },
     },
@@ -184,6 +187,7 @@ export default defineConfig({
       workers: 1,
       use: {
         baseURL: `http://127.0.0.1:${port}`,
+        extraHTTPHeaders: { origin: `http://127.0.0.1:${port}` },
         storageState: `${results}/auth-${port}.json`,
       },
     },
@@ -197,6 +201,7 @@ export default defineConfig({
       fullyParallel: true,
       use: {
         baseURL: `http://127.0.0.1:${port}`,
+        extraHTTPHeaders: { origin: `http://127.0.0.1:${port}` },
         storageState: `${results}/auth-${port}.json`,
       },
     },
@@ -208,7 +213,7 @@ export default defineConfig({
       testIgnore: [],
       metadata: { fresh: true },
       workers: 1,
-      use: { baseURL: `http://127.0.0.1:${firstRunPort}` },
+      use: { baseURL: `http://127.0.0.1:${firstRunPort}`, extraHTTPHeaders: { origin: `http://127.0.0.1:${firstRunPort}` } },
     },
     // Seed-only projects for the pool's extra servers: they run no test of their
     // own, but global setup seeds one owner on every project's server.
@@ -217,6 +222,7 @@ export default defineConfig({
       testMatch: "no-test-runs-here.never",
       use: {
         baseURL: `http://127.0.0.1:${poolPort}`,
+        extraHTTPHeaders: { origin: `http://127.0.0.1:${poolPort}` },
         storageState: `${results}/auth-${poolPort}.json`,
       },
     })),

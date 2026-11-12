@@ -36,7 +36,7 @@ export default async function setup(config: FullConfig) {
 }
 
 async function seed(baseURL: string, storagePath: string) {
-  const api = await request.newContext({ baseURL });
+  const api = await request.newContext({ baseURL, extraHTTPHeaders: { origin: baseURL } });
   const owner = await api.post("/setup/local-owner", {
     form: {
       email: "owner@example.test",

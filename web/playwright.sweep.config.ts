@@ -74,6 +74,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: target.baseURL,
+    extraHTTPHeaders: { origin: target.baseURL },
     headless: true,
     trace: "off",
     screenshot: "off",

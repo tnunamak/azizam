@@ -10,7 +10,7 @@ export default async function login(browser) {
       "ENGINES_REVIEW_ORIGIN must name an isolated loopback gateway on 18000-18997",
     );
   }
-  const context = await browser.newContext();
+  const context = await browser.newContext({ extraHTTPHeaders: { origin } });
   const api = context.request;
   const owner = await api.post(`${origin}/setup/local-owner`, {
     form: {

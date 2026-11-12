@@ -90,6 +90,35 @@ def test_a_resolved_name_with_no_record_is_an_unknown_model_on_the_route():
     assert response.status_code == 404 or json.loads(response.body)["error"]["code"] == "model_not_found"
 
 
+def _queued_run(pinned_id: str, *, record_id: str = ODD_ID, resolves_to: str = "fx"):
+    """A queued job's run with the pin the accepted job stored; a 502 means it got past the pin to the stubbed wire."""
+    manifest = _record(record_id, "audio.generate", "fx").manifest
+    pin = SimpleNamespace(manifest=lambda _binding: manifest, envelope=SimpleNamespace(source_id="job-1"))
+    with _registry(_record(record_id, "audio.generate", "fx")), derived_patch("COMFY_ENABLED", True), \
+            patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
+            patch.object(proxy, "_resolve_audio_workflow", return_value=(resolves_to, {"file": "x.json"})), \
+            patch.object(proxy, "_pinned_graph", new=lambda _pin: {"1": {"inputs": {"text": ""}}}), \
+            patch.object(proxy, "_build_graph_submit_payload", side_effect=RuntimeError("stop before the wire")):
+        return asyncio.run(proxy.proxy_audio_generate(_Json({"model": resolves_to, "prompt": "x"}), access_context(),
+                                                      pinned=pin, pinned_workflow=pinned_id))
+
+
+def test_a_queued_job_pinned_to_a_record_with_an_unrelated_id_runs_from_its_pin():
+    """The record is named by its graph artifact's stem, as in submission and the synchronous route."""
+    response = _queued_run(ODD_ID)       # the stubbed wire fails (502): it got past the pin check
+    assert response.status_code == 502, (response.status_code, response.body)
+
+
+def test_a_queued_job_whose_pin_is_another_record_is_refused():
+    response = _queued_run("catalog-entry-99")
+    assert response.status_code == 500 and json.loads(response.body)["error"]["code"] == "definition_unavailable"
+
+
+def test_a_queued_job_whose_model_now_resolves_to_another_workflow_is_refused():
+    response = _queued_run(ODD_ID, resolves_to="other")
+    assert response.status_code == 500 and json.loads(response.body)["error"]["code"] == "definition_unavailable"
+
+
 def test_a_record_whose_intent_is_not_an_audio_row_is_not_an_audio_record():
     assert "audio.fake" not in media_job_intents.AUDIO_INTENTS
     with _registry(_record("audio.generate.imposter", "audio.fake", "fx"), _record(ODD_ID, "sfx.generate", "fy")):
