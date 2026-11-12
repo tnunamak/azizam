@@ -14376,7 +14376,7 @@ async def _serve(app: FastAPI):
             flush=True,
         )
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] firehose replay failed: {e}", flush=True)
+        print(f"[proxy] firehose replay failed: {log_scrub.describe_error(e)}", flush=True)
 
     # Engines are reached lazily. A declared process driver may start one on
     # the first request when the owner has enabled host command execution.
@@ -14407,7 +14407,7 @@ async def _serve(app: FastAPI):
                     flush=True,
                 )
             except Exception as e:  # noqa: BLE001
-                print(f"[proxy] video progress startup reconcile failed: {e}", flush=True)
+                print(f"[proxy] video progress startup reconcile failed: {log_scrub.describe_error(e)}", flush=True)
 
         video_reconcile_task = asyncio.create_task(
             _reconcile_video_progress_loop(video_reconcile_stop)
@@ -14438,7 +14438,7 @@ async def _serve(app: FastAPI):
         metrics_task = asyncio.create_task(metrics_sampler.sampler_loop(lambda: config))
         print(f"[proxy] Metrics sampler started (db={metrics_store.DB_PATH})", flush=True)
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
+        print(f"[proxy] Metrics sampler failed to start: {log_scrub.describe_error(e)}", flush=True)
 
     # Saved /v1/responses conversations survive until explicit deletion.
     print(f"[proxy] Responses store initialized (db={responses_store.DB_PATH})", flush=True)
@@ -14459,7 +14459,7 @@ async def _serve(app: FastAPI):
         )
         _recover_media_jobs()
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Media job store failed to start: {e}", flush=True)
+        print(f"[proxy] Media job store failed to start: {log_scrub.describe_error(e)}", flush=True)
 
     try:
         print(f"[proxy] Admin store initialized (db={ADMIN_DB_PATH})", flush=True)
@@ -14481,7 +14481,7 @@ async def _serve(app: FastAPI):
                 flush=True,
             )
     except Exception as e:  # noqa: BLE001
-        print(f"[proxy] Admin store failed to start: {e}", flush=True)
+        print(f"[proxy] Admin store failed to start: {log_scrub.describe_error(e)}", flush=True)
 
     prompt_memory_stop = asyncio.Event()
     prompt_memory_task = asyncio.create_task(_prompt_memory_maintenance_loop(prompt_memory_stop))
@@ -28489,7 +28489,7 @@ async def videos_extend(request: Request):
 # The workflow directory is a storage root: it stays in the startup file (CONFIG_HOMES C10). The rest of the `audio`
 # section (CONFIG_HOMES C8b) is read from the snapshot on every call.
 # The config section the audio settings live in, named once for the startup read below and the snapshot read in _audio().
-_AUDIO_SECTION = domain_rows.AUDIO
+_AUDIO_SECTION = "audio"
 _AUDIO_WORKFLOWS_DIR_CFG = (_bootstrap_config.get(_AUDIO_SECTION) or {}).get("workflows_dir", "./workflows/audio")
 AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
@@ -28756,7 +28756,11 @@ async def proxy_audio_generate(
             manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
             workflow_id = str(manifest.get("id") or "")
-            if pinned_workflow != workflow_id or not _manifest_names_audio_workflow(manifest, workflow_name):
+            if (pinned_workflow != workflow_id
+                    or not _manifest_names_audio_workflow(manifest, workflow_name)
+                    or (str(body.get("model") or "") != workflow_name
+                        and _manifest_names_audio_workflow(manifest, str(body.get("model") or ""))
+                        and not _manifest_names_audio_workflow(manifest, workflow_name))):
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:

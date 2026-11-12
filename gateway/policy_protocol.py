@@ -46,7 +46,12 @@ def _row_protocols() -> dict[str, frozenset[str]]:
             for value in node:
                 walk(value)
 
-    walk(yaml.safe_load(FRONTENDS_PATH.read_text(encoding="utf-8")))
+    document = yaml.safe_load(FRONTENDS_PATH.read_text(encoding="utf-8"))
+    walk(document)
+    for record in document.get("records") or ():
+        for intent in record.get("intents") or ():
+            if record.get("protocol"):
+                found[intent].add(record["protocol"])
     return {intent: frozenset(protocols) for intent, protocols in found.items()}
 
 
@@ -54,7 +59,7 @@ def protocol_for_intent(intent: str) -> str:
     """The protocol the rows declare for ``intent``; ``ProtocolUnresolved`` when none does."""
     candidates = _row_protocols().get(intent, frozenset())
     capability = capability_for_intent(intent)
-    declared = POLICY_PROTOCOLS.get(capability) if capability else None
+    declared = (POLICY_PROTOCOLS.get(capability) or CHAT_FAMILY_PROTOCOL) if capability else None
     if len(candidates) == 1:
         return next(iter(candidates))
     if candidates:
