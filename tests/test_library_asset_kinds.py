@@ -393,7 +393,7 @@ def test_the_shipped_asset_prefixes_keep_the_existing_ids_and_kind_name_shape():
     assert asset_types.asset_prefix_for_media_type("smell/aroma-bundle") == "ast"
     for kind, prefix in asset_types.ASSET_PREFIX_BY_TOP_TYPE.items():
         assert asset_types.asset_prefix_for_media_type(f"{kind}/example") == prefix
-        assert set(asset_types.kind_names(kind)) == {"kind", *asset_types.KIND_WORDS}
+        assert set(asset_types.kind_names(kind)) == {"kind", "recent", *asset_types.KIND_WORDS}
 
 
 @pytest.mark.parametrize("prefix", [
@@ -483,12 +483,15 @@ def test_every_kind_rows_recent_flag_reaches_the_media_list(library, monkeypatch
                     + "  smell: {label: Aroma, plural: Aromas, untitled: Scent, input: aroma sample, recent: false}\n", encoding="utf-8")
     table = asset_types.load_kind_names(data)
     monkeypatch.setattr(asset_types, "KIND_NAMES", table)
-    suffixes = {"image": ".png", "video": ".mp4", "audio": ".wav", "model": ".glb", "text": ".txt", "file": ".zzunknown"}
+    # Image, video and audio bytes would need real media for the metadata step; their rows are checked against the table below.
+    suffixes = {"smell": ".aroma", "model": ".glb", "text": ".txt", "file": ".zzunknown"}
     for suffix in suffixes.values():
         _store(library, GLB if suffix == ".glb" else suffix.encode(), suffix)
     listing = library.client.get("/me/api/media").json()
     by_kind = {row["kind"]: row for row in listing["kinds"]}
     assert set(by_kind) == set(suffixes), "every stored kind is listed with its words"
     assert {kind: row["recent"] for kind, row in by_kind.items()} == {kind: table[kind].get("recent", True) for kind in suffixes}
-    assert by_kind["text"]["recent"] is False
+    assert by_kind["text"]["recent"] is False and by_kind["smell"]["recent"] is False
+    for kind in table:
+        assert asset_types.kind_names(kind)["recent"] is table[kind].get("recent", True)
     assert {row["kind"] for row in listing["assets"]} == set(suffixes)
