@@ -252,11 +252,11 @@ def test_a_stage_the_run_does_not_know_still_fails_the_run():
 
 # Declared output words come from the shared kind table; a run that declares no output gets the table's generic file words.
 @pytest.mark.parametrize("media_type,label,noun,plural,article", [
-    ("video/mp4", "Video", "video", "video", "a"),
+    ("video/mp4", "Video", "video", "videos", "a"),
     ("image/png", "Image", "image", "images", "an"),
-    (None, "File", "file", "file", "a"),
-    ("audio/wav", "Audio", "audio", "audio", "an"),
-    ("smell/example", "Smell", "smell", "smell", "a"),
+    (None, "File", "file", "files", "a"),
+    ("audio/wav", "Audio", "audio", "audios", "an"),
+    ("smell/example", "Smell", "smell", "smells", "a"),
 ])
 @pytest.mark.parametrize("failure_kind", [graph_round.WAIT_EXCEEDED, graph_round.DROPPED])
 def test_failure_words_follow_declared_output_without_changing_metadata(media_type, label, noun, plural, article, failure_kind):
@@ -307,4 +307,4 @@ def test_unknown_kind_words_use_the_shared_table_fallback():
     from gateway.node_graph_runner import output_noun
 
     assert "smell" not in asset_types.KIND_NAMES
-    assert output_noun({"out": {"media_type": "smell/example"}}) == asset_types.kind_names("smell")["plural"].lower()
+    assert output_noun({"out": {"media_type": "smell/example"}}) == "smells"

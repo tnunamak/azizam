@@ -25,6 +25,8 @@ KIND_NAMES_PATH = Path(__file__).resolve().parent.parent / "registry" / "asset_k
 KIND_WORDS = ("label", "plural", "untitled", "input")
 # Optional boolean per kind: whether Home's Recent shows items of this kind. A kind with no row, or a row without it, shows.
 RECENT_FIELD = "recent"
+# Optional per kind: the lowercase plural noun that counts items in a sentence ("videos"). A kind with no such field counts as its name plus "s".
+ITEMS_FIELD = "items"
 # A stored file whose kind has no prefix of its own is stored under this one, so no kind row may claim it.
 OTHER_ASSET_PREFIX = "ast"
 
@@ -44,7 +46,7 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
     for kind, words in rows.items():
         if not isinstance(kind, str) or not kind or kind != kind.lower() or not isinstance(words, dict):
             raise ValueError(f"{path.name}: kind {kind!r} must be a lower-case name with a mapping of words")
-        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD} or not all(
+        if not set(KIND_WORDS) <= set(words) <= set(KIND_WORDS) | {"prefix", RECENT_FIELD, ITEMS_FIELD} or not all(
             isinstance(words[w], str) and words[w].strip() for w in KIND_WORDS
         ):
             raise ValueError(
@@ -55,6 +57,10 @@ def load_kind_names(path: Path = KIND_NAMES_PATH) -> dict[str, dict[str, Any]]:
         table[kind] = {word: words[word].strip() for word in KIND_WORDS}
         if RECENT_FIELD in words:
             table[kind][RECENT_FIELD] = words[RECENT_FIELD]
+        if ITEMS_FIELD in words:
+            if not isinstance(words[ITEMS_FIELD], str) or not words[ITEMS_FIELD].strip() or words[ITEMS_FIELD] != words[ITEMS_FIELD].lower():
+                raise ValueError(f"{path.name}: kind {kind!r} {ITEMS_FIELD} must be a lower-case non-empty string")
+            table[kind][ITEMS_FIELD] = words[ITEMS_FIELD].strip()
         if "prefix" in words:
             prefix = words["prefix"]
             if not isinstance(prefix, str) or re.fullmatch(r"[a-z]{1,8}", prefix) is None:
@@ -125,6 +131,11 @@ def kind_names(kind: str) -> dict[str, Any]:
         word = kind[:1].upper() + kind[1:] if kind else "File"
         row = {"label": word, "plural": word, "untitled": word, "input": word.lower()}
     return {"kind": kind, **{word: row[word] for word in KIND_WORDS}, RECENT_FIELD: row.get(RECENT_FIELD, True)}
+
+
+def items_word(kind: str) -> str:
+    """The lowercase plural noun for counting items of a kind in a sentence ("videos"); a kind with no field is its name plus "s"."""
+    return KIND_NAMES.get(kind, {}).get(ITEMS_FIELD) or f"{kind}s"
 
 
 def input_word(modality: str) -> str:

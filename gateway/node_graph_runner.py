@@ -73,8 +73,7 @@ def output_kind(outputs: Mapping[str, Any]) -> str:
 def output_noun(outputs: Mapping[str, Any]) -> str:
     """The plural of ``output_kind`` for a no-result message; a workflow that declares no output gets the generic file words."""
     kind = output_kind(outputs)
-    word = asset_types.kind_names(kind)["plural"]
-    return word[:1].lower() + word[1:]
+    return asset_types.items_word(kind or asset_types.UNKNOWN_KIND)
 
 
 class RunFailed(Exception):
