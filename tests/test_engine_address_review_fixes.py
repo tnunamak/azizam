@@ -89,9 +89,9 @@ def test_face_client_posts_under_the_explicit_url(field, url, monkeypatch):
 @pytest.mark.parametrize("field", FIELDS)
 @pytest.mark.parametrize("url", VARIANTS.values(), ids=VARIANTS.keys())
 def test_status_probes_keep_the_prefix(field, url, probed):
-    config = {"backends": {
+    config = {"backends": declared({
         "tts": _record(field, url), "comfyui": _record(field, url),
-        "chat": _record(field, url, capabilities=["chat"], lifecycle={"driver": "systemd"})}}
+        "chat": _record(field, url, capabilities=["chat"], lifecycle={"driver": "systemd"})})}
     asyncio.run(status_endpoint._enriched_aux_health(config))
     asyncio.run(status_endpoint._comfy_queue_and_stats(config))
     asyncio.run(status_endpoint._llama_props_and_slots(config))
@@ -166,9 +166,9 @@ QUERY_BASES = {
 @pytest.mark.parametrize("field", FIELDS)
 @pytest.mark.parametrize("base,pattern", QUERY_BASES.values(), ids=QUERY_BASES.keys())
 def test_status_probes_join_the_endpoint_before_the_query(field, base, pattern, probed):
-    config = {"backends": {
+    config = {"backends": declared({
         "tts": _record(field, base), "comfyui": _record(field, base),
-        "chat": _record(field, base, capabilities=["chat"], lifecycle={"driver": "systemd"})}}
+        "chat": _record(field, base, capabilities=["chat"], lifecycle={"driver": "systemd"})})}
     asyncio.run(status_endpoint._enriched_aux_health(config))
     asyncio.run(status_endpoint._comfy_queue_and_stats(config))
     asyncio.run(status_endpoint._llama_props_and_slots(config))
