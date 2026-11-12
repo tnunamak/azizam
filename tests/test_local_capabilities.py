@@ -1266,5 +1266,77 @@ def test_new_alias_row_drives_all_three_collections(tmp_path, monkeypatch, engin
     )
 
 
+
+class LocalLanguageContractTest(unittest.TestCase):
+    def test_current_source_facts_keep_results(self):
+        for spec, words, expected in (
+            ({"mmproj": "/not/read/projector"}, [], ("text", "image")),
+            ({}, ["vision"], ("text", "image")),
+            ({}, ["Vision"], ("text", "image")),
+            ({}, ["chat"], ("text",)),
+            ({}, [" vision "], ("text",)),
+        ):
+            with self.subTest(spec=spec, words=words):
+                self.assertEqual(local_capabilities._llm_input_modalities(
+                    spec=spec, backend="sample",
+                    backends={"sample": {"capabilities": words}},
+                ), expected)
+
+    def test_changed_tag_controls_backend_not_name(self):
+        contract = dataclasses.replace(
+            mm.METADATA_CONTRACT,
+            tags=tuple("sight" if tag == "vision" else tag for tag in mm.METADATA_CONTRACT.tags),
+            implications=tuple(
+                dataclasses.replace(rule, tag="sight")
+                if rule.type == "language" and rule.tag == "vision" else rule
+                for rule in mm.METADATA_CONTRACT.implications
+            ),
+        )
+        for words, expected in ((["sight"], ("text", "image")), (["vision"], ("text",))):
+            with self.subTest(words=words):
+                self.assertEqual(local_capabilities._llm_input_modalities(
+                    spec={}, backend="sample",
+                    backends={"sample": {"capabilities": words}}, contract=contract,
+                ), expected)
+
+    def test_changed_modality_controls_backend_and_projector(self):
+        contract = dataclasses.replace(
+            mm.METADATA_CONTRACT,
+            implications=tuple(
+                dataclasses.replace(rule, input_modality="audio")
+                if rule.type == "language" and rule.tag == "vision" else rule
+                for rule in mm.METADATA_CONTRACT.implications
+            ),
+        )
+        self.assertIn("audio", contract.input_modalities)
+        for spec, words in (({}, ["vision"]), ({"mmproj": "projector"}, [])):
+            with self.subTest(spec=spec):
+                self.assertEqual(local_capabilities._llm_input_modalities(
+                    spec=spec, backend="sample",
+                    backends={"sample": {"capabilities": words}}, contract=contract,
+                ), ("text", "audio"))
+
+    def test_contract_order_type_filter_and_deduplication(self):
+        rule = next(rule for rule in mm.METADATA_CONTRACT.implications
+                    if rule.type == "language" and rule.tag == "vision")
+        contract = dataclasses.replace(
+            mm.METADATA_CONTRACT,
+            input_modalities=("audio", "text", "image"),
+            implications=(
+                dataclasses.replace(rule, input_modality="image"),
+                dataclasses.replace(rule, input_modality="audio"),
+                dataclasses.replace(rule, input_modality="text"),
+                dataclasses.replace(rule, type="image", tag="other"),
+            ),
+        )
+        self.assertEqual(local_capabilities._llm_input_modalities(
+            spec={}, backend="sample",
+            backends={"sample": {"capabilities": ["vision"]}}, contract=contract,
+        ), ("text", "audio", "image"))
+        self.assertEqual(local_capabilities._llm_input_modalities(
+            spec={}, backend="sample",
+            backends={"sample": {"capabilities": ["other"]}}, contract=contract,
+        ), ("text",))
+
 if __name__ == "__main__":
     unittest.main()

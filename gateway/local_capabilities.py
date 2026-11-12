@@ -38,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -46,6 +46,9 @@ from gateway.capabilities import Capability, ResourceEstimate
 from gateway.engine_protocol.reviewed import adapter_serves, speaks_serving_adapter
 from gateway.model_files import missing_model_file_caveat, model_file_availability
 from gateway.service_priority import selected_service, service_priority
+
+if TYPE_CHECKING:  # model_metadata imports this module through stable_aliases; read it at call time
+    from gateway.model_metadata import MetadataContract
 
 # Intent vocabulary used by the gateway. Mirrors what proxy.py advertises
 # today, kept here so this module does not depend on the proxy.
@@ -758,14 +761,20 @@ def _workflow_family_capabilities(
     return out
 
 
+# A projector is source evidence for this tag, not a separate modality rule.
+_PROJECTOR_CAPABILITY_TAG = "vision"
+
+
 def _llm_input_modalities(
     *,
     spec: Mapping[str, Any],
     backend: str,
     backends: Mapping[str, Any],
+    contract: MetadataContract | None = None,
 ) -> tuple[str, ...]:
-    """Image input comes from a capability fact (a projector file or the backend's words), never from a name."""
-    has_mmproj = bool(spec.get("mmproj"))
+    """Derive language inputs from source tags and the ordered metadata contract (the shipped one by default)."""
+    if contract is None:
+        from gateway.model_metadata import METADATA_CONTRACT as contract
     backend_spec = _as_mapping(backends.get(backend))
     backend_caps_raw = backend_spec.get("capabilities")
     backend_caps: set[str] = set()
@@ -773,9 +782,17 @@ def _llm_input_modalities(
         backend_caps = {
             str(c).lower() for c in backend_caps_raw if isinstance(c, str)
         }
-    if has_mmproj or "vision" in backend_caps:
-        return ("text", "image")
-    return ("text",)
+    if spec.get("mmproj"):
+        backend_caps.add(_PROJECTOR_CAPABILITY_TAG)
+    implied = {
+        rule.input_modality
+        for rule in contract.implications
+        if rule.type == "language" and rule.tag in backend_caps
+    }
+    return ("text",) + tuple(
+        modality for modality in contract.input_modalities
+        if modality != "text" and modality in implied
+    )
 
 
 def _resource_estimate(
