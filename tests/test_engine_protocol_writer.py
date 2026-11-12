@@ -488,3 +488,25 @@ def test_gateway_cache_reads_no_database_until_a_committed_writer_invalidates_it
         assert description.registry_problems() == []
     assert client.delete(f"{PATH}/tiny", headers={"If-Match": replaced.headers["ETag"]}).status_code == 200
     assert "tiny" not in description.owner_descriptions()[0]
+
+
+def test_two_writers_invalidating_at_once_both_count(monkeypatch, tmp_path):
+    """Two commits whose after-commit callbacks overlap must move the in-process revision by two, or the reader that
+    re-read after the first write keeps serving rows without the second."""
+    path = tmp_path / "admin.db"
+    second: list[threading.Thread] = []
+
+    class Interleaving(dict):
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if not second:  # the first writer has read the count; the second writer runs before it stores its own
+                thread = threading.Thread(target=protocol_description_store._invalidate, args=(path,))
+                second.append(thread)
+                thread.start()
+                thread.join(timeout=0.5)
+            return value
+
+    monkeypatch.setattr(protocol_description_store, "_cache_revisions", Interleaving())
+    protocol_description_store._invalidate(path)
+    second[0].join(timeout=5)
+    assert protocol_description_store._cache_revisions[path] == 2
