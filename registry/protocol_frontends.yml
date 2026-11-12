@@ -29,15 +29,35 @@ records:
       - images.generate
       - images.edit
       - video.generate
+    mcp_jobs: [
+      {
+        "family": "video",
+        "poll": {
+          "method": "GET",
+          "path": "/v1/videos/{job_id}"
+        },
+        "content": {
+          "method": "GET",
+          "path": "/v1/videos/{job_id}/content"
+        },
+        "cancel": {
+          "method": "DELETE",
+          "path": "/v1/videos/{job_id}"
+        },
+        "wrap_intent": false
+      }
+    ]
     registered_routes:
       - methods: [GET]
         translator: identity
         intent: models.list
         canonical: /v1/models
+        mcp_not_exposed: "Model discovery remains available over HTTP."
         alias: /openai/v1/models
         runtime_policy: {protocol: openai.models, intent: models.list}
       - methods: [POST]
         canonical: /v1/decisions
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         operation: decisions
         model_metadata:
           type: decision
@@ -48,12 +68,14 @@ records:
         translator: identity
         intent: voices.list
         canonical: /v1/voices
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/voices
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       - methods: [GET]
         translator: identity
         intent: voices.list
         canonical: /v1/audio/voices
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/audio/voices
         runtime_policy: {protocol: openai.audio, intent: speech.synthesis, backend: tts, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
       # Custom voices and consent recordings (gateway/voices_api.py). Every one of these routes
@@ -61,23 +83,100 @@ records:
       # because that dict is keyed by path alone.
       - methods: [POST]
         canonical: /v1/audio/voices
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/audio/voices
       - methods: [GET, POST, DELETE]
         canonical: /v1/audio/voices/{voice_id}
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/audio/voices/{voice_id}
       - methods: [GET]
         canonical: /v1/audio/voices/{voice_id}/sample
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/audio/voices/{voice_id}/sample
       - methods: [GET, POST]
         canonical: /v1/audio/voice_consents
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/audio/voice_consents
       - methods: [GET, POST, DELETE]
         canonical: /v1/audio/voice_consents/{consent_id}
+        mcp_not_exposed: "Voice lookup supplements exposed targets; voice management remains HTTP-only."
         alias: /openai/v1/audio/voice_consents/{consent_id}
       - methods: [POST]
         translator: identity
         intent: audio.speech
         canonical: /v1/audio/speech
+        mcp: {
+          "target": "speech",
+          "mode": "sync",
+          "description": "Text to speech through the OpenAI-style speech route.",
+          "summary": "Text to speech.",
+          "defaults": {
+            "model": "tts",
+            "response_format": "mp3"
+          },
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "string",
+                "description": "Text to speak."
+              },
+              "voice": {
+                "type": "string",
+                "description": "Voice name or custom voice id. Optional."
+              },
+              "model": {
+                "type": "string",
+                "description": "Speech alias or engine, e.g. tts, tts-fast, tts-quality."
+              },
+              "speed": {
+                "type": "number",
+                "minimum": 0.25,
+                "maximum": 4.0
+              },
+              "instructions": {
+                "type": "string",
+                "description": "Style hint, for engines that take one."
+              },
+              "response_format": {
+                "type": "string",
+                "enum": [
+                  "mp3",
+                  "wav",
+                  "opus",
+                  "aac",
+                  "flac"
+                ],
+                "default": "mp3"
+              }
+            },
+            "required": [
+              "input"
+            ],
+            "additionalProperties": false
+          },
+          "outputs": [
+            {
+              "name": "audio",
+              "media_type": "audio/mpeg"
+            }
+          ],
+          "response_kind": "binary_asset",
+          "accepted_modes": [
+            "auto",
+            "sync",
+            "async"
+          ],
+          "filter_by_intent": false,
+          "choices": {
+            "name": "voices",
+            "method": "GET",
+            "path": "/v1/audio/voices",
+            "default_field": "default_voice",
+            "items_field": "voices",
+            "id_field": "voice_id"
+          }
+        }
         extensions: [com.azizam.prompts]
         extension_order: 70
         operation: speech
@@ -91,6 +190,77 @@ records:
         translator: identity
         intent: audio.transcriptions
         canonical: /v1/audio/transcriptions
+        mcp: {
+          "target": "transcription",
+          "mode": "sync",
+          "description": "Transcribe an owned audio asset or bounded audio data URI through the OpenAI-style transcription route.",
+          "summary": "Audio to text.",
+          "defaults": {
+            "model": "stt",
+            "response_format": "json"
+          },
+          "forced": {
+            "stream": false
+          },
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "Owned aud_ asset id or base64 audio data URI, up to 32 MiB; never a path or URL."
+              },
+              "model": {
+                "type": "string",
+                "description": "Transcription alias or engine."
+              },
+              "language": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "response_format": {
+                "type": "string",
+                "enum": [
+                  "json",
+                  "verbose_json"
+                ],
+                "default": "json"
+              },
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "stream": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "required": [
+              "file"
+            ],
+            "additionalProperties": false
+          },
+          "outputs": [
+            {
+              "name": "transcription",
+              "media_type": "application/json"
+            }
+          ],
+          "response_kind": "json_result",
+          "accepted_modes": [
+            "auto",
+            "sync"
+          ],
+          "filter_by_intent": true,
+          "file_input": {
+            "field": "file",
+            "asset_prefix": "aud_",
+            "media_prefix": "audio/",
+            "max_bytes": 33554432
+          }
+        }
         operation: transcriptions
         model_metadata:
           type: audio
@@ -103,6 +273,7 @@ records:
         translator: identity
         intent: audio.translations
         canonical: /v1/audio/translations
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         alias: /openai/v1/audio/translations
         body: multipart
         runtime_policy: {protocol: openai.audio, intent: speech.translation, backend: stt, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: interactive}
@@ -110,6 +281,7 @@ records:
         translator: identity
         intent: audio.generate
         canonical: /v1/audio/generate
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         extensions: [com.azizam.prompts, com.azizam.workflow]
         extension_order: 60
         route_inputs: [prompt, tags, lyrics, duration, seed]
@@ -128,12 +300,14 @@ records:
         translator: identity
         intent: audio.models
         canonical: /v1/audio/models
+        mcp_not_exposed: "Model discovery remains available over HTTP."
         alias: /openai/v1/audio/models
         runtime_policy: {protocol: openai.audio, intent: models.list}
       - methods: [POST]
         translator: identity
         intent: images.generate
         canonical: /v1/images/generations
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         extensions: [com.azizam.prompts, com.azizam.workflow]
         extension_order: 10
         route_inputs: [prompt, source_image, width, height]
@@ -151,6 +325,7 @@ records:
         translator: identity
         intent: images.edit
         canonical: /v1/images/edits
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         extensions: [com.azizam.prompts, com.azizam.workflow]
         extension_order: 20
         route_inputs: [prompt, source_image, width, height, mask, source_mask, mask_asset]
@@ -169,27 +344,32 @@ records:
         translator: identity
         intent: images.content
         canonical: /v1/images/{image_id}/content
+        mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
         alias: /openai/v1/images/{image_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [GET]
         translator: identity
         intent: assets.content
         canonical: /v1/assets/{asset_id}/content
+        mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
         alias: /openai/v1/assets/{asset_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [DELETE]
         translator: identity
         intent: assets.delete
         canonical: /v1/assets/{asset_id}
+        mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
       - methods: [DELETE]
         translator: identity
         intent: assets.delete
         canonical: /openai/v1/assets/{asset_id}
+        mcp_not_exposed: "MCP uses asset result links and previews; asset management remains HTTP-only."
       # Data only: no translator, because the videos-create frontend row below serves this route. The row stays here for the
       # extension catalog and the model metadata, which read their facts from registered_routes.
       - methods: [POST]
         intent: videos.create
         canonical: /v1/videos
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         extensions: [com.azizam.prompts, com.azizam.workflow]
         extension_order: 30
         route_inputs: [prompt, negative_prompt, width, height, length, frame_rate, seed, image, image_strength]
@@ -206,12 +386,14 @@ records:
         translator: identity
         intent: videos.retrieve
         canonical: /v1/videos/{video_id}
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         alias: /openai/v1/videos/{video_id}
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [GET]
         translator: identity
         intent: videos.content
         canonical: /v1/videos/{video_id}/content
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         alias: /openai/v1/videos/{video_id}/content
         runtime_policy: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       # GET /v1/videos (list) and DELETE /v1/videos/{video_id} deliberately have
@@ -233,6 +415,7 @@ records:
         intent: videos.remix
         execution_intents: {admission: video.remix}
         canonical: /v1/videos/{video_id}/remix
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         alias: /openai/v1/videos/{video_id}/remix
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       - methods: [POST]
@@ -240,6 +423,7 @@ records:
         intent: videos.edit
         execution_intents: {admission: video.edit}
         canonical: /v1/videos/edits
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         alias: /openai/v1/videos/edits
         runtime_policy: {protocol: openai.video, intent: video.remix, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
       # /rerank and /v2/rerank are handled in-handler with the policy of /v1/rerank. rerank is retrieval
@@ -248,6 +432,7 @@ records:
         translator: identity
         intent: rerank
         canonical: /v1/rerank
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         operation: rerank
         model_metadata:
           type: reranking
@@ -260,6 +445,7 @@ records:
         intent: videos.extend
         execution_intents: {admission: video.extend, receipt: video.extend}
         canonical: /v1/videos/extensions
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         extensions: [com.azizam.prompts]
         extension_order: 40
         alias: /openai/v1/videos/extensions
@@ -268,6 +454,7 @@ records:
         translator: identity
         intent: responses.create
         canonical: /v1/responses
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         extensions: [com.azizam.prompts, com.azizam.chat, com.azizam.routing]
         extension_order: 80
         alias: /openai/v1/responses
@@ -275,16 +462,19 @@ records:
         translator: identity
         intent: responses.retrieve
         canonical: /v1/responses/{response_id}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         alias: /openai/v1/responses/{response_id}
       - methods: [DELETE]
         translator: identity
         intent: responses.delete
         canonical: /v1/responses/{response_id}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         alias: /openai/v1/responses/{response_id}
       - methods: [POST]
         translator: identity
         intent: chat.completions
         canonical: /v1/chat/completions
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         extensions: [com.azizam.chat, com.azizam.routing]
         extension_order: 75
         operation: chat
@@ -298,12 +488,14 @@ records:
         translator: identity
         intent: text.completions
         canonical: /v1/completions
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         alias: /openai/v1/completions
         azizam_policy: {protocol: openai.chat, intent: text.completions}
       - methods: [POST]
         translator: identity
         intent: text.embeddings
         canonical: /v1/embeddings
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         operation: embeddings
         model_metadata:
           type: embedding
@@ -313,118 +505,146 @@ records:
         azizam_policy: {protocol: openai.embeddings, intent: text.embeddings}
       - methods: [GET]
         canonical: /v1/videos
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         translator: identity
         intent: videos.list
       - methods: [GET]
         canonical: /openai/v1/videos
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         translator: identity
         intent: videos.list
       - methods: [DELETE]
         canonical: /v1/videos/{video_id}
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         translator: identity
         intent: videos.delete
       - methods: [DELETE]
         canonical: /openai/v1/videos/{video_id}
+        mcp_not_exposed: "Video workflows and declared job profiles provide the MCP lifecycle."
         translator: identity
         intent: videos.delete
       - methods: [GET]
         canonical: /v1/models/{model_id:path}
+        mcp_not_exposed: "Model discovery remains available over HTTP."
         translator: identity
         intent: models.retrieve
       - methods: [GET]
         canonical: /openai/v1/models/{model_id:path}
+        mcp_not_exposed: "Model discovery remains available over HTTP."
         translator: identity
         intent: models.retrieve
       - methods: [POST]
         canonical: /v1/images/variations
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         translator: identity
         intent: images.variations
         execution_intents: {admission: image.variation}
         body: multipart
       - methods: [POST]
         canonical: /openai/v1/images/variations
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         translator: identity
         intent: images.variations
         execution_intents: {admission: image.variation}
         body: multipart
       - methods: [POST]
         canonical: /v2/rerank
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: rerank.v2
       - methods: [POST]
         canonical: /rerank
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: rerank.root
       - methods: [GET]
         canonical: /v1/responses/{response_id}/input_items
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: responses.input_items
       - methods: [GET]
         canonical: /openai/v1/responses/{response_id}/input_items
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: responses.input_items
       - methods: [POST]
         canonical: /v1/responses/input_tokens
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: responses.input_tokens
       - methods: [POST]
         canonical: /openai/v1/responses/input_tokens
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: responses.input_tokens
       - methods: [POST]
         canonical: /v1/responses/{response_id}/cancel
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: responses.cancel
       - methods: [POST]
         canonical: /openai/v1/responses/{response_id}/cancel
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: responses.cancel
       - methods: [GET, POST, PUT, DELETE, PATCH]
         canonical: /v1/assistants{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.assistants
       - methods: [GET, POST, PUT, DELETE, PATCH]
         canonical: /openai/v1/assistants{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.assistants
       - methods: [GET, POST, DELETE]
         canonical: /v1/files{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.files
       - methods: [GET, POST, DELETE]
         canonical: /openai/v1/files{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.files
       - methods: [GET, POST, DELETE]
         canonical: /v1/batches{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.batches
       - methods: [GET, POST, DELETE]
         canonical: /openai/v1/batches{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.batches
       - methods: [GET, POST, DELETE]
         canonical: /v1/fine_tuning{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.fine_tuning
       - methods: [GET, POST, DELETE]
         canonical: /openai/v1/fine_tuning{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.fine_tuning
       - methods: [GET, POST, DELETE]
         canonical: /v1/realtime{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.realtime
       - methods: [GET, POST, DELETE]
         canonical: /openai/v1/realtime{rest:path}
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: identity
         intent: unsupported.realtime
       - methods: [WEBSOCKET]
         canonical: /v1/realtime
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: realtime
         intent: realtime.session
       - methods: [WEBSOCKET]
         canonical: /openai/v1/realtime
+        mcp_not_exposed: "HTTP-only protocol operation; no MCP input/result contract is declared."
         translator: realtime
         intent: realtime.session
     public_discovery:
@@ -836,6 +1056,24 @@ records:
       - providers.native
       - jobs.create
       - assets.read
+    mcp_jobs: [
+      {
+        "family": "media_job",
+        "poll": {
+          "method": "GET",
+          "path": "/gateway/v1/media/jobs/{job_id}"
+        },
+        "content": {
+          "method": "GET",
+          "path": "/gateway/v1/media/jobs/{job_id}/content"
+        },
+        "cancel": {
+          "method": "POST",
+          "path": "/gateway/v1/media/jobs/{job_id}/cancel"
+        },
+        "wrap_intent": true
+      }
+    ]
     registered_routes:
       - methods: [GET]
         translator: gateway
@@ -960,6 +1198,7 @@ records:
     registered_routes:
       - methods: [POST]
         canonical: /v1/3d/generations
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         intent: mesh.generate
         capability: mesh
         discovery_metadata:
@@ -968,6 +1207,7 @@ records:
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       - methods: [POST]
         canonical: /v1/3d/generations/glb
+        mcp_not_exposed: "Use the workflow catalog or HTTP; no standalone MCP target is declared."
         intent: mesh.generate
         capability: mesh
         discovery_metadata:
