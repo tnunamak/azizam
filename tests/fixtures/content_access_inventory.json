@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "8b8fe7db8d12cfdbf471cc78aab6d67b791cf3d3eca68016ba7cfba3647c082b",
+      "source_sha256": "eefb25b0beffaefda214c18a6c995cddcb1a1830b608c7d8ebc540be66004630",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -72,7 +72,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
+      "source_sha256": "498d28a05eddd563bc43333c75b4b3483b1d982e80a85849be5314cca864ca8a",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
@@ -80,7 +80,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
+      "source_sha256": "70ed22da8167b6bf6a20473106b347df1dee51626296203f8746d2c5e4c4bfc0",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
@@ -88,7 +88,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "964f8500e5ef0cd303a6fcd57f7c6a035b24b1253d14decc07f59d7c15af76bf",
+      "source_sha256": "750f91034dce94fd16d7fe503c760b8a798410af9f51590e6e560b2d0e22acc4",
       "call": "append_event",
       "event": "'completed'",
       "access": "content:job:read"
@@ -96,7 +96,7 @@
     {
       "path": "proxy.py",
       "function": "_run_video_media_job",
-      "source_sha256": "cab9bb47be2f4c73bf6f47209d68cd3f884c3bc005240b83df5c97eed5428e2e",
+      "source_sha256": "41ee6f6eb42569b7242ea110ea3286de73343ddd2ae89c8c77192ebe6be75a74",
       "call": "append_event",
       "event": "'completed'",
       "access": "content:job:read"
@@ -104,7 +104,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_fail",
-      "source_sha256": "66ff6f0f8b43df092aa47a5d263fd8efa92f4d1f1571d385b6fdd296ed920c6b",
+      "source_sha256": "113fe2b2f2407c38021734105db3fa887d5dc0d9cd95c1827fa1bf538c106ef5",
       "call": "append_event",
       "event": "'failed'",
       "access": "content:job:read"
@@ -136,7 +136,7 @@
     {
       "path": "proxy.py",
       "function": "_run_video_media_job",
-      "source_sha256": "cab9bb47be2f4c73bf6f47209d68cd3f884c3bc005240b83df5c97eed5428e2e",
+      "source_sha256": "41ee6f6eb42569b7242ea110ea3286de73343ddd2ae89c8c77192ebe6be75a74",
       "call": "append_event",
       "event": "'progress'",
       "access": "content:job:read"
@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "cf9b2049febe28a690d241a4c68c1a00a1129a84edb70e3fd316c62263ff2fbb",
+      "source_sha256": "de71ab1261688f2bcc9c75982b2eceed8da5850788941a38b546d12f9a1a229c",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -192,7 +192,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
+      "source_sha256": "70ed22da8167b6bf6a20473106b347df1dee51626296203f8746d2c5e4c4bfc0",
       "call": "append_event",
       "event": "'retry'",
       "access": "content:job:read"
@@ -200,7 +200,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
+      "source_sha256": "70ed22da8167b6bf6a20473106b347df1dee51626296203f8746d2c5e4c4bfc0",
       "call": "append_event",
       "event": "'retry'",
       "access": "content:job:read"
@@ -216,7 +216,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
+      "source_sha256": "498d28a05eddd563bc43333c75b4b3483b1d982e80a85849be5314cca864ca8a",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -224,7 +224,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "964f8500e5ef0cd303a6fcd57f7c6a035b24b1253d14decc07f59d7c15af76bf",
+      "source_sha256": "750f91034dce94fd16d7fe503c760b8a798410af9f51590e6e560b2d0e22acc4",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -232,7 +232,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
+      "source_sha256": "70ed22da8167b6bf6a20473106b347df1dee51626296203f8746d2c5e4c4bfc0",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -240,7 +240,7 @@
     {
       "path": "proxy.py",
       "function": "_run_video_media_job",
-      "source_sha256": "cab9bb47be2f4c73bf6f47209d68cd3f884c3bc005240b83df5c97eed5428e2e",
+      "source_sha256": "41ee6f6eb42569b7242ea110ea3286de73343ddd2ae89c8c77192ebe6be75a74",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -248,7 +248,7 @@
     {
       "path": "proxy.py",
       "function": "_run_video_media_job",
-      "source_sha256": "cab9bb47be2f4c73bf6f47209d68cd3f884c3bc005240b83df5c97eed5428e2e",
+      "source_sha256": "41ee6f6eb42569b7242ea110ea3286de73343ddd2ae89c8c77192ebe6be75a74",
       "call": "append_event",
       "event": "'submitted'",
       "access": "content:job:read"
@@ -256,7 +256,7 @@
     {
       "path": "proxy.py",
       "function": "_protocol_image_result",
-      "source_sha256": "ff9be2f2c4ebfbfa7330965d633a1a990c7a303b8091488030fe238f76c08f2f",
+      "source_sha256": "20a8aa474c10a04645974fc6e48702262c81532bcb2da750460b201b829a006f",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -264,7 +264,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_run",
-      "source_sha256": "b356e003a3bc24f7414984f04e74104d703f8c4e4dad367808a6594193e343b4",
+      "source_sha256": "498d28a05eddd563bc43333c75b4b3483b1d982e80a85849be5314cca864ca8a",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -280,7 +280,7 @@
     {
       "path": "proxy.py",
       "function": "_run_identity_job",
-      "source_sha256": "0f4a1a7d163403c4d1fd218a064561a3f98f6b5b362deb6fb4f60e7e388ff601",
+      "source_sha256": "6812af0a36e4720bf5b2f20ce39c2c09eb945847662ed45e84358acb31250448",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -288,7 +288,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "9082c855bb2251089c60706ae18e2d89edd329bdc376a42496d24d49e1ab7160",
+      "source_sha256": "70ed22da8167b6bf6a20473106b347df1dee51626296203f8746d2c5e4c4bfc0",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
@@ -368,7 +368,8 @@
     "visible": "none",
     "read_preview_asset": "content:creation:read",
     "note_failure": "none",
-    "problem_report": "own-account"
+    "problem_report": "own-account",
+    "availability": "operational"
   },
   "mcp_tools": [
     {
@@ -381,8 +382,8 @@
       ],
       "access": "none+content:voice:read",
       "operations": {
-        "list": "none",
         "describe": "none",
+        "list": "none",
         "speech-voices": "content:voice:read"
       }
     },
@@ -392,18 +393,19 @@
       "parameters": [
         "inputs",
         "mode",
+        "tag",
         "target",
         "wait_seconds"
       ],
       "access": "own-account+content:creation:reuse+content:voice:reuse+content:creation:link+content:job:read",
       "operations": {
-        "workflow-auto": "content:creation:reuse+content:creation:link",
-        "workflow-sync": "content:creation:reuse+content:creation:link",
-        "workflow-async": "content:creation:reuse+content:job:read",
-        "speech": "content:voice:reuse+content:creation:link",
+        "alias-async": "content:creation:reuse+content:job:read",
         "alias-auto": "content:creation:reuse+content:creation:link",
         "alias-sync": "content:creation:reuse+content:creation:link",
-        "alias-async": "content:creation:reuse+content:job:read"
+        "speech": "content:voice:reuse+content:creation:link",
+        "workflow-async": "content:creation:reuse+content:job:read",
+        "workflow-auto": "content:creation:reuse+content:creation:link",
+        "workflow-sync": "content:creation:reuse+content:creation:link"
       },
       "note": "Fresh generation is own-account; supplied assets/voices and result links have separate content checks."
     },
@@ -413,14 +415,15 @@
       "parameters": [
         "cancel",
         "job_id",
+        "job_profile",
         "wait_seconds"
       ],
       "access": "content:job:read+content:job:cancel+content:creation:link",
       "operations": {
-        "poll": "content:job:read",
-        "wait": "content:job:read",
+        "cancel": "content:job:cancel",
         "content": "content:job:read+content:creation:link",
-        "cancel": "content:job:cancel"
+        "poll": "content:job:read",
+        "wait": "content:job:read"
       }
     },
     {
@@ -478,12 +481,12 @@
       ],
       "access": "operational",
       "operations": {
-        "options": "operational",
-        "configure": "operational",
-        "start": "operational",
-        "status": "operational",
+        "apply": "operational",
         "cancel": "operational",
-        "apply": "operational"
+        "configure": "operational",
+        "options": "operational",
+        "start": "operational",
+        "status": "operational"
       }
     },
     {
@@ -498,16 +501,17 @@
         "action",
         "cursor",
         "limit",
-        "record_id"
+        "record_id",
+        "tag"
       ],
       "access": "content:request_history:read+content:request_history:delete+content:receipt:read+none",
       "operations": {
-        "list": "content:request_history:read",
-        "get": "content:request_history:read",
         "delete": "content:request_history:delete",
         "delete_all": "content:request_history:delete",
+        "get": "content:request_history:read",
         "ledger-with-request-id": "content:receipt:read",
-        "ledger-without-request-id": "none"
+        "ledger-without-request-id": "none",
+        "list": "content:request_history:read"
       }
     },
     {
@@ -3711,59 +3715,72 @@
     "succeeded": "content:job:read"
   },
   "mcp_dispatch": {
-    "McpDeps": "aa80d651a8e863e1b2a6199c290edaf613b98a4f4f3a599263d328bd4c5114d1",
-    "rpc_error": "a23c4b9c67defee55675b673cded5661de031a6216b4231e661eef8f2c62e7a2",
-    "_decode_header_value": "34648136c6a4cdfc8071129770a4beb60738f3a5053d8f974c6ce18c4b605878",
-    "_normal_origin": "96df6d69434cf32e0e38a64189bb2fcb0fad04285c4e48c1cd66d970f6fbbcea",
-    "_origin_allowed": "116c7b2c42c96ce89bfedc29bfd0cdcdb90870b978693e7cccbb0956b45ab704",
-    "_asset": "bdeb44dadbbd2f2bb8186cf7a2112a938431337c60f64edb4569e44c46e49f7e",
+    "<module>": "35db42972b1a83322fd410f5fae468c39ca6ae6834ddee6b0d9ac1bdb165ba04",
     "ImagePreview": "8f44951015df28c66372989c4069505718b02231b49826bf7a57cd16b7e67350",
-    "_reduced_image_preview": "3f8bc420807bb7bbef2f50d210ba20102ca3378cf96fffc48be4fc6b1d5b05e3",
-    "_image_preview_blocks": "66aaada80dfc5271eaec65ac33f9fc841429decaa7c02fb5e386295a1f3adaa3",
-    "_view_asset_crop": "a6a353824601b798fceeadc1b02270d953bceb73d13d8d3fbe37f399b69151b4",
-    "_view_asset": "23dfa9dfb87d961ee8476a32b10b37bcff08ef2f4660ee9c0bad4d8c40114d1c",
+    "McpDeps": "26890be97f0f653c2c7bf15dac272f2579db571a7d912dc69f6f09434c3469d3",
+    "McpJobProfile": "f472c2045b00112bb38d5489834312870b93f7bedfc064ca5361de0b5241e0f8",
+    "McpRegistry": "11408d732b0e6dfc48065755bd363e67ea95a1236a6c83f0c2e53f3ea68148fb",
+    "McpTarget": "42afb40adfc28ae672f14ffe3925163e2d23e686e00e32b0ff16202b9e649cb4",
+    "Tools": "216ccebda3c70be5a03a09d6823a838f4f3aa52f448814004587b461cac1ded7",
+    "__init__": "0a016fe90dfe9a244de7100c3cfb558d5f48d8ecc692a80bca3d35ed2eff2479",
+    "_asset": "bdeb44dadbbd2f2bb8186cf7a2112a938431337c60f64edb4569e44c46e49f7e",
     "_assets_from_response": "cf283156a090b1a96432eb757ba933193baa4661e69a480b818b7bf5b35ada20",
-    "_job_family": "0d1684dce09411c6a345fb99bbfc4cbbffc4c1c09ff44cbedd7907393ba8f187",
-    "_job_paths": "7c5795ab8594aadbbbf6f357064596c572702cd82aab0b35c4b45e5c94a36465",
-    "_normalize_job": "2dcd8c0b5d75a70126d32343159f807c6f945c78f9ceda43adba1daf45377944",
-    "Tools": "fa1d33b09907a6e14bb9bc83cade8af4fbc768b41b35b88e8d6810a0c20dc4d7",
-    "tool_result": "e1efa86a533c6754836ea6f5cf96ada46537d05b4e1fa96a599b7689573c38d9",
-    "_history_tool": "c5b1ad4a40f691f9ec1ecebe32a1103c1ce8e62296767cefdd4f60183ece3efd",
-    "_tool_argument_error": "3f32675ba4c92fb3b901967a8cca48cf5fe7bcdbd69b673d88e05b51de80b1ae",
-    "_with_report_hint": "e77adcfd9dac4cc5e8293cf728993425417ecde33e426bee2853dae2c2c47daa",
-    "call_tool": "5c3048ce5d80bcf07bc53fef838a3a295c400f523d6d9fef5da7361ee4dee152",
-    "_json": "d6cf8d0eccd7337c47b15be6d9560f65a5840c0594a91465a4f77f5eb985a098",
+    "_availability": "cc2379ce25cd50a24606d5363d3e5492f47cfd7dea7da0aaddb133cb3502b246",
+    "_await": "ac295b20abb13a30a95738b2b5cc098912182e0af6360d7d6b2bf1678b8acf40",
     "_bad_request": "a294e7977da5864ff89dd16e015edfcec2fa1d8e301de8da7bdd95120665f97a",
-    "_validate_modern": "432f7895202e0642c6fa654e8220a821e5df44273f09d0619cca939675224d58",
-    "_valid_envelope": "22fc29e2742465753487013398e5186278267ef295aa1bc64093a58d5fda2587",
-    "handle_message": "b5971f988c4af35fbdd3656d49bd1c8277642bb0deff73e454124949390ef5a4",
-    "_quoted": "b5c1398422b4a8d3081e4f0d7620a28718369daca734207393de9e2fc1c0ae7d",
-    "bearer_challenge": "39a19c7740529da1df86cb38aad57a7e54ed8b3220ab24d7134c2f626a44e63c",
-    "register_mcp_routes": "23da16a0a1fe022c5b5a26fbedb7632bbdda4a5e628c25ca55b75dbb0682a019",
-    "__init__": "6d113975bcca33ab17d54a78378c838f77d09011921d134c0286cf26a98cb2dd",
-    "_speech_names": "27631203d897683116b6ad58c8e63a6803f8dfdec1b6dc5c273d674d96abacb2",
     "_catalog": "71ae813200fdc060939f2dba7acb9faa48c8f13abab0d60ece0dbeb2b2ad5dfe",
-    "resolve": "7d5dc8dfc14f531bcfa547db031ed466b2ebfcfdd1a3b3b7e716ed24a91a67a9",
-    "capabilities": "d15f7e84d08ffb4ffe70440626b3eab193d749a522aeba2e0701fe6d93bacae2",
-    "_describe": "67a43a10651421e480992293f9591739fe993a7a89b1a64f4180cfbb9e6b5ee1",
-    "_mode_for": "9822114f43518ae70aa3e2e036a408110ef3b0418126c39489ce8f438afa194c",
-    "run": "97eeb5abcb05e7e675a367c5b9dae26d923b658b958283609c48ad1c074edae3",
-    "_speech": "08ce5e3b4dbeb91a3edcb6d8f71bee8eef24cc971c7e4bc1195ca9db50b9eac7",
-    "_send": "499e3045061e4fc0456800340c9b06fa41db997760f237c827003ae6386302ab",
-    "_wait": "62f9ea33e8db6edbb2567654350e22765ccf795e41b4e94ac4ef865af207055e",
+    "_decode_header_value": "34648136c6a4cdfc8071129770a4beb60738f3a5053d8f974c6ce18c4b605878",
+    "_describe": "af79720854d4ec22352fd930a1d2804c4cddcf4249d3292c268ffb0ae86e9b4a",
     "_done": "758fcaf9dd5da692064f7d820b5e4bb15dc2efb3eb22d29e7ec2cd0a19c84f77",
-    "_poll": "aee312761350f28e2290a9e3b5035661374b2dee6245e18b336e99e3774ff498",
-    "_await": "852bf0e0f68e4c0cd20cde95ca3d932ad576ea6c0e7f3e6f714f09fdfcb2150c",
-    "_job_assets": "fd4c6f32ce5644515a3314cbae97b1fe8bb293a69e3fdc329cbac6abbd331a49",
-    "job": "0ef6e3762a63fe1cb8757e71beb72fd3d722d6d69b9fb678a02389de3ec6acd5",
-    "rename": "2f7b61af84cd091b444556c024ab01e678e568de109e6d232ae85dc7a3dd7cdc",
+    "_history_tool": "555c6b27d82ba97982d5ba3f17801d8728bb9568dd10c703bcd53faa1fa0eb7f",
+    "_image_preview_blocks": "66aaada80dfc5271eaec65ac33f9fc841429decaa7c02fb5e386295a1f3adaa3",
+    "_job_assets": "78bd1feb3ae3cbffd3a60c009a19d60ff7e8f3464e5b1f5981110ed3ce090039",
+    "_job_paths": "01f2bbfd66cdc0a28eac8b7a1c7c1d7199156b9c17109cd57cf82569f8a8e4e3",
+    "_job_profile": "ca739c19802007b1c046f65aefa4361ecfe13283b93e05cd07479dd16398eddc",
+    "_json": "d6cf8d0eccd7337c47b15be6d9560f65a5840c0594a91465a4f77f5eb985a098",
+    "_mcp_file": "0d1dc22543d77e4f6640dcb49ac50055e16322c1d945452f5e02c2e2a2fd81bd",
+    "_mcp_json": "f5cd4bfd634af207476d9878998dd68b7cf3b39adfb0d6adda0a06c6d5718ede",
+    "_mcp_object": "57c7d8ce9bafc7c9f811c2242dbbc3ad863106a56e259462e8b9c7cae5b8e827",
+    "_mcp_operation_body": "81915d7b58333e4078ea5ff6da709e920748ee7951105b130576eb2cd57e53b6",
+    "_mcp_path": "6dbdebaee3a875116e27a58484bac1028327e21db62e584989822fd9b69dc62c",
+    "_mcp_text": "2d1c596ba90d35e665890aadad67ea5d9220272e8a891069d27b92175726d6cf",
+    "_mode_for": "9822114f43518ae70aa3e2e036a408110ef3b0418126c39489ce8f438afa194c",
+    "_normal_origin": "96df6d69434cf32e0e38a64189bb2fcb0fad04285c4e48c1cd66d970f6fbbcea",
+    "_normalize_job": "2dcd8c0b5d75a70126d32343159f807c6f945c78f9ceda43adba1daf45377944",
+    "_operation": "84ce62fcddacd8c0119c5f9ac292adab682e82aa932302195161fe574149bd40",
+    "_operation_names": "0ffaae2891ea6bd400b2330b4aa7ad86018e02aac2961dfbabb795d359087879",
+    "_origin_allowed": "116c7b2c42c96ce89bfedc29bfd0cdcdb90870b978693e7cccbb0956b45ab704",
+    "_poll": "d6b52a11aa558272e6ebefab4d19cb34bb410dd980b4105ca59b6649c39c3036",
+    "_quoted": "b5c1398422b4a8d3081e4f0d7620a28718369daca734207393de9e2fc1c0ae7d",
+    "_reduced_image_preview": "3f8bc420807bb7bbef2f50d210ba20102ca3378cf96fffc48be4fc6b1d5b05e3",
+    "_run_tag": "1f71df421d5eaa633bd8a419568c6af9b2062f26a0ce6e11ee5cb44ccff04738",
+    "_send": "1d51e900b2ff00a75fd18358817ca28a5dc65f85ca895299ffd9efed077b4f52",
+    "_tool_argument_error": "3f32675ba4c92fb3b901967a8cca48cf5fe7bcdbd69b673d88e05b51de80b1ae",
+    "_valid_envelope": "22fc29e2742465753487013398e5186278267ef295aa1bc64093a58d5fda2587",
+    "_validate_modern": "432f7895202e0642c6fa654e8220a821e5df44273f09d0619cca939675224d58",
+    "_view_asset": "23dfa9dfb87d961ee8476a32b10b37bcff08ef2f4660ee9c0bad4d8c40114d1c",
+    "_view_asset_crop": "a6a353824601b798fceeadc1b02270d953bceb73d13d8d3fbe37f399b69151b4",
+    "_wait": "62f9ea33e8db6edbb2567654350e22765ccf795e41b4e94ac4ef865af207055e",
+    "_with_report_hint": "e77adcfd9dac4cc5e8293cf728993425417ecde33e426bee2853dae2c2c47daa",
     "base": "0d79c831f9739e2fffcef5e991fe1c26c61d0f9f70a6f446f46cadb7358bca8e",
-    "metadata_url": "beaf2ba02aadc666bb450ec003f221647b458575d3ebc55a91258324e5226ea7",
+    "bearer_challenge": "39a19c7740529da1df86cb38aad57a7e54ed8b3220ab24d7134c2f626a44e63c",
+    "call_tool": "5c3048ce5d80bcf07bc53fef838a3a295c400f523d6d9fef5da7361ee4dee152",
+    "capabilities": "1a2fdc76aa83ef1d0ccaf8a7fd254461169a731353a51545776ac89c680eaf8e",
+    "compile_mcp_registry": "afdc6227f343927ed13c155c995d55da5aa84a9bbfb3877a86bb37819f626f14",
     "dispatch": "53ccec55be40dacbb05313d7625f8cf06d11ed24f923ac934792f0cbdf3821d9",
-    "mcp_post": "853a486b3c95a9b2dd5ff0fdc00ac76a6860e6e56ab34eae178a491563fa6c46",
+    "handle_message": "b5971f988c4af35fbdd3656d49bd1c8277642bb0deff73e454124949390ef5a4",
+    "job": "79b042a7e3bd2f2495ee8bafa2ebbfafb5134b994abd083a3041f500776e006e",
+    "load_mcp_registry": "cdddbaaec50f003df57e721724a216b08344dec56c15ffec0878c18830825bba",
     "mcp_no_stream": "dc1118144f06960affd356e3f599ae76703726c95f144af06f2d3554079690b3",
+    "mcp_post": "853a486b3c95a9b2dd5ff0fdc00ac76a6860e6e56ab34eae178a491563fa6c46",
+    "metadata_url": "beaf2ba02aadc666bb450ec003f221647b458575d3ebc55a91258324e5226ea7",
     "protected_resource": "a9bd38a702db1bfd58c9833c829c59973acf8b5fd595d733418f0542f3cf5215",
     "rank": "0b045bdafd1ab65458de7bd9f45a79a1c2fa18bd5cd8a8eeedb53a30d8d46f55",
-    "<module>": "8073bdd25f670ed838707e127b9bed88939967133a5850efcebd4d3508979109"
+    "register_mcp_routes": "23da16a0a1fe022c5b5a26fbedb7632bbdda4a5e628c25ca55b75dbb0682a019",
+    "rename": "2f7b61af84cd091b444556c024ab01e678e568de109e6d232ae85dc7a3dd7cdc",
+    "resolve": "4ffb840a2d081e782084aecd87508d162c3682acbedcaa0076a61e6f06d5ed00",
+    "rpc_error": "a23c4b9c67defee55675b673cded5661de031a6216b4231e661eef8f2c62e7a2",
+    "run": "d681e4451837a52055af765f7512b59a46f2612854d9a3d32193fcfd4dce2e94",
+    "tool_result": "e1efa86a533c6754836ea6f5cf96ada46537d05b4e1fa96a599b7689573c38d9"
   }
 }

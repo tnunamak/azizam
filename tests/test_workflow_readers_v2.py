@@ -18,6 +18,9 @@ Review every existing entry that changes before replacing it.
 Re-captured for the six added model workflows: existing entries change only the mesh generator’s rank:2 tag
 in capabilities, member catalog, projection and the three audience summaries.
 
+Re-captured for train 54: summaries/catalogs add status and superseded_by; audio inputs add declared enums,
+short help and detailed instrumental guidance. Audio document hashes follow those edits. No other output moved.
+
 The golden moved at S3.5a, when the bundled files became schema 2. Only the entries below moved; every other entry is
 byte for byte what the readers gave before the switch:
 

@@ -165,6 +165,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     # order of image-anime/image-uncensored and of stt-diarize/stt-fast/stt-quality moved. Capabilities and engine did not move.
     # Re-captured 2026-11-08 (S5 projections): the face-likeness workflow's output modalities read from its contract and now
     # list "text" (its JSON output); before, they were empty. Nothing else in this digest moved.
+    # Train 54: face-likeness leaves the OpenAI model list because no OpenAI route runs it.
     assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "2203b28987cb3687035bd38cf9d0c2f36a559c7ea18bd2dcd3060c9fc46e80ca"
 
 
