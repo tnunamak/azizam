@@ -1,7 +1,7 @@
 """Two image-to-3D records on one card (docs/design/MESH_WORKFLOW_SELECTION.md).
 
-A request names a record with ``model``; a request that names none runs the first choice, which the records' ``rank:N``
-tags declare. The tests use the stand-in engines of the mesh harness: nothing here calls a real service.
+A request names a record with ``model``; a request that names none runs the first choice, which the records' ``selection_rank``
+facts declare. The tests use the stand-in engines of the mesh harness: nothing here calls a real service.
 """
 
 from __future__ import annotations
@@ -35,13 +35,13 @@ def ranked(rig, monkeypatch):
     proxy.GATEWAY_WORKFLOW_REGISTRY.restore(saved)
 
 
-def _retag(tags_by_id: dict[str, tuple[str, ...]]) -> None:
-    """Adopt a registry in which the named mesh records carry other tags (an owner's edit of the rank)."""
+def _rerank(rank_by_id: dict[str, int | None]) -> None:
+    """Adopt a registry in which the named mesh records carry other ranks (an owner's edit of the rank)."""
     changed = WorkflowRegistry()
     for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records():
         facts = record.facts
-        if record.id in tags_by_id:
-            facts = dataclasses.replace(facts, tags=tags_by_id[record.id])
+        if record.id in rank_by_id:
+            facts = dataclasses.replace(facts, selection_rank=rank_by_id[record.id])
         changed.add_manifest(copy.deepcopy(record.manifest), source_path=record.source_path,
                              provenance=Provenance(trusted=record.identity.trusted, source=record.identity.source), facts=facts)
     proxy.GATEWAY_WORKFLOW_REGISTRY.adopt(changed)
@@ -67,23 +67,23 @@ def test_a_request_that_names_no_model_runs_the_first_choice_the_rank_data_decla
     async def scenario():
         async with gateway_client() as client:
             first = await client.post(RAW, **form())
-            _retag({PIXAL: ("rank:3",)})
+            _rerank({PIXAL: 3})
             second = await client.post(RAW, **form())
             return first, second
 
     first, second = asyncio.run(scenario())
-    assert first.content == PIXAL3D_GLB      # rank:1 ships on Pixal3D
+    assert first.content == PIXAL3D_GLB      # selection_rank 1 ships on Pixal3D
     assert second.content == GLB             # the owner's edit moved the first choice
     assert (len(ranked.pixal_downstream), len(ranked.downstream)) == (1, 1)
 
 
-def test_the_default_follows_the_rank_tags_and_ties_go_to_the_lower_id(ranked):
+def test_the_default_follows_the_selection_rank_and_ties_go_to_the_lower_id(ranked):
     assert proxy._mesh_default_workflow() == PIXAL
-    _retag({PIXAL: ("rank:5",), TRELLIS: ("rank:2",)})
+    _rerank({PIXAL: 5, TRELLIS: 2})
     assert proxy._mesh_default_workflow() == TRELLIS
-    _retag({PIXAL: ("rank:2",), TRELLIS: ("rank:2",)})
+    _rerank({PIXAL: 2, TRELLIS: 2})
     assert proxy._mesh_default_workflow() == PIXAL     # "mesh.generate.pixal3d" < "mesh.generate.trellis-2"
-    _retag({PIXAL: (), TRELLIS: ()})
+    _rerank({PIXAL: None, TRELLIS: None})
     assert [w.id for w in proxy.current_mesh_workflows()] == [PIXAL, TRELLIS]
     assert workflow_policy.rank_of(proxy.GATEWAY_WORKFLOW_REGISTRY.get(PIXAL).facts) == workflow_policy.UNRANKED
 

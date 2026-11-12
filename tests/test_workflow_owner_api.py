@@ -705,3 +705,18 @@ def test_an_owner_write_without_selection_rank_keeps_the_record_unranked(api):
     saved = _save_mesh(api)
     assert saved.status_code == 201, saved.text
     assert api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"].get("selection_rank") is None
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_selection_rank_set_through_the_owner_route_changes_the_model_an_unnamed_request_runs(api, monkeypatch):
+    import proxy
+
+    saved = proxy.GATEWAY_WORKFLOW_REGISTRY.contents()
+    try:
+        assert proxy._mesh_default_workflow() == "mesh.generate.pixal3d"      # the release ships Pixal3D first
+        assert _save_mesh(api, selection_rank=0).status_code == 201
+        monkeypatch.setattr(proxy, "ADMIN_DB_PATH", api.db)
+        proxy.GATEWAY_WORKFLOW_REGISTRY.adopt(proxy._load_gateway_workflow_registry(strict=True))
+        assert proxy._mesh_default_workflow() == MESH_ID
+    finally:
+        proxy.GATEWAY_WORKFLOW_REGISTRY.restore(saved)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import pytest
 import yaml
@@ -42,13 +43,18 @@ def test_the_engine_service_holds_no_local_paths_or_addresses() -> None:
         assert "/home/" not in text and "192.168." not in text, path.name
 
 
-@pytest.mark.parametrize("tags,expected", [
-    (("rank:²",), workflow_policy.UNRANKED),
-    (("rank:", "rank:-1", "rank:no"), workflow_policy.UNRANKED),
-    (("rank:99999999999999999999",), 99999999999999999999),
-    (("rank:3", "rank:1"), 1),
-])
-def test_rank_tags_ignore_invalid_numbers_and_leave_unranked_records_last(tags, expected) -> None:
-    facts = dataclasses.replace(RECORDS.get(PIXAL3D_ID).facts, tags=tags)
+@pytest.mark.parametrize("rank,expected", [(None, workflow_policy.UNRANKED), (0, 0), (3, 3), (workflow_policy.MAX_SELECTION_RANK, workflow_policy.MAX_SELECTION_RANK)])
+def test_selection_rank_orders_records_and_an_unranked_record_comes_last(rank, expected) -> None:
+    facts = dataclasses.replace(RECORDS.get(PIXAL3D_ID).facts, selection_rank=rank)
     assert workflow_policy.rank_of(facts) == expected
-    assert workflow_policy.rank_of(dataclasses.replace(facts, tags=())) > 99999999999999999999
+    assert workflow_policy.rank_of(dataclasses.replace(facts, selection_rank=None)) > workflow_policy.MAX_SELECTION_RANK
+
+
+@pytest.mark.parametrize("bad", [True, False, -1, workflow_policy.MAX_SELECTION_RANK + 1, 10**30, 1.5, "1", [1]])
+def test_a_selection_rank_that_is_not_a_bounded_integer_states_no_facts(bad) -> None:
+    stated = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media", "tags": []}
+    assert workflow_policy.facts_from_mapping({**stated, "selection_rank": 2}).selection_rank == 2
+    assert workflow_policy.facts_from_mapping({**stated, "selection_rank": bad}) is None
+    text = "schema_version: 1\nworkflows:\n  w: {exposure: default, trust_tier: stable, resource_tier: batch, resource_class: media, tags: [], selection_rank: %s}\n"
+    with pytest.raises(workflow_policy.PolicyFileError):
+        workflow_policy.parse_policy_text(text % json.dumps(bad))
