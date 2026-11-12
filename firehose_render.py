@@ -387,7 +387,7 @@ def render_html(
     _append_group("Health", [
         ("Backends", _render_backends(payload.get("backends") or [])),
         ("GPUs (live)", _render_gpus(payload.get("gpus") or [])),
-        ("Auxiliary backend health", _render_aux_health(payload.get("aux_health") or {})),
+        ("Auxiliary backend health", _render_aux_health(payload.get("aux_health") or {}, payload.get("aux_panels") or ())),
     ])
 
     _append_group("Resources", [
@@ -1500,10 +1500,12 @@ def _render_slots(slots: list[dict]) -> str:
     return "".join(rows)
 
 
-def _render_aux_health(aux: dict) -> str:
-    """Render Voxtral (TTS) and Parakeet (STT) as small cards with labeled
-    rows instead of dumping raw JSON. Falls back to a JSON pre-block when
-    a payload doesn't fit the expected schema (forward-compatibility).
+def _render_aux_health(aux: dict, panels: Any = ()) -> str:
+    """Render each declared ``health_json`` status panel as a small card with labeled rows instead of dumping raw JSON.
+
+    *panels* is the payload's ``aux_panels``: ``{kind, output_key, title, short_title}`` per panel; the JSON of each is
+    ``aux[output_key]``. Falls back to a JSON pre-block when a payload doesn't fit the expected schema
+    (forward-compatibility).
     """
 
     def _status_pill(status: Any) -> str:
@@ -1519,68 +1521,40 @@ def _render_aux_health(aux: dict) -> str:
             f'<h3 style="margin-top:0">{_esc(title)}</h3>{body}</div>'
         )
 
+    def _row(label: str, value: Any) -> str:
+        return f'<tr><th>{_esc(label)}</th><td class="mono small">{_esc(value)}</td></tr>'
+
     parts: list[str] = []
-
-    vox = aux.get("voxtral")
-    if isinstance(vox, dict):
-        rows = [
-            f'<tr><th>Status</th><td>{_status_pill(vox.get("status"))}</td></tr>',
-            f'<tr><th>Model</th><td class="mono small">{_esc(vox.get("model") or "—")}</td></tr>',
-        ]
-        vram = vox.get("vram_gb")
-        if vram is not None:
-            rows.append(
-                f'<tr><th>VRAM</th><td class="mono small">{_esc(vram)} GB</td></tr>'
-            )
-        for k, v in vox.items():
-            if k in ("status", "model", "vram_gb"):
-                continue
-            rows.append(
-                f'<tr><th>{_esc(k)}</th>'
-                f'<td class="mono small">{_esc(v)}</td></tr>'
-            )
-        parts.append(_card("Voxtral (TTS)",
-                          f'<table class="kv">{"".join(rows)}</table>'))
-    elif vox is not None:
-        parts.append(_card("Voxtral (TTS)",
-                          f'<pre class="small">{_esc(json.dumps(vox, indent=2))}</pre>'))
-
-    pk = aux.get("parakeet")
-    if isinstance(pk, dict):
-        rows = [
-            f'<tr><th>Status</th><td>{_status_pill(pk.get("status"))}</td></tr>',
-            f'<tr><th>Default model</th>'
-            f'<td class="mono small">{_esc(pk.get("default_model") or "—")}</td></tr>',
-        ]
-        if pk.get("speedup") is not None:
-            rows.append(
-                f'<tr><th>Speedup</th>'
-                f'<td class="mono small">{_esc(pk.get("speedup"))}</td></tr>'
-            )
-        models = pk.get("models") or []
-        if isinstance(models, list) and models:
-            rows.append(
-                f'<tr><th>Available models</th><td>'
-                f'<details><summary class="muted small">'
-                f'{len(models)} model(s)</summary>'
-                f'<ul style="margin:.25em 0 .25em 1em">'
-                + "".join(
-                    f'<li class="mono small">{_esc(m)}</li>' for m in models
+    for panel in panels or ():
+        if not isinstance(panel, dict) or panel.get("kind") != "health_json":
+            continue
+        title = str(panel.get("title") or panel.get("output_key") or "")
+        health = aux.get(panel.get("output_key"))
+        if isinstance(health, dict):
+            rows = [f'<tr><th>Status</th><td>{_status_pill(health.get("status"))}</td></tr>']
+            if "default_model" in health:
+                rows.append(_row("Default model", health.get("default_model") or "—"))
+            else:
+                rows.append(_row("Model", health.get("model") or "—"))
+            if health.get("vram_gb") is not None:
+                rows.append(_row("VRAM", f'{health["vram_gb"]} GB'))
+            if health.get("speedup") is not None:
+                rows.append(_row("Speedup", health.get("speedup")))
+            models = health.get("models") or []
+            if isinstance(models, list) and models:
+                rows.append(
+                    f'<tr><th>Available models</th><td>'
+                    f'<details><summary class="muted small">'
+                    f'{len(models)} model(s)</summary>'
+                    f'<ul style="margin:.25em 0 .25em 1em">'
+                    + "".join(f'<li class="mono small">{_esc(m)}</li>' for m in models)
+                    + '</ul></details></td></tr>'
                 )
-                + '</ul></details></td></tr>'
-            )
-        for k, v in pk.items():
-            if k in ("status", "default_model", "speedup", "models"):
-                continue
-            rows.append(
-                f'<tr><th>{_esc(k)}</th>'
-                f'<td class="mono small">{_esc(v)}</td></tr>'
-            )
-        parts.append(_card("Parakeet (STT)",
-                          f'<table class="kv">{"".join(rows)}</table>'))
-    elif pk is not None:
-        parts.append(_card("Parakeet (STT)",
-                          f'<pre class="small">{_esc(json.dumps(pk, indent=2))}</pre>'))
+            rows += [_row(k, v) for k, v in health.items()
+                     if k not in ("status", "model", "default_model", "vram_gb", "speedup", "models")]
+            parts.append(_card(title, f'<table class="kv">{"".join(rows)}</table>'))
+        elif health is not None:
+            parts.append(_card(title, f'<pre class="small">{_esc(json.dumps(health, indent=2))}</pre>'))
 
     if not parts:
         return '<div class="muted">unavailable</div>'
@@ -2526,36 +2500,34 @@ def _render_backend_readiness(payload: dict) -> str:
         else:
             cards.append(("ComfyUI", _pill("down"), str(live or "?"), ""))
 
-    # Voxtral
+    # One card per declared health panel. A panel whose JSON names a default model reports that model; the others
+    # report whether the model is resident (more than 3 GB of VRAM) or only the service is up.
     aux = payload.get("aux_health") or {}
-    vox = aux.get("voxtral") or {}
-    if isinstance(vox, dict):
-        vram = vox.get("vram_gb")
+    for panel in payload.get("aux_panels") or ():
+        if not isinstance(panel, dict) or panel.get("kind") != "health_json":
+            continue
+        name = str(panel.get("short_title") or panel.get("title") or panel.get("output_key") or "")
+        health = aux.get(panel.get("output_key")) or {}
+        if not isinstance(health, dict):
+            continue
+        status = (health.get("status") or "").lower()
+        if "default_model" in health:
+            if status in ("ok", "healthy", "up"):
+                cards.append((name, _pill("warm"), str(health.get("default_model") or ""), ""))
+            else:
+                cards.append((name, _pill("down"), str(health.get("status") or "?"), ""))
+            continue
+        vram = health.get("vram_gb")
         try:
             vram_n = float(vram) if vram is not None else 0.0
         except Exception:
             vram_n = 0.0
         if vram_n > 3.0:
-            cards.append(("Voxtral (TTS)", _pill("warm"),
-                          f"{vram} GB VRAM resident", ""))
-        elif (vox.get("status") or "").lower() in ("ok", "healthy", "up"):
-            cards.append(("Voxtral (TTS)", _pill("cold"),
-                          "service up, model not resident",
-                          "first TTS warms cache"))
+            cards.append((name, _pill("warm"), f"{vram} GB VRAM resident", ""))
+        elif status in ("ok", "healthy", "up"):
+            cards.append((name, _pill("cold"), "service up, model not resident", "first TTS warms cache"))
         else:
-            cards.append(("Voxtral (TTS)", _pill("down"),
-                          str(vox.get("status") or "?"), ""))
-
-    # Parakeet
-    para = aux.get("parakeet") or {}
-    if isinstance(para, dict):
-        st = (para.get("status") or "").lower()
-        if st in ("ok", "healthy", "up"):
-            cards.append(("Parakeet (STT)", _pill("warm"),
-                          str(para.get("default_model") or ""), ""))
-        else:
-            cards.append(("Parakeet (STT)", _pill("down"),
-                          str(para.get("status") or "?"), ""))
+            cards.append((name, _pill("down"), str(health.get("status") or "?"), ""))
 
     if not cards:
         return '<div class="muted">no backend data</div>'

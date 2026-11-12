@@ -37,3 +37,17 @@ def record_value(capability: str, record: Mapping[str, Any] | None, key: str) ->
     if record.get(key) is not None:
         return record[key]
     return release_defaults()[capability][key]
+
+
+def role_status_panels() -> dict[str, list[dict[str, Any]]]:
+    """The release status panels of each capability role that declares some."""
+    return {capability: [dict(panel) for panel in values["status_panels"]]
+            for capability, values in release_defaults().items() if values.get("status_panels")}
+
+
+def record_status_panels(capability: str, record: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The panels the status page shows for *record*: its own ``status_panels``, else the role's release panels."""
+    own = (record or {}).get("status_panels")
+    if isinstance(own, (list, tuple)):
+        return [dict(panel) for panel in own if isinstance(panel, Mapping)]
+    return role_status_panels().get(capability, [])

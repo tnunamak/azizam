@@ -13,9 +13,23 @@
       "additionalProperties": false,
       "properties": {
         "audio.speech": {"type": "object", "additionalProperties": false, "properties": {
-          "timeout": {"type": "integer", "minimum": 1}}},
+          "timeout": {"type": "integer", "minimum": 1},
+          "health_endpoint": {"type": "string", "pattern": "^/"},
+          "status_panels": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+            "required": ["kind", "output_key", "title", "short_title"], "properties": {
+              "kind": {"enum": ["health_json"]},
+              "output_key": {"type": "string", "minLength": 1},
+              "title": {"type": "string", "minLength": 1},
+              "short_title": {"type": "string", "minLength": 1}}}}}},
         "audio.transcriptions": {"type": "object", "additionalProperties": false, "properties": {
-          "timeout": {"type": "integer", "minimum": 1}}},
+          "timeout": {"type": "integer", "minimum": 1},
+          "health_endpoint": {"type": "string", "pattern": "^/"},
+          "status_panels": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+            "required": ["kind", "output_key", "title", "short_title"], "properties": {
+              "kind": {"enum": ["health_json"]},
+              "output_key": {"type": "string", "minLength": 1},
+              "title": {"type": "string", "minLength": 1},
+              "short_title": {"type": "string", "minLength": 1}}}}}},
         "embeddings": {"type": "object", "additionalProperties": false, "properties": {
           "timeout": {"type": "integer", "minimum": 1},
           "health_endpoint": {"type": "string", "pattern": "^/"},

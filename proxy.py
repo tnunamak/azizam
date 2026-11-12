@@ -26,7 +26,7 @@ from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_identity import find_workflow_record, other_intent_owns_stem
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
-from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway import browser_origin, client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
@@ -194,6 +194,7 @@ from gateway.alias_policy import (
 from gateway.admin_api import (
     AdminAuthError,
     AdminContext,
+    _pinned_base_url,
     _require_admin,
     create_admin_router,
     registry_not_applied_response,
@@ -16131,6 +16132,13 @@ class _SessionMakeRuntime:
     def workflow_id(self, intent: str, model: str) -> str:
         return _image_job_workflow_id(intent, model)
 
+    def source_input(self, intent: str, model: str) -> me_make.SourceInput:
+        record = _image_workflow_record(intent, model)
+        if record is None:
+            # An owner graph with no record has no contract to read: the intent decides.
+            return "required" if intent == me_make.EDIT_INTENT else "none"
+        return me_make.source_input_of_contract(record.manifest.get("inputs") or {})
+
     def admission(self, intent: str) -> Response | None:
         # The same operator admission regular media jobs meet at submit.
         return _media_job_admission_response(intent)
@@ -17685,6 +17693,15 @@ def _confirms_administrators(body: Any) -> bool:
 
 
 def _require_user_action_header(request: Request, session) -> JSONResponse | None:
+    # Only session-authenticated writes reach this validator; explicit bearer credentials bypass it.
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and not browser_origin.sent_from_this_gateway(
+        request, _pinned_base_url(ADMIN_AUTH)
+    ):
+        return _user_action_response_error(UserPortalError(
+            "member_origin_forbidden",
+            client_errors.CODE_REASONS["member_origin_forbidden"],
+            status_code=403,
+        ))
     if request.headers.get("x-azizam-user-action") == "1":
         expected = _csrf_token_for_oidc_session(session)
         supplied = request.headers.get("x-azizam-csrf") or ""

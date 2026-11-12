@@ -1,11 +1,12 @@
 // "Choose from Library" on a media input. The Library's download route answers
 // with a short-lived signed link, not the picture, so a pick must read the file
 // from that link and the request must carry the picture's own bytes.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { PICTURE_ITEM, RECORDING_ITEM, stubbedLibrary } from "../../../tests/helpers/library-stub";
 import { MediaInput } from "./media-input";
+import { LibraryPicker } from "./library-picker";
 
 const ID = `img_${"a".repeat(64)}`;
 const SIGNED = "http://gateway.test/v1/assets/signed-picture";
@@ -103,6 +104,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 function FileHarness({ onFile }: { onFile: (file: File | null) => void }) {
@@ -563,7 +565,7 @@ const memo = (letter: string, prompt: string, daysAgo: number) => ({
   createdAt: NOW_S - daysAgo * DAY,
 });
 
-test("audio is a list of rows, each with the icon, the whole title, the length and the date", async () => {
+test("audio is a list of rows, each with the icon, the whole title and length under a day heading", async () => {
   const sunday = memo("c", "Voice memo: groceries for Sunday dinner, and the long list of things to do before the guests arrive", 2);
   const monday = memo("d", "Voice memo: groceries for Monday lunch", 4);
   const library = stubbedLibrary([sunday, monday]);
@@ -579,7 +581,8 @@ test("audio is a list of rows, each with the icon, the whole title, the length a
     expect(row.querySelector("svg")).not.toBeNull();
     expect(row.querySelector("img, video")).toBeNull();
     expect(row.textContent).toContain("1:23");
-    expect(row.textContent).toMatch(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    expect(row.textContent).not.toMatch(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    expect(row.closest("section")?.querySelector("h3")).not.toBeNull();
     const title = row.querySelector("span.line-clamp-2")!;
     expect(title.getAttribute("title")).toBe(row.getAttribute("aria-label"));
   }
@@ -595,9 +598,15 @@ test("a picture or a video is a grid; a kind with nothing to look at is a list",
   render(<MediaInput id="picture" label="Picture" kind="image" file={null} onFileChange={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
   const tile = await screen.findByRole("button", { name: "A teal fish" });
-  expect(tile.closest("ul")!.className).toContain("grid-cols-3");
-  // Five to a row from lg, so a desktop dialog shows more at once.
-  expect(tile.closest("ul")!.className).toContain("lg:grid-cols-5");
+  expect(tile.closest("ul")!.className).toContain("grid");
+  // Three columns on a phone and five to a row from lg, so a desktop dialog shows more at once. The days share
+  // these columns, so the count is set once, on the list of days.
+  const days = tile.closest("section")!.parentElement!;
+  expect(days.className).toContain("[--cols:3]");
+  expect(days.className).toContain("lg:[--cols:5]");
+  // On a phone a day takes the whole width and its own three columns, not a share of a row.
+  expect(tile.closest("section")!.className).toContain("max-sm:w-full!");
+  expect(tile.closest("ul")!.className).toContain("max-sm:grid-cols-3!");
   cleanup();
   vi.stubGlobal("fetch", vi.fn(library.impl));
   render(<MediaInput id="solid" label="Model" kind="model" file={null} onFileChange={() => {}} />);
@@ -920,7 +929,21 @@ test("the search starts empty each time the dialog opens, and an empty Library o
   vi.stubGlobal("fetch", vi.fn(stubbedLibrary([]).impl));
   render(<FileHarness onFile={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
-  await screen.findByText(/in your Library yet/);
+  // The shared empty state: a titled region with the way to fill it.
+  const empty = await screen.findByRole("region", { name: /in your Library yet/ });
+  expect(empty.textContent).toContain("choose a file");
+  // Flush with the dialog's own padding: no frame or padding of its own, so its icon lines up with the title.
+  expect(empty.className).not.toContain("border-dashed");
+  expect(empty.className).not.toContain("p-6");
+  // Nothing to search, so the phone sheet fits its content rather than the screen's height.
+  expect(screen.getByRole("dialog").className).toContain("max-sm:h-auto");
+  expect(screen.getByRole("dialog").className).not.toContain("max-sm:h-[calc(100dvh-1rem)]");
+  // Its way forward is the screen's own file chooser: the dialog closes and the chooser opens.
+  const chooser = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+  fireEvent.click(within(empty).getByRole("button", { name: "Choose a file" }));
+  expect(chooser).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  chooser.mockRestore();
   expect(screen.queryByRole("searchbox")).toBeNull();
 });
 
@@ -1009,9 +1032,14 @@ test("under 640 px the picker is a full-height bottom sheet, and its bottom edge
   const body = document.querySelector<HTMLElement>('[data-slot="library-picker-body"]')!;
   expect(body.contains(header)).toBe(false);
   expect(body.className).toContain("overflow-y-auto");
-  // The bottom edge is on the desktop dialog as well as the phone sheet.
-  expect(body.className).toContain("data-[more-below]:shadow-");
-  expect(body.className).not.toContain("max-sm:data-[more-below]");
+  // The bottom edge is on the desktop dialog as well as the phone sheet: a fade into the dialog's surface, drawn over
+  // the tiles while more lie below (a shadow inside the scroll area would paint under them).
+  const fade = document.querySelector<HTMLElement>('[data-slot="library-picker-fade"]')!;
+  expect(body.className).toContain("peer");
+  expect(fade.className).toContain("peer-data-[more-below]:block");
+  expect(fade.className).toContain("from-background");
+  expect(fade.className).not.toContain("max-sm:");
+  expect(body.className).not.toContain("shadow-");
   // More list below the fold: the edge shows; scrolled to the end: it goes.
   const metrics = { scrollHeight: 900, clientHeight: 400, scrollTop: 0 };
   for (const key of ["scrollHeight", "clientHeight", "scrollTop"] as const) {
@@ -1181,4 +1209,67 @@ test("a click on the pending Remove from somewhere else does end the pick", asyn
   await settle();
   // Remove told the screen it holds nothing, and no file ever arrived.
   expect(onFile.mock.calls.every(([file]) => file === null)).toBe(true);
+});
+
+const PICKER_NOW = new Date(2026, 9, 26, 12);
+
+function datedPicker(kind: "image" | "audio") {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(PICKER_NOW);
+  const assets = [
+    { asset_id: "today", prompt: "Teal today", created_at: new Date(2026, 9, 26, 10).getTime() },
+    { asset_id: "yesterday", prompt: "Amber yesterday", created_at: new Date(2026, 9, 25, 10).getTime() },
+    { asset_id: "undated", prompt: "Teal undated", created_at: null },
+  ].map((asset) => ({
+    ...asset, kind, media_type: kind === "image" ? "image/png" : "audio/wav",
+    duration_s: 83, download_url: SIGNED, thumbnail_url: THUMB,
+  }));
+  vi.stubGlobal("fetch", vi.fn(async () => reply(JSON.stringify({ assets }), "application/json")));
+  return <LibraryPicker open onOpenChange={() => {}} kind={kind} onPick={() => {}} />;
+}
+
+test.each(["image", "audio"] as const)("the %s picker groups the right items under named day sections", async (kind) => {
+  render(datedPicker(kind));
+  await screen.findByRole("button", { name: "Teal today" });
+  for (const [heading, title] of [
+    ["Today", "Teal today"], ["Yesterday", "Amber yesterday"], ["Undated", "Teal undated"],
+  ]) {
+    const section = screen.getByRole("region", { name: heading });
+    // A dated heading carries its day as a machine-readable date, with the whole date as its tooltip.
+    const time = within(section).getByRole("heading", { level: 3, name: heading }).querySelector("time");
+    if (heading === "Undated") expect(time).toBeNull();
+    else expect(time?.getAttribute("datetime")).toBe(heading === "Today" ? "2026-10-26" : "2026-10-25");
+    const list = within(section).getByRole("list");
+    expect(within(list).getAllByRole("button")).toHaveLength(1);
+    const item = within(list).getByRole("button", { name: title });
+    expect(list.className).toContain(kind === "audio" ? "flex-col" : "grid");
+    if (kind === "audio") {
+      expect(item.textContent).toContain("1:23");
+      expect(item.textContent).not.toContain("Oct 26");
+      expect(item.textContent).not.toContain("Oct 25");
+    }
+  }
+});
+
+test("picker search keeps only the matching day headings and their items", async () => {
+  render(datedPicker("image"));
+  await screen.findByRole("button", { name: "Teal today" });
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Amber" } });
+  expect(screen.queryByRole("region", { name: "Today" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Undated" })).toBeNull();
+  const section = screen.getByRole("region", { name: "Yesterday" });
+  expect(within(section).getByRole("button", { name: "Amber yesterday" })).toBeTruthy();
+  expect(within(section).getAllByRole("listitem")).toHaveLength(1);
+});
+
+test("a Library with no dates at all shows its items without any day heading", async () => {
+  const assets = ["Teal one", "Amber two"].map((prompt, index) => ({
+    asset_id: `undated-${index}`, prompt, kind: "image", media_type: "image/png", created_at: null,
+    download_url: SIGNED, thumbnail_url: THUMB,
+  }));
+  vi.stubGlobal("fetch", vi.fn(async () => reply(JSON.stringify({ assets }), "application/json")));
+  render(<LibraryPicker open onOpenChange={() => {}} kind="image" onPick={() => {}} />);
+  await screen.findByRole("button", { name: "Teal one" });
+  expect(screen.getByRole("button", { name: "Amber two" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
 });
