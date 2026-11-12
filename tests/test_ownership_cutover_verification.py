@@ -302,14 +302,21 @@ def expect_line(proc, expected, timeout=30):
     assert line == expected, f"expected {expected!r}, got {line!r}; exit={proc.poll()}"
 
 
+# Each kill point starts a child interpreter, so the full schedule takes minutes. The shards split the points
+# between parallel workers; together they still kill the migration after every statement.
+KILL_SHARDS = 8
+
+
+@pytest.mark.parametrize("shard", range(KILL_SHARDS))
 def test_sigkill_after_every_transaction_statement_recovers_and_backup_opens(
-    disk_legacy, host_disk_dir, monkeypatch, record_property,
+    shard, disk_legacy, host_disk_dir, monkeypatch, record_property,
 ):
     accept(disk_legacy)
     before = snapshot(disk_legacy)
     schedule = statement_schedule(disk_legacy, host_disk_dir / "successful.db", monkeypatch)
     record_property("interruption_points", len(schedule))
-    for step in range(1, len(schedule) + 1):
+    assert len(schedule) >= KILL_SHARDS, "every shard must kill at least one statement"
+    for step in range(1 + shard, len(schedule) + 1, KILL_SHARDS):
         directory = host_disk_dir / f"kill-{step}"
         directory.mkdir()
         path = directory / "admin.db"
