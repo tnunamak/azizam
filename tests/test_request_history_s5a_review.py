@@ -28,7 +28,8 @@ from tests.test_review_retention_s5a_probes import (  # noqa: F401 - fixture
 )
 
 RECEIPT_ID = "req_s5a_review_limit"
-CSRF = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf-for-test"}
+# A browser on the gateway's own page also says so (Sec-Fetch-Site), which the member Origin rule reads.
+CSRF = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf-for-test", "sec-fetch-site": "same-origin"}
 
 
 def _run(db, media, person, messages, *, content_type, headers=(), route_reads=None, record_receipt=False):
@@ -180,7 +181,7 @@ def test_a_browser_session_reads_and_deletes_its_own_history_and_nobody_elses(ga
     assert _browser("GET", f"/gateway/v1/requests/{theirs['record_id']}").status_code == 404
     assert _browser("GET", f"/gateway/v1/requests/{mine['record_id']}").status_code == 200
     assert _browser("DELETE", f"/gateway/v1/requests/{theirs['record_id']}", headers=CSRF).status_code == 404
-    refused = _browser("DELETE", f"/gateway/v1/requests/{mine['record_id']}")
+    refused = _browser("DELETE", f"/gateway/v1/requests/{mine['record_id']}", headers={"sec-fetch-site": "same-origin"})
     assert refused.status_code == 403 and refused.json()["error"]["code"] == "user_action_header_required"
     assert _browser("DELETE", f"/gateway/v1/requests/{mine['record_id']}", headers=CSRF).status_code == 204
     assert _browser("GET", f"/gateway/v1/requests/{mine['record_id']}").status_code == 404

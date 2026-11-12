@@ -446,7 +446,7 @@ def _session_headers(w: World, person: str, *, role: str = "none") -> dict[str, 
     session = browser_sessions.issue({"sub": person, "email": "matrix@example.test"}, role=role,
                                      cookie=cookie, path=w.db)
     token = encode_session_cookie(session, signing_key=proxy._browser_admin_session_signing_key())
-    return {"cookie": f"{cookie.name}={token}", "x-azizam-user-action": "1",
+    return {"cookie": f"{cookie.name}={token}", "x-azizam-user-action": "1", "sec-fetch-site": "same-origin",
             "x-azizam-csrf": proxy._csrf_token_for_oidc_session(session)}
 
 
