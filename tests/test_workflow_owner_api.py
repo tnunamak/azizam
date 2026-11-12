@@ -666,3 +666,43 @@ def test_every_bundled_run_control_patch_write_returns_a_new_etag(api):
         assert listed.headers["etag"] == detailed.headers["etag"] == current
         seen.add(current)
         previous, record_revision = current, commit["record_revision"]
+
+
+MESH_ID = "mesh.generate.trellis-2"
+
+
+def _mesh_facts(**changes):
+    return {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "media",
+            "tags": [], **changes}
+
+
+def _save_mesh(api, **facts):
+    contract = api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["contract"]
+    return api.put(f"/admin/api/workflows/{MESH_ID}", json={"contract": contract, "overrides": MESH_ID,
+                                                            "facts": _mesh_facts(**facts)},
+                   headers={"If-Match": os_n(api)})
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_the_owner_route_stores_selection_rank_and_the_stored_record_loads_it(api):
+    saved = _save_mesh(api, selection_rank=0)
+    assert saved.status_code == 200, saved.text
+    assert api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"]["selection_rank"] == 0
+    from gateway.workflow_policy import rank_of
+    records = {record.id: record for record in service_registry.workflow_records_from_registry(
+        service_registry.load_service_registry(path=api.db))}
+    assert rank_of(records[MESH_ID].facts) == 0
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+@pytest.mark.parametrize("bad", [True, False, -1, 10**30, 1.5, "1", [1]])
+def test_the_owner_route_refuses_a_selection_rank_that_is_not_a_bounded_integer(api, bad):
+    refused = _save_mesh(api, selection_rank=bad)
+    assert refused.status_code == 422, refused.text
+
+
+@pytest.mark.parametrize("api", ["real"], indirect=True)
+def test_an_owner_write_without_selection_rank_keeps_the_record_unranked(api):
+    assert _save_mesh(api).status_code == 200
+    assert "selection_rank" not in api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"] \
+        or api.get(f"/admin/api/workflows/{MESH_ID}").json()["workflow"]["facts"]["selection_rank"] is None
