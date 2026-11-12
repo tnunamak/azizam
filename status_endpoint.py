@@ -2696,16 +2696,19 @@ def _health_panel_sources(config: Mapping[str, Any]) -> list[tuple[dict, Optiona
     """
     backends = (config or {}).get("backends") or {}
     sources: dict[str, tuple[dict, Optional[Mapping[str, Any]], Optional[str]]] = {}
+    role_of: dict[int, str] = {}  # a role's selected record takes the role's default health path
     for capability, panels in engine_record_defaults.role_status_panels().items():
         selected = service_priority.selected_service(backends, capability)
         record = selected[1] if selected else None
+        if record is not None:
+            role_of.setdefault(id(record), capability)
         owns = record is not None and isinstance(record.get("status_panels"), (list, tuple))
         for panel in panels:
             sources[panel["output_key"]] = (panel, None if owns else record, capability)
     for record in backends.values():
         for panel in (record.get("status_panels") or []) if isinstance(record, Mapping) else []:
             if isinstance(panel, Mapping) and panel.get("kind") == "health_json" and panel.get("output_key"):
-                sources[panel["output_key"]] = (dict(panel), record, None)
+                sources[panel["output_key"]] = (dict(panel), record, role_of.get(id(record)))
     return list(sources.values())
 
 
@@ -2735,8 +2738,9 @@ async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
 
         async def _health(client, panel, record, capability):
             origin = _configured_engine_base(record) if record is not None else ""
-            path = (engine_record_defaults.record_value(capability, record, "health_endpoint") if capability
-                    else (record or {}).get("health_endpoint"))
+            path = (record or {}).get("health_endpoint")
+            if not path and capability:
+                path = engine_record_defaults.release_defaults().get(capability, {}).get("health_endpoint")
             if not origin or not path:
                 return None  # no address or no health path: not configured, not probed
             return await _get(client, service_registry.join_base_path(origin, str(path)))
