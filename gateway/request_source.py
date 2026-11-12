@@ -8,8 +8,14 @@ from contextvars import ContextVar
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
+from fastapi.responses import JSONResponse
+
+from gateway import run_tag
+
 _client_hint: ContextVar[str | None] = ContextVar("receipt_client_hint", default=None)
 _gateway_ui: ContextVar[bool] = ContextVar("receipt_gateway_ui", default=False)
+# The caller's run tag (gateway/run_tag.py), validated at the ASGI boundary.
+_run_tag: ContextVar[str | None] = ContextVar("receipt_run_tag", default=None)
 # One dict per request, made at the ASGI boundary. Authentication runs in a
 # worker thread whose context is a copy, so it fills this shared dict rather
 # than setting a variable.
@@ -116,6 +122,10 @@ def current_client_hint() -> str | None:
     return _client_hint.get()
 
 
+def current_run_tag() -> str | None:
+    return _run_tag.get()
+
+
 class RequestSourceMiddleware:
     def __init__(self, app):
         self.app = app
@@ -134,12 +144,23 @@ class RequestSourceMiddleware:
                          and referer.path in {"/", "/try/"})
         except ValueError:
             ui_origin = False
+        tag = headers.get(run_tag.TAG_HEADER.encode())
+        if tag is not None:
+            try:
+                tag = run_tag.validate(tag)
+            except run_tag.InvalidTag as exc:
+                response = JSONResponse({"error": {"message": str(exc), "type": "invalid_request_error",
+                                                   "code": "invalid_tag", "param": run_tag.TAG_HEADER}},
+                                        status_code=400)
+                return await response(scope, receive, send)
         ui_token = _gateway_ui.set(current_gateway_ui() or ui_origin)
         token = _client_hint.set(hint)
+        tag_token = _run_tag.set(tag)
         address_token = _trusted_address.set({})
         try:
             await self.app(scope, receive, send)
         finally:
+            _run_tag.reset(tag_token)
             _trusted_address.reset(address_token)
             _client_hint.reset(token)
             _gateway_ui.reset(ui_token)

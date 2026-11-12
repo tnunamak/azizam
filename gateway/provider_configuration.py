@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from fastapi import status
 
-from gateway import provider_catalog, secret_store, service_registry
+from gateway import protocol_family, provider_catalog, secret_store, service_registry
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.provider_listing import validate_provider_base_url, ProviderListingError
 
@@ -62,7 +62,7 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         "cost_class": "paid-remote",
         "preset_id": preset.id,
         "provider_id": provider_id,
-        "protocol": "openai-compatible" if preset.protocol == "openai-chat" else preset.protocol,
+        "protocol": protocol_family.chat_protocol_id() if preset.protocol == "openai-chat" else preset.protocol,
         "protocols": [preset.protocol],
         "base_url": base_url,
         "credential_origin": credential_origin,

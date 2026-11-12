@@ -505,6 +505,8 @@ class RunFailure:
     retryable: bool = False
     upstream_status: int | None = None
     problems: tuple[ContractError, ...] = ()
+    # Epoch seconds the engine last answered, set only on ``engine_unavailable`` when the health record knows.
+    last_healthy_at: int | None = None
 
 
 @dataclass(frozen=True)

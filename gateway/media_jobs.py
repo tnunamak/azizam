@@ -67,6 +67,9 @@ PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "fi
 # says who refused: the gateway (authorization, invalid_input, capacity) or the
 # work itself (upstream, timeout, safety); ``internal`` is the gateway's own bug. ``upstream_http_status`` is set only
 # for an upstream failure. None means not recorded (older or unclassified jobs).
+# The job metadata key, and the read-time field, that hold when an unreachable engine last answered (the failure code
+# ``engine_unavailable``). The field is None unless that code is set and the gateway's health record knew a time.
+LAST_HEALTHY_KEY = "last_healthy_at"
 ERROR_FIELDS = ("error_code", "error_category", "retryable", "upstream_http_status")
 ERROR_CATEGORIES = frozenset({"authorization", "invalid_input", "upstream", "capacity", "timeout", "safety",
                               "internal"})
@@ -135,6 +138,8 @@ CLIENT_VISIBLE_FIELDS = frozenset(
         "attempt_number",
         "previous_attempts",
         "cancel_requested",
+        "queue_position",
+        LAST_HEALTHY_KEY,
     }
 )
 
@@ -323,7 +328,7 @@ def for_audience(job: Mapping[str, Any], audience: str) -> dict[str, Any]:
 
 
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
-    data = {**dict.fromkeys((*PHASE_FIELDS, *ERROR_FIELDS, "attempt_number")), **data}
+    data = {**dict.fromkeys((*PHASE_FIELDS, *ERROR_FIELDS, "attempt_number", "queue_position", LAST_HEALTHY_KEY)), **data}
     data.setdefault("previous_attempts", [])
     data["cancel_requested"] = (
         holds_resources(data.get("status", STATUS_QUEUED))
@@ -1487,6 +1492,37 @@ def _erase_results(conn: sqlite3.Connection, owner_keys: set[str], *, before: in
         raise
 
 
+def queue_position_in(conn: sqlite3.Connection, job_id: str) -> int | None:
+    """Jobs ahead of a queued job in its queue, read from the job table; ``None`` unless the job is queued.
+
+    A queue is the queued jobs of one engine, taken oldest first (creation time, then insertion order). Nothing is
+    counted in memory, so a restarted process reads the same number. The gateway has no honest time estimate, so none
+    is given.
+    """
+    row = conn.execute("SELECT rowid, status, created_at, COALESCE(backend, '') FROM media_jobs WHERE job_id = ?",
+                       (job_id,)).fetchone()
+    if row is None or row[1] != STATUS_QUEUED:
+        return None
+    return conn.execute(
+        "SELECT COUNT(*) FROM media_jobs WHERE status = ? AND COALESCE(backend, '') = ? "
+        "AND (created_at, rowid) < (?, ?)", (STATUS_QUEUED, row[3], row[2], row[0])).fetchone()[0]
+
+
+def queue_position(job_id: str, *, path: Path = DB_PATH) -> int | None:
+    with _conn(path) as conn:
+        return queue_position_in(conn, job_id)
+
+
+def _with_read_facts(conn: sqlite3.Connection, data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The stored job plus its read-time facts: ``queue_position``, and ``last_healthy_at`` of a failed job whose engine
+    could not be reached. Never the stored values, which were only defaults."""
+    if not data.get("job_id"):
+        return data
+    position = queue_position_in(conn, str(data["job_id"])) if data.get("status") == STATUS_QUEUED else None
+    healthy = (data.get("metadata") or {}).get(LAST_HEALTHY_KEY) if data.get("status") == STATUS_FAILED else None
+    return {**data, "queue_position": position, LAST_HEALTHY_KEY: healthy}
+
+
 def get(
     job_id: str,
     *,
@@ -1501,9 +1537,9 @@ def get(
             "SELECT job_json FROM media_jobs WHERE job_id = ?",
             (job_id,),
         ).fetchone()
-    if not row:
-        return None
-    data = _safe_loads(row[0])
+        data = _safe_loads(row[0]) if row else None
+        if isinstance(data, Mapping):
+            data = _with_read_facts(conn, data)
     if not isinstance(data, Mapping):
         return None
     return _filter_for_audience(data, audience)
@@ -1530,7 +1566,7 @@ def get_many(
             for job_id, raw in rows:
                 data = _safe_loads(raw)
                 if isinstance(data, Mapping):
-                    out[job_id] = _filter_for_audience(data, audience)
+                    out[job_id] = _filter_for_audience(_with_read_facts(conn, data), audience)
     return out
 
 
@@ -1550,9 +1586,9 @@ def get_by_request_id(
             "SELECT job_json, status, updated_at FROM media_jobs WHERE request_id = ?",
             (request_id,),
         ).fetchone()
-    if not row or not _replays(row[1], row[2]):
-        return None
-    data = _safe_loads(row[0])
+        data = _safe_loads(row[0]) if row and _replays(row[1], row[2]) else None
+        if isinstance(data, Mapping):
+            data = _with_read_facts(conn, data)
     if not isinstance(data, Mapping):
         return None
     return _filter_for_audience(data, audience)
@@ -1638,12 +1674,12 @@ def recent(
             "ORDER BY updated_at DESC, job_id DESC LIMIT ?",
             params,
         ).fetchall()
-    out: list[dict[str, Any]] = []
-    for (job_json,) in rows:
-        data = _safe_loads(job_json)
-        if not isinstance(data, Mapping):
-            continue
-        out.append(_filter_for_audience(data, audience))
+        out: list[dict[str, Any]] = []
+        for (job_json,) in rows:
+            data = _safe_loads(job_json)
+            if not isinstance(data, Mapping):
+                continue
+            out.append(_filter_for_audience(_with_read_facts(conn, data), audience))
     return out
 
 

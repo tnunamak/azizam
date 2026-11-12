@@ -1606,7 +1606,7 @@
         "properties": {
           "duration": {
             "default": 180,
-            "description": "Maximum length in seconds; the song may be shorter.",
+            "description": "Length in seconds. The model can stop early on long prompts.",
             "maximum": 360,
             "minimum": 10,
             "type": "number"
@@ -1621,7 +1621,7 @@
             "type": "integer"
           },
           "tags": {
-            "description": "Describe the genre, instruments, and mood.",
+            "description": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
             "type": "string"
           }
         },
@@ -21503,6 +21503,22 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
             }
           }
         ],

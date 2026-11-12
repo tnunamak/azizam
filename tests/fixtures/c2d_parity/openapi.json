@@ -2066,7 +2066,7 @@
       "sha256": "e6b46fe41b5b2b1b00a6f1e668e20f3e40c348983f60c33aa57c244e16022564"
     },
     "audio.generate.yue2-song": {
-      "bytes": 3870,
+      "bytes": 3997,
       "full": {
         "catalog_entry": {
           "aliases": [],
@@ -2180,7 +2180,7 @@
             "properties": {
               "duration": {
                 "default": 180,
-                "description": "Maximum length in seconds; the song may be shorter.",
+                "description": "Length in seconds. The model can stop early on long prompts.",
                 "maximum": 360,
                 "minimum": 10,
                 "type": "number"
@@ -2195,7 +2195,7 @@
                 "type": "integer"
               },
               "tags": {
-                "description": "Describe the genre, instruments, and mood.",
+                "description": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
                 "type": "string"
               }
             },
@@ -2218,7 +2218,7 @@
         "extension_ref": "#/components/schemas/WorkflowInputs_audio_generate_yue2_song",
         "run_path": null
       },
-      "sha256": "c065fb57eea4bf15fbb466c5ed0ee204f7be0bff0385811f7ba08b70a78c9739"
+      "sha256": "e7a8a66c3979dfed262edbb62d8732a843dd7d590cba9cda19716844c371bbdf"
     },
     "image.analyze.face-likeness": {
       "bytes": 2724,

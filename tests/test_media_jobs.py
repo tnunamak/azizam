@@ -58,6 +58,7 @@ def test_audience_contract_is_independent_of_implementation_tables():
         "started_at", "first_output_at", "finished_at", "attempt_number",
         "previous_attempts", "cancel_requested",
         "error_code", "error_category", "retryable", "upstream_http_status",
+        "queue_position", "last_healthy_at",
     }
     admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
     internal_keys = {
@@ -582,7 +583,7 @@ def test_audience_contract_is_independent_of_implementation_tables():
         "accepted_at", "queued_at", "started_at", "first_output_at",
         "finished_at", "attempt_number", "previous_attempts",
         "cancel_requested", "error_code", "error_category", "retryable",
-        "upstream_http_status",
+        "upstream_http_status", "queue_position", "last_healthy_at",
     }
     admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
     internal_keys = {
@@ -629,6 +630,43 @@ def test_a_version_five_store_gains_the_maker_stamp_and_its_old_jobs_stay_unstam
     assert migrated is not None and migrated.get("maker_person_id") is None and migrated.get("maker_credential_id") is None
     kept = media_jobs.get(stamped.job_id, audience="internal", path=path)
     assert kept is not None and kept["maker_person_id"] == "usr_alice"
+
+
+class TestQueuePosition(_StoreCase):
+    """``queue_position``: jobs ahead in the same engine's queue, read from the job table."""
+
+    def _queued(self, request_id: str, backend: str = "engine-a") -> str:
+        return media_jobs.create(_make_job(request_id=request_id, backend=backend), path=self.db).job_id
+
+    def test_queued_jobs_report_their_place_and_others_report_none(self) -> None:
+        first, second = self._queued("req_q1"), self._queued("req_q2")
+        other_engine = self._queued("req_q3", backend="engine-b")
+        for audience in ("client", "admin"):
+            self.assertEqual(media_jobs.get(first, audience=audience, path=self.db)["queue_position"], 0)
+            self.assertEqual(media_jobs.get(second, audience=audience, path=self.db)["queue_position"], 1)
+        self.assertEqual(media_jobs.get(other_engine, audience="client", path=self.db)["queue_position"], 0)
+        self.assertEqual(media_jobs.get(second, audience="internal", path=self.db)["queue_position"], 1)
+
+    def test_position_moves_up_when_the_first_job_starts_and_is_none_once_running(self) -> None:
+        first, second = self._queued("req_q1"), self._queued("req_q2")
+        media_jobs.update_status(first, STATUS_RUNNING, expected_status=STATUS_QUEUED, path=self.db)
+        self.assertIsNone(media_jobs.get(first, audience="client", path=self.db)["queue_position"])
+        self.assertEqual(media_jobs.get(second, audience="client", path=self.db)["queue_position"], 0)
+
+    def test_every_reader_carries_the_position(self) -> None:
+        self._queued("req_q1")
+        second = self._queued("req_q2")
+        self.assertEqual(media_jobs.get_by_request_id("req_q2", audience="client", path=self.db)["queue_position"], 1)
+        self.assertEqual(media_jobs.get_many([second], audience="client", path=self.db)[second]["queue_position"], 1)
+        listed = {row["job_id"]: row for row in media_jobs.recent(10, audience="client", path=self.db)}
+        self.assertEqual(listed[second]["queue_position"], 1)
+
+    def test_a_restarted_process_reads_the_same_positions(self) -> None:
+        first, second = self._queued("req_q1"), self._queued("req_q2")
+        before = [media_jobs.queue_position(job, path=self.db) for job in (first, second)]
+        media_jobs.init_db(self.db)  # a new process opens the same file
+        self.assertEqual([media_jobs.queue_position(job, path=self.db) for job in (first, second)], before)
+        self.assertEqual(before, [0, 1])
 
 
 if __name__ == "__main__":

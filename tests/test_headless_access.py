@@ -537,6 +537,8 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     list the video-mux workflow extension (the video-mux record from main). Nothing else moved.
     Re-captured 2026-11-10 for train 45: the two video create paths and VideoGenerationRequest gained the
     descriptor-owned com.azizam.video extension controls; nothing else moved.
+    Re-captured 2026-11-12 (train 54, L3): WorkflowInputs_audio_generate_yue2_song holds the new help text and duration label;
+    GET /gateway/v1/requests gained the optional ``tag`` filter, which this test strips like the other additive opt-ins.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())
@@ -562,6 +564,9 @@ def test_existing_data_plane_schema_is_byte_equivalent():
                                               if p["name"] != "available"]
             if not operation["get"]["parameters"]:
                 del operation["get"]["parameters"]
+        if path == "/gateway/v1/requests":
+            # ?tag= filters by a run tag (2026-11-12, an additive opt-in); the rest of the original operation is unchanged.
+            operation["get"]["parameters"] = [p for p in operation["get"]["parameters"] if p["name"] != "tag"]
         assert _digest(operation) == expected, path
     for name, expected in baseline["schemas"].items():
         assert _digest(schema["components"]["schemas"][name]) == expected, name

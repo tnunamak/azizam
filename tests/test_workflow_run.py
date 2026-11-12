@@ -483,6 +483,68 @@ def test_a_failing_adapter_settles_the_job_failed_with_a_token_code_and_no_raw_t
     assert "secret" not in json.dumps(job)
 
 
+def _fail_with(db, tmp_path, error, healthy=None):
+    core, port, view, _ = submitted(db, tmp_path)
+    if healthy is not None:
+        port.engine_last_healthy_at = lambda job: healthy
+
+    async def failing(ctx):
+        raise error
+
+    port.run_adapter = failing
+    run(core.execute_run(view.job_id))
+    return core, port, view
+
+
+def test_a_refused_engine_fails_the_job_engine_unavailable_retryable_with_last_healthy_at(db, tmp_path):
+    from gateway.engine_protocol.errors import TransportFailure
+
+    core, port, view = _fail_with(db, tmp_path, TransportFailure("unreachable", "refused"), healthy=1_700_000_000)
+    job = media_jobs.get(view.job_id, audience="client", path=db)
+    assert (job["status"], job["error_code"], job["error_category"], job["retryable"]) == (
+        "failed", "engine_unavailable", "upstream", True)
+    assert job["last_healthy_at"] == 1_700_000_000
+    failed = WorkflowJobService(port=port, path=db).get(view.job_id, Caller())
+    assert failed.failure.code == "engine_unavailable" and failed.failure.last_healthy_at == 1_700_000_000
+
+
+def test_an_engine_with_no_health_record_fails_without_last_healthy_at(db, tmp_path):
+    from gateway.engine_protocol.errors import TransportFailure
+
+    _, _, view = _fail_with(db, tmp_path, TransportFailure("unreachable", "refused"))
+    job = media_jobs.get(view.job_id, audience="client", path=db)
+    assert job["error_code"] == "engine_unavailable" and job["last_healthy_at"] is None
+
+
+def test_an_unresolvable_engine_name_is_engine_unavailable_but_not_retryable(db, tmp_path):
+    from gateway.engine_protocol.errors import TransportFailure
+
+    _, _, view = _fail_with(db, tmp_path, TransportFailure("dns", "no such host"))
+    job = media_jobs.get(view.job_id, audience="client", path=db)
+    assert (job["error_code"], job["retryable"]) == ("engine_unavailable", False)
+
+
+def test_a_proxy_502_is_engine_unavailable(db, tmp_path):
+    from gateway.engine_protocol.errors import UpstreamError
+
+    _, _, view = _fail_with(db, tmp_path, UpstreamError(502, "The engine answered 502.", body=b"<html>Bad Gateway</html>"))
+    assert media_jobs.get(view.job_id, audience="client", path=db)["error_code"] == "engine_unavailable"
+
+
+def test_an_engine_own_500_is_not_engine_unavailable(db, tmp_path):
+    from gateway.engine_protocol.errors import UpstreamError
+
+    _, _, view = _fail_with(db, tmp_path, UpstreamError(500, "The engine answered 500.", body=b'{"error":"model crashed"}'))
+    assert media_jobs.get(view.job_id, audience="client", path=db)["error_code"] != "engine_unavailable"
+
+
+def test_a_timeout_stays_a_timeout(db, tmp_path):
+    from gateway.engine_unavailable import classify
+    from gateway.engine_protocol.errors import TransportFailure
+
+    assert classify(TransportFailure("timeout", "slow")) is None
+
+
 # ---------------------------------------------------------------------------------------------------- recovery
 
 

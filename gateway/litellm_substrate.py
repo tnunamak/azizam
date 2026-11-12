@@ -15,6 +15,7 @@ Explicit limitations:
 
 from __future__ import annotations
 
+from gateway import protocol_family
 from gateway.compat import get_env
 
 import logging
@@ -44,7 +45,7 @@ from gateway.service_registry import (
     service_base_url,
 )
 
-OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
+OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", protocol_family.chat_protocol_id()})
 SECRET_PLACEHOLDER = "<external-secret>"
 LOCAL_NO_AUTH_API_KEY = "sk-local"
 DEFAULT_LISTEN_PORT = 5000
@@ -895,7 +896,7 @@ def _litellm_provider(config: Mapping[str, Any]) -> str:
         or config.get("provider_id")
         or ""
     ).strip()
-    if provider == "openai-compatible":
+    if provider == protocol_family.chat_protocol_id():
         return "openai"
     return canonical_provider_id(provider)
 

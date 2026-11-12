@@ -1374,7 +1374,7 @@
         "sha256": "1ae7aafa5648a647c953345b1817ba167c2f15196e001cad14dc99b0f9987a0e"
       },
       "row": {
-        "bytes": 9029,
+        "bytes": 9275,
         "full": {
           "aliases": [],
           "availability": {
@@ -1467,8 +1467,8 @@
             {
               "accepted": true,
               "applies": "Request body",
-              "description": "Describe the genre, instruments, and mood.",
-              "help": "Describe the genre, instruments, and mood.",
+              "description": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
+              "help": "Describe the genre, instruments, and mood. For instrumental music, name one instrument and add 'no humming, no human sounds'; 'no vocals' alone is not reliable.",
               "ignored": false,
               "label": "Musical style",
               "name": "tags",
@@ -1492,10 +1492,10 @@
               "accepted": true,
               "applies": "Request body",
               "default": 180,
-              "description": "Maximum length in seconds; the song may be shorter.",
-              "help": "Maximum length in seconds; the song may be shorter.",
+              "description": "Length in seconds. The model can stop early on long prompts.",
+              "help": "Length in seconds. The model can stop early on long prompts.",
               "ignored": false,
-              "label": "Maximum length",
+              "label": "Length",
               "maximum": 360,
               "minimum": 10,
               "name": "duration",
@@ -1630,7 +1630,7 @@
           "try_url": "/try/?workflow=audio.generate.yue2-song",
           "typical_seconds": 30
         },
-        "sha256": "d2dec3ec158281384a46ff18d853bd46f8d4f42074793c55365ebc2562e622db"
+        "sha256": "55664d714218c9841c5391294c6c28912d3d30eb6c3286ac239dd0f8d55a4fb1"
       }
     },
     "image.analyze.face-likeness": {

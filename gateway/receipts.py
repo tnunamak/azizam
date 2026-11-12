@@ -66,6 +66,7 @@ CLIENT_VISIBLE_FIELDS = {
     "retention",
     *PHASE_FIELDS,
     "attempt_number",
+    "tag",
 }
 
 # Admin adds routing and policy facts. Ownership (``owner_key_hash``) and the raw
@@ -415,6 +416,8 @@ class RouteReceipt:
     # Such a request runs as the person's own session App, so ``app_id`` alone
     # cannot tell ChatGPT from the person's browser. None for every other request.
     connection_id: str | None = None
+    # The caller's optional run tag (gateway/run_tag.py), read from the request's ``X-Azizam-Tag`` header.
+    tag: str | None = None
     # The trusted client address a keyless request ran under; None when a key did.
     client_address: str | None = None
     source_kind: str | None = None
@@ -465,7 +468,7 @@ class RouteReceipt:
 
     def __post_init__(self) -> None:
         from gateway.request_source import (
-            connection_for, current_client_hint, current_gateway_ui, maker_for, trusted_address_for,
+            connection_for, current_client_hint, current_gateway_ui, current_run_tag, maker_for, trusted_address_for,
         )
 
         if self.parent_request_id and self.app_id is None:
@@ -478,6 +481,7 @@ class RouteReceipt:
             _remember_caller(self)
         self.client_address = self.client_address or trusted_address_for(self.app_id)
         self.connection_id = self.connection_id or connection_for(self.app_id)
+        self.tag = self.tag or current_run_tag()
         self._note_frontend_loss()
         if self.source_kind is not None:
             return
@@ -725,6 +729,8 @@ class RouteReceipt:
         }
         if self.maker_person_id is not None:
             data["maker_person_id"] = self.maker_person_id
+        if self.tag is not None:
+            data["tag"] = self.tag
         if self.retention is not None:
             data["retention"] = validate_retention(self.retention)
         if self.retention_facts:

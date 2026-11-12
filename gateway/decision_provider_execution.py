@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
-from gateway import category_enforcement, client_errors, providers
+from gateway import category_enforcement, client_errors, protocol_family, providers
 from gateway.capabilities import Capability
 from gateway.policy import EffectiveAccess, PolicyRequest, evaluate
 from gateway.decisions_api import DecisionDispatchResult
@@ -176,7 +176,7 @@ def openai_decisions_provider(registry: Mapping[str, Any]) -> providers.Provider
         provider
         for provider in providers.provider_refs(registry).values()
         if provider.enabled
-        and ({"openai-compatible", "openai-chat"} & set(provider.protocols))
+        and ({protocol_family.chat_protocol_id(), "openai-chat"} & set(provider.protocols))
         and _provider_has_capability(provider, registry, "decisions")
     ]
     if len(candidates) != 1:
