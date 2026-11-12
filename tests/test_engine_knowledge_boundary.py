@@ -1056,10 +1056,10 @@ class TestReviewedEngineKnowledge:
         raw = {rel: _count_engine_knowledge(source, rel) for rel, source in sources.items()}
         assert raw == {
             "gateway/model_files.py": 2, "gateway/model_ids.py": 1,
-            "gateway/local_capabilities.py": 3,
+            "gateway/local_capabilities.py": 1,
         }
         counts = _engine_knowledge_counts(sources)
-        assert counts == {"gateway/local_capabilities.py": 2}
+        assert counts == {}      # every raw hit left in these files is a reviewed one
         assert sum(raw.values()) - sum(counts.values()) == 4
 
     def test_lower_baseline_uses_reviewed_counts_and_refuses_increases(self, tmp_path, monkeypatch) -> None:
@@ -1076,12 +1076,13 @@ class TestReviewedEngineKnowledge:
         monkeypatch.setitem(globals(), "_BASELINE_PATH", baseline)
         monkeypatch.setitem(globals(), "_production_files", lambda: paths)
         _lower_baseline()
-        assert _load_baseline() == {"gateway/local_capabilities.py": 2}
+        assert _load_baseline() == {}
         _lower_baseline()  # The lowered baseline is idempotent.
-        baseline.write_text('{"files": {"gateway/local_capabilities.py": 1}}\n', encoding="utf-8")
+        baseline.write_text('{"files": {"gateway/sample.py": 1}}\n', encoding="utf-8")
+        monkeypatch.setitem(globals(), "_engine_knowledge_counts", lambda *a, **k: {"gateway/sample.py": 2})
         with pytest.raises(SystemExit, match="refusing to raise"):
             _lower_baseline()
-        assert _load_baseline() == {"gateway/local_capabilities.py": 1}
+        assert _load_baseline() == {"gateway/sample.py": 1}
 
     def test_reviewed_literals_do_not_disable_engine_branch_guard(self, tmp_path) -> None:
         path = tmp_path / "reviewed.yml"

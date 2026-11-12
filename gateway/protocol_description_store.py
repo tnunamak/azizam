@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,7 @@ GENERATION_KEY = "protocol_descriptions"
 # second worker's loader before the app exists) reads the default path.
 _provider: Callable[[], Path] | None = None
 _cache_revisions: dict[Path, int] = {}
+_cache_lock = threading.Lock()   # writes commit on worker threads; two bumps must not read the same old value
 
 
 def use_path(provider: Callable[[], Path] | None) -> None:
@@ -41,7 +43,8 @@ def cache_revision(path: Path) -> int:
 
 
 def _invalidate(path: Path) -> None:
-    _cache_revisions[path] = _cache_revisions.get(path, 0) + 1
+    with _cache_lock:
+        _cache_revisions[path] = _cache_revisions.get(path, 0) + 1
 
 
 class StoreConflict(Exception):

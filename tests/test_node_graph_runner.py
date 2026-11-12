@@ -249,3 +249,62 @@ def test_the_provenance_stage_leaves_a_file_alone_when_the_request_kept_no_recor
 def test_a_stage_the_run_does_not_know_still_fails_the_run():
     with pytest.raises(RunFailed):
         asyncio.run(runner()._stages(context(stages=["no_such_stage"]), [MP4]))
+
+# Declared output words come from the shared kind table; a run that declares no output gets the table's generic file words.
+@pytest.mark.parametrize("media_type,label,noun,plural,article", [
+    ("video/mp4", "Video", "video", "videos", "a"),
+    ("image/png", "Image", "image", "images", "an"),
+    (None, "File", "file", "files", "a"),
+    ("audio/wav", "Audio", "audio", "audios", "an"),
+    ("smell/example", "Smell", "smell", "smells", "a"),
+])
+@pytest.mark.parametrize("failure_kind", [graph_round.WAIT_EXCEEDED, graph_round.DROPPED])
+def test_failure_words_follow_declared_output_without_changing_metadata(media_type, label, noun, plural, article, failure_kind):
+    from gateway.node_graph_runner import output_noun
+
+    outputs = {"result": {"media_type": media_type}} if media_type else {}
+    failed = failure_of(graph_round.RoundFailure(failure_kind, queue_position=3),
+                        SimpleNamespace(label="Engine"), None, "binding", outputs)
+    assert output_noun(outputs) == plural
+    if failure_kind == graph_round.WAIT_EXCEEDED:
+        assert failed.client_message == f"{label} generation timed out before Engine returned {article} {noun} (queue_position=3)"
+        assert (failed.code, failed.category, failed.upstream_status, failed.retryable, failed.retry_reason, failed.queue_position) == (
+            "image_generation_timeout", "timeout", 504, True, "binding_timeout", 3)
+    else:
+        assert failed.client_message == f"{label} backend connection dropped"
+        assert (failed.code, failed.category, failed.upstream_status, failed.retryable, failed.retry_reason, failed.queue_position) == (
+            "upstream_dropped", "upstream", 502, True, None, None)
+
+
+@pytest.mark.parametrize("failure_kind", [graph_round.WAIT_EXCEEDED, graph_round.DROPPED])
+def test_one_round_passes_its_declared_video_output_to_failure_builder(monkeypatch, failure_kind):
+    async def fail_round(*args, **kwargs):
+        raise graph_round.RoundFailure(failure_kind)
+
+    monkeypatch.setattr(graph_round, "run_round", fail_round)
+    monkeypatch.setattr(media_jobs, "update_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(media_jobs, "get", lambda *args, **kwargs: {})
+    host = GraphHost(engine=None, identity=None, problem=None, adapter=None, connection=None, limits=None,
+                     control_timeout=lambda: 1, headers=None, batching=None, stages={})
+    graph = NodeGraphRunner("binding", "adapter", host)
+    ctx = SimpleNamespace(job_id="test", inputs={}, generated={}, record_result_metadata=lambda value: None,
+                          record_progress=lambda value: None)
+    adapter = SimpleNamespace(label="Engine", compile=lambda *args, **kwargs: ({}, {}))
+    with pytest.raises(RunFailed) as caught:
+        asyncio.run(graph._one_round(
+            ctx=ctx, adapter=adapter, session=None, runtime=SimpleNamespace(wait_s=1),
+            op="generate", template_request=SimpleNamespace(params={}), manifest_inputs={}, offset=0,
+            batching=None, plan=None, target=1, probe=None, headers={}, binding={},
+            outputs={"result": {"media_type": "video/mp4"}}, limits=None, poll=CADENCE,
+            label="test", failure_binding="binding", conn=None, retry_freed=lambda: False, staged={}))
+    expected = ("Video generation timed out before Engine returned a video"
+                if failure_kind == graph_round.WAIT_EXCEEDED else "Video backend connection dropped")
+    assert caught.value.client_message == expected
+
+
+def test_unknown_kind_words_use_the_shared_table_fallback():
+    from gateway import asset_types
+    from gateway.node_graph_runner import output_noun
+
+    assert "smell" not in asset_types.KIND_NAMES
+    assert output_noun({"out": {"media_type": "smell/example"}}) == "smells"

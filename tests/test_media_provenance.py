@@ -983,6 +983,10 @@ class ObjectInfoLookupTests(unittest.TestCase):
     def setUp(self) -> None:
         node_info._CACHE.clear()
         node_info._FAILED_AT.clear()
+        # Gateway startup in another test of this worker sets the disk copy; its files would answer a failed lookup.
+        disk = patch.object(node_info, "DISK_CACHE_DIR", None)
+        disk.start()
+        self.addCleanup(disk.stop)
         self.addCleanup(node_info._CACHE.clear)
         self.addCleanup(node_info._FAILED_AT.clear)
 

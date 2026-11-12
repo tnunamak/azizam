@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 import proxy
 from tests.support.graph_service import set_derived
 from gateway import media_jobs, receipt_store
-from gateway.engine_protocol import description, transport, executor
+from gateway.engine_protocol import description, inventory, transport, executor
 from tests.support.access import authenticated, identity, plan_for
 from tests.support.fake_upstream import HandlerTransport
 from tests.support.protocol_upstream import ProtocolUpstream
@@ -34,6 +34,12 @@ def engine(monkeypatch, tmp_path):
     monkeypatch.setattr(description, 'REGISTRY_DIR', shipped)
     original = description.load_registry
     monkeypatch.setattr(description, 'load_registry', lambda directory=shipped: original(directory))
+    # The model listing reads descriptions inside a 0.5 s budget and falls back to the last good read of whichever test ran
+    # before. A loaded gate worker overran it and listed no prism-chat; this world reads its own directory with no deadline.
+    monkeypatch.setattr(inventory, 'DESCRIPTION_LOAD_S', 60.0)
+    monkeypatch.setattr(inventory, '_docs_last_good', None)
+    monkeypatch.setattr(inventory, '_docs_load', None)
+    monkeypatch.setattr(inventory, '_cache', type(inventory._cache)())
     wire = transport.HttpxTransport.for_tests(HandlerTransport(fake))
     monkeypatch.setattr(executor, 'HttpxTransport', lambda: wire)
     monkeypatch.setattr(proxy, '_litellm_runtime_config', lambda: SimpleNamespace(enabled=False))

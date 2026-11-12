@@ -8,11 +8,13 @@
 # plural:   the filter ("Images").
 # untitled: an item with no prompt of its own ("Picture").
 # input:    a file of this kind that a person gives a workflow ("picture", "recording", "clip").
+# recent:   optional true or false: whether Home's Recent shows items of this kind. Absent means true, as for a kind with no row.
+# items:    optional lowercase plural noun that counts items in a sentence ("No videos generated"). Absent means the kind name plus "s".
 # prefix:   optional stored-asset id prefix; 1-8 lowercase ASCII letters, unique across kinds.
 kinds:
-  image: {label: Image, plural: Images, untitled: Picture, input: picture, prefix: img}
-  video: {label: Video, plural: Video, untitled: Video, input: clip, prefix: vid}
-  audio: {label: Audio, plural: Audio, untitled: Audio, input: recording, prefix: aud}
+  image: {label: Image, plural: Images, untitled: Picture, input: picture, items: images, prefix: img}
+  video: {label: Video, plural: Video, untitled: Video, input: clip, items: videos, prefix: vid}
+  audio: {label: Audio, plural: Audio, untitled: Audio, input: recording, items: audios, prefix: aud}
   model: {label: 3D model, plural: 3D models, untitled: 3D model, input: 3D model}
-  text: {label: Text, plural: Text, untitled: Text file, input: text file}
+  text: {label: Text, plural: Text, untitled: Text file, input: text file, recent: false}
   file: {label: File, plural: Files, untitled: File, input: file}

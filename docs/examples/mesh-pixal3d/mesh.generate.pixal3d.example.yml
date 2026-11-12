@@ -1,0 +1,49 @@
+# Owner-override example: serve the image-to-3D route with Pixal3D (run inside ComfyUI) instead of the bundled TRELLIS.2 service.
+#
+# The 3D routes serve one workflow record, the one whose id is the bundled mesh id. To use this document, save it as an
+# owner override of that record (id below) with the service record in service-record.example.yml. It is not a second
+# bundled workflow: a record with another id would list as a job the 3D rows cannot run.
+schema_version: 2
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: mesh.generate.trellis-2
+intent: mesh.generate
+capability: mesh
+display_name: Pixal3D image to 3D
+purpose: One image to a textured 3D model
+description: Turns one image into a textured 3D model in GLB format.
+technical_description: Fixed mesh route bound to the pixal3d service over one multipart POST. The service runs Pixal3D in ComfyUI and returns raw GLB bytes.
+summary: Send one picture; receive one textured 3D model (model/gltf-binary).
+inputs:
+  image:
+    label: picture
+    help: The picture to turn into a 3D model. PNG, JPEG or WebP.
+    type: asset
+    accepts:
+      - image/png
+      - image/jpeg
+      - image/webp
+    required: true
+  seed:
+    label: variation number
+    help: Reuse this number and the same picture for a similar model.
+    type: integer
+    minimum: 0
+    maximum: 4294967295
+  resolution:
+    label: detail
+    help: Geometry resolution. Higher is slower.
+    type: integer
+    enum: [512, 1024, 1536]
+    default: 1024
+outputs:
+  mesh:
+    media_type: model/gltf-binary
+bindings:
+  http-multipart:
+    map:
+      image: image
+      seed: seed
+      resolution: resolution
+    service: pixal3d
+    path: /generate

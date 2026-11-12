@@ -1038,7 +1038,7 @@ class WebBuildTests(unittest.TestCase):
 
 
 class SmokeAuthModeTests(unittest.TestCase):
-    def smoke(self, *, mode=None, status=200, body=None):
+    def smoke(self, *, mode=None, status=200, body=None, key=None):
         # No network and no model calls: every curl invocation is a local fake.
         fake = r"""#!/bin/bash
 set -eu
@@ -1122,6 +1122,8 @@ fi
             env.pop("AZIZAM_SMOKE_KEY", None)
             if mode is not None:
                 env["AZIZAM_SMOKE_AUTH_MODE"] = mode
+            if key is not None:
+                env["AZIZAM_SMOKE_KEY"] = key
             return subprocess.run(["bash", str(ROOT / "scripts" / "post-deploy-smoke")],
                                   env=env, capture_output=True, text=True, timeout=10)
 
@@ -1160,6 +1162,20 @@ fi
 
     def test_trusted_mode_rejects_empty_model_list(self):
         self._assert_models_check_fails(mode="trusted", body='{"object":"list","data":[]}')
+
+    def test_a_listed_current_alias_without_a_context_window_fails(self):
+        body = json.dumps({"object": "list", "data": [
+            {"id": "fast"}, {"id": "current", "context_window": 262144}, {"id": "current-fast"}]})
+        result = self.smoke(mode="trusted", body=body, key="smoke-test")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAIL current aliases publish limits: no context_window on current-fast", result.stdout)
+
+    def test_current_aliases_with_context_windows_pass(self):
+        body = json.dumps({"object": "list", "data": [
+            {"id": "current", "context_window": 262144}, {"id": "current-fast", "context_window": 131072}]})
+        result = self.smoke(mode="trusted", body=body, key="smoke-test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS current aliases publish limits", result.stdout)
 
     def test_unknown_auth_mode_is_usage_error(self):
         result = self.smoke(mode="bypass")

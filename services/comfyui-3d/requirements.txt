@@ -1,0 +1,6 @@
+# Packages the UltraTex texture-refine nodes add to the ComfyUI venv.
+# Installing them changed no existing package (torch, torchvision, triton and numpy stay as they were).
+glcontext==3.1.0
+moderngl==5.13.0
+trimesh==5.2.0
+xatlas==0.0.11
