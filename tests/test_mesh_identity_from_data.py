@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_ROUTE = {
     "methods": ["POST"],
     "canonical": "/v1/3d/generations",
+    # Train 54 gave every route row its MCP exposure fact; the row still comes back unchanged.
+    "mcp_not_exposed": "Use the workflow catalog or HTTP; no standalone MCP target is declared.",
     "intent": "mesh.generate",
     "capability": "mesh",
     "runtime_policy": {
