@@ -42,6 +42,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
+    extraHTTPHeaders: { origin: `http://127.0.0.1:${port}` },
     storageState: "./test-results/live-data-owner.json",
     headless: true,
     trace: "retain-on-failure",

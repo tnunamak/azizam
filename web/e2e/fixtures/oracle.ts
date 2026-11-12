@@ -157,7 +157,7 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
   const bodies: Record<string, unknown> = {};
   const contexts: APIRequestContext[] = [];
   const open = async () => {
-    const context = await request.newContext({ baseURL: origin });
+    const context = await request.newContext({ baseURL: origin, extraHTTPHeaders: { origin } });
     contexts.push(context);
     return context;
   };
