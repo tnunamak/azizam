@@ -29,7 +29,8 @@ def test_a_second_unfamiliar_intent_resolves_from_its_contract():
     clip = _contract("reel.make", "video/mp4")
 
     assert policy_protocol.protocol_for_workflow("reel.make.x", clip) == "openai.video"
-    assert policy_protocol.lists_as_model("reel.make.x", clip)
+    assert not policy_protocol.lists_as_model("reel.make.x", clip)  # no listing row serves this intent
+    assert policy_protocol.lists_as_model("video.generate.y", _contract("video.generate", "video/mp4"))
 
 
 def test_an_unknown_intent_never_becomes_chat():
