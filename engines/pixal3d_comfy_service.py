@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -39,6 +40,19 @@ class Refusal(Exception):
     def __init__(self, status: int, message: str, retry_after: int | None = None) -> None:
         super().__init__(message)
         self.status, self.message, self.retry_after = status, message, retry_after
+
+
+def upstream_object(response: httpx.Response, step: str) -> dict[str, Any]:
+    """Only a successful JSON object is a usable ComfyUI answer."""
+    try:
+        if response.status_code != 200:
+            raise ValueError("status")
+        body = response.json()
+        if not isinstance(body, dict):
+            raise ValueError("object")
+        return body
+    except ValueError as exc:
+        raise Refusal(502, f"ComfyUI returned an invalid {step} reply") from exc
 
 
 def load_prompt(path: Path = PROMPT_PATH) -> dict[str, Any]:
@@ -92,33 +106,31 @@ class Pixal3DService:
 
     async def _run(self, client: httpx.AsyncClient, data: bytes, seed: int | None, resolution: int | None) -> bytes:
         base = self.base_url
-        queue = (await client.get(f"{base}/queue")).json()
+        queue = upstream_object(await client.get(f"{base}/queue"), "queue")
         if queue.get("queue_running") or queue.get("queue_pending"):
             raise Refusal(503, "ComfyUI is busy", retry_after=30)
         name = f"pixal3d-{uuid.uuid4().hex}.png"
         up = await client.post(f"{base}/upload/image", files={"image": (name, data, "image/png")}, data={"overwrite": "true"})
-        if up.status_code != 200:
-            raise Refusal(502, f"ComfyUI refused the picture ({up.status_code})")
-        stored = up.json().get("name") or name
+        stored = upstream_object(up, "image upload").get("name") or name
         prefix = f"pixal3d/{uuid.uuid4().hex}"
         body = {"prompt": patch_prompt(self.prompt, image_name=stored, seed=seed, resolution=resolution, prefix=prefix)}
         sub = await client.post(f"{base}/prompt", json=body)
-        if sub.status_code != 200:
-            raise Refusal(502, f"ComfyUI refused the prompt ({sub.status_code})")
-        prompt_id = sub.json()["prompt_id"]
+        prompt_id = upstream_object(sub, "prompt submit").get("prompt_id")
+        if not isinstance(prompt_id, str) or not prompt_id:
+            raise Refusal(502, "ComfyUI prompt submit reply has no prompt id")
         entry = await self._wait(client, prompt_id)
         ref = find_glb(entry.get("outputs") or {})
         if ref is None:
             raise Refusal(502, "ComfyUI finished without a GLB")
         got = await client.get(f"{base}/view", params=ref)
-        if got.status_code != 200 or not got.content:
+        if got.status_code != 200 or not got.content.startswith(b"glTF"):
             raise Refusal(502, f"ComfyUI would not return the GLB ({got.status_code})")
         return got.content
 
     async def _wait(self, client: httpx.AsyncClient, prompt_id: str) -> dict[str, Any]:
         deadline = asyncio.get_running_loop().time() + self.timeout
         while True:
-            history = (await client.get(f"{self.base_url}/history/{prompt_id}")).json()
+            history = upstream_object(await client.get(f"{self.base_url}/history/{prompt_id}"), "history")
             entry = history.get(prompt_id)
             if entry:
                 status = entry.get("status") or {}
@@ -127,8 +139,29 @@ class Pixal3DService:
                 if status.get("completed") or entry.get("outputs"):
                     return entry
             if asyncio.get_running_loop().time() > deadline:
+                await self._cancel_prompt(client, prompt_id)
                 raise Refusal(504, "ComfyUI did not finish in time")
             await asyncio.sleep(self.poll_interval)
+
+    async def _cancel_prompt(self, client: httpx.AsyncClient, prompt_id: str) -> None:
+        # ComfyUI POST /queue deletes pending ids. POST /interrupt is global,
+        # so call it only when GET /queue names our id as the running prompt.
+        errors = []
+        try:
+            response = await client.post(f"{self.base_url}/queue", json={"delete": [prompt_id]})
+            response.raise_for_status()
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+        try:
+            queue = upstream_object(await client.get(f"{self.base_url}/queue"), "cleanup queue")
+            if any(isinstance(row, list) and len(row) > 1 and row[1] == prompt_id
+                   for row in queue.get("queue_running", [])):
+                response = await client.post(f"{self.base_url}/interrupt", json={})
+                response.raise_for_status()
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+        if errors:
+            logging.getLogger(__name__).warning("ComfyUI timeout cleanup failed: %s", ", ".join(errors))
 
 
 def create_app(base_url: str, *, prompt: dict[str, Any] | None = None,

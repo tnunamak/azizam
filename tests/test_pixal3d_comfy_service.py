@@ -60,6 +60,7 @@ def test_one_request_returns_the_textured_glb_and_patches_the_prompt(fake_upstre
     assert prompt[svc.LOAD_IMAGE_NODE]["inputs"]["image"] == "up.png"
     assert prompt[svc.RESOLUTION_NODE]["inputs"]["target_resolution"] == 512
     assert set(seeds(prompt)) == {7}
+    assert not [r for r in fake.requests if (r.method, r.path) in {("POST", "/queue"), ("POST", "/interrupt")}]
 
 
 def test_omitted_options_leave_the_shipped_prompt_values(fake_upstreams) -> None:
@@ -91,6 +92,8 @@ def test_a_failed_prompt_is_a_502(fake_upstreams) -> None:
 
 def test_a_prompt_that_never_finishes_is_a_504(fake_upstreams) -> None:
     steps = full_run([], view=False) + [exchange("history", "GET", "/history/p1", {"json": {}}, repeat=True)]
+    steps += [exchange("delete", "POST", "/queue", {"json": {}}),
+              exchange("cleanup-queue", "GET", "/queue", {"json": IDLE})]
     _, app = serve(fake_upstreams, steps, timeout=0.05)
     assert post(app).status_code == 504
 
@@ -108,3 +111,64 @@ def test_the_shipped_prompt_has_the_nodes_the_service_patches_and_no_local_paths
     assert prompt[svc.OUTPUT_NODE]["class_type"] == "Save3DAdvanced"
     text = svc.PROMPT_PATH.read_text(encoding="utf-8")
     assert "/home/" not in text and "192.168." not in text
+
+
+@pytest.mark.parametrize("step,path", [("queue", "/queue"), ("upload", "/upload/image"),
+                                      ("prompt", "/prompt"), ("history0", "/history/p1")])
+@pytest.mark.parametrize("reply", [{"status": 500, "body": [{"hex": "3c68746d6c3e6572726f723c2f68746d6c3e"}]},
+                                   {"body": [{"hex": "6e6f74204a534f4e"}]}, {"json": []}])
+def test_bad_upstream_reply_is_a_json_502(fake_upstreams, step, path, reply) -> None:
+    steps = full_run([DONE])
+    index = next(i for i, item in enumerate(steps) if item["id"] == step)
+    steps[index]["response"] = reply
+    _, app = serve(fake_upstreams, steps[:index + 1])
+    response = post(app)
+    assert response.status_code == 502
+    assert isinstance(response.json()["error"], str)
+
+
+def test_prompt_without_id_is_a_json_502(fake_upstreams) -> None:
+    steps = full_run([], view=False)
+    steps[-1]["response"] = {"json": {}}
+    _, app = serve(fake_upstreams, steps)
+    response = post(app)
+    assert response.status_code == 502
+    assert "prompt id" in response.json()["error"]
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_timeout_cancels_only_its_prompt(fake_upstreams, running) -> None:
+    queue = {"queue_running": [[0, "p1"]] if running else [[0, "other"]],
+             "queue_pending": [] if running else [[1, "p1"]]}
+    steps = full_run([], view=False) + [
+        exchange("history", "GET", "/history/p1", {"json": {}}, repeat=True),
+        exchange("delete", "POST", "/queue", {"json": {}}),
+        exchange("cleanup-queue", "GET", "/queue", {"json": queue})]
+    if running:
+        steps.append(exchange("interrupt", "POST", "/interrupt", {"json": {}}))
+    fake, app = serve(fake_upstreams, steps, timeout=0.005)
+    response = post(app)
+    assert response.status_code == 504
+    assert response.json()["error"] == "ComfyUI did not finish in time"
+    assert fake.calls("delete")[0].json == {"delete": ["p1"]}
+    if running:
+        assert fake.calls("interrupt")[0].json == {}
+    else:
+        assert not [r for r in fake.requests if r.path == "/interrupt"]
+
+
+def test_json_bytes_are_not_a_glb(fake_upstreams) -> None:
+    steps = full_run([DONE])
+    steps[-1]["response"] = {"json": {"error": "not a model"}}
+    _, app = serve(fake_upstreams, steps)
+    assert post(app).status_code == 502
+
+
+def test_history_becomes_non_json_mid_wait(fake_upstreams) -> None:
+    steps = full_run([{}], view=False) + [
+        exchange("bad-history", "GET", "/history/p1",
+                 {"body": [{"hex": "6e6f74204a534f4e"}]})]
+    _, app = serve(fake_upstreams, steps)
+    response = post(app)
+    assert response.status_code == 502
+    assert "history" in response.json()["error"]
