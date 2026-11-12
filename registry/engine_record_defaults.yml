@@ -11,11 +11,26 @@
 # model_id: the model that the engine serves, when the record names none.
 # default_model: the model a request gets when it names none.
 # workflows_dir / video_workflows_dir: where the engine's graph files are, relative to the gateway, unless absolute.
+# status_panels: the panels the status page shows for the service selected for the role, when its record declares none.
+#   Each is {kind, output_key, title, short_title}. kind health_json reads the record's health path and publishes the
+#   JSON it returns under output_key. A record that names its own status_panels replaces these.
 defaults:
   audio.speech:
     timeout: 120
+    health_endpoint: /health
+    status_panels:
+      - kind: health_json
+        output_key: voxtral
+        title: Voxtral (TTS)
+        short_title: Voxtral (TTS)
   audio.transcriptions:
     timeout: 120
+    health_endpoint: /health
+    status_panels:
+      - kind: health_json
+        output_key: parakeet
+        title: Parakeet (STT)
+        short_title: Parakeet (STT)
   embeddings:
     timeout: 120
     health_endpoint: /health

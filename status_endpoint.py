@@ -40,7 +40,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 import httpx
 import yaml
 
-from gateway import engine_egress, lifecycle_drivers, service_registry
+from gateway import engine_egress, engine_record_defaults, lifecycle_drivers, service_priority, service_registry
 from gateway import http_tls
 from gateway.resource_awareness import ResourceObserver, age_resource_view
 from gateway.http_tls import tls_context
@@ -661,12 +661,27 @@ async def _llama_props_and_slots(config: Mapping[str, Any]) -> tuple[Optional[di
         return None, None
 
 
-def _llama_server_args() -> Optional[list[str]]:
-    rc, out, _ = _run(["pgrep", "-fa", "llama-server"])
+def _aux_probe(config: Optional[Mapping[str, Any]]) -> Optional[tuple[str, str]]:
+    """(process name, flag) of the first enabled record whose ``aux`` reads a loaded aux file from a process command line."""
+    for record in ((config or {}).get("backends") or {}).values():
+        aux = record.get("aux") if isinstance(record, Mapping) else None
+        if (isinstance(aux, Mapping) and aux.get("probe") == "process-cmdline" and aux.get("process") and aux.get("flag")
+                and _is_enabled(record)):
+            return str(aux["process"]), str(aux["flag"])
+    return None
+
+
+def _llama_server_args(config: Optional[Mapping[str, Any]] = None) -> Optional[list[str]]:
+    """The command line of the model server process a record's ``aux`` block names, or None when none does."""
+    probe = _aux_probe(config)
+    if probe is None:
+        return None
+    process = probe[0]
+    rc, out, _ = _run(["pgrep", "-fa", process])
     if rc != 0 or not out.strip():
         return None
     for line in out.splitlines():
-        if "llama-server" in line and "--model" in line:
+        if process in line and "--model" in line:
             return line.strip().split()
     return None
 
@@ -807,139 +822,6 @@ def _resolve_tts_engine(
     }
 
 
-async def _models_section(config: dict, props: Optional[dict], slots: Optional[list[dict]]) -> dict:
-    args = _llama_server_args()
-    loaded_path = _extract_arg(args, "--model") if args else None
-    mmproj = _extract_arg(args, "--mmproj") if args else None
-    ctx_size_str = _extract_arg(args, "--ctx-size") if args else None
-    cache_k_arg = _extract_arg(args, "--cache-type-k") if args else None
-    cache_v_arg = _extract_arg(args, "--cache-type-v") if args else None
-    tensor_split = _extract_arg(args, "--tensor-split") if args else None
-    parallel_arg = _extract_arg(args, "--parallel") if args else None
-
-    try:
-        ctx_size = int(ctx_size_str) if ctx_size_str else None
-    except ValueError:
-        ctx_size = None
-
-    # Prefer /props over cmdline parsing.
-    props_total_slots: Optional[int] = None
-    props_n_ctx: Optional[int] = None
-    props_model_alias: Optional[str] = None
-    props_model_path: Optional[str] = None
-    vision_modality: Optional[bool] = None
-    speculative_type: Optional[str] = None
-
-    if isinstance(props, dict):
-        props_total_slots = props.get("total_slots")
-        props_model_alias = props.get("model_alias")
-        props_model_path = props.get("model_path")
-        modalities = props.get("modalities") or {}
-        if isinstance(modalities, dict):
-            vision_modality = modalities.get("vision")
-        gs = props.get("default_generation_settings") or {}
-        if isinstance(gs, dict):
-            props_n_ctx = gs.get("n_ctx")
-            params = gs.get("params") or {}
-            if isinstance(params, dict):
-                speculative_type = params.get("speculative.type")
-
-    # Per-slot detail.
-    slot_details: list[dict] = []
-    active_slots = 0
-    ctx_used: Optional[int] = None
-    if isinstance(slots, list):
-        used_vals: list[int] = []
-        for s in slots:
-            if not isinstance(s, dict):
-                continue
-            is_processing = bool(s.get("is_processing"))
-            n_past = int(s.get("n_past", 0)) if isinstance(s.get("n_past"), (int, float)) else 0
-            n_decoded = int(s.get("n_decoded", 0)) if isinstance(s.get("n_decoded"), (int, float)) else 0
-            slot_details.append({
-                "id": s.get("id"),
-                "is_processing": is_processing,
-                "n_ctx": s.get("n_ctx"),
-                "n_past": n_past,
-                "n_decoded": n_decoded,
-                "speculative": s.get("speculative"),
-                "id_task": s.get("id_task"),
-                "prompt_processing_progress": s.get("prompt_processing_progress"),
-                "state": "processing" if is_processing else "idle",
-            })
-            if is_processing:
-                active_slots += 1
-            used_vals.append(n_past)
-        if used_vals:
-            ctx_used = max(used_vals)
-
-    videos_cfg = config.get("videos", {})
-    aliases = sorted((videos_cfg.get("aliases") or {}).keys())
-
-    # Image workflows: list ComfyUI api_workflows dir.
-    image_workflows: list[str] = []
-    try:
-        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
-        wf_dir = comfy_cfg.get("workflows_dir")
-        if wf_dir:
-            p = Path(wf_dir)
-            if p.is_dir():
-                stems = []
-                for f in p.glob("*.json"):
-                    name = f.name
-                    if name.endswith(".ui.json"):
-                        continue
-                    if ".obsolete" in name or ".bak" in name:
-                        continue
-                    stems.append(f.stem)
-                image_workflows = sorted(set(stems))[:50]
-    except Exception:
-        pass
-
-    # Active TTS engine: read systemd ActiveState of voxtral-int4-tts.service.
-    tts_engine: Optional[str] = None
-    rc, out, _ = _run(["systemctl", "--user", "is-active", "voxtral-int4-tts.service"])
-    if rc == 0 and out.strip() == "active":
-        tts_engine = "voxtral-int4-tts"
-    else:
-        for unit in ("voxtral-tts.service", "tts.service"):
-            rc2, out2, _ = _run(["systemctl", "--user", unit])
-            if rc2 == 0 and out2.strip() == "active":
-                tts_engine = unit.removesuffix(".service")
-                break
-
-    loaded_name = props_model_alias or (Path(loaded_path).name if loaded_path else None)
-
-    # Honest vision-capable: prefer /props.modalities.vision.
-    if vision_modality is not None:
-        vision_capable = bool(vision_modality)
-    else:
-        vision_capable = bool(mmproj)
-
-    return {
-        "loaded_llm_path": props_model_path or loaded_path,
-        "loaded_llm_name": loaded_name,
-        "mmproj_path": mmproj,
-        "vision_capable": vision_capable,
-        "vision_source": "props" if vision_modality is not None else ("cmdline" if mmproj else "unknown"),
-        "ctx_size": props_n_ctx or ctx_size,
-        "ctx_used": ctx_used,
-        "active_tts_engine": tts_engine,
-        "image_workflows": image_workflows,
-        "video_aliases": aliases,
-        "total_slots": props_total_slots if props_total_slots is not None else len(slot_details),
-        "active_slots": active_slots,
-        "slots": slot_details,
-        "speculative_type": speculative_type,
-        "cache_type_k": cache_k_arg,
-        "cache_type_v": cache_v_arg,
-        "tensor_split": tensor_split,
-        "parallel_arg": parallel_arg,
-    }
-
-
-# --- GPU / queue ----------------------------------------------------------
-
 def _gpus_raw() -> Optional[list[dict]]:
     """nvidia-smi snapshot incl. temp, power, clocks, pcie, throttle.
 
@@ -1005,6 +887,7 @@ def _safe_float(s: str) -> Optional[float]:
         return None
 
 
+_SPEECH_ROLE = "audio.speech"  # the capability role whose service the models section describes
 _GRAPH_SERVICE_ID = "comfyui"  # the id of the graph engine's service record; the gateway selects it by capability (proxy._graph_service), the status page does not yet
 
 
@@ -2536,7 +2419,24 @@ def _thermal_state(temp: Optional[float], warn: float, crit: float) -> str:
     return "ok"
 
 
-def _cpu_usage_quick() -> dict:
+def _service_process_patterns(config: Optional[Mapping[str, Any]]) -> tuple[str, ...]:
+    """Lower-case substrings that mark a process as an engine service: the lifecycle names and ``aux.process`` of each
+    record. A record names its own units; the page does not list engines."""
+    patterns: list[str] = []
+    for record in ((config or {}).get("backends") or {}).values():
+        if not isinstance(record, Mapping):
+            continue
+        lifecycle = record.get("lifecycle") if isinstance(record.get("lifecycle"), Mapping) else {}
+        driver_config = lifecycle.get("driver_config") if isinstance(lifecycle.get("driver_config"), Mapping) else {}
+        aux = record.get("aux") if isinstance(record.get("aux"), Mapping) else {}
+        for name in (lifecycle.get("service_name"), driver_config.get("unit"), aux.get("process")):
+            name = str(name or "").strip().lower().removesuffix(".service")
+            if name and name not in patterns:
+                patterns.append(name)
+    return tuple(patterns)
+
+
+def _cpu_usage_quick(config: Optional[Mapping[str, Any]] = None) -> dict:
     """Top-N processes by CPU/memory plus a load summary. ~200ms.
 
     Filter rules (avoid noise from idle kernel threads):
@@ -2585,11 +2485,7 @@ def _cpu_usage_quick() -> dict:
     # Bucket: surface proxy-managed services first, lump desktop/UI noise into
     # one combined row. The user cares about which AI service is busy, not
     # which Brave window is on top.
-    SERVICE_PATTERNS = (
-        "proxy.py", "llama-server", "comfyui", "comfy_server",
-        "voxtral", "parakeet", "daisy", "claude",
-        "main.py", "uvicorn",
-    )
+    SERVICE_PATTERNS = ("proxy.py", "daisy", "claude", "main.py", "uvicorn", *_service_process_patterns(config))
 
     def _is_service(cmd: str) -> bool:
         c = cmd.lower()
@@ -2791,8 +2687,40 @@ def _recent_renders_images(n: int = 10) -> list[dict]:
 
 # --- voxtral / parakeet enriched ------------------------------------------
 
+def _health_panel_sources(config: Mapping[str, Any]) -> list[tuple[dict, Optional[Mapping[str, Any]], Optional[str]]]:
+    """(panel, record to probe or None, capability role or None) for each ``health_json`` status panel, in order.
+
+    A capability role's release panels (registry/engine_record_defaults.yml) belong to the service selected for the
+    role, unless its record declares ``status_panels`` of its own. A record's own panels belong to that record.
+    A role's panels are listed even when no record is selected: the published key is then empty, never absent.
+    """
+    backends = (config or {}).get("backends") or {}
+    sources: dict[str, tuple[dict, Optional[Mapping[str, Any]], Optional[str]]] = {}
+    for capability, panels in engine_record_defaults.role_status_panels().items():
+        selected = service_priority.selected_service(backends, capability)
+        record = selected[1] if selected else None
+        owns = record is not None and isinstance(record.get("status_panels"), (list, tuple))
+        for panel in panels:
+            sources[panel["output_key"]] = (panel, None if owns else record, capability)
+    for record in backends.values():
+        for panel in (record.get("status_panels") or []) if isinstance(record, Mapping) else []:
+            if isinstance(panel, Mapping) and panel.get("kind") == "health_json" and panel.get("output_key"):
+                sources[panel["output_key"]] = (dict(panel), record, None)
+    return list(sources.values())
+
+
+def _aux_panels(config: Mapping[str, Any]) -> list[dict]:
+    """The status panels the page shows beside the backend grid, each ``{kind, output_key, title, short_title}``."""
+    return [panel for panel, _record, _capability in _health_panel_sources(config)]
+
+
+def _aux_role_key(capability: str) -> Optional[str]:
+    """The ``output_key`` of the first release panel of a capability role, or None."""
+    panels = engine_record_defaults.role_status_panels().get(capability) or []
+    return panels[0]["output_key"] if panels else None
+
+
 async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
-    out: dict[str, Any] = {"voxtral": None, "parakeet": None}
     async def _get(client, url):
         try:
             r = await client.get(url, extensions=engine_egress.probe())
@@ -2800,18 +2728,23 @@ async def _enriched_aux_health(config: Mapping[str, Any]) -> dict:
         except Exception:
             return None
 
-    backends = (config or {}).get("backends") or {}
-
-    async def _health(client, service_id: str):
-        record = backends.get(service_id) or {}
-        origin = _configured_engine_base(record)
-        return await _get(client, service_registry.join_base_path(origin, "/health")) if origin else None  # no address: not configured, not probed
-
+    out: dict[str, Any] = {}
     try:
+        sources = _health_panel_sources(config)
+        out = {panel["output_key"]: None for panel, _record, _capability in sources}
+
+        async def _health(client, panel, record, capability):
+            origin = _configured_engine_base(record) if record is not None else ""
+            path = (engine_record_defaults.record_value(capability, record, "health_endpoint") if capability
+                    else (record or {}).get("health_endpoint"))
+            if not origin or not path:
+                return None  # no address or no health path: not configured, not probed
+            return await _get(client, service_registry.join_base_path(origin, str(path)))
+
         async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
-            voxtral, parakeet = await asyncio.gather(_health(client, "tts"), _health(client, "stt"))
-        out["voxtral"] = voxtral
-        out["parakeet"] = parakeet
+            answers = await asyncio.gather(*[_health(client, *source) for source in sources])
+        for (panel, _record, _capability), answer in zip(sources, answers):
+            out[panel["output_key"]] = answer
     except Exception:
         pass
     return out
@@ -4000,7 +3933,7 @@ async def build_status_payload(config: dict) -> dict:
         **{f"hotspot_{name}": _section(_dir_summary, name, path) for name, path in _HOTSPOT_DIRS},
         "journal_disk": _section(_journal_disk_usage),
         "sensors": _section(_read_sensors),
-        "cpu_usage": _section(_cpu_usage_quick),
+        "cpu_usage": _section(_cpu_usage_quick, config),
         # OWNER_VISIBILITY_STEP3: remove member recent-media content from operational status audiences.
         "recent_videos": _section(_recent_renders_videos, 20),
         "recent_images": _section(_recent_renders_images, 10),
@@ -4024,7 +3957,8 @@ async def build_status_payload(config: dict) -> dict:
     comfy_queue, comfy_stats = (first["comfy_queue"] or (None, None))
     props, slots = (first["llama_props_slots"] or (None, None))
     aux_health = first["aux_health"] or {}
-    voxtral_health = aux_health.get("voxtral") if isinstance(aux_health, dict) else None
+    speech_key = _aux_role_key(_SPEECH_ROLE)
+    voxtral_health = aux_health.get(speech_key) if isinstance(aux_health, dict) and speech_key else None
     video_meta = first["video_meta"] or {}
 
     # In-process projection of loop-owned state: no I/O and no await.
@@ -4358,6 +4292,7 @@ async def build_status_payload(config: dict) -> dict:
         "image_capabilities": image_capabilities,
         "voices_summary": voices_summary,
         "aux_health": aux_health,
+        "aux_panels": _aux_panels(config),
         "recent_videos": recent_videos,
         "recent_images": recent_images,
         # Backwards-compatible alias for the existing Next.js page.
@@ -4387,12 +4322,11 @@ def _build_models(
     slots: Optional[list[dict]],
     voxtral_health: Optional[dict] = None,
 ) -> dict:
-    """Synchronous wrapper around the async-friendly _models_section."""
-    # The function above is async; we re-implement the sync portion since props/slots
-    # already came in. Keep the body identical to _models_section.
-    args = _llama_server_args()
+    """The models section, built from the props and slots the first phase already fetched."""
+    args = _llama_server_args(config)
     loaded_path = _extract_arg(args, "--model") if args else None
-    mmproj = _extract_arg(args, "--mmproj") if args else None
+    aux_flag = (_aux_probe(config) or ("", ""))[1]
+    mmproj = _extract_arg(args, aux_flag) if args and aux_flag else None
     ctx_size_str = _extract_arg(args, "--ctx-size") if args else None
     cache_k_arg = _extract_arg(args, "--cache-type-k") if args else None
     cache_v_arg = _extract_arg(args, "--cache-type-v") if args else None
