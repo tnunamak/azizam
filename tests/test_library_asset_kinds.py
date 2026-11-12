@@ -340,7 +340,7 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     table = asset_types.load_kind_names()
     assert table == asset_types.KIND_NAMES
     assert {"image", "video", "audio", "model", "text", "file"} <= set(table)
-    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent"}
+    assert all(set(asset_types.KIND_WORDS) <= set(words) <= set(asset_types.KIND_WORDS) | {"prefix", "recent", "items"}
                for words in table.values())
 
 
@@ -354,6 +354,8 @@ def test_the_shipped_kind_file_holds_every_word_of_every_kind():
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: 'no'}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: 0}}\n",
     "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, recent: null}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, items: Smells}}\n",
+    "kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, items: 3}}\n",
     "other: 1\n",
 ])
 def test_a_malformed_kind_file_is_refused(tmp_path, text):
@@ -361,6 +363,15 @@ def test_a_malformed_kind_file_is_refused(tmp_path, text):
     path.write_text(text, encoding="utf-8")
     with pytest.raises(ValueError, match="asset_kinds.yml"):
         asset_types.load_kind_names(path)
+
+
+def test_a_kind_counts_by_its_items_noun_or_its_name_plus_s(tmp_path):
+    path = tmp_path / "asset_kinds.yml"
+    path.write_text("kinds: {smell: {label: Smell, plural: Smells, untitled: Smell, input: smell, items: scents}, "
+                    "hum: {label: Hum, plural: Hum, untitled: Hum, input: hum}}\n", encoding="utf-8")
+    table = asset_types.load_kind_names(path)
+    assert table["smell"]["items"] == "scents" and "items" not in table["hum"]
+    assert [asset_types.items_word("video"), asset_types.items_word("audio"), asset_types.items_word("hum")] == ["videos", "audios", "hums"]
 
 
 def test_a_kind_added_only_in_the_data_file_is_named_filtered_and_listed(library, tmp_path, monkeypatch):
