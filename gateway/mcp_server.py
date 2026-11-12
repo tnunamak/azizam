@@ -916,8 +916,6 @@ class Tools:
                 "availability": health.get(entry["id"]),
                 "status": entry.get("status") or "current", "superseded_by": entry.get("superseded_by"),
             })
-        # An agent asks "what should I use": workflows to choose today come before the ones they replaced.
-        rows.sort(key=lambda row: row["status"] != "current")
         for descriptor in self.registry.targets:
             if query and query not in descriptor.target.lower():
                 continue
@@ -925,7 +923,9 @@ class Tools:
                 continue
             rows.append({"target": descriptor.target, "intent": descriptor.intent,
                          "aliases": self._operation_names(descriptor), "description": descriptor.summary,
-                         "typical_seconds": None, "mode": descriptor.mode})
+                         "typical_seconds": None, "mode": descriptor.mode, "status": "current", "superseded_by": None})
+        # An agent asks "what should I use": everything to choose today comes before the workflows it replaced.
+        rows.sort(key=lambda row: row["status"] != "current")
         return {"workflows": rows, "hint": (
             "Call capabilities with `target` for typed inputs; run with `target` and `inputs`. "
             "Speech and transcription also run over the OpenAI-shaped routes. "

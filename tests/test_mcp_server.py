@@ -117,6 +117,10 @@ class Core:
         return self.assets.get(asset_id)
 
 
+# An MCP client without a key is a script, not a browser: it sends no Origin (tests/conftest.py adds one otherwise).
+SCRIPT = {"x-test-browser-sends-no-origin": "1"}
+
+
 def _build_env(catalog, **deps_extra):
     core = Core()
 
@@ -166,7 +170,7 @@ def call(env, name, arguments, **kw):
 
 
 def test_missing_key_is_401_with_resource_metadata_challenge(env):
-    resp = env.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    resp = env.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=SCRIPT)
     assert resp.status_code == 401
     assert resp.headers["www-authenticate"] == (
         'Bearer resource_metadata="https://gw.test/.well-known/oauth-protected-resource/mcp"')
@@ -180,7 +184,7 @@ def test_presented_but_rejected_token_gets_invalid_token_and_scope():
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
     client = TestClient(app)
-    bare = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    bare = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=SCRIPT)
     assert bare.headers["www-authenticate"] == (
         'Bearer resource_metadata="https://gw.test/.well-known/oauth-protected-resource/mcp", scope="mcp"')
     stale = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
@@ -1170,7 +1174,7 @@ def test_an_unexpected_failure_becomes_a_tool_error_without_a_traceback(env):
                    store_asset=env.core.store_asset, read_asset=env.core.read_asset, public_base_url=lambda r: "https://gw.test")
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
-    resp = TestClient(app).post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+    resp = TestClient(app).post("/mcp", headers=SCRIPT, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                                               "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}})
     result = resp.json()["result"]
     assert result["isError"] is True and "secret" not in json.dumps(result)

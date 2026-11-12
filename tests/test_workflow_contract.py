@@ -529,6 +529,16 @@ def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but
         if path.stem == "video-mux":                    # the length rule added to the release description
             assert bundled["description"].startswith(converted["description"])
             converted["description"] = bundled["description"]
+        if path.stem.startswith("mesh.edit."):          # the 3D stage service's upload caps, added with the stages
+            for name, spec in bundled["inputs"].items():
+                cap = spec.pop("max_bytes", None)
+                assert cap is None or (isinstance(cap, int) and cap > 0 and "max_bytes" not in converted["inputs"][name])
+        if path.stem == "yue2-song":                    # the measured length and instrumental help (film agent memo M7, M10)
+            assert bundled["inputs"]["tags"]["help"].startswith(converted["inputs"]["tags"]["help"])
+            for name, key in (("tags", "help"), ("duration", "help"), ("duration", "label")):
+                converted["inputs"][name][key] = bundled["inputs"][name][key]
+        if path.stem == "tangoflux":                    # replaced by the sound-effect default (film agent memo M5)
+            assert (bundled.pop("status"), bundled.pop("superseded_by")) == ("superseded", "audio.generate.sa3-small-sfx")
         if path.stem not in named:
             assert without_section_additions(bundled, converted) == converted, path.name
     ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))
