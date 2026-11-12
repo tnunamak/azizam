@@ -389,7 +389,8 @@ def _restore_video_job_records() -> Iterator[None]:
 # A browser sends Origin on every same-origin POST, PUT, PATCH and DELETE, and the gateway refuses a signed-in write
 # that does not say it came from its own pages (gateway/browser_origin.py). A test client is the browser here, so it
 # sends its own base URL as Origin unless the test names one, or sends a bearer key (a script, which has none). A
-# test that needs the browser to send nothing adds the header below.
+# test that needs the browser to send nothing adds the header below. Cookie-less MCP calls model protocol clients
+# and send no browser Origin, so unauthenticated calls exercise the bearer challenge.
 NO_ORIGIN = "x-test-browser-sends-no-origin"
 
 
@@ -403,7 +404,7 @@ def _test_browser_sends_origin(monkeypatch) -> None:
     def request(self, method, url, **kwargs):
         headers = httpx.Headers(kwargs.get("headers") or {})
         opted_out = headers.pop(NO_ORIGIN, None) is not None
-        if (not opted_out and (self.cookies or kwargs.get("cookies")) and method.upper() not in {"GET", "HEAD", "OPTIONS"} and "authorization" not in headers
+        if (not opted_out and (httpx.URL(url).path != "/mcp" or self.cookies or kwargs.get("cookies")) and method.upper() not in {"GET", "HEAD", "OPTIONS"} and "authorization" not in headers
                 and not {"origin", "referer", "sec-fetch-site"} & set(headers.keys())):
             headers["origin"] = str(self.base_url).rstrip("/")
         kwargs["headers"] = headers
