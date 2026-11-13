@@ -97,6 +97,74 @@ describe("i: the engine record page", () => {
   });
 });
 
+describe("native protocol record operation pick list", () => {
+  beforeEach(async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue({
+      protocols: [{
+        id: "local-chat",
+        title: "Local chat",
+        executor: "http-v1",
+        operations: ["chat", "smell.infer"],
+        source: "user",
+        dispatch_supported: true,
+        validation: { valid: true, message: "Valid description. 2 operations." },
+      }],
+      problems: [],
+    });
+    const base = engineView();
+    mount({
+      enabled: false,
+      capabilities: ["chat"],
+      can_edit_offerings: true,
+      values: { ...base.values, dispatch: "protocol", protocol_description: "local-chat" },
+      record: { ...base.record, capabilities: ["chat"] },
+    });
+    // The page is loaded and the description chosen before each case looks at the tasks.
+    expect(await screen.findByRole("heading", { level: 1, name: view.name })).toBeVisible();
+    await waitFor(() => expect(protocolDescriptionsApi.list).toHaveBeenCalled());
+    expect(await screen.findByRole("combobox", { name: "Protocol description" })).toHaveValue("local-chat");
+  });
+
+  // With protocol dispatch the tasks are the description's operations, not the definition's capabilities.
+  it("offers described operations with only the record's saved chat capability ticked", async () => {
+    expect(await screen.findByRole("checkbox", { name: "smell.infer" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^chat$/i })).toBeChecked();
+  });
+
+  it("saves chat and a newly ticked smell.infer operation as capabilities", async () => {
+    const user = userEvent.setup();
+    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    const smell = await screen.findByRole("checkbox", { name: "smell.infer" });
+    expect(smell).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^chat$/i })).toBeChecked();
+    await user.click(smell);
+    expect(smell).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(
+      view.service_id,
+      expect.objectContaining({ capabilities: ["chat", "smell.infer"] }),
+    ));
+    expect(update.mock.calls[0][1].capabilities).toEqual(["chat", "smell.infer"]);
+  });
+
+  it("saves no capabilities after unticking chat while smell.infer remains unticked", async () => {
+    const user = userEvent.setup();
+    const update = vi.spyOn(enginesApi, "update").mockResolvedValue(registry);
+    // Require the described pick list here too: legacy Chat alone is not this contract.
+    expect(await screen.findByRole("checkbox", { name: "smell.infer" })).not.toBeChecked();
+    const chat = screen.getByRole("checkbox", { name: /^chat$/i });
+    expect(chat).toBeChecked();
+    await user.click(chat);
+    expect(chat).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(
+      view.service_id,
+      expect.objectContaining({ capabilities: [] }),
+    ));
+    expect(update.mock.calls[0][1].capabilities).toEqual([]);
+  });
+});
+
 describe("native protocol honesty", () => {
   const nativeCatalog = {
     protocols: [{ id: "local-chat", title: "Local chat", executor: "http-v1", operations: ["chat"], source: "user" as const, dispatch_supported: true, validation: { valid: true as const, message: "Valid description." } }],
@@ -144,6 +212,16 @@ describe("native protocol honesty", () => {
     await waitFor(() => expect(edit).toHaveBeenCalledWith(nativeView.service_id, { enabled: true }));
     expect(checkRun).not.toHaveBeenCalled();
     expect(engineUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps a saved task the description does not declare visible and ticked, so loading the page is not an edit", async () => {
+    vi.spyOn(protocolDescriptionsApi, "list").mockResolvedValue({ ...nativeCatalog, protocols: [{ ...nativeCatalog.protocols[0], operations: ["chat", "smell.infer"] }] });
+    mount({ values: { ...engineView().values, dispatch: "protocol", protocol_description: "local-chat" } });
+    // The described task is on the page only once the description has loaded.
+    expect(await screen.findByRole("checkbox", { name: "smell.infer" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Document search" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^chat$/i })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull();
   });
 
   it("requires an installed valid description and an explicit keep-off save when protocol dispatch changes", async () => {
