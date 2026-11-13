@@ -289,26 +289,26 @@ def _emit_fast(writer, now: int) -> None:
 
 
 async def _emit_fast_async(writer, now: int, config: Optional[Mapping[str, Any]] = None) -> None:
-    """ComfyUI queue depth (async) + llama slots. `config` names the services the probes reach; none means no backends."""
+    """Graph-engine queue depth (async) + chat-engine slots. `config` names the services the probes reach; none means no backends."""
     config = config if config is not None else {}
     try:
-        queue, _stats = await status_endpoint._comfy_queue_and_stats(config)
+        queue, _stats = await status_endpoint._graph_queue_and_stats(config)
         if isinstance(queue, dict):
             running = int(queue.get("running") or 0)
             pending = int(queue.get("pending") or 0)
-            writer.record_sample(now, "comfy_queue_running", float(running))
-            writer.record_sample(now, "comfy_queue_pending", float(pending))
+            writer.record_sample(now, status_endpoint._GRAPH_WORDS["queue_running_series"], float(running))
+            writer.record_sample(now, status_endpoint._GRAPH_WORDS["queue_pending_series"], float(pending))
     except Exception as e:  # noqa: BLE001
-        print(f"[metrics_sampler] comfy queue probe failed: {e}", flush=True)
+        print(f"[metrics_sampler] graph queue probe failed: {e}", flush=True)
 
     try:
-        _props, slots = await status_endpoint._llama_props_and_slots(config)
+        _props, slots = await status_endpoint._chat_props_and_slots(config)
         if isinstance(slots, list):
             active = sum(1 for s in slots if isinstance(s, dict) and s.get("is_processing"))
-            writer.record_sample(now, "llama_slots_active", float(active))
-            writer.record_sample(now, "llama_slots_total", float(len(slots)))
+            writer.record_sample(now, status_endpoint._CHAT_WORDS["slots_active_series"], float(active))
+            writer.record_sample(now, status_endpoint._CHAT_WORDS["slots_total_series"], float(len(slots)))
     except Exception as e:  # noqa: BLE001
-        print(f"[metrics_sampler] llama slots probe failed: {e}", flush=True)
+        print(f"[metrics_sampler] chat slots probe failed: {e}", flush=True)
 
 
 def _emit_slow(writer, now: int, config: Optional[Mapping[str, Any]] = None) -> None:

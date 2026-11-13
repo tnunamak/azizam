@@ -1279,13 +1279,13 @@ class SystemdDriver:
         if precheck == "gguf_path":
             if not (os.path.isabs(model) and model.endswith(".gguf") and os.path.exists(model)):
                 _say(
-                    f"[proxy] ensure_target: GGUF not found at {model}",
+                    f"[proxy] ensure_target: model file not found at {model}",
                     flush=True,
                 )
                 return None
             if aux and not (os.path.isabs(aux) and os.path.exists(aux)):
                 _say(
-                    f"[proxy] ensure_target: mmproj not found at {aux}",
+                    f"[proxy] ensure_target: aux file not found at {aux}",
                     flush=True,
                 )
                 return None
@@ -1391,12 +1391,12 @@ class SystemdDriver:
                 if target not in warned_models:
                     warned_models.add(target)
                     loaded = ctx.loaded_model
-                    loaded_mmproj = ctx.loaded_aux
-                    target_mmproj = ctx.target_aux or None
+                    loaded_aux_file = ctx.loaded_aux
+                    target_aux_file = ctx.target_aux or None
                     _say(
                         f"[proxy] ensure_target pin_loaded_model=true: skipping switch "
                         f"(loaded={loaded}, requested={target}, "
-                        f"loaded_mmproj={loaded_mmproj}, requested_mmproj={target_mmproj}); "
+                        f"loaded_aux={loaded_aux_file}, requested_aux={target_aux_file}); "
                         f"serving with current model",
                         flush=True,
                     )
