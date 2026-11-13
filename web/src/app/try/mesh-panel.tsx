@@ -86,12 +86,39 @@ async function pollJob(
   const payload = (await response.json().catch(() => null)) as {
     status?: unknown;
     error?: unknown;
+    error_category?: unknown;
+    retryable?: unknown;
   } | null;
   if (!response.ok) throw new MeshFailure(meshFailureMessage(payload));
-  return {
+  const status: MeshJobStatus = {
     status: String(payload?.status ?? ""),
     error: typeof payload?.error === "string" ? payload.error : undefined,
   };
+  if (status.status === "failed") {
+    status.category = typeof payload?.error_category === "string" ? payload.error_category : undefined;
+    status.retryable = payload?.retryable === true;
+    if (status.category === "capacity" && status.retryable) {
+      status.retryAfterS = await retryAfterSeconds(secret, id, signal);
+    }
+  }
+  return status;
+}
+
+/** The newest delay the gateway wrote for a job it refused for capacity. The delay is a courtesy: no answer means no delay. */
+async function retryAfterSeconds(secret: string, id: string, signal: AbortSignal): Promise<number | undefined> {
+  try {
+    const response = await networkFetch(jobUrl(id, "/events"), { headers: bearer(secret), signal });
+    if (!response.ok) return undefined;
+    const body = (await response.json()) as { events?: { event_type?: unknown; payload?: { step?: unknown } }[] };
+    let found: number | undefined;
+    for (const event of body.events ?? []) {
+      const step = event.payload?.step;
+      if (event.event_type === "retry_after" && typeof step === "number" && step > 0) found = step;
+    }
+    return found;
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchModel(
@@ -131,6 +158,8 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
   const [phase, setPhase] = useState<Phase>("idle");
   const [result, setResult] = useState<Result | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Set when the gateway refused for lack of room and says asking again can work; `afterS` is its suggested wait.
+  const [retry, setRetry] = useState<{ afterS: number | null } | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [startedAt, setStartedAt] = useState(0);
@@ -277,6 +306,7 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
       } else {
         setPhase("error");
         setMessage(outcome.message);
+        setRetry(outcome.retry ?? null);
       }
     } catch (error) {
       if (run.signal.aborted) return;
@@ -351,6 +381,7 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
     if (resolution === null) return;
     setFieldError(null);
     setMessage(null);
+    setRetry(null);
     setResult(null);
     setPhase("running");
     setStartedAt(Date.now());
@@ -372,6 +403,11 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
       });
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => null);
+        const code = (payload as { error?: { code?: unknown } } | null)?.error?.code;
+        if (response.status === 503 && code === "resource_unavailable") {
+          const wait = Number(response.headers.get("retry-after"));
+          setRetry({ afterS: Number.isFinite(wait) && wait > 0 ? wait : null });
+        }
         throw new MeshFailure(meshFailureMessage(payload));
       }
       if (response.headers.get("content-type")?.startsWith(MESH_MEDIA_TYPE)) {
@@ -563,6 +599,18 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
           <p role="alert" className="text-destructive text-sm">
             {message}
           </p>
+        )}
+        {phase === "error" && retry && file && (
+          <div className="space-y-2">
+            {retry.afterS !== null && (
+              <p className="text-muted-foreground text-sm">
+                {`The gateway suggests waiting about ${retry.afterS} seconds.`}
+              </p>
+            )}
+            <Button type="button" className="min-h-11" disabled={busy} onClick={() => void generate()}>
+              Try again
+            </Button>
+          </div>
         )}
       </section>
     </div>
