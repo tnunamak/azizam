@@ -25,6 +25,7 @@ SHIPPED_IMAGES = {
     "queue_running_series": "comfy_queue_running", "queue_pending_series": "comfy_queue_pending",
     "dir_env": "AZIZAM_COMFY_DIR", "output_dir_env": "AZIZAM_COMFY_OUTPUT_DIR",
     "custom_nodes_env": "AZIZAM_COMFY_CUSTOM_NODES_DIR", "baseline_field": "comfy_baseline_bytes",
+    "disabled_reason": "comfy_disabled", "operator_mode_reason": "comfy_operator_mode",
     "audio_decode_class": "LTXVAudioVAEDecode", "two_stage_class": "LTXVCropGuides", "client_id_attr": "GRAPH_CLIENT_ID",
 }
 
@@ -202,3 +203,31 @@ def test_the_sampler_stores_the_series_the_words_name(monkeypatch):
     monkeypatch.setattr(status_endpoint, "_GRAPH_WORDS", {**status_endpoint._GRAPH_WORDS, "queue_running_series": "q_run"})
     asyncio.run(metrics_sampler._emit_fast_async(Writer(), 1))
     assert recorded[0] == "q_run"
+
+
+def test_proxy_persists_and_normalizes_the_baseline_field_from_data(monkeypatch, tmp_path):
+    import json
+    import proxy
+
+    path = tmp_path / "estimates.json"
+    monkeypatch.setattr(proxy, "VRAM_ESTIMATES_FILE", path)
+    monkeypatch.setattr(proxy, "_vram_estimates_loaded", True)
+    monkeypatch.setattr(proxy, "_vram_estimates_cache", {})
+    for field in (SHIPPED_IMAGES["baseline_field"], "operator_baseline"):
+        monkeypatch.setattr(proxy, "_GRAPH_WORDS", {**proxy._GRAPH_WORDS, "baseline_field": field})
+        proxy.record_vram_estimate("fixture", 64, 64, 1024, trusted=False, graph_baseline_bytes=123)
+        entry = next(iter(json.loads(path.read_text())["entries"].values()))
+        assert entry[field] == 123
+        assert proxy._normalize_vram_entry(entry)[field] == 123
+        assert proxy._normalize_vram_entry(1024)[field] == 0
+
+
+def test_video_grid_reasons_keep_the_published_values_and_read_data(monkeypatch):
+    from gateway import video_grid
+
+    assert video_grid.stride_reason(8) == "ltx_latent_8np1_stride"
+    for step in (1, 4, 17):
+        assert video_grid.stride_reason(step) == "frame_count_stride"
+    monkeypatch.setattr(video_grid, "_STRIDE_REASONS", {"default": "generic", "by_step": {8: "selected"}})
+    assert video_grid.stride_reason(8) == "selected"
+    assert video_grid.stride_reason(17) == "generic"

@@ -17,7 +17,9 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway.service_priority import service_priority
-from gateway import engine_egress, engine_record_defaults
+from gateway import engine_egress, engine_record_defaults, status_words
+
+_GRAPH_WORDS = status_words.words("images")
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.frontend_shapes.video_views import VideoViews
 from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
@@ -6838,7 +6840,7 @@ _vram_estimates_lock = threading.Lock()
 #   {
 #     "peak_bytes": int,            # == marginal_bytes; kept for status-page compat
 #     "marginal_bytes": int,        # comfy_used_peak - comfy_used_before (or - baseline)
-#     "comfy_baseline_bytes": int,  # min ComfyUI per-process VRAM in the 2s pre-run window
+#     <baseline_field from status words>: int,  # min graph-process VRAM in the 2s pre-run window
 #     "model_state": "warm" | "cold",
 #     "samples_count": int,
 #     "trusted": bool,
@@ -6887,7 +6889,7 @@ def _normalize_vram_entry(value) -> Optional[dict]:
         return {
             "peak_bytes": peak,
             "marginal_bytes": peak,
-            "comfy_baseline_bytes": 0,
+            _GRAPH_WORDS["baseline_field"]: 0,
             "model_state": "unknown",
             "samples_count": 0,
             "trusted": False,
@@ -6907,7 +6909,7 @@ def _normalize_vram_entry(value) -> Optional[dict]:
             except (TypeError, ValueError):
                 marginal = 0
             try:
-                baseline = int(value.get("comfy_baseline_bytes", 0))
+                baseline = int(value.get(_GRAPH_WORDS["baseline_field"], 0))
             except (TypeError, ValueError):
                 baseline = 0
             try:
@@ -6929,7 +6931,7 @@ def _normalize_vram_entry(value) -> Optional[dict]:
         return {
             "peak_bytes": marginal if has_v3 else peak,
             "marginal_bytes": marginal,
-            "comfy_baseline_bytes": baseline,
+            _GRAPH_WORDS["baseline_field"]: baseline,
             "model_state": state,
             "samples_count": samples,
             "trusted": trusted,
@@ -7011,7 +7013,7 @@ def record_vram_estimate(
     trusted: bool = True,
     source: str = "probe",
     model_state: str = "unknown",
-    comfy_baseline_bytes: int = 0,
+    graph_baseline_bytes: int = 0,
     samples_count: int = 0,
 ) -> None:
     """Persist a measured VRAM-per-image cost so restarts inherit the calibration.
@@ -7073,7 +7075,7 @@ def record_vram_estimate(
     cache[key] = {
         "peak_bytes": new_peak,
         "marginal_bytes": new_peak,
-        "comfy_baseline_bytes": int(comfy_baseline_bytes or 0),
+        _GRAPH_WORDS["baseline_field"]: int(graph_baseline_bytes or 0),
         "model_state": str(model_state or "unknown"),
         "samples_count": int(samples_count or 0),
         "trusted": new_trusted,
@@ -7103,7 +7105,7 @@ async def graph_vram_snapshot(
         total_i = int(total) if isinstance(total, (int, float)) else None
         return free_i, total_i
     except Exception as e:
-        print(f"[proxy] comfy_vram_snapshot: {log_scrub.describe_error(e)}", flush=True)
+        print(f"[proxy] graph_vram_snapshot: {log_scrub.describe_error(e)}", flush=True)
         return None, None
 
 
@@ -7142,7 +7144,7 @@ async def _free_graph_models_if_idle(client: httpx.AsyncClient, capability: str)
 _VRAM_PROBE_INTERVAL_S = 0.5
 _VRAM_PROBE_INTERVAL_MIN_S = 0.25
 # How long the "pre-run baseline" window stays open after probe start. Used to
-# compute ``comfy_baseline_bytes`` = min of ComfyUI per-process VRAM in this
+# compute the graph baseline = min of graph-process VRAM in this
 # window. With 500 ms cadence we get ~4 samples in 2 s.
 _VRAM_BASELINE_WINDOW_S = 2.0
 
@@ -8875,7 +8877,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
         source = "endpoint_diff"
     record_vram_estimate(
         workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
-        comfy_baseline_bytes=graph_baseline, samples_count=samples_count)
+        graph_baseline_bytes=graph_baseline, samples_count=samples_count)
     sys_peak = probe.system_peak_used_bytes() if probe is not None else None
     gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
     print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
@@ -9070,7 +9072,7 @@ async def _generate_images_with_adaptive_batching(
                         **_graph_result_source(manifest, _GRAPH_CAPABILITY),
                     )
         if models_freed:
-            response_headers["X-ComfyUI-Models-Freed"] = "true"
+            response_headers[domain_rows.result_header(_IMAGE_RESULT_ROW, "models_freed")] = "true"
         if err is None:
             _delivery = media_delivery.current()
             if _delivery is not None:
@@ -9278,7 +9280,7 @@ async def proxy_graph_image_request(
 
     if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_disabled")
+            receipt.add_fallback_reason(_GRAPH_WORDS["disabled_reason"])
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -9288,7 +9290,7 @@ async def proxy_graph_image_request(
         service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_operator_mode")
+            receipt.add_fallback_reason(_GRAPH_WORDS["operator_mode_reason"])
         return service_response
 
     try:
@@ -9666,7 +9668,7 @@ async def proxy_graph_image_edit_request(
 
     if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_disabled")
+            receipt.add_fallback_reason(_GRAPH_WORDS["disabled_reason"])
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -9676,7 +9678,7 @@ async def proxy_graph_image_edit_request(
         service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_operator_mode")
+            receipt.add_fallback_reason(_GRAPH_WORDS["operator_mode_reason"])
         return service_response
 
     form_dict: dict[str, Any] = {}
@@ -10290,7 +10292,7 @@ async def proxy_graph_image_variations_request(
 
     if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_disabled")
+            receipt.add_fallback_reason(_GRAPH_WORDS["disabled_reason"])
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -10300,7 +10302,7 @@ async def proxy_graph_image_variations_request(
         service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_operator_mode")
+            receipt.add_fallback_reason(_GRAPH_WORDS["operator_mode_reason"])
         return service_response
 
     try:
@@ -12614,10 +12616,7 @@ async def _proxy_graph_video_create(
     for nid in length_targets:
         _set_field(nid, ["length", "value", "frames_number"], length)
     if length_targets and abs(actual_seconds - seconds_val) > 0.05:
-        # 8N+1 LTX latent stride => ~0.333s granularity at fps=24. Surface it.
-        duration_adjustment_reason = (
-            "ltx_latent_8np1_stride" if length_step == 8 else "frame_count_stride"
-        )
+        duration_adjustment_reason = video_grid.stride_reason(length_step)
 
     # Remix workflows slice the source clip; keep half a frame of slack past `length`.
     for nid in _as_list(meta.get("duration_node")):
@@ -30505,7 +30504,7 @@ async def v1_status(request: Request):
                 "banner": "bad",
                 "backends": [],
                 "gpus": None,
-                "comfy_queue": None,
+                _GRAPH_WORDS["queue_key"]: None,
                 "models": None,
                 "capabilities": [],
                 "recent_renders": [],
