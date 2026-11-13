@@ -514,11 +514,20 @@ def test_a_file_says_its_bytes_were_left_unchanged_and_media_says_removed(librar
     plain = _item(library, _store(library, b"hello", ".zzunknown"))
     assert plain["metadata_handling"] == "unchanged"
     assert plain["metadata_note"] == "Azizam left this file's bytes unchanged and did not remove any metadata from it."
-    download = library.client.get(plain["download_url"])
+    download = _download(plain["asset_id"])
     assert download.status_code == 200 and download.content == b"hello"
     assert download.headers["x-azizam-metadata"] == "unchanged"
     from tests.media_test_bytes import png_bytes
     image = _item(library, _store(library, png_bytes(), ".png"))
     assert image["metadata_handling"] == "removed"
     assert image["metadata_note"] == "Azizam removed the metadata it knows how to find in this file."
-    assert library.client.get(image["download_url"]).headers["x-azizam-metadata"] == "removed"
+    assert _download(image["asset_id"]).headers["x-azizam-metadata"] == "removed"
+
+
+def _download(asset_id):
+    """Fetch the stored copy through the gateway's real content route with a key-minted signed URL."""
+    from starlette.requests import Request as StarletteRequest
+    request = StarletteRequest({"type": "http", "scheme": "https", "server": ("ai.example", 443), "path": "/",
+                                "query_string": b"", "headers": [(b"host", b"ai.example"),
+                                                                 (b"authorization", b"Bearer test-app-credential")]})
+    return TestClient(proxy.app).get(proxy.build_signed_asset_url(request, asset_id, "none"))

@@ -115,7 +115,8 @@ class KindTests(unittest.TestCase):
             self.assertEqual(mm.media_kind(key), want, key)
 
     def test_unknown_refused(self):
-        for suffix in (".txt", ".png", ".jpg", ".webp"):
+        # A .txt holding "abc" is a File and passes unchanged (test_a_file_that_is_not_media_passes_unchanged).
+        for suffix in (".png", ".jpg", ".webp"):
             with self.assertRaises(mm.MediaMetadataError):
                 mm.strip_metadata(b"abc", suffix)
 
