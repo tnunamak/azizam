@@ -195,7 +195,7 @@ def long_clip(world):
         raise RuntimeError("video extension parity requires the hermetic test environment's ffmpeg")
     path = world.tmp / "source.mp4"
     subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=64x64:d=2:r=10",
-                    "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-fflags", "+bitexact", "-flags:v", "+bitexact",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", "-threads", "1", "-fflags", "+bitexact", "-flags:v", "+bitexact",
                     "-map_metadata", "-1", str(path)], capture_output=True, check=True)
     world.engine.clip = path.read_bytes()
 

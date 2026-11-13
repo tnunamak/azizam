@@ -23,13 +23,22 @@ def _media_buffer(path, name):
         return False
 
 
+_STRIP_FILTERS = {
+    "filter_units=remove_types=6",
+    "filter_units=remove_types=5",
+    "hevc_mp4toannexb,filter_units=remove_types=39|40",
+}
+
+
 def _anonymous_media_command(executable, command):
     if not isinstance(command, (list, tuple)):
         return False
     command = list(command)
     probe = ["ffprobe", "-v", "error", "-print_format", "json",
              "-show_format", "-show_streams"]
-    if executable == "ffprobe" and command[:-1] in (probe, probe[:-1]):
+    codecs = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name",
+              "-of", "json"]
+    if executable == "ffprobe" and command[:-1] in (probe, probe[:-1], codecs):
         return _media_buffer(command[-1], "input")
     # Tag embedding: the tags come from a second anonymous buffer, not the command line.
     if (
@@ -54,14 +63,24 @@ def _anonymous_media_command(executable, command):
         and command[7:9] == ["-map", "0"]
         and command[-7:-2] == ["-c", "copy", "-fflags", "+bitexact", "-f"]
         and command[-2] in {"mp4", "mov", "webm", "matroska", "avi", "wav",
-                                "flac", "mp3", "ogg", "adts"}
+                                "flac", "mp3", "ogg", "adts", "mpegts"}
         and _media_buffer(command[6], "input")
         and _media_buffer(command[-1], "output")
     ):
         return False
     middle = command[9:-7]
-    if middle == ["-map_metadata", "-1", "-map_chapters", "-1", "-map_metadata:s", "-1"]:
-        return True
+    clear = ["-map_metadata", "-1", "-map_chapters", "-1", "-map_metadata:s", "-1"]
+    if middle[:6] == clear:
+        # The strip may drop metadata units per video stream (media_metadata._codec_strip_options).
+        filters = middle[6:]
+        if filters[-2:] == ["-write_btrt", "0"] and command[-2] in {"mp4", "mov"}:
+            filters = filters[:-2]
+        return len(filters) % 2 == 0 and all(
+            flag.startswith("-bsf:v:") and flag[7:].isdecimal() and value in _STRIP_FILTERS
+            for flag, value in zip(filters[::2], filters[1::2])
+        )
+    if command[-2] == "mpegts":
+        return False
     if middle[-2:] == ["-movflags", "+use_metadata_tags"]:
         middle = middle[:-2]
     return (

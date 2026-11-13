@@ -187,8 +187,10 @@ def deliver_bytes(
     metadata-free rewrite. If the rewrite fails, raise: a ``none`` request
     must never fall back to leaking the full copy.
     """
-    if mode != provenance.METADATA_NONE:
+    if mode == provenance.METADATA_FULL:
         return content
+    if mode != provenance.METADATA_NONE:
+        raise ValueError("invalid media metadata mode")
     return media_metadata.strip_metadata(
         content, suffix, workdir=workdir or DEFAULT_WORKDIR
     )

@@ -1,9 +1,11 @@
 """Lossless metadata strip / embed for generated media.
 
 Pure helpers: no proxy, no FastAPI. Images are rewritten at the container
-level (PNG chunks, JPEG marker segments, WebP RIFF chunks) so pixel data and
-entropy-coded payloads stay byte-identical. WAV, FLAC and common MP3 tags
-are stripped directly; other audio/video use ``ffmpeg -c copy`` (no re-encode).
+level (PNG chunks, JPEG markers, WebP RIFF chunks and GIF blocks). GLB JSON
+is rewritten while its BIN chunk stays byte-identical. WAV, FLAC and common
+MP3 tags are stripped directly; other audio/video use ``ffmpeg -c copy``.
+Video user-data units are removed without re-encoding; HEVC codec headers
+are rebuilt through a transport-stream intermediate.
 
 Container findings for ``embed_media_tags`` (verified with ffprobe, ffmpeg 8):
 
@@ -27,6 +29,7 @@ Where a container cannot hold a key, the fallback is described per function.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import struct
@@ -43,6 +46,11 @@ from gateway.strict_yaml import safe_load_strict
 __all__ = [
     "MediaMetadataError",
     "media_kind",
+    "metadata_handling",
+    "METADATA_REMOVED",
+    "METADATA_UNCHANGED",
+    "METADATA_REFUSED",
+    "METADATA_NOTES",
     "strip_metadata",
     "embed_png_text",
     "copy_png_text",
@@ -59,8 +67,8 @@ class MediaMetadataError(RuntimeError):
 
 
 _FORMAT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "media_metadata_formats.yml"
-# The kinds strip_metadata has code for. A row naming any other handler would silently keep its metadata.
-_HANDLERS = frozenset({"png", "jpeg", "webp", "audio", "video"})
+# Closed set of stripping algorithms and explicit metadata-free content rows.
+_HANDLERS = frozenset({"png", "jpeg", "webp", "gif", "glb", "content", "audio", "video"})
 
 
 def load_media_metadata_formats(
@@ -127,6 +135,8 @@ def load_media_metadata_formats(
             if mime_type.count("/") != 1 or not all(mime_type.split("/")) or ";" in mime_type:
                 fail(where, f"invalid MIME type: {mime_type!r}")
         muxer = token(row["muxer"], where, "muxer") if "muxer" in row else None
+        if handler in {"audio", "video"} and muxer is None:
+            fail(where, "stream handler requires a muxer")
         if muxer is not None and not suffixes:
             fail(where, "muxer requires at least one suffix")
         if not suffixes and not mime_types:
@@ -154,7 +164,7 @@ def _norm(suffix_or_mime: str) -> str:
 
 
 def media_kind(suffix_or_mime: str) -> str | None:
-    """Return png/jpeg/webp/video/audio, or None when unknown."""
+    """Return the declared stripping handler, or None when unknown/refused."""
     key = _norm(suffix_or_mime)
     if not key:
         return None
@@ -175,7 +185,6 @@ def _suffix(suffix_or_mime: str) -> str:
 # --------------------------------------------------------------------- PNG
 
 _PNG_SIG = b"\x89PNG\r\n\x1a\n"
-_PNG_DROP = {b"tEXt", b"zTXt", b"iTXt", b"eXIf", b"tIME"}
 
 
 def _png_chunks(content: bytes):
@@ -198,12 +207,17 @@ def _png_chunk(ctype: bytes, data: bytes) -> bytes:
 
 def _strip_png(content: bytes) -> bytes:
     if not content.startswith(_PNG_SIG):
-        return content
+        raise MediaMetadataError("invalid PNG")
     out = [_PNG_SIG]
+    structural = {b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"cHRM", b"gAMA",
+                  b"iCCP", b"sBIT", b"sRGB", b"bKGD", b"hIST", b"pHYs", b"sPLT",
+                  b"acTL", b"fcTL", b"fdAT", b"cICP", b"mDCV", b"cLLI"}
     for ctype, _data, raw in _png_chunks(content):
-        if ctype not in _PNG_DROP:
+        if ctype in structural:
             out.append(raw)
-    return b"".join(out)
+        if ctype == b"IEND":
+            return b"".join(out)
+    raise MediaMetadataError("PNG missing IEND")
 
 
 def _png_text_entry(ctype: bytes, data: bytes) -> tuple[str, str] | None:
@@ -321,12 +335,31 @@ def copy_png_text(source: bytes, target: bytes) -> bytes:
 
 # -------------------------------------------------------------------- JPEG
 
-_JPEG_DROP = {0xE1, 0xED, 0xFE}  # APP1 (EXIF/XMP), APP13 (IPTC), COM
+def _jpeg_kept_payload(marker: int, payload: bytes) -> bytes | None:
+    """The payload to keep for a segment, or None to drop it.
+
+    APP segments are kept only for their fixed rendering fields: the JFIF header
+    without its thumbnail, an ICC profile, and the fixed-length Adobe transform.
+    """
+    if marker == 0xFE:
+        return None
+    if not 0xE0 <= marker <= 0xEF:
+        return payload
+    if marker == 0xE0 and payload.startswith(b"JFIF\x00") and len(payload) >= 14:
+        return payload[:12] + b"\x00\x00"  # no thumbnail: it is an image of its own
+    if marker == 0xE2 and payload.startswith(b"ICC_PROFILE\x00"):
+        return payload
+    if marker == 0xEE and payload.startswith(b"Adobe"):
+        if len(payload) != 12:
+            # Dropping it would change how CMYK samples decode.
+            raise MediaMetadataError("invalid Adobe JPEG segment")
+        return payload
+    return None
 
 
 def _strip_jpeg(content: bytes) -> bytes:
     if content[:2] != b"\xff\xd8":
-        return content
+        raise MediaMetadataError("invalid JPEG")
     n = len(content)
     out = bytearray(b"\xff\xd8")
     pos = 2
@@ -352,8 +385,9 @@ def _strip_jpeg(content: bytes) -> bytes:
         end = pos + seglen
         if seglen < 2 or end > n:
             raise MediaMetadataError("truncated JPEG segment")
-        if marker not in _JPEG_DROP:
-            out += bytes([0xFF, marker]) + content[pos:end]
+        kept = _jpeg_kept_payload(marker, content[pos + 2:end])
+        if kept is not None:
+            out += bytes([0xFF, marker]) + struct.pack(">H", len(kept) + 2) + kept
         pos = end
         if marker == 0xDA:  # SOS: copy entropy-coded data verbatim
             start = pos
@@ -365,29 +399,33 @@ def _strip_jpeg(content: bytes) -> bytes:
             else:
                 pos = n
             out += content[start:pos]
-    return bytes(out)
+    raise MediaMetadataError("JPEG missing EOI")
 
 
 # -------------------------------------------------------------------- WebP
 
 def _strip_webp(content: bytes) -> bytes:
     if len(content) < 12 or content[:4] != b"RIFF" or content[8:12] != b"WEBP":
-        return content
+        raise MediaMetadataError("invalid WebP")
     riff_size = struct.unpack("<I", content[4:8])[0]
-    end = min(len(content), 8 + riff_size)
+    end = 8 + riff_size
+    if end > len(content):
+        raise MediaMetadataError("truncated WebP")
     pos = 12
     chunks: list[bytes] = []
-    while pos + 8 <= end:
+    while pos < end:
+        if pos + 8 > end:
+            raise MediaMetadataError("truncated WebP header")
         fourcc = content[pos:pos + 4]
         size = struct.unpack("<I", content[pos + 4:pos + 8])[0]
         total = 8 + size + (size & 1)
-        if pos + 8 + size > end:
+        if pos + total > end:
             raise MediaMetadataError("truncated WebP chunk")
         raw = content[pos:pos + 8 + size]
         if size & 1:
             raw += b"\x00"
         pos += total
-        if fourcc in (b"EXIF", b"XMP "):
+        if fourcc not in {b"VP8 ", b"VP8L", b"VP8X", b"ALPH", b"ANIM", b"ANMF", b"ICCP"}:
             continue
         if fourcc == b"VP8X" and size >= 10:
             raw = raw[:8] + bytes([raw[8] & ~0x0C & 0xFF]) + raw[9:]
@@ -529,9 +567,10 @@ def _run(cmd: list[str], *, pass_fds: tuple[int, ...] = ()) -> subprocess.Comple
 
 
 def _ffmpeg_rewrite(content: bytes, suffix_or_mime: str, workdir: Path | None,
-                    extra_out: list[str], metadata_file: bytes | None = None) -> bytes:
+                    extra_out: list[str], metadata_file: bytes | None = None,
+                    *, output_muxer: str | None = None) -> bytes:
     suffix = _suffix(suffix_or_mime)
-    muxer = _MUXER.get(suffix)
+    muxer = output_muxer or _MUXER.get(suffix)
     if muxer is None:
         raise MediaMetadataError(f"no muxer for {suffix_or_mime!r}")
     if shutil.which("ffmpeg") is None:
@@ -577,38 +616,291 @@ def strip_audio(content: bytes, suffix_or_mime: str, *, workdir: Path | None = N
     return _ffmpeg_rewrite(content, suffix_or_mime, workdir, ["-an"])
 
 
-def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
-    """Remove metadata without touching pixel/stream payloads.
+# Families that carry metadata (EXIF, XMP, GPS, an author) but have no handler here. They are
+# refused, never passed through as a File: an iPhone photo is HEIC and carries GPS.
+_UNHANDLED_FAMILIES = frozenset({"tiff", "heif", "pdf", "jxl", "jp2", "psd"})
+_HEIF_BRANDS = frozenset({b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"heif",
+                          b"mif1", b"mif2", b"msf1", b"miaf", b"MiHE", b"MiHB", b"MiHA",
+                          b"avif", b"avis", b"avci", b"avcs"})
+_DIRECT_FAMILIES = frozenset({"png", "jpeg", "webp", "gif", "glb"})
+_MUXER_FAMILY = {"mp4": "bmff", "mov": "bmff", "webm": "ebml", "matroska": "ebml", "avi": "avi",
+                 "wav": "wav", "flac": "flac", "mp3": "mp3", "ogg": "ogg", "adts": "adts"}
 
-    Unknown kinds are returned unchanged. ffmpeg failures raise
-    ``MediaMetadataError`` (never silently returns bytes still carrying tags).
+METADATA_REMOVED = "removed"
+METADATA_UNCHANGED = "unchanged"
+METADATA_REFUSED = "refused"
+METADATA_NOTES = {
+    METADATA_REMOVED: "Azizam removed the metadata it knows how to find in this file.",
+    METADATA_UNCHANGED: "Azizam left this file's bytes unchanged and did not remove any metadata from it.",
+    METADATA_REFUSED: "Azizam cannot remove this file's metadata, so it will not deliver the file.",
+}
+
+
+def _ftyp_brands(content: bytes) -> set[bytes]:
+    """The major and compatible brands of a leading ftyp box (size 0 runs to the end, size 1 is 64-bit)."""
+    size, start = int.from_bytes(content[:4], "big"), 8
+    if size == 1:
+        size, start = int.from_bytes(content[8:16], "big"), 16
+    elif size == 0:
+        size = len(content)
+    end = min(max(size, start + 8), len(content), 4096)
+    return {content[start:start + 4]} | {content[i:i + 4] for i in range(start + 8, end - 3, 4)}
+
+
+def sniff_metadata_type(content: bytes) -> str | None:
+    """Identify a container from its bytes, never from a filename or MIME hint."""
+    for signature, kind in ((_PNG_SIG, "png"), (b"\xff\xd8", "jpeg"),
+                            (b"GIF87a", "gif"), (b"GIF89a", "gif"),
+                            (b"glTF", "glb"), (b"fLaC", "flac"),
+                            (b"OggS", "ogg"), (b"ID3", "mp3"),
+                            (b"\x1a\x45\xdf\xa3", "ebml"),
+                            (b"II*\x00", "tiff"), (b"MM\x00*", "tiff"),
+                            (b"II+\x00", "tiff"), (b"MM\x00+", "tiff"),
+                            (b"IIRO", "tiff"), (b"IIU\x00", "tiff"),
+                            (b"%PDF-", "pdf"), (b"\xff\x0a", "jxl"),
+                            (b"\x00\x00\x00\x0cJXL \r\n\x87\n", "jxl"),
+                            (b"\x00\x00\x00\x0cjP  \r\n\x87\n", "jp2"), (b"\xff\x4f\xff\x51", "jp2"),
+                            (b"8BPS", "psd")):
+        if content.startswith(signature):
+            return kind
+    if len(content) >= 12 and content[:4] == b"RIFF":
+        return {b"WEBP": "webp", b"WAVE": "wav", b"AVI ": "avi"}.get(content[8:12])
+    if len(content) >= 12 and content[4:8] == b"ftyp":
+        return "heif" if _ftyp_brands(content) & _HEIF_BRANDS else "bmff"
+    if b"%PDF-" in content[:1024]:
+        return "pdf"  # PDF readers accept a header after leading junk in the first kilobyte.
+    if len(content) >= 2 and content[0] == 0xff:
+        if content[1] & 0xf6 == 0xf0:
+            return "adts"
+        if content[1] & 0xe0 == 0xe0 and content[1] & 0x06:
+            return "mp3"
+    return None
+
+
+def _strip_gif(content: bytes) -> bytes:
+    """Keep rendering blocks and animation loops; discard descriptive extensions."""
+    if len(content) < 13 or content[:6] not in (b"GIF87a", b"GIF89a"):
+        raise MediaMetadataError("invalid GIF")
+    pos = 13 + (3 * (2 ** ((content[10] & 7) + 1)) if content[10] & 0x80 else 0)
+    if pos > len(content):
+        raise MediaMetadataError("truncated GIF colour table")
+    out = bytearray(content[:pos])
+    control_at: int | None = None  # where the last kept graphic control block starts
+
+    def subblocks(start: int) -> int:
+        while start < len(content):
+            size = content[start]
+            start += 1
+            if start + size > len(content):
+                break
+            start += size
+            if size == 0:
+                return start
+        raise MediaMetadataError("truncated GIF sub-block")
+
+    while pos < len(content):
+        start = pos
+        tag = content[pos]
+        pos += 1
+        if tag == 0x3b:
+            return bytes(out) + b"\x3b"
+        if tag == 0x2c:
+            if pos + 9 > len(content):
+                raise MediaMetadataError("truncated GIF image descriptor")
+            packed = content[pos + 8]
+            pos += 9 + (3 * 2 ** ((packed & 7) + 1) if packed & 0x80 else 0)
+            if pos >= len(content):
+                raise MediaMetadataError("truncated GIF image data")
+            pos = subblocks(pos + 1)  # LZW minimum code size
+            out += content[start:pos]
+            control_at = None
+        elif tag == 0x21:
+            if pos >= len(content):
+                raise MediaMetadataError("truncated GIF extension")
+            label = content[pos]
+            pos += 1
+            block = pos
+            pos = subblocks(pos)
+            if label == 0xf9:
+                if content[block] != 4 or pos - block != 6:
+                    raise MediaMetadataError("invalid GIF graphic control")
+                control_at = len(out)
+                out += content[start:pos]
+            elif label == 0x01:
+                # Plain text is dropped; the control block that governs it goes too,
+                # so it cannot retime the next frame.
+                if control_at is not None:
+                    del out[control_at:control_at + 8]
+                    control_at = None
+            elif label == 0xff and content[block:block + 12] in (
+                b"\x0bNETSCAPE2.0", b"\x0bANIMEXTS1.0"
+            ):
+                # Only the fixed loop-count block is rendering information.
+                if pos - block != 17 or content[block + 12:block + 14] != b"\x03\x01":
+                    raise MediaMetadataError("invalid GIF loop extension")
+                out += content[start:pos]
+        else:
+            raise MediaMetadataError("invalid GIF block")
+    raise MediaMetadataError("GIF missing trailer")
+
+
+def _strip_glb(content: bytes) -> bytes:
+    if len(content) < 12 or content[:4] != b"glTF":
+        raise MediaMetadataError("invalid GLB")
+    version, total = struct.unpack_from("<II", content, 4)
+    if version != 2 or total != len(content):
+        raise MediaMetadataError("invalid GLB header")
+    pos, chunks = 12, []
+    def without_extras(value):
+        if isinstance(value, dict):
+            return {key: without_extras(item) for key, item in value.items() if key != "extras"}
+        if isinstance(value, list):
+            return [without_extras(item) for item in value]
+        return value
+    while pos < total:
+        if pos + 8 > total:
+            raise MediaMetadataError("truncated GLB chunk")
+        size, kind = struct.unpack_from("<I4s", content, pos)
+        pos += 8
+        if size % 4 or pos + size > total:
+            raise MediaMetadataError("invalid GLB chunk length")
+        payload = content[pos:pos + size]
+        pos += size
+        if not chunks and kind == b"JSON":
+            try:
+                value = without_extras(json.loads(payload))
+                asset = value["asset"]
+                if not isinstance(asset, dict) or asset.get("version") != "2.0":
+                    raise ValueError("invalid asset")
+                asset.pop("generator", None)
+                asset.pop("copyright", None)
+                payload = json.dumps(value, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode()
+            except (ValueError, KeyError, TypeError, UnicodeError, RecursionError) as exc:
+                raise MediaMetadataError("invalid GLB JSON") from exc
+            payload += b" " * (-len(payload) % 4)
+        elif len(chunks) != 1 or kind != b"BIN\x00":
+            raise MediaMetadataError("unsupported GLB chunk")
+        chunks.append(struct.pack("<I4s", len(payload), kind) + payload)
+    if not chunks:
+        raise MediaMetadataError("GLB missing JSON")
+    body = b"".join(chunks)
+    return b"glTF" + struct.pack("<II", 2, len(body) + 12) + body
+
+
+def _probe_streams(content: bytes) -> list[dict[str, str]]:
+    if shutil.which("ffprobe") is None:
+        raise MediaMetadataError("ffprobe not found")
+    with _media_buffers(content) as (src, _dst):
+        probe = _run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name", "-of", "json",
+                      f"/proc/self/fd/{src.fileno()}"], pass_fds=(src.fileno(),))
+    try:
+        if probe.returncode:
+            raise ValueError("probe failed")
+        streams = json.loads(probe.stdout)["streams"]
+        if not isinstance(streams, list) or not streams or any(
+            not isinstance(stream, dict) or not isinstance(stream.get("codec_type"), str)
+            or not isinstance(stream.get("codec_name"), str) for stream in streams
+        ):
+            raise ValueError("invalid streams")
+        return streams
+    except (ValueError, KeyError, TypeError) as exc:
+        raise MediaMetadataError("could not probe media codecs") from exc
+
+
+def _codec_strip_options(streams: list[dict[str, str]]) -> tuple[list[str], bool]:
+    options = []
+    index = 0
+    rebuild_headers = False
+    for stream in streams:
+        kind = stream["codec_type"]
+        if kind == "audio":
+            continue
+        if kind != "video":
+            raise MediaMetadataError("unsupported ancillary stream")
+        codec = stream["codec_name"]
+        units = {"h264": "6", "hevc": "39|40", "av1": "5"}.get(codec)
+        if units:
+            filters = f"filter_units=remove_types={units}"
+            if codec == "hevc":
+                # filter_units leaves hvcC extradata untouched. Annex B through a
+                # transport stream rebuilds it from the filtered parameter sets.
+                filters = "hevc_mp4toannexb," + filters
+                rebuild_headers = True
+            options += [f"-bsf:v:{index}", filters]
+        elif codec not in {"vp8", "vp9"}:
+            raise MediaMetadataError("unsupported video codec")
+        index += 1
+    return options, rebuild_headers
+
+
+def _strip_decision(content: bytes, suffix_or_mime: str) -> tuple[str | None, str | None]:
+    """The one decision strip_metadata and metadata_handling share: (sniffed family, refusal reason or None).
+
+    A None family with no refusal is a File that passes unchanged. Reads only the first bytes.
     """
+    actual = sniff_metadata_type(content)
+    if actual in _DIRECT_FAMILIES:
+        return actual, None
+    if actual in _UNHANDLED_FAMILIES:
+        return actual, "media metadata format has no handler"
     kind = media_kind(suffix_or_mime)
-    if kind == "png":
-        return _strip_png(content)
-    if kind == "jpeg":
-        return _strip_jpeg(content)
-    if kind == "webp":
-        return _strip_webp(content)
-    if kind == "audio":
-        suffix = _suffix(suffix_or_mime)
-        if suffix == ".wav":
-            return _strip_wav(content)
-        if suffix == ".flac":
-            return _strip_flac(content)
-        if suffix == ".mp3":
-            clean = _strip_mp3(content)
-            if clean is not None:
-                return clean
-    if kind in ("video", "audio"):
-        if _suffix(suffix_or_mime) not in _MUXER:
-            return content
-        return _ffmpeg_rewrite(
-            content, suffix_or_mime, workdir,
-            ["-map_metadata", "-1", "-map_chapters", "-1",
-             "-map_metadata:s", "-1"],
-        )
-    return content
+    if actual is None:
+        # A File that is not media (an upload or an engine result) or the explicit headerless PCM row:
+        # no known metadata channel, so the bytes pass unchanged and metadata_handling says so.
+        return None, None if kind in (None, "content") else "declared media has unrecognised bytes"
+    if kind not in ("audio", "video"):
+        return actual, "unsupported media metadata format"
+    if _MUXER_FAMILY.get(_MUXER.get(_suffix(suffix_or_mime)) or "") != actual:
+        return actual, "unknown or contradictory media container"
+    return actual, None
+
+
+def metadata_handling(content: bytes, suffix_or_mime: str) -> str:
+    """What strip_metadata decides for these bytes, without running it.
+
+    METADATA_UNCHANGED for a File that passes through, METADATA_REFUSED when strip_metadata refuses before
+    any handler runs, else METADATA_REMOVED (a handler can still refuse a broken file). A prefix is enough.
+    """
+    actual, refusal = _strip_decision(content, suffix_or_mime)
+    if refusal is not None:
+        return METADATA_REFUSED
+    return METADATA_UNCHANGED if actual is None else METADATA_REMOVED
+
+
+def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
+    """Strip by actual bytes; refuse unknown or contradictory container declarations."""
+    actual, refusal = _strip_decision(content, suffix_or_mime)
+    if refusal is not None:
+        raise MediaMetadataError(refusal)
+    if actual is None:
+        return content
+    handlers = {"png": _strip_png, "jpeg": _strip_jpeg, "webp": _strip_webp,
+                "gif": _strip_gif, "glb": _strip_glb}
+    if actual in handlers:
+        return handlers[actual](content)
+    muxer = _MUXER[_suffix(suffix_or_mime)]
+    if actual == "wav":
+        return _strip_wav(content)
+    if actual == "flac":
+        return _strip_flac(content)
+    if actual == "mp3":
+        clean = _strip_mp3(content)
+        if clean is not None:
+            return clean
+    if shutil.which("ffmpeg") is None:
+        raise MediaMetadataError("ffmpeg not found")
+    streams = _probe_streams(content)
+    filters, rebuild_headers = _codec_strip_options(streams)
+    options = ["-map_metadata", "-1", "-map_chapters", "-1", "-map_metadata:s", "-1", *filters]
+    if rebuild_headers:
+        content = _ffmpeg_rewrite(content, suffix_or_mime, workdir, options, output_muxer="mpegts")
+        if _probe_streams(content) != streams:
+            raise MediaMetadataError("codec header rewrite changed streams")
+    if muxer in ("mp4", "mov"):
+        # The bitrate hint box would carry the source's figures through a filtered
+        # copy, so a second strip would change it: leave it out to keep strip idempotent.
+        options += ["-write_btrt", "0"]
+    return _ffmpeg_rewrite(content, suffix_or_mime, workdir, options)
 
 
 # -------------------------------------------------------------------- EXIF

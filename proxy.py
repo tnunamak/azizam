@@ -27165,6 +27165,8 @@ def _signed_asset_content_response(
         etag=headers.get("ETag"),
     )
     response.headers.update(headers)
+    if md_raw != provenance.METADATA_FULL:
+        response.headers["X-Azizam-Metadata"] = media_metadata.metadata_handling(data[:4096], cache_path.suffix)
     return response
 
 

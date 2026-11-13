@@ -19,16 +19,17 @@ import proxy
 from gateway import route_registry, service_registry
 from gateway.exclusive_pool import ExclusivePoolLeaseManager
 from gateway.mesh_api import MeshApiDeps
+from tests.media_test_bytes import glb_bytes, png_bytes
 
 ROOT = Path(__file__).resolve().parents[2]
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 128
-GLB = b"glTF\x02\x00\x00\x00" + b"model-bytes" * 8
+PNG = png_bytes()
+GLB = glb_bytes(b"model-bytes" * 8)
 MIB = 1 << 20
 TOTAL = 24 * 1024 * MIB
 OBSERVER_URL = "http://vram-observer.test"
 TRELLIS_URL = "http://127.0.0.1:8890"
 PIXAL3D_URL = "http://127.0.0.1:8892"
-PIXAL3D_GLB = b"glTF\x02\x00\x00\x00" + b"pixal-model" * 8
+PIXAL3D_GLB = glb_bytes(b"pixal-model" * 8)
 GOOD_CAPACITY = {
     "enabled": True,
     "mode": "exclusive-route-pool",

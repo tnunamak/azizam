@@ -2,7 +2,7 @@
   "assets": [
     {
       "json": {
-        "asset_id": "vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d",
+        "asset_id": "vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853",
         "origin": {
           "request_id": "<req:1>",
           "takes_text": true,
@@ -13,14 +13,14 @@
         ],
         "updated_at": "<time>"
       },
-      "name": "e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d.meta.json",
+      "name": "45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853.meta.json",
       "size": 262,
       "suffix": ".json"
     },
     {
-      "name": "e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d.mp4",
-      "sha256": "e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d",
-      "size": 858,
+      "name": "45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853.mp4",
+      "sha256": "45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853",
+      "size": 799,
       "suffix": ".mp4"
     }
   ],
@@ -114,7 +114,7 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"schema_version\":1,\"audience\":\"internal\",\"asset_url_ttl_s\":3600,\"jobs\":[{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":null,\"assets\":[{\"asset_id\":\"vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d\",\"media_type\":\"video/mp4\",\"asset_url\":\"http://gateway.test/v1/assets/vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"attempts\":1,\"binding_key\":\"comfyui\",\"completed_at\":\"<time>\",\"engine_progress\":true,\"engine_prompt\":\"p1\",\"failure_text\":\"adapter\",\"frontend\":\"videos-create\",\"keep_engine_prompt\":true,\"last_http_status\":200,\"mode\":\"workflow.run\",\"protocol_job\":\"p1\",\"protocol_submitting\":false,\"request_facts\":{\"actual_seconds\":5.0417,\"frame_rate\":24.0,\"length_frames\":121,\"model\":\"ltx-2.5-t2v\",\"provenance\":{\"backend\":\"comfyui\",\"created_at\":\"<iso-time>\",\"generator\":\"azizam-gateway\",\"kind\":\"video\",\"model_alias\":\"ltx-2.5-t2v\",\"parameters\":{\"actual_seconds\":5.0417,\"length_frames\":121,\"seconds\":\"5\",\"size\":\"960x512\"},\"receipt\":\"/gateway/v1/receipts/<req:1>\",\"request_id\":\"<req:1>\",\"requested_model\":\"ltx-2.5-t2v\",\"resolved_model\":\"video-ltx-2.5-t2v\",\"schema\":\"azizam.provenance/1\",\"seed\":192058881,\"workflow_id\":\"video.generate.ltx-2.5-t2v\"},\"resolved_model\":\"video-ltx-2.5-t2v\",\"seconds\":\"5\",\"seed\":192058881,\"size\":\"960x512\"},\"resource_class\":\"video\",\"result_metadata\":{\"filename\":\"clip.mp4\",\"returned\":1,\"rounds\":1,\"warnings\":[]},\"retries\":\"none\",\"started_at\":\"<time>\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video.generate.ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}}}]}"
+          "text": "{\"schema_version\":1,\"audience\":\"internal\",\"asset_url_ttl_s\":3600,\"jobs\":[{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":null,\"assets\":[{\"asset_id\":\"vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853\",\"media_type\":\"video/mp4\",\"asset_url\":\"http://gateway.test/v1/assets/vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"attempts\":1,\"binding_key\":\"comfyui\",\"completed_at\":\"<time>\",\"engine_progress\":true,\"engine_prompt\":\"p1\",\"failure_text\":\"adapter\",\"frontend\":\"videos-create\",\"keep_engine_prompt\":true,\"last_http_status\":200,\"mode\":\"workflow.run\",\"protocol_job\":\"p1\",\"protocol_submitting\":false,\"request_facts\":{\"actual_seconds\":5.0417,\"frame_rate\":24.0,\"length_frames\":121,\"model\":\"ltx-2.5-t2v\",\"provenance\":{\"backend\":\"comfyui\",\"created_at\":\"<iso-time>\",\"generator\":\"azizam-gateway\",\"kind\":\"video\",\"model_alias\":\"ltx-2.5-t2v\",\"parameters\":{\"actual_seconds\":5.0417,\"length_frames\":121,\"seconds\":\"5\",\"size\":\"960x512\"},\"receipt\":\"/gateway/v1/receipts/<req:1>\",\"request_id\":\"<req:1>\",\"requested_model\":\"ltx-2.5-t2v\",\"resolved_model\":\"video-ltx-2.5-t2v\",\"schema\":\"azizam.provenance/1\",\"seed\":192058881,\"workflow_id\":\"video.generate.ltx-2.5-t2v\"},\"resolved_model\":\"video-ltx-2.5-t2v\",\"seconds\":\"5\",\"seed\":192058881,\"size\":\"960x512\"},\"resource_class\":\"video\",\"result_metadata\":{\"filename\":\"clip.mp4\",\"returned\":1,\"rounds\":1,\"warnings\":[]},\"retries\":\"none\",\"started_at\":\"<time>\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video.generate.ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}}}]}"
         },
         "headers": {
           "content-length": "<2243 after normalisation>",
@@ -191,7 +191,7 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":null,\"assets\":[{\"asset_id\":\"vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d\",\"media_type\":\"video/mp4\",\"asset_url\":\"http://gateway.test/v1/assets/vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"attempts\":1,\"binding_key\":\"comfyui\",\"completed_at\":\"<time>\",\"engine_progress\":true,\"engine_prompt\":\"p1\",\"failure_text\":\"adapter\",\"frontend\":\"videos-create\",\"keep_engine_prompt\":true,\"last_http_status\":200,\"mode\":\"workflow.run\",\"protocol_job\":\"p1\",\"protocol_submitting\":false,\"request_facts\":{\"actual_seconds\":5.0417,\"frame_rate\":24.0,\"length_frames\":121,\"model\":\"ltx-2.5-t2v\",\"provenance\":{\"backend\":\"comfyui\",\"created_at\":\"<iso-time>\",\"generator\":\"azizam-gateway\",\"kind\":\"video\",\"model_alias\":\"ltx-2.5-t2v\",\"parameters\":{\"actual_seconds\":5.0417,\"length_frames\":121,\"seconds\":\"5\",\"size\":\"960x512\"},\"receipt\":\"/gateway/v1/receipts/<req:1>\",\"request_id\":\"<req:1>\",\"requested_model\":\"ltx-2.5-t2v\",\"resolved_model\":\"video-ltx-2.5-t2v\",\"schema\":\"azizam.provenance/1\",\"seed\":192058881,\"workflow_id\":\"video.generate.ltx-2.5-t2v\"},\"resolved_model\":\"video-ltx-2.5-t2v\",\"seconds\":\"5\",\"seed\":192058881,\"size\":\"960x512\"},\"resource_class\":\"video\",\"result_metadata\":{\"filename\":\"clip.mp4\",\"returned\":1,\"rounds\":1,\"warnings\":[]},\"retries\":\"none\",\"started_at\":\"<time>\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video.generate.ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"queue_position\":null,\"last_healthy_at\":null,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":null,\"assets\":[{\"asset_id\":\"vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853\",\"media_type\":\"video/mp4\",\"asset_url\":\"http://gateway.test/v1/assets/vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853/content?expires=<expires>&md=none&sig=<sig>\",\"url\":\"http://gateway.test/v1/assets/vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"attempts\":1,\"binding_key\":\"comfyui\",\"completed_at\":\"<time>\",\"engine_progress\":true,\"engine_prompt\":\"p1\",\"failure_text\":\"adapter\",\"frontend\":\"videos-create\",\"keep_engine_prompt\":true,\"last_http_status\":200,\"mode\":\"workflow.run\",\"protocol_job\":\"p1\",\"protocol_submitting\":false,\"request_facts\":{\"actual_seconds\":5.0417,\"frame_rate\":24.0,\"length_frames\":121,\"model\":\"ltx-2.5-t2v\",\"provenance\":{\"backend\":\"comfyui\",\"created_at\":\"<iso-time>\",\"generator\":\"azizam-gateway\",\"kind\":\"video\",\"model_alias\":\"ltx-2.5-t2v\",\"parameters\":{\"actual_seconds\":5.0417,\"length_frames\":121,\"seconds\":\"5\",\"size\":\"960x512\"},\"receipt\":\"/gateway/v1/receipts/<req:1>\",\"request_id\":\"<req:1>\",\"requested_model\":\"ltx-2.5-t2v\",\"resolved_model\":\"video-ltx-2.5-t2v\",\"schema\":\"azizam.provenance/1\",\"seed\":192058881,\"workflow_id\":\"video.generate.ltx-2.5-t2v\"},\"resolved_model\":\"video-ltx-2.5-t2v\",\"seconds\":\"5\",\"seed\":192058881,\"size\":\"960x512\"},\"resource_class\":\"video\",\"result_metadata\":{\"filename\":\"clip.mp4\",\"returned\":1,\"rounds\":1,\"warnings\":[]},\"retries\":\"none\",\"started_at\":\"<time>\"},\"parent_request_id\":null,\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video.generate.ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
         },
         "headers": {
           "content-length": "<2191 after normalisation>",
@@ -425,7 +425,7 @@
     ],
     "media_job_asset_origins": [
       {
-        "asset_id": "vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d",
+        "asset_id": "vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853",
         "job_id": "<job:1>",
         "origin_id": "<req:1>"
       }
@@ -508,7 +508,7 @@
           "app_profile": null,
           "assets": [
             {
-              "asset_id": "vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d",
+              "asset_id": "vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853",
               "media_type": "video/mp4"
             }
           ],
@@ -638,7 +638,7 @@
               "count": 1,
               "kind": "assets",
               "name": "video",
-              "size_bytes": 894
+              "size_bytes": 1530
             }
           ]
         }
@@ -647,14 +647,14 @@
     "result_stage": [
       {
         "attempt": 1,
-        "bytes": 894,
+        "bytes": 1530,
         "count": 1,
         "created": "<time>",
         "items_json": [
           {
-            "asset_ref": "vid_e890157c5b85842b08f708763d72b66a9382179d6aefcfbe6c08e9e3867a355d",
+            "asset_ref": "vid_45f2e3d6c8dda0f3f5ab716d09ceb4c6e3f9720ba4f00b4412b05c708de0e853",
             "media_type": "video/mp4",
-            "size_bytes": 894
+            "size_bytes": 1530
           }
         ],
         "job_id": "<job:1>",
@@ -943,7 +943,7 @@
                   "count": 1,
                   "kind": "assets",
                   "name": "video",
-                  "size_bytes": 894
+                  "size_bytes": 1530
                 }
               ]
             },

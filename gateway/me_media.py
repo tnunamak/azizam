@@ -1353,7 +1353,21 @@ def _build_job_item(
         "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at, prompt=prompt),
         "source": source,
         "unavailable_reason": None if available else "Asset file is missing or expired.",
+        **_metadata_fields(path if available else None),
     }
+
+
+def _metadata_fields(path: Path | None) -> dict[str, str | None]:
+    """Say honestly what the stored copy went through: a File that is not media passed unchanged."""
+    if path is None:
+        return {"metadata_handling": None, "metadata_note": None}
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(4096)  # The decision reads the first bytes only.
+    except OSError:
+        return {"metadata_handling": None, "metadata_note": None}
+    handling = media_metadata.metadata_handling(head, path.suffix)
+    return {"metadata_handling": handling, "metadata_note": media_metadata.METADATA_NOTES[handling]}
 
 
 def _build_cache_item(
@@ -1413,6 +1427,7 @@ def _build_cache_item(
         "download_url": signed_url_builder(request, asset_id, "none"),
         "workflow_download_url": signed_url_builder(request, asset_id, "full") if prompt_record else None,
         "thumbnail_url": signed_url_builder(request, asset_id, thumbnails.THUMB_MODE) if thumbnails.can_thumbnail(path) else None,
+        **_metadata_fields(path),
         "generation_ms": None,
         "provenance": {
             "prompt": prompt,

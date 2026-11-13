@@ -58,7 +58,7 @@ def long_mp4_bytes(color: str = "black") -> bytes:
         output = Path(directory) / "long.mp4"
         subprocess.run(
             ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
-             f"color=c={color}:s=16x16:d=5:r=24", "-c:v", "mpeg4", str(output)],
+             f"color=c={color}:s=16x16:d=5:r=24", "-c:v", "libx264", "-threads", "1", str(output)],
             capture_output=True, check=True,
         )
         return output.read_bytes()
@@ -1570,7 +1570,7 @@ def _audit_clip(color, seconds):
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory) / "clip.mp4"
         subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
-                        f"color=c={color}:s=16x16:d={seconds}:r=24", "-c:v", "mpeg4", str(output)],
+                        f"color=c={color}:s=16x16:d={seconds}:r=24", "-c:v", "libx264", "-threads", "1", str(output)],
                        capture_output=True, check=True, timeout=30)
         return output.read_bytes()
 

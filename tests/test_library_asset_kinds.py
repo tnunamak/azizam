@@ -10,10 +10,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.media_test_bytes import glb_bytes, png_bytes
 from gateway import accounts, admin_store, asset_types, media_jobs, me_media, prompt_memory, receipt_store, workflow_call
 from gateway.admin_oidc import AdminSession
 
-GLB = b"glTF\x02\x00\x00\x00" + b"\x00" * 24
+GLB = glb_bytes(b"\x00" * 24)
 
 
 @pytest.mark.parametrize("suffix,media_type,kind", [
@@ -121,7 +122,7 @@ def test_a_stored_file_is_found_again_by_its_id(library):
 
 # --- what made a stored file: any workflow, no workflow named in the store ---------------------------------------------
 
-PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
+PNG = png_bytes()
 
 
 def _store_output(library, **overrides):
@@ -316,8 +317,8 @@ def test_a_source_only_picture_still_opens_from_the_item_that_uses_it(library):
 
 
 def test_a_picture_that_was_made_stays_listed_when_a_later_run_uses_it(library):
-    first = _store_output(library, data=PNG + b"made", suffix=".png", inputs=())
-    again = asset_types.OutputInput(PNG + b"made", "first.png", "image/png")
+    first = _store_output(library, data=png_bytes((9, 9, 9)), suffix=".png", inputs=())
+    again = asset_types.OutputInput(png_bytes((9, 9, 9)), "first.png", "image/png")
     second = _store_output(library, inputs=(again,))
     assert first in _listed_ids(library, "&kind=image")
     assert second in _listed_ids(library, "&kind=model")
@@ -507,3 +508,39 @@ def test_every_kind_rows_recent_flag_reaches_the_media_list(library, monkeypatch
     for kind in table:
         assert asset_types.kind_names(kind)["recent"] is table[kind].get("recent", True)
     assert {row["kind"] for row in listing["assets"]} == set(suffixes)
+
+
+def test_a_file_says_its_bytes_were_left_unchanged_and_media_says_removed(library):
+    # A File passes through untouched: the listing and the download must not read as "clean".
+    plain = _item(library, _store(library, b"hello", ".zzunknown"))
+    assert plain["metadata_handling"] == "unchanged"
+    assert plain["metadata_note"] == "Azizam left this file's bytes unchanged and did not remove any metadata from it."
+    download = _download(plain["asset_id"])
+    assert download.status_code == 200 and download.content == b"hello"
+    assert download.headers["x-azizam-metadata"] == "unchanged"
+    from tests.media_test_bytes import png_bytes
+    # A picture uploaded under a File name is still sniffed and stripped, so it says removed.
+    image = _item(library, _store(library, png_bytes(), ".bin"))
+    assert image["metadata_handling"] == "removed"
+    assert image["metadata_note"] == "Azizam removed the metadata it knows how to find in this file."
+    assert _download(image["asset_id"]).headers["x-azizam-metadata"] == "removed"
+
+
+def _download(asset_id):
+    """Fetch the stored copy through the gateway's real content route with a key-minted signed URL."""
+    from starlette.requests import Request as StarletteRequest
+    request = StarletteRequest({"type": "http", "scheme": "https", "server": ("ai.example", 443), "path": "/",
+                                "query_string": b"", "headers": [(b"host", b"ai.example"),
+                                                                 (b"authorization", b"Bearer test-app-credential")]})
+    return TestClient(proxy.app).get(proxy.build_signed_asset_url(request, asset_id, "none"))
+
+
+def test_a_stored_picture_is_labelled_removed_by_its_real_bytes(tmp_path):
+    # The label reads the stored file's first bytes even when its name already says media.
+    from tests.media_test_bytes import png_bytes
+    picture = tmp_path / "a.png"
+    picture.write_bytes(png_bytes())
+    assert me_media._metadata_fields(picture)["metadata_handling"] == "removed"
+    plain = tmp_path / "a.zzunknown"
+    plain.write_bytes(b"hello")
+    assert me_media._metadata_fields(plain)["metadata_handling"] == "unchanged"

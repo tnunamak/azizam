@@ -147,7 +147,9 @@ def test_an_asset_id_of_another_kind_is_refused_before_anything_else(rig):
 # Revert: ``accepted`` in the resolver, or ``accepts=("image/*",)`` here.
 def test_a_stored_file_that_is_not_an_image_is_refused_whatever_its_id_says(rig):
     """The old route sent any bytes under an image id. The resolver measures them, so these are refused."""
-    asset_id = proxy.store_image_bytes(b"not an image at all", owner_key_hash="app:app_owner")
+    asset_id = stored(image_bytes("PNG"))
+    # Simulate a legacy/corrupted cache entry: new writes reject these bytes.
+    proxy.asset_cache_path(asset_id).write_bytes(b"not an image at all")
     _, error = run_extension(asset_id)
     assert error is not None and b"asset_id must reference a cached image asset" in error.body
     assert rig.uploads == [] and lease_rows() == 0

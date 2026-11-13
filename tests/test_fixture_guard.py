@@ -288,3 +288,73 @@ def test_anonymous_media_guard_rejects_other_inputs_and_commands(tmp_path):
                  "-show_streams", str(disk)]
         with pytest.raises(RuntimeError, match="child process"):
             check_event("subprocess.Popen", ("ffprobe", probe, None, None), {18750}, media)
+
+
+def _guarded_strip(tmp_path, monkeypatch, content, suffix):
+    from gateway import media_metadata
+
+    run = subprocess.run
+    commands = []
+
+    def guarded_run(command, **kwargs):
+        check_event("subprocess.Popen", (command[0], command, None, None),
+                    {18750}, tmp_path / "images")
+        commands.append(command[0])
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    return media_metadata.strip_metadata(content, suffix), commands
+
+
+def test_anonymous_media_guard_allows_the_household_video_strip(tmp_path, monkeypatch):
+    # The Library video tile asks for md=none: the codec probe and the
+    # parameter-set filter must pass the household fixture's guard.
+    from pathlib import Path
+
+    video = Path("scripts/ui/fixtures/household/garden-breeze.mp4").read_bytes()
+    clean, commands = _guarded_strip(tmp_path, monkeypatch, video, ".mp4")
+    assert clean[4:8] == b"ftyp"
+    assert commands == ["ffprobe", "ffmpeg"]
+
+
+def test_anonymous_media_guard_allows_the_hevc_header_rebuild(tmp_path, monkeypatch):
+    import shutil
+
+    if shutil.which("ffmpeg") is None or "libx265" not in subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout:
+        pytest.skip("no HEVC encoder")
+    source = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=160x120:d=2",
+                    "-c:v", "libx265", "-x265-params", "log-level=none", str(source)], check=True)
+    clean, commands = _guarded_strip(tmp_path, monkeypatch, source.read_bytes(), ".mp4")
+    assert clean[4:8] == b"ftyp"
+    assert commands == ["ffprobe", "ffmpeg", "ffprobe", "ffmpeg"]
+
+
+def test_anonymous_media_guard_rejects_unknown_stream_filters(tmp_path):
+    from gateway import media_metadata
+
+    media = tmp_path / "images"
+    with media_metadata._media_buffers(b"fixture") as (source, destination):
+        src = f"/proc/self/fd/{source.fileno()}"
+        dst = f"/proc/self/fd/{destination.fileno()}"
+        head = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src, "-map", "0",
+                "-map_metadata", "-1", "-map_chapters", "-1", "-map_metadata:s", "-1"]
+        tail = ["-c", "copy", "-fflags", "+bitexact", "-f", "mp4", dst]
+        allowed = head + ["-bsf:v:0", "filter_units=remove_types=6"] + tail
+        check_event("subprocess.Popen", ("ffmpeg", allowed, None, None), {18750}, media)
+        no_btrt = head + ["-bsf:v:0", "filter_units=remove_types=6", "-write_btrt", "0"] + tail
+        check_event("subprocess.Popen", ("ffmpeg", no_btrt, None, None), {18750}, media)
+        with pytest.raises(RuntimeError, match="child process"):
+            check_event("subprocess.Popen", ("ffmpeg", no_btrt[:-2] + ["mpegts", dst], None, None),
+                        {18750}, media)
+        for flags in (["-bsf:v:0", "noise=amount=1"], ["-bsf:a:0", "filter_units=remove_types=6"],
+                      ["-bsf:v:x", "filter_units=remove_types=6"], ["-vf", "scale=2:2"],
+                      ["-bsf:v:0"]):
+            with pytest.raises(RuntimeError, match="child process"):
+                check_event("subprocess.Popen", ("ffmpeg", head + flags + tail, None, None), {18750}, media)
+        probe = ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name",
+                 "-of", "json", src]
+        check_event("subprocess.Popen", ("ffprobe", probe, None, None), {18750}, media)
+        with pytest.raises(RuntimeError, match="child process"):
+            check_event("subprocess.Popen", ("ffprobe", probe[:-1] + [dst], None, None), {18750}, media)

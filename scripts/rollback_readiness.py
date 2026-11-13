@@ -14,6 +14,7 @@ import argparse
 from contextlib import closing
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import stat
@@ -44,9 +45,9 @@ def target_reads_tombstones(rev: str | None, repo: Path = REPO) -> bool:
         return False
     try:
         result = subprocess.run(
-            # The real history decides: a local replace ref must not make an older target look newer.
+            # The real history decides: a local replace ref or graft must not make an older target look newer.
             ["git", "--no-replace-objects", "-C", str(repo), "merge-base", "--is-ancestor", TOMBSTONE_READER_COMMIT, rev],
-            capture_output=True, timeout=10, check=False,
+            capture_output=True, timeout=10, check=False, env={**os.environ, "GIT_GRAFT_FILE": os.devnull},
         )
     except (OSError, subprocess.SubprocessError):
         return False
