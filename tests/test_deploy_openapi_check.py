@@ -67,14 +67,14 @@ def test_a_live_document_that_differs_from_the_new_pin_rolls_back():
 def test_operations_the_pin_adds_or_removes_must_appear_or_leave_live():
     old, new = _document(), _document(extra_path=True)
     assert _deploy(old, new, old, new)[0] == []
-    assert _names(_deploy(old, old, old, new)[0]) == ["/v1/extra get"]
+    assert _names(_deploy(old, old, old, new)[0]) == ["/v1/extra get", "paths /v1/extra"]
     assert _deploy(new, old, new, old)[0] == []
-    assert _names(_deploy(new, new, new, old)[0]) == ["/v1/extra get"]
+    assert _names(_deploy(new, new, new, old)[0]) == ["/v1/extra get", "paths /v1/extra"]
 
 
 def test_an_operation_that_appears_only_after_the_deploy_rolls_back():
     old, new = _document(), _document(extra_path=True)
-    assert _names(_deploy(old, new, old, old)[0]) == ["/v1/extra get"]
+    assert _names(_deploy(old, new, old, old)[0]) == ["/v1/extra get", "paths /v1/extra"]
 
 
 def test_a_top_level_change_the_pin_does_not_record_rolls_back():
@@ -110,7 +110,7 @@ def test_an_entry_live_data_shapes_holds_still_and_must_reach_the_new_pin_when_t
     assert _names(_deploy(live, _document(models_doc="Something else."), pin, repinned)[0]) == ["/v1/models get"]
     without = copy.deepcopy(live)
     del without["paths"]["/v1/models"]
-    assert _names(_deploy(live, without, pin, repinned)[0]) == ["/v1/models get"]
+    assert _names(_deploy(live, without, pin, repinned)[0]) == ["/v1/models get", "paths /v1/models"]
     assert _deploy(live, repinned, pin, repinned)[0] == []
 
 
