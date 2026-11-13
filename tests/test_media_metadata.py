@@ -743,6 +743,42 @@ def test_jpeg_app_allowlist(tmp_path):
     assert _px(clean) == _px(original)
 
 
+def test_jpeg_kept_segments_carry_only_their_fixed_fields(tmp_path):
+    path = tmp_path / "synthetic.jpg"
+    _image().save(path, "JPEG")
+    original = path.read_bytes()
+    assert original[2:4] == b"\xff\xe0"
+    app0_end = 4 + struct.unpack(">H", original[4:6])[0]
+    def segment(marker, value):
+        return bytes([255, marker]) + struct.pack(">H", len(value) + 2) + value
+    # A JFIF thumbnail and a JFXX extension are images of their own: neither leaves.
+    thumbnail = b"PRIVATE_MARKER\x00"  # 5 x 1 RGB pixels
+    jfif = original[6:app0_end][:12] + bytes([5, 1]) + thumbnail
+    source = original[:2] + segment(0xe0, jfif) + segment(0xe0, b"JFXX\x00\x10PRIVATE_MARKER") + original[app0_end:]
+    clean = mm.strip_metadata(source, ".jpg")
+    assert b"PRIVATE_MARKER" not in clean
+    assert clean == mm.strip_metadata(original, ".jpg")
+    assert _px(clean) == _px(original)
+    # The Adobe segment has a fixed length; dropping it would recolour CMYK, so a longer one is refused.
+    adobe = segment(0xee, b"Adobe\x00\x64\x00\x00\x00\x00\x00PRIVATE_MARKER")
+    with pytest.raises(mm.MediaMetadataError):
+        mm.strip_metadata(original[:2] + adobe + original[2:], ".jpg")
+
+
+def test_gif_plain_text_leaves_with_its_graphic_control(tmp_path):
+    path = tmp_path / "synthetic.gif"
+    frames = [Image.new("RGB", (8, 8), color) for color in ("red", "blue")]
+    frames[0].save(path, "GIF", save_all=True, append_images=frames[1:], loop=2)
+    original = path.read_bytes()
+    first = original.index(b"\x21\xf9")
+    control = b"\x21\xf9\x04\x00\xf4\x01\x00\x00"
+    text = b"\x21\x01\x0c" + bytes(12) + b"\x0ePRIVATE_MARKER\x00"
+    source = original[:first] + control + text + original[first:]
+    clean = mm.strip_metadata(source, ".gif")
+    # The control block governs the plain text it precedes, not the next frame.
+    assert clean == mm.strip_metadata(original, ".gif")
+
+
 def test_gif_extensions_and_frames(tmp_path):
     path = tmp_path / "synthetic.gif"
     frames = [Image.new("RGB", (8, 8), color) for color in ("red", "blue")]
