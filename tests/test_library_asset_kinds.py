@@ -507,3 +507,18 @@ def test_every_kind_rows_recent_flag_reaches_the_media_list(library, monkeypatch
     for kind in table:
         assert asset_types.kind_names(kind)["recent"] is table[kind].get("recent", True)
     assert {row["kind"] for row in listing["assets"]} == set(suffixes)
+
+
+def test_a_file_says_its_bytes_were_left_unchanged_and_media_says_removed(library):
+    # A File passes through untouched: the listing and the download must not read as "clean".
+    plain = _item(library, _store(library, b"hello", ".zzunknown"))
+    assert plain["metadata_handling"] == "unchanged"
+    assert plain["metadata_note"] == "Azizam left this file's bytes unchanged and did not remove any metadata from it."
+    download = library.client.get(plain["download_url"])
+    assert download.status_code == 200 and download.content == b"hello"
+    assert download.headers["x-azizam-metadata"] == "unchanged"
+    from tests.media_test_bytes import png_bytes
+    image = _item(library, _store(library, png_bytes(), ".png"))
+    assert image["metadata_handling"] == "removed"
+    assert image["metadata_note"] == "Azizam removed the metadata it knows how to find in this file."
+    assert library.client.get(image["download_url"]).headers["x-azizam-metadata"] == "removed"

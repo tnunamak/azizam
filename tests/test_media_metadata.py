@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import pytest
-from PIL import Image  # noqa: E402
+from PIL import Image, features  # noqa: E402
 
 from gateway import media_metadata as mm  # noqa: E402
 from gateway import media_delivery
@@ -723,10 +723,61 @@ def test_real_bytes_choose_image_handler(tmp_path, declared, actual):
     assert _px(clean) == _px(source)
 
 
-@pytest.mark.parametrize("declared", [".bin", ".png", ".jpg", ".webp", ".gif"])
-def test_unknown_bytes_refused(declared):
+@pytest.mark.parametrize("declared", [".png", ".jpg", ".webp", ".gif", ".glb", ".mp4", ".mp3", "image/png", "video/mp4"])
+def test_declared_media_with_unknown_bytes_is_refused(declared):
     with pytest.raises(mm.MediaMetadataError):
         mm.strip_metadata(b"unknown private bytes", declared)
+
+
+@pytest.mark.parametrize("declared", [".bin", ".zzunknown", "", "application/octet-stream", "application/json", "text/csv"])
+def test_a_file_that_is_not_media_passes_unchanged(declared):
+    # A File (an upload or an engine result that is not media) keeps its bytes:
+    # the gateway knows no metadata channel in them, and says so where it is shown.
+    molecule = b'{"smiles": "CCO", "odour": ["alcohol"]}'
+    assert mm.strip_metadata(molecule, declared) == molecule
+    assert mm.metadata_handling(molecule, declared) == mm.METADATA_UNCHANGED
+
+
+def _avif_bytes(brand: bytes = b"avif") -> bytes:
+    if not features.check("avif"):
+        pytest.skip("Pillow has no AVIF encoder")
+    out = io.BytesIO()
+    _image().save(out, "AVIF", exif=mm.exif_bytes({"prompt": "PRIVATE_MARKER"}))
+    data = out.getvalue()
+    assert data[4:12] == b"ftypavif"
+    # HEIC is the same item-based HEIF container with the brand an iPhone writes;
+    # only the brands decide what the bytes are.
+    return data if brand == b"avif" else data[:8] + brand + data[12:].replace(b"avif", b"heic")
+
+
+def _tiff_bytes() -> bytes:
+    out = io.BytesIO()
+    _image().save(out, "TIFF", exif=mm.exif_bytes({"prompt": "PRIVATE_MARKER"}))
+    return out.getvalue()
+
+
+def _pdf_bytes() -> bytes:
+    out = io.BytesIO()
+    _image().save(out, "PDF", author="PRIVATE_MARKER")
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("make", [_tiff_bytes, _pdf_bytes, _avif_bytes, lambda: _avif_bytes(b"heic")],
+                         ids=["tiff", "pdf", "avif", "heic"])
+@pytest.mark.parametrize("declared", [".bin", ".zzunknown", "application/octet-stream", ".png"])
+def test_metadata_bearing_formats_with_no_handler_never_pass_as_files(make, declared):
+    # An iPhone photo (HEIC) carries GPS; a TIFF or PDF carries author and EXIF.
+    # Uploaded under a non-media name they are refused, never kept as a File.
+    source = make()
+    assert b"PRIVATE_MARKER" in source
+    with pytest.raises(mm.MediaMetadataError):
+        mm.strip_metadata(source, declared)
+
+
+def test_media_that_is_stripped_says_removed(tmp_path):
+    path = tmp_path / "synthetic.png"
+    _image().save(path, "PNG")
+    assert mm.metadata_handling(path.read_bytes(), ".bin") == mm.METADATA_REMOVED
 
 
 def test_jpeg_app_allowlist(tmp_path):
