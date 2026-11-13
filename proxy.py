@@ -18492,11 +18492,19 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
         except Exception:  # noqa: BLE001
             records = {}
+        declared_capabilities = declared_operation_job.capabilities(records)
+        capability_sets = []
+        for auth_context in auth_contexts:
+            # Declared jobs belong to this member listing only; the shared catalog also drives routing and discovery.
+            viewed = [_capability_for_access(capability, auth_context, protocol="gateway.media", registry=records)
+                      for capability in declared_capabilities]
+            capability_sets.append([
+                *_gateway_capabilities_for_auth_context(auth_context),
+                *(capability for capability in viewed
+                  if not category_enforcement.is_hidden(capability.policy_reasons)),
+            ])
         records = _workflow_availability_services(records)
-        return activity, records, [
-            _gateway_capabilities_for_auth_context(auth_context)
-            for auth_context in auth_contexts
-        ]
+        return activity, records, capability_sets
 
     activity, service_records, capability_sets = await asyncio.to_thread(load_catalog_inputs)
     visible_service_ids = {
