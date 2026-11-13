@@ -132,3 +132,77 @@ def test_starter_migration_uses_declared_media_capability(monkeypatch):
         assert conn.execute("SELECT name FROM schema_migration_steps").fetchone()[0] == admin_store.MESH_STARTER_STEP
     finally:
         conn.close()
+
+
+def test_recommendation_copy_reaches_both_video_routes(tmp_path, monkeypatch):
+    from tests.support import video_rig
+    from tests.support.config_snapshot import publish_section
+    from tests.support.video_rig import MODEL
+    messages = {**toolcall_detection.GATEWAY_MESSAGES,
+                "long_video_not_supported": "Select configured long renderer for {model} ({max_seconds}).",
+                "video_extend_not_supported": "Select configured extension renderer for {model}."}
+    monkeypatch.setattr(toolcall_detection, "GATEWAY_MESSAGES", messages)
+
+    async def exercise(world):
+        workflows = copy.deepcopy(proxy.config["videos"]["workflows"])
+        for entry in workflows.values():
+            entry.pop("chain_workflow", None)
+        publish_section(world.rig.monkeypatch, "videos", {**proxy.config["videos"], "workflows": workflows})
+        response = await world.call("POST", "/v1/videos", json_body={
+            "model": MODEL, "prompt": "waves", "shots": [{"prompt": "waves", "seconds": 5}]})
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["message"].startswith("Select configured long renderer for ")
+        response = await world.call("POST", "/v1/videos/extensions", json_body={
+            "model": MODEL, "prompt": "waves", "video": {"id": "video_absent"}})
+        # A missing source is checked first; use the real rig's completed source below instead.
+        from tests.test_s7_parity_video_texts import make_video, finish
+        vid = await make_video(world)
+        await finish(world, vid)
+        response = await world.call("POST", "/v1/videos/extensions", json_body={
+            "model": "unconfigured-renderer", "prompt": "waves", "video": {"id": vid}})
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["message"] == "Select configured extension renderer for 'unconfigured-renderer'."
+    video_rig.run(tmp_path, exercise)
+
+
+def test_transcription_settings_use_frontend_intent(tmp_path, monkeypatch):
+    monkeypatch.setattr(domain_rows, "route_intent", lambda path: "speech.recognize" if path == "/v1/audio/transcriptions" else None)
+    record = {"capabilities": ["speech.recognize"], "config": {"chunking": {}}}
+    seen = []
+    store = SimpleNamespace(path=tmp_path / "fixture.db",
+                            get_service_registry_snapshot=lambda: ({"services": {"s": record}}, 0),
+                            update_service=lambda **kwargs: seen.append(kwargs) or {"operator_settings_generation": 1})
+    result = engine_admin.EngineService(store).configure_stt(
+        SimpleNamespace(roles=("owner",)), "s", {}, expected_generation=0)
+    assert result["revision"] == '"os-1"'
+    assert seen[0]["service_id"] == "s"
+
+
+def test_identity_upload_and_error_param_follow_wire_declaration(monkeypatch):
+    from dataclasses import replace
+    from tests.test_identity_api import build, PHOTO, GOOD
+    registry = openai_media_schemas._MEDIA_SCHEMA_REGISTRY
+    monkeypatch.setattr(openai_media_schemas, "_MEDIA_SCHEMA_REGISTRY", replace(
+        registry, wire_error_params={**registry.wire_error_params, "identity_scene": {"reference_photos": "portrait"}}))
+    client, calls, _ = build([GOOD])
+    with client:
+        response = client.post(identity_api.IDENTITY_PATH,
+                               files={"portrait": ("ref.png", PHOTO, "image/png")},
+                               data={"prompt": "standing", "attempts": "1", "refine": "off"})
+        assert response.status_code == 200, response.text
+        assert calls
+        response = client.post(identity_api.IDENTITY_PATH, files={"other": ("empty", b"x")}, data={"prompt": "x"})
+        assert response.status_code == 400
+        assert response.json()["error"]["param"] == "portrait"
+
+
+def test_private_diagnostics_preserve_declared_wire_param(monkeypatch):
+    from dataclasses import replace
+    from tests.test_identity_jobs import result
+    registry = openai_media_schemas._MEDIA_SCHEMA_REGISTRY
+    monkeypatch.setattr(openai_media_schemas, "_MEDIA_SCHEMA_REGISTRY", replace(
+        registry, wire_error_params={**registry.wire_error_params, "identity_scene": {"reference_photos": "portrait"}}))
+    scene = result()
+    scene.warnings = [{"code": "reference_warning", "param": "portrait"}]
+    request = SimpleNamespace(prompt="portrait", people=[])
+    assert identity_api.stored_scene_extras(scene, request)["warnings"][0]["param"] == "portrait"
