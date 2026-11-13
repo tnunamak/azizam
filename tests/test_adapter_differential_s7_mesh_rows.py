@@ -548,6 +548,7 @@ def test_a_job_refused_for_capacity_tells_its_caller_the_card_is_busy(rig):
         await settle(c, job_id_of(third))
         row = _providers()[0](job_id_of(third), audience="client")
         events = media_jobs.events(job_id_of(third), audience="client")
+        print("EVENTS", events)
         gate.release.set()
         await settle(c, job_id_of(first))
         return {"row": row, "events": events}
