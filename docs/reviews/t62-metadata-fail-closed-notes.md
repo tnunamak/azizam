@@ -260,8 +260,9 @@ other case still goes by the bytes:
 - Bytes that sniff as a family with a handler (PNG, JPEG, WebP, GIF, GLB, audio, video)
   always go through that handler, whatever name they arrived under, and are refused if
   the handler fails.
-- TIFF, HEIF/HEIC/AVIF, PDF and JPEG XL carry EXIF, XMP, GPS or an author, and there is no
-  handler for them here. They are refused under any name, including as a File. An iPhone
+- TIFF (and TIFF-based camera raw), HEIF/HEIC/AVIF, PDF (also after leading junk in the
+  first kilobyte), JPEG XL, JPEG 2000 and PSD carry EXIF, XMP, GPS or an author, and there is
+  no handler for them here. They are refused under any name, including as a File. An iPhone
   photo is HEIC and carries GPS, so passing it as a File would leak what this train closes.
 - A name or type that declares media while the bytes match no family is refused.
 
@@ -277,3 +278,9 @@ Open:
   `extras` and names can carry text. There is no JSON-aware handler.
 - An unknown container that carries metadata and that the sniff does not recognise passes
   as a File, labelled `unchanged`.
+- ZIP-based documents (docx, xlsx, odt, epub) carry an author in their properties and pass
+  as Files labelled `unchanged`. Refusing ZIP would refuse every archive; this needs a
+  decision, not a sniff.
+- `metadata_handling` and `strip_metadata` share one decision function, and a test holds
+  them in agreement across sample bytes and declared names. A handler can still refuse a
+  broken file that the label called `removed`; delivery then answers 502, never the bytes.
