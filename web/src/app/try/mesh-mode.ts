@@ -9,21 +9,29 @@ import type { WorkflowInput } from "./workflow-inputs";
 export const MESH_CAPABILITY = "mesh";
 
 /**
- * Whether a workflow belongs in Photo to 3D: a 3D workflow whose input contract requires a picture. A 3D stage that
- * works on a model file (an edit stage) takes no picture, so it lists under Workflow instead and never decides
- * whether the Photo to 3D tab is shown.
+ * Whether a workflow belongs in Photo to 3D: a 3D workflow whose required files are all pictures, at least one. A 3D
+ * stage that works on a model file (an edit stage, also one that takes a reference picture beside the model) lists under
+ * Workflow instead and never decides whether the Photo to 3D tab is shown.
  */
 export function makesAModelFromAPicture(workflow: { capability?: string; inputs: WorkflowInput[] } | undefined): boolean {
   if (workflow?.capability !== MESH_CAPABILITY) return false;
-  return workflow.inputs.some(
-    (input) =>
-      input.asset === true &&
-      input.required === true &&
-      [input.media_type, ...(input.accepted_media_types ?? [])].some(
-        (type) => typeof type === "string" && type.startsWith("image/"),
-      ),
-  );
+  const files = workflow.inputs.filter((input) => input.asset === true && input.required === true);
+  const isPicture = (input: WorkflowInput) =>
+    [input.media_type, ...(input.accepted_media_types ?? [])].some(
+      (type) => typeof type === "string" && type.startsWith("image/"),
+    );
+  return files.length > 0 && files.every(isPicture);
 }
+
+/**
+ * Photo to 3D's workflows in the data's order: the lowest `selection_rank` first (the one the 3D route runs when no
+ * workflow is named), then by id; an unranked workflow comes last. The first one decides the tab and its choices.
+ */
+export function photoTo3dOrder<T extends { id: string; workflow?: { selectionRank?: number } }>(options: T[]): T[] {
+  const place = (option: T) => option.workflow?.selectionRank ?? Number.POSITIVE_INFINITY;
+  return [...options].sort((a, b) => place(a) - place(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 /** The gateway route the mesh workflow posts to. */
 export const MESH_PATH = "/v1/3d/generations/glb";
 export const MESH_MEDIA_TYPE = "model/gltf-binary";

@@ -269,7 +269,9 @@ def discovery_facts(manifest: MeshWorkflow, frontend_records: Sequence[Mapping[s
         backend=manifest.service_id,
         workflow=manifest.id,
         capability=capability,
-        title=CAPABILITY_LABELS[capability],
+        # The workflow's own name ("Pixal3D image to 3D"), so a page that offers several 3D workflows can tell them
+        # apart; the capability label only when the workflow states none.
+        title=_display_name(manifest) or CAPABILITY_LABELS[capability],
         input_modalities=_modalities(metadata, "input_modalities"),
         output_modalities=_modalities(metadata, "output_modalities"),
         execution="sync",
@@ -280,6 +282,11 @@ def discovery_facts(manifest: MeshWorkflow, frontend_records: Sequence[Mapping[s
         resource_tier=tiers.get("capability_resource_tier", "batch"),
         resources=ResourceEstimate(gpu_required=True),
     )
+
+
+def _display_name(manifest: MeshWorkflow) -> str | None:
+    name = manifest.data.get("display_name")
+    return " ".join(name.split()) if isinstance(name, str) and name.strip() else None
 
 
 async def pool_evidence(deps: MeshApiDeps) -> dict[str, dict[str, Any]]:
