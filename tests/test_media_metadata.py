@@ -947,3 +947,15 @@ def test_av1_metadata_obu_removed_with_pixels_intact(tmp_path):
                                "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                               check=True, capture_output=True).stdout
     assert pixels(output) == pixels(path)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_h264_strip_is_a_fixed_point():
+    # A clean file stays byte-identical when stripped again: the startup migration
+    # and every md=none download re-strip stored files, and a Library listing's size
+    # must match the download. The bitrate hint box is recomputed after the SEI
+    # units go, so it is left out rather than carried from the source.
+    source = Path("scripts/ui/fixtures/household/garden-breeze.mp4").read_bytes()
+    clean = mm.strip_metadata(source, ".mp4")
+    assert mm.strip_metadata(clean, ".mp4") == clean
+    assert b"btrt" not in clean
