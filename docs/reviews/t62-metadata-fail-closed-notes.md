@@ -250,3 +250,30 @@ Not fixed here, open:
   after its last metadata block; an appended tag can survive. This predates train 62.
 - WAV keeps a LIST chunk's sub-chunks without checking each one.
 - A few-frame HEVC clip fails the probe after the MPEG-TS rebuild and is refused (no leak).
+
+## Files that are not media (lead decision, 2026-11-13)
+
+A stored item whose bytes match no known media family and whose declared name or type is
+not media (a File, or the explicit headerless PCM row) passes through unchanged. Every
+other case still goes by the bytes:
+
+- Bytes that sniff as a family with a handler (PNG, JPEG, WebP, GIF, GLB, audio, video)
+  always go through that handler, whatever name they arrived under, and are refused if
+  the handler fails.
+- TIFF, HEIF/HEIC/AVIF, PDF and JPEG XL carry EXIF, XMP, GPS or an author, and there is no
+  handler for them here. They are refused under any name, including as a File. An iPhone
+  photo is HEIC and carries GPS, so passing it as a File would leak what this train closes.
+- A name or type that declares media while the bytes match no family is refused.
+
+The pass-through is labelled. A Library item carries `metadata_handling` (`removed` or
+`unchanged`) and a `metadata_note` sentence; an `md=none` download carries the
+`X-Azizam-Metadata` header with the same value. `unchanged` says the gateway left the
+bytes as they were and removed no metadata, so `md=none` does not read as "clean" for a
+File.
+
+Open:
+
+- A `.gltf` (JSON) model is a File and passes unchanged; its `asset.generator`,
+  `extras` and names can carry text. There is no JSON-aware handler.
+- An unknown container that carries metadata and that the sniff does not recognise passes
+  as a File, labelled `unchanged`.
