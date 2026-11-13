@@ -330,14 +330,26 @@ def copy_png_text(source: bytes, target: bytes) -> bytes:
 
 # -------------------------------------------------------------------- JPEG
 
-def _jpeg_keeps(marker: int, payload: bytes) -> bool:
+def _jpeg_kept_payload(marker: int, payload: bytes) -> bytes | None:
+    """The payload to keep for a segment, or None to drop it.
+
+    APP segments are kept only for their fixed rendering fields: the JFIF header
+    without its thumbnail, an ICC profile, and the fixed-length Adobe transform.
+    """
     if marker == 0xFE:
-        return False
-    if 0xE0 <= marker <= 0xEF:
-        return ((marker == 0xE0 and payload.startswith((b"JFIF\x00", b"JFXX\x00")))
-                or (marker == 0xE2 and payload.startswith(b"ICC_PROFILE\x00"))
-                or (marker == 0xEE and payload.startswith(b"Adobe")))
-    return True
+        return None
+    if not 0xE0 <= marker <= 0xEF:
+        return payload
+    if marker == 0xE0 and payload.startswith(b"JFIF\x00") and len(payload) >= 14:
+        return payload[:12] + b"\x00\x00"  # no thumbnail: it is an image of its own
+    if marker == 0xE2 and payload.startswith(b"ICC_PROFILE\x00"):
+        return payload
+    if marker == 0xEE and payload.startswith(b"Adobe"):
+        if len(payload) != 12:
+            # Dropping it would change how CMYK samples decode.
+            raise MediaMetadataError("invalid Adobe JPEG segment")
+        return payload
+    return None
 
 
 def _strip_jpeg(content: bytes) -> bytes:
@@ -368,8 +380,9 @@ def _strip_jpeg(content: bytes) -> bytes:
         end = pos + seglen
         if seglen < 2 or end > n:
             raise MediaMetadataError("truncated JPEG segment")
-        if _jpeg_keeps(marker, content[pos + 2:end]):
-            out += bytes([0xFF, marker]) + content[pos:end]
+        kept = _jpeg_kept_payload(marker, content[pos + 2:end])
+        if kept is not None:
+            out += bytes([0xFF, marker]) + struct.pack(">H", len(kept) + 2) + kept
         pos = end
         if marker == 0xDA:  # SOS: copy entropy-coded data verbatim
             start = pos
@@ -627,6 +640,7 @@ def _strip_gif(content: bytes) -> bytes:
     if pos > len(content):
         raise MediaMetadataError("truncated GIF colour table")
     out = bytearray(content[:pos])
+    control_at: int | None = None  # where the last kept graphic control block starts
 
     def subblocks(start: int) -> int:
         while start < len(content):
@@ -654,6 +668,7 @@ def _strip_gif(content: bytes) -> bytes:
                 raise MediaMetadataError("truncated GIF image data")
             pos = subblocks(pos + 1)  # LZW minimum code size
             out += content[start:pos]
+            control_at = None
         elif tag == 0x21:
             if pos >= len(content):
                 raise MediaMetadataError("truncated GIF extension")
@@ -664,7 +679,14 @@ def _strip_gif(content: bytes) -> bytes:
             if label == 0xf9:
                 if content[block] != 4 or pos - block != 6:
                     raise MediaMetadataError("invalid GIF graphic control")
+                control_at = len(out)
                 out += content[start:pos]
+            elif label == 0x01:
+                # Plain text is dropped; the control block that governs it goes too,
+                # so it cannot retime the next frame.
+                if control_at is not None:
+                    del out[control_at:control_at + 8]
+                    control_at = None
             elif label == 0xff and content[block:block + 12] in (
                 b"\x0bNETSCAPE2.0", b"\x0bANIMEXTS1.0"
             ):
