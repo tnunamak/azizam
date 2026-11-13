@@ -493,6 +493,7 @@ def test_deleted_job_get_and_content_are_not_found(served):
     created = call("post", ROUTE, json={"inputs": {"prompt": "hi"}}, headers={"Prefer": "wait=10"})
     assert created.status_code == 200, created.text
     job_id = created.json()["job_id"]
+    assert call("get", f"/gateway/v1/media/jobs/{job_id}").status_code == 200
     media_jobs.tombstone_job(job_id, path=served.media)
     for suffix in ("", "/content"):
         response = call("get", f"/gateway/v1/media/jobs/{job_id}{suffix}")

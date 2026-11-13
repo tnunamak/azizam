@@ -78,3 +78,8 @@ Inspected all production Python calls using AST traversal and `git grep`, includ
 The two payload-cleanup lookups and the workflow receipt lookup include deleted rows only for cleanup/accounting. Legacy video recovery includes them to distinguish a terminal deleted job from an unfinished record. Synchronous asset indexing keeps its existing first-response-wins behavior. None of these exceptions authorizes public retrieval.
 
 Tests which inspect physical retention after deletion now explicitly include deleted rows. Normal public and workflow reads keep the default. No callers remain unclassified. In-flight adapter cancellation and publication still depend on their existing terminal-state guards; this change does not introduce transactional synchronization between deletion and an already running adapter.
+
+
+## Validation
+
+The first targeted hermetic run passed: `233 passed, 11 subtests passed in 11.82s` (store, image jobs, S7 core, workflow routes, adapter units and protocol traits). Follow-up verification adds explicit deleted-terminal protocol replay and multipart dispatch guards, plus a positive HTTP get before deletion. Seven new pytest cases in total; the protocol replay case extends an existing test.
