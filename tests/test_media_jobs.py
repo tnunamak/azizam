@@ -222,6 +222,39 @@ class TestStoreLifecycle(_StoreCase):
         self.assertEqual(loaded["intent"], "video.generate")
         self.assertEqual(loaded["status"], STATUS_QUEUED)
 
+    def test_get_hides_tombstones_unless_included(self) -> None:
+        job = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        before = media_jobs.get(job.job_id, path=self.db)
+        media_jobs.tombstone_job(job.job_id, path=self.db)
+        self.assertIsNone(media_jobs.get(job.job_id, path=self.db))
+        self.assertEqual(media_jobs.get(job.job_id, include_deleted=True, path=self.db), before)
+
+    def test_get_many_hides_tombstones_unless_included(self) -> None:
+        live = media_jobs.create(_make_job(request_id="live", status=STATUS_SUCCEEDED), path=self.db)
+        deleted = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        ids = [live.job_id, deleted.job_id, "missing", live.job_id]
+        before = media_jobs.get_many(ids, path=self.db)
+        media_jobs.tombstone_job(deleted.job_id, path=self.db)
+        self.assertEqual(media_jobs.get_many(ids, path=self.db), {live.job_id: before[live.job_id]})
+        self.assertEqual(media_jobs.get_many(ids, include_deleted=True, path=self.db), before)
+
+    def test_get_by_request_id_hides_tombstones_unless_included(self) -> None:
+        job = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        before = media_jobs.get_by_request_id(job.request_id, path=self.db)
+        media_jobs.tombstone_job(job.job_id, path=self.db)
+        self.assertIsNone(media_jobs.get_by_request_id(job.request_id, path=self.db))
+        self.assertEqual(media_jobs.get_by_request_id(job.request_id, include_deleted=True, path=self.db), before)
+
+    def test_deleted_request_id_stays_claimed_until_reaped(self) -> None:
+        first = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        media_jobs.tombstone_job(first.job_id, path=self.db)
+        retry = media_jobs.create(_make_job(status=STATUS_SUCCEEDED), path=self.db)
+        self.assertEqual(retry.job_id, first.job_id)
+        with media_jobs.connection(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0], 1)
+        self.assertEqual(media_jobs.reap_tombstones(before=2**40, path=self.db), 1)
+        self.assertNotEqual(media_jobs.create(_make_job(), path=self.db).job_id, first.job_id)
+
     def test_get_missing_returns_none(self) -> None:
         self.assertIsNone(media_jobs.get("mj_does_not_exist", path=self.db))
 

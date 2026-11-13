@@ -487,3 +487,27 @@ def test_the_run_core_follows_the_jobs_database_it_was_built_for(served, monkeyp
     assert second is not first
     assert second._path == other
     assert proxy._workflow_run_core() is second
+
+
+def test_deleted_job_get_and_content_are_not_found(served, monkeypatch):
+    # The app's imported router captured its original store path. Bind this GET to the fixture store,
+    # with the production audience and ownership rules; content already resolves DB_PATH per request.
+    router = api.create_gateway_router(
+        proxy.GATEWAY_REGISTRY_PROVIDER, media_job_store_path=served.media,
+        audience_resolver=proxy._gateway_audience_resolver,
+        record_authorizer=proxy._gateway_record_authorizer,
+    )
+    getter_routes = [route for route in router.routes if route.path == "/gateway/v1/media/jobs/{job_id}"
+                     and "GET" in route.methods]
+    assert len(getter_routes) == 1
+    monkeypatch.setattr(proxy.app.router, "routes", getter_routes + proxy.app.router.routes)
+    created = call("post", ROUTE, json={"inputs": {"prompt": "hi"}}, headers={"Prefer": "wait=10"})
+    assert created.status_code == 200, created.text
+    job_id = created.json()["job_id"]
+    assert call("get", f"/gateway/v1/media/jobs/{job_id}").status_code == 200
+    media_jobs.tombstone_job(job_id, path=served.media)
+    for suffix in ("", "/content"):
+        response = call("get", f"/gateway/v1/media/jobs/{job_id}{suffix}")
+        assert response.status_code == 404, response.text
+    assert media_jobs.get(job_id, include_deleted=True, path=served.media) is not None
+    assert served.engine_calls == 1

@@ -33,6 +33,7 @@ BACKUP_TIMEOUT_SECONDS = 5.0
 # workflow read and listing, and reaped after its window). A rollback target that contains it hides a deleted job from
 # the same reads as this build, so deleted rows the reaper has not removed yet cannot resurface after the switch.
 # If a later change makes more reads hide deleted jobs, move this to that commit: an older target would show them again.
+# Store reads also filter from T60 onward; the threshold stays because higher-level reads already honour tombstones.
 TOMBSTONE_READER_COMMIT = "fc6e2b36d7fea6afbb23a8cb1679f0dbe5e29434"
 REPO = Path(__file__).resolve().parents[1]
 

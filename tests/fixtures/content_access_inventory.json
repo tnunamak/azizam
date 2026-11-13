@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "de71ab1261688f2bcc9c75982b2eceed8da5850788941a38b546d12f9a1a229c",
+      "source_sha256": "38777b86550bf2c39110959be072ad1a83c468cb6c45f062ab29260b57315274",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"

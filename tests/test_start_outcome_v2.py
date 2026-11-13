@@ -371,6 +371,10 @@ def test_a_finished_job_is_replayed_not_run_again(fake_upstreams, jobs_db):
     assert rig.run(job_id) is None
     assert rig.facts["requests"] == requests, "a terminal job was sent again"
     check_published(rig, job_id)
+    media_jobs.tombstone_job(job_id, path=jobs_db)
+    assert media_jobs.get(job_id, path=jobs_db) is None
+    assert rig.run(job_id) is None
+    assert rig.facts["requests"] == requests, "a deleted job was sent again"
 
 
 def test_a_crash_between_send_and_commit_is_submission_unknown_and_never_resent(fake_upstreams, jobs_db, monkeypatch):

@@ -596,7 +596,7 @@ class WorkflowRunCore:
             await asyncio.sleep(CLAIM_POLL_S)
 
     def _replay(self, job_id: str | None) -> RunJobView | RunRefused:
-        job = media_jobs.get(job_id or "", audience="internal", path=self._path)
+        job = media_jobs.get(job_id or "", audience="internal", include_deleted=True, path=self._path)
         if job is None:
             return RunRefused(409, IDEMPOTENCY_IN_PROGRESS, "the job for this Idempotency-Key is not readable yet; retry",
                               retry_after_s=RETRY_AFTER_S)
@@ -823,7 +823,7 @@ class WorkflowRunCore:
 
     def _receipt_outcome(self, job_id: str) -> tuple[str, str, str] | None:
         """``(request_id, status, reason)`` for a terminal job that carries a request receipt, else None."""
-        job = media_jobs.get(job_id, audience="internal", path=self._path)
+        job = media_jobs.get(job_id, audience="internal", include_deleted=True, path=self._path)
         if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
             return None
         metadata = job.get("metadata") or {}

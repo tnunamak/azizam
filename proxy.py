@@ -20654,7 +20654,7 @@ def _unfinished_openai_video_jobs(max_age_s: int = 2 * 3600) -> int:
         if record.get("completed_at") is not None or record.get("deleted_at") is not None:
             continue
         media_job_id = record.get("media_job_id")
-        video_job = media_jobs.get(media_job_id, audience="internal", path=media_jobs.DB_PATH) if media_job_id else None
+        video_job = media_jobs.get(media_job_id, audience="internal", include_deleted=True, path=media_jobs.DB_PATH) if media_job_id else None
         if video_job and video_job.get("status") in media_jobs.TERMINAL_STATUSES:
             continue
         created = record.get("created_at") or now
@@ -23849,7 +23849,7 @@ def _prune_orphaned_media_job_payloads() -> int:
     with _MEDIA_PAYLOAD_LOCK:
         removed = 0
         for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
-            job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+            job = media_jobs.get(job_id, audience="internal", include_deleted=True, path=media_jobs.DB_PATH)
             if job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES:
                 _release_ephemeral_media_job_payload(job_id)
                 removed += 1
@@ -23861,7 +23861,7 @@ def _prune_orphaned_media_job_payloads() -> int:
             if _young_media_payload_stage(path):
                 continue
             job_id = path.name.lstrip(".").split(".json", 1)[0]
-            job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+            job = media_jobs.get(job_id, audience="internal", include_deleted=True, path=media_jobs.DB_PATH)
             if (path.name.startswith(".") and path.name.endswith(".tmp")) or (
                 job is not None and job.get("status") in media_jobs.TERMINAL_STATUSES
             ):
@@ -26451,9 +26451,14 @@ async def gateway_image_generations_media_job(request: Request):
     existing = media_jobs.get_by_request_id(
         request_id,
         audience="internal",
+        include_deleted=True,
         path=media_jobs.DB_PATH,
     )
     if existing is not None:
+        if media_jobs.tombstoned(str(existing["job_id"]), path=media_jobs.DB_PATH):
+            response = JSONResponse({"error": {"code": "job_deleted", "message": "The job for this request was deleted."}}, status_code=404)
+            await run_receipt_write(finish_image_route_receipt, receipt, response)
+            return response
         if existing.get("status") in {media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING}:
             job_id = str(existing.get("job_id") or "")
             if job_id and _has_image_media_job_payload(job_id):
@@ -28297,8 +28302,10 @@ async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
     """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
     file stops being reachable there. The engine asked is the service the job was pinned to, which holds that history even
     after a priority change gave the videos family another winner. A job the engine never took, or that pinned no service,
-    has none; a service no longer configured cannot be asked; a failure is not the caller's."""
-    job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
+    has none; a service no longer configured cannot be asked; a failure is not the caller's. It runs after the delete wrote
+    the tombstone, so it reads the deleted job on purpose."""
+    job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", include_deleted=True,
+                                  path=media_jobs.DB_PATH)
     kept = (job or {}).get("metadata") or {}
     prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
     if not prompt_id:

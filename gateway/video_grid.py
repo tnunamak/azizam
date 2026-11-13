@@ -19,12 +19,47 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Any
 from pathlib import Path
 
+import json
+
+import jsonschema
 import yaml
 
 
-_STRIDE_REASONS = yaml.safe_load(
-    (Path(__file__).resolve().parent.parent / "registry" / "video_grid.yml").read_text(encoding="utf-8")
-)["stride_reasons"]
+_REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
+BUNDLED_PATH = _REGISTRY_DIR / "video_grid.yml"
+SCHEMA_PATH = _REGISTRY_DIR / "video_grid.schema.json"
+
+
+def load_stride_reasons(path: Path = BUNDLED_PATH) -> dict[str, Any]:
+    """Read validated wire reasons, preserving integer step keys for callers."""
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        checked = document
+        if isinstance(document, dict):
+            reasons = document.get("stride_reasons")
+            if isinstance(reasons, dict):
+                by_step = reasons.get("by_step")
+                if isinstance(by_step, dict):
+                    if any(type(step) is not int or step <= 0 for step in by_step):
+                        raise ValueError("stride_reasons.by_step keys must be positive integers (not bools)")
+                    checked = {
+                        **document,
+                        "stride_reasons": {
+                            **reasons,
+                            "by_step": {str(step): reason for step, reason in by_step.items()},
+                        },
+                    }
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(checked)
+    except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError, jsonschema.ValidationError) as error:
+        raise ValueError(f"{path}: invalid video grid registry: {error}") from error
+    return {
+        "default": document["stride_reasons"]["default"],
+        "by_step": dict(document["stride_reasons"]["by_step"]),
+    }
+
+
+_STRIDE_REASONS = load_stride_reasons()
 
 
 def stride_reason(step: int) -> str:

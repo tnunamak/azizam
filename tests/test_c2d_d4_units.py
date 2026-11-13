@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
-from gateway import job_retry_hint, multipart_adapter, row_routes, workflow_adapters
+from gateway import media_jobs, job_retry_hint, multipart_adapter, row_routes, workflow_adapters
 
 
 class _Runner:
@@ -75,3 +76,16 @@ def test_form_fields_come_from_the_mapped_inputs_with_contract_defaults() -> Non
     assert multipart_adapter.scalar_fields(inputs, mapping, {}) == {"seed_field": "7", "flag_field": "false"}
     assert multipart_adapter.scalar_fields(inputs, mapping, {"seed": 1, "flag": True, "note": "x", "image": b"skipped"}) == {
         "seed_field": "1", "flag_field": "true", "note_field": "x"}
+
+
+def test_multipart_runner_does_not_dispatch_a_deleted_terminal_job(tmp_path) -> None:
+    path = tmp_path / "jobs.db"
+    media_jobs.init_db(path)
+    job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", status="succeeded"), path=path)
+    media_jobs.tombstone_job(job.job_id, path=path)
+    host = SimpleNamespace(jobs_path=lambda: path)
+    runner = multipart_adapter.runner(host)
+    # Any dispatch would need pin/inputs and host methods absent from these sentinels.
+    asyncio.run(runner.run(SimpleNamespace(job_id=job.job_id)))
+    assert media_jobs.get(job.job_id, path=path) is None
+    assert media_jobs.get(job.job_id, include_deleted=True, path=path)["status"] == "succeeded"
