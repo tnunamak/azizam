@@ -38,9 +38,9 @@ def _forbidden(report):
 def test_fresh_gateway_has_zero_engine_egress(tmp_path):
     report = run_oracle(tmp_path)
     assert report["preloaded_at_guard"] == [], "an application module was imported before the guards"
-    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
+    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "GRAPH_HOST"):
         assert report["derived"][key] == "", key
-    for key in ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "COMFY_ENABLED"):
+    for key in ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "GRAPH_ENABLED"):
         assert report["derived"][key] is False, key
     assert all(status >= 400 for _, status in report["statuses"]), report["statuses"]
     allowed = urlsplit(report["released"]).netloc
@@ -65,10 +65,10 @@ def test_absent_partial_and_disabled_records_never_dial(record):
     derived = proxy._derive_backend_constants({"backends": declared({
         "tts": dict(record), "stt": dict(record), "embeddings": dict(record), "comfyui": dict(record)})})
     complete_enabled = bool(record.get("host") and record.get("port")) and record.get("enabled", True) is not False
-    for key in ("TTS_ENABLED", "STT_ENABLED", "COMFY_ENABLED"):
+    for key in ("TTS_ENABLED", "STT_ENABLED", "GRAPH_ENABLED"):
         assert derived[key] is complete_enabled, key
     if not (record.get("host") and record.get("port")):
-        assert {derived[k] for k in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST")} == {""}
+        assert {derived[k] for k in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "GRAPH_HOST")} == {""}
 
 
 def test_removed_on_reload_record_is_unconfigured():

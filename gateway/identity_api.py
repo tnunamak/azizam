@@ -21,7 +21,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from gateway import binding_descriptors, binding_registry
+from gateway import binding_descriptors, binding_registry, openai_media_schemas
 from gateway import identity_scene as ids
 from gateway import likeness, request_forms
 from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest
@@ -325,16 +325,18 @@ LIKENESS_OPENAPI: dict[str, Any] = {
     }}}}},
 }
 
+def _identity_reference_schema() -> dict[str, Any]:
+    return openai_media_schemas._endpoint_fragment("POST", IDENTITY_PATH)["requestBody"]["content"]["multipart/form-data"]["schema"]
+
+
 IDENTITY_OPENAPI: dict[str, Any] = {
     "requestBody": {
         "required": True,
         "content": {"multipart/form-data": {"schema": {
             "type": "object",
-            "required": ["image", "prompt"],
+            "required": _identity_reference_schema()["required"],
             "properties": {
-                "image": {"type": "array", "items": {"type": "string", "format": "binary"},
-                          "description": "Reference photo(s) at full resolution. Never send tiny face crops: the gateway crops roomy heads itself. Several photos of one person are welcome: list them in people[].images."},
-                "prompt": {"type": "string", "description": "The new scene, poses and gaze. People are tagged for you."},
+                **_identity_reference_schema()["properties"],
                 "people": _people_schema(),
                 "attempts": {"type": "integer", "minimum": 1, "maximum": ids.MAX_ATTEMPTS, "default": 3,
                              "description": "Maximum seeds to try; stops early when every person meets the threshold. ~2 min each."},
@@ -460,9 +462,10 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
             return auth
         try:
             form = await form_of(request)
-            photos = await _uploads(form, "image", "image[]")
+            reference_field = openai_media_schemas.wire_error_param("identity_scene", "reference_photos")
+            photos = await _uploads(form, reference_field, f"{reference_field}[]")
             if not photos or len(photos) > MAX_PHOTOS:
-                raise IdentityError(f"send 1 to {MAX_PHOTOS} reference photos", param="image")
+                raise IdentityError(f"send 1 to {MAX_PHOTOS} reference photos", param=reference_field)
             response_format = str(form.get("response_format") or "b64_json")
             if response_format not in ("b64_json", "url"):
                 raise IdentityError("response_format must be 'b64_json' or 'url'", param="response_format")
@@ -591,7 +594,7 @@ def stored_scene_extras(result: ids.SceneResult, request: SceneRequest) -> dict[
                 continue
             if key in {"reason", "message", "param"} and isinstance(item, str):
                 if any(label in item for label in labels) or any(text in item for text in prompt_texts):
-                    if not (key == "param" and item in {"prompt", "people", "image"}):
+                    if not (key == "param" and item in {"prompt", "people", openai_media_schemas.wire_error_param("identity_scene", "reference_photos")}):
                         continue
             clean[key] = private_diagnostics(item)
         return clean

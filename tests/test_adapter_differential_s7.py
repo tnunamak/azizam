@@ -55,7 +55,7 @@ class Route:
         base._comfy(rig, comfy_exchanges(history=FAILED_HISTORY, strict=False))
 
     def engine_never(self, rig):
-        rig.set(proxy, "COMFY_TIMEOUT", 2)
+        rig.set(proxy, "GRAPH_TIMEOUT", 2)
         base._comfy(rig, comfy_exchanges(history=NEVER_HISTORY, strict=False,
                                          queue={"queue_running": [], "queue_pending": [[0, "p1", {}, {}, []]]}))
 
@@ -292,10 +292,10 @@ def build(route: Route, outcome: str):
     elif outcome == "admission_refusal":
         def setup(rig):
             prepare(rig, "engine_down")
-            set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
+            set_derived(rig.monkeypatch, "GRAPH_ENABLED", False)
             # The run core reads the engine's own record: a video route's engine is disabled there too.
             rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
-                "enabled": False, "host": base.COMFY_HOST, "port": 80, "protocol": "node-graph"}})
+                "enabled": False, "host": base.GRAPH_HOST, "port": 80, "protocol": "node-graph"}})
 
         async def drive(rig):
             await _first(rig, route, "media backend disabled")
@@ -324,7 +324,7 @@ def build(route: Route, outcome: str):
             rig.note("scheduled_jobs", len(rig.scheduled))
     elif outcome == "wait_timeout":
         # Today no modality route holds a client for a bounded wait. A sync route waits for the engine until the
-        # engine budget (COMFY_TIMEOUT) ends and answers its timeout; a job route answers the queued job at once.
+        # engine budget (GRAPH_TIMEOUT) ends and answers its timeout; a job route answers the queued job at once.
         # That is the contract recorded here; the generic route's Prefer: wait is the S6 contract, tested in C.
         def setup(rig): prepare(rig, "engine_never")
 

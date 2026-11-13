@@ -221,8 +221,8 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
             }
             for name, value in replacements.items():
                 stack.enter_context(patch.object(proxy, name, value))
-            stack.enter_context(derived_patch("COMFY_ENABLED", True))
-            stack.enter_context(derived_patch("COMFY_HOST", host))
+            stack.enter_context(derived_patch("GRAPH_ENABLED", True))
+            stack.enter_context(derived_patch("GRAPH_HOST", host))
             sleep = stack.enter_context(patch.object(proxy.asyncio, "sleep", AsyncMock()))
             response = await asyncio.wait_for(
                 proxy.proxy_audio_generate(JsonRequest(), proxy.NO_AUTH_CONTEXT),

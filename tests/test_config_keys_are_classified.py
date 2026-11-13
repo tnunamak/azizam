@@ -183,6 +183,9 @@ KEY_READING_CALLS = frozenset({"scalar", "url"})
 # Everything else a production file reads under a credential-like name must be a field some projection type classifies.
 CREDENTIAL_NAMES_OF_OTHER_THINGS = {
     "AZIZAM_SUPERVISOR_REDACT_ENV": "the name of an environment variable read from os.environ",
+    "dir_env": "registry/status_words.yml: the name of the environment variable that places the graph engine's folder (a path, not a secret)",
+    "output_dir_env": "registry/status_words.yml: the name of the environment variable that places the engine's output folder",
+    "custom_nodes_env": "registry/status_words.yml: the name of the environment variable that places the engine's custom nodes folder",
     "client_secret_env": "a setting of the OIDC provider (admin settings), not of a service",
     "signing_key_env": "a setting of the OIDC provider (admin settings), not of a service",
     "session_signing_key_env": "a setting of the OIDC provider (admin settings), not of a service",

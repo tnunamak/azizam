@@ -4,7 +4,7 @@ from __future__ import annotations
 import proxy
 from tests.support.config_snapshot import derived_patch, publish_section
 
-NAME = "COMFY_ENABLED"
+NAME = "GRAPH_ENABLED"
 
 
 def test_a_section_published_inside_a_derived_patch_loses_the_patch_when_the_block_ends(monkeypatch):

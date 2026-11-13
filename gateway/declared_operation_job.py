@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from gateway import media_job_intents, media_jobs
+from gateway.capabilities import Capability
 from gateway.engine_contract_view import connection_config
 from gateway.engine_protocol import description, dispatch
 from gateway.engine_protocol import jobs as protocol_jobs
@@ -77,6 +78,16 @@ def declared(registry: Mapping[str, Any]) -> list[tuple[str, str, str]]:
 def intents(registry: Mapping[str, Any]) -> list[str]:
     """The declared operations as submit intents, sorted and without repeats."""
     return sorted({operation for _engine, _model, operation in declared(registry)})
+
+
+def capabilities(registry: Mapping[str, Any]) -> list[Capability]:
+    """Project declared jobs for the member catalog, without inferring modalities.
+
+    Installed descriptions currently declare no input/output modalities; leave them empty so presentation uses the
+    unclassified vocabulary rather than guessing from the operation's name.
+    """
+    return [Capability(intent=operation, backend=engine_id, model=model, execution="async")
+            for engine_id, model, operation in declared(registry)]
 
 
 def model_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:

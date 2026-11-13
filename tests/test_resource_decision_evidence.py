@@ -163,7 +163,7 @@ def test_queue_read_failure_is_unknown_and_refused_without_dispatch():
     import proxy
     from tests.support.config_snapshot import derived_patch
     from unittest.mock import patch
-    with derived_patch("COMFY_ENABLED", True), \
+    with derived_patch("GRAPH_ENABLED", True), \
          patch.object(proxy, "_operator_service_availability_overrides", return_value={}), \
          patch.object(proxy, "_effective_media_job_admission_cfg", return_value={"max_queue_depth": 1}), \
          patch.object(proxy.media_jobs, "recent", side_effect=RuntimeError("private database detail")):
@@ -205,7 +205,7 @@ def test_empty_queue_read_is_measured_and_admitted():
     import proxy
     from tests.support.config_snapshot import derived_patch
     from unittest.mock import patch
-    with derived_patch("COMFY_ENABLED", True), \
+    with derived_patch("GRAPH_ENABLED", True), \
          patch.object(proxy, "_operator_service_availability_overrides", return_value={}), \
          patch.object(proxy, "_effective_media_job_admission_cfg", return_value={"max_queue_depth": 1}), \
          patch.object(proxy.media_jobs, "recent", return_value=[]):

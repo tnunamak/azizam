@@ -143,7 +143,7 @@ def normalize_video_asset(
     return normalized
 
 
-def extract_comfyui_video_assets(history_job: Mapping[str, Any]) -> list[dict[str, Any]]:
+def extract_graph_video_assets(history_job: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Extract normalized video assets from a ComfyUI history job.
 
     The ComfyUI-specific name is intentional: this is a binding adapter around

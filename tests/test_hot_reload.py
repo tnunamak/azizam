@@ -161,7 +161,7 @@ class TestGoldenParity(unittest.TestCase):
         before_tts = proxy.DERIVED.TTS_HOST
         before_stt = proxy.DERIVED.STT_HOST
         before_emb = proxy.DERIVED.EMBEDDINGS_HOST
-        before_comfy = proxy.DERIVED.COMFY_HOST
+        before_comfy = proxy.DERIVED.GRAPH_HOST
         before_llm = dict(proxy.DERIVED.LLM_BACKEND_HOSTS)
 
         # Use the REAL _load_effective_runtime_config — hits the live DB.
@@ -171,7 +171,7 @@ class TestGoldenParity(unittest.TestCase):
         self.assertEqual(proxy.DERIVED.TTS_HOST, before_tts, "TTS_HOST changed on no-op reload")
         self.assertEqual(proxy.DERIVED.STT_HOST, before_stt, "STT_HOST changed on no-op reload")
         self.assertEqual(proxy.DERIVED.EMBEDDINGS_HOST, before_emb, "EMBEDDINGS_HOST changed on no-op reload")
-        self.assertEqual(proxy.DERIVED.COMFY_HOST, before_comfy, "COMFY_HOST changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.GRAPH_HOST, before_comfy, "GRAPH_HOST changed on no-op reload")
         self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS, before_llm, "LLM_BACKEND_HOSTS changed on no-op reload")
 
     def test_golden_host_values(self):
@@ -395,7 +395,7 @@ class TestReadSiteLiveness(unittest.TestCase):
                          "TTS_HOST was not updated after reload")
 
     def test_comfy_host_updated(self):
-        """COMFY_HOST is updated after a reload that changes the ComfyUI backend port."""
+        """GRAPH_HOST is updated after a reload that changes the ComfyUI backend port."""
         new_cfg = _make_effective_config({
             "vision-llm": _vision_backend(),
             "kobold": _kobold_backend(),
@@ -408,8 +408,8 @@ class TestReadSiteLiveness(unittest.TestCase):
         })
         _call_reload_with_config(new_cfg)
 
-        self.assertEqual(proxy.DERIVED.COMFY_HOST, "http://127.0.0.1:8765",
-                         "COMFY_HOST was not updated after reload")
+        self.assertEqual(proxy.DERIVED.GRAPH_HOST, "http://127.0.0.1:8765",
+                         "GRAPH_HOST was not updated after reload")
 
 
 # ---------------------------------------------------------------------------
@@ -477,8 +477,8 @@ class TestAtomicity(unittest.TestCase):
 
         required_keys = {
             "TTS_HOST", "STT_HOST",
-            "EMBEDDINGS_HOST", "COMFY_HOST", "LLM_BACKEND_HOSTS",
-            "TTS_ENABLED", "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "COMFY_ENABLED",
+            "EMBEDDINGS_HOST", "GRAPH_HOST", "LLM_BACKEND_HOSTS",
+            "TTS_ENABLED", "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "GRAPH_ENABLED",
         }
         missing = required_keys - set(updates.keys())
         self.assertFalse(missing, f"reload_runtime_config() missing keys: {missing}")
@@ -553,7 +553,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
         self.assertEqual(result["STT_HOST"], "http://10.1.0.4:5092")
         self.assertEqual(result["STT_TIMEOUT"], 321)
         self.assertEqual(result["EMBEDDINGS_HOST"], "http://10.1.0.5:5061")
-        self.assertEqual(result["COMFY_HOST"], "http://10.1.0.6:7890")
+        self.assertEqual(result["GRAPH_HOST"], "http://10.1.0.6:7890")
         self.assertIn("vision-llm", result["LLM_BACKEND_HOSTS"])
         self.assertIn("kobold", result["LLM_BACKEND_HOSTS"])
 
@@ -601,7 +601,7 @@ class TestDeriveBackendConstants(unittest.TestCase):
             }
         }
         result = proxy._derive_backend_constants(cfg)
-        self.assertTrue(result["COMFY_ENABLED"])
+        self.assertTrue(result["GRAPH_ENABLED"])
 
 
 def _pin_reload_state(monkeypatch) -> tuple[dict[str, Any], dict[str, Any]]:

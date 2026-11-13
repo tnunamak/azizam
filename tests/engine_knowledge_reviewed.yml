@@ -20,3 +20,55 @@ sites:
     count: 1
     category: protocol_field
     reason: Names the configuration field containing a projector-file path.
+  - file: firehose_render.py
+    literal: "curl -s https://gateway.example/openai/v1/images/generations \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"flux2-klein-4b\",\"prompt\":\"a calico cat\",\"size\":\"512x512\"}'"
+    count: 1
+    category: doc_example
+    reason: Copy-paste curl example in the status page's quick-test panel; it names a public model id a caller sends.
+  - file: firehose_render.py
+    literal: "curl -s https://gateway.example/openai/v1/audio/speech \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"voxtral-4b-tts\",\"voice\":\"nova\",\"input\":\"hello\"}' --output out.mp3"
+    count: 1
+    category: doc_example
+    reason: Copy-paste curl example in the status page's quick-test panel; it names a public model id a caller sends.
+  - file: firehose_render.py
+    literal: "curl -s https://gateway.example/openai/v1/audio/transcriptions \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -F \"file=@audio.mp3\" -F \"model=parakeet-tdt-0.6b-v3\""
+    count: 1
+    category: doc_example
+    reason: Copy-paste curl example in the status page's quick-test panel; it names a public model id a caller sends.
+  - file: firehose_render.py
+    literal: "curl -s https://gateway.example/openai/v1/videos \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"ltx-2.5\",\"prompt\":\"a calico cat playing chess\",\"seconds\":5}'"
+    count: 1
+    category: doc_example
+    reason: Copy-paste curl example in the status page's quick-test panel; it names a public model id a caller sends.
+  - file: firehose_render.py
+    literal: "curl -s https://gateway.example/openai/v1/videos \\\n  -H \"Authorization: Bearer $AZIZAM_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\":\"ltx-2.5\",\"prompt\":\"camera dolly in\",\"input_image_url\":\"…\"}'"
+    count: 1
+    category: doc_example
+    reason: Copy-paste curl example in the status page's quick-test panel; it names a public model id a caller sends.
+  - file: gateway/a1111_api.py
+    literal: upscaling is not supported by this adapter; use the seedvr2-upscale workflow
+    count: 2
+    category: doc_example
+    reason: Refusal text points the caller at the shipped upscaling workflow by its registry id.
+  - file: gateway/openai_media_schemas.py
+    literal: STT model id (e.g. 'whisper-1').
+    count: 1
+    category: doc_example
+    reason: Schema description example of a public OpenAI-compatible model id.
+  - file: gateway/lifecycle_drivers.py
+    literal: .gguf
+    count: 1
+    category: file_format
+    reason: Suffix of the model file a record's gguf_path precheck requires before a swap.
+  - file: gateway/lifecycle_drivers.py
+    literal: gguf_path
+    count: 1
+    category: protocol_field
+    reason: Value of a record's driver_config precheck field, stored in service records.
+  - file: gateway/lifecycle_drivers.py
+    literal: '# Managed by azizam. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.
+
+      '
+    count: 1
+    category: protocol_field
+    reason: Comment written into a systemd drop-in; names the role config fields; pinned byte for byte by golden tests.

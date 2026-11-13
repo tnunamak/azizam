@@ -16,7 +16,8 @@ answers JSON that carries the model. In every cell the engine saw the same reque
 (the oracle test below). Differences
 that hold for every cell: (a) the old ``x-request-id`` and ``x-asset-id`` headers and the route's receipt rows are gone
 (the run core keeps a job row and a Library asset; no per-request receipt); (b) a failed run's message is the run core's
-generic text ("The job failed."), the status and code carry the reason (old: a sentence per case); (c) the job is a
+generic text ("The job failed."), the status and code carry the reason (old: a sentence per case); the one exception is the
+capacity refusal ``resource_unavailable``, which says "The graphics card is busy with other work. Try again soon."; (c) the job is a
 workflow job (``intent: workflow.run``, ``workflow_id`` names the workflow), not a mesh job with its own mode.
 
 * ``success_raw`` -> ``success``: status 200, ``model/gltf-binary`` and the exact model bytes, as before.
@@ -532,3 +533,26 @@ def test_the_job_content_route_serves_the_model(rig):
         return {"status": content.status_code, "type": content.headers.get("content-type"), "bytes": content.content}
     got = run(rig, go)
     assert (got["status"], got["type"], got["bytes"]) == (200, "model/gltf-binary", GLB)
+
+
+def test_a_job_refused_for_capacity_tells_its_caller_the_card_is_busy(rig):
+    """The async job a person polls says the card is busy and that waiting works: the plain sentence, the typed facts
+    unchanged, and a ``retry_after`` event whose delay the client reads."""
+    rig.run_slots(4)
+    gate = Gate(rig)
+
+    async def go(c):
+        first = await c.post(SYNC, headers=ASYNC, **form())
+        await gate.started.wait()
+        third = await c.post(SYNC, headers=ASYNC, **form())
+        await settle(c, job_id_of(third))
+        row = _providers()[0](job_id_of(third), audience="client")
+        events = media_jobs.events(job_id_of(third), audience="client", path=media_jobs.DB_PATH)
+        gate.release.set()
+        await settle(c, job_id_of(first))
+        return {"row": row, "events": events}
+    got = run(rig, go)
+    row = got["row"]
+    assert row["error"] == "The graphics card is busy with other work. Try again soon."
+    assert (row["error_code"], row["error_category"], row["retryable"]) == ("resource_unavailable", "capacity", True)
+    assert [e["payload"].get("step") for e in got["events"] if e["event_type"] == "retry_after"] == [30]

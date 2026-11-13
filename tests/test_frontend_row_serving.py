@@ -50,7 +50,7 @@ def served(monkeypatch, tmp_path):
     # The deployment declares its engine as a service record; the run core finds it by the protocol the record names.
     monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "engine-under-test": {
         "enabled": True, "host": "engine.test", "port": 80, "protocol": "node-graph"}})
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_DEFAULT_MODEL", CONFIGURED_DEFAULT)
+    monkeypatch.setitem(proxy.runtime().derived, "GRAPH_DEFAULT_MODEL", CONFIGURED_DEFAULT)
     state = SimpleNamespace(seen=[], media=media)
 
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")

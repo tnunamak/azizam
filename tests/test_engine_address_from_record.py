@@ -59,14 +59,14 @@ def probed(monkeypatch):
 def test_derived_constants_use_the_record_as_written():
     derived = proxy._derive_backend_constants(_config(
         tts=NON_DEFAULT, stt=NON_DEFAULT, embeddings=NON_DEFAULT, comfyui=NON_DEFAULT))
-    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
+    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "GRAPH_HOST"):
         assert derived[key] == "http://203.0.113.7:9999", key
 
 
 def test_status_probe_dials_the_address_the_record_names(probed):
     config = _config(tts=NON_DEFAULT, stt=NON_DEFAULT, comfyui=NON_DEFAULT)
     asyncio.run(status_endpoint._enriched_aux_health(config))
-    asyncio.run(status_endpoint._comfy_queue_and_stats(config))
+    asyncio.run(status_endpoint._graph_queue_and_stats(config))
     assert sorted(probed) == sorted([
         "http://203.0.113.7:9999/health", "http://203.0.113.7:9999/health",
         "http://203.0.113.7:9999/queue", "http://203.0.113.7:9999/system_stats"])
@@ -74,7 +74,7 @@ def test_status_probe_dials_the_address_the_record_names(probed):
 
 def test_status_probe_of_the_chat_engine_dials_its_record(probed):
     config = _config(chat={**NON_DEFAULT, "capabilities": ["chat"], "lifecycle": {"driver": "systemd"}})
-    asyncio.run(status_endpoint._llama_props_and_slots(config))
+    asyncio.run(status_endpoint._chat_props_and_slots(config))
     assert probed == ["http://203.0.113.7:9999/props"]
 
 
@@ -95,11 +95,11 @@ def test_lifecycle_driver_dials_the_record_address():
 
 def test_a_record_with_no_address_is_not_configured():
     derived = proxy._derive_backend_constants(_config(tts={"enabled": True}, stt={"timeout": 5}, comfyui={}))
-    for host in ("TTS_HOST", "STT_HOST", "COMFY_HOST"):
+    for host in ("TTS_HOST", "STT_HOST", "GRAPH_HOST"):
         assert derived[host] == ""
     assert derived["TTS_ENABLED"] is False
     assert derived["STT_ENABLED"] is False
-    assert derived["COMFY_ENABLED"] is False
+    assert derived["GRAPH_ENABLED"] is False
     # A host without a port, or a port without a host, names no address either.
     half = proxy._derive_backend_constants(_config(tts={"host": "203.0.113.1"}, stt={"port": 5092}))
     assert half["TTS_HOST"] == half["STT_HOST"] == ""
@@ -108,8 +108,8 @@ def test_a_record_with_no_address_is_not_configured():
 def test_status_probe_sends_nothing_for_a_record_with_no_address(probed):
     config = _config(tts={}, stt={}, comfyui={}, chat={"capabilities": ["chat"], "lifecycle": {"driver": "systemd"}})
     assert asyncio.run(status_endpoint._enriched_aux_health(config)) == {"voxtral": None, "parakeet": None}
-    assert asyncio.run(status_endpoint._comfy_queue_and_stats(config)) == (None, None)
-    assert asyncio.run(status_endpoint._llama_props_and_slots(config)) == (None, None)
+    assert asyncio.run(status_endpoint._graph_queue_and_stats(config)) == (None, None)
+    assert asyncio.run(status_endpoint._chat_props_and_slots(config)) == (None, None)
     assert probed == []
 
 
@@ -159,7 +159,7 @@ def test_host_and_port_derive_the_old_address(host, port):
     derived = proxy._derive_backend_constants(_config(
         tts={"host": host, "port": port}, stt={"host": host, "port": port},
         embeddings={"host": host, "port": port}, comfyui={"host": host, "port": port}))
-    assert {derived[k] for k in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST")} == {old}
+    assert {derived[k] for k in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "GRAPH_HOST")} == {old}
     assert proxy._backend_host_map(_config(chat={"host": host, "port": port}).get("backends"), lambda *_: True) == {"chat": old}
 
 

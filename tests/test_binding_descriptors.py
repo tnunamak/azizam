@@ -295,7 +295,7 @@ def run_tile_route(proxy: Any, counts: dict[str, int]) -> Any:
         raise AssertionError("an engine was called")
 
     receipt = proxy.start_image_route_receipt("/v1/images/generations", access_context())
-    with pytest.MonkeyPatch.context() as mp, derived_patch("COMFY_ENABLED", True), patch.object(
+    with pytest.MonkeyPatch.context() as mp, derived_patch("GRAPH_ENABLED", True), patch.object(
         proxy, "configured_downstream_headers", lambda _auth, _service: {}
     ), patch.object(proxy, "_graph_run_round", counting_round):
         install_async_client_stub(mp, counting_post)

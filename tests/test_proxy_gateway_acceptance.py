@@ -1749,7 +1749,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
                 media_type="application/json",
             )
 
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             # Background-removal decisioning calls get_active_backend() ->
             # check_service_health() against every configured backend host —
             # a real network call this test must not depend on (it hangs
@@ -1801,7 +1801,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
                 media_type="application/json",
             )
 
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             # Background-removal decisioning calls get_active_backend() ->
             # check_service_health() against every configured backend host —
             # a real network call this test must not depend on (it hangs
@@ -1881,7 +1881,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
                 media_type="application/json",
             )
 
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             # Background-removal decisioning calls get_active_backend() ->
             # check_service_health() against every configured backend host —
             # a real network call this test must not depend on (it hangs

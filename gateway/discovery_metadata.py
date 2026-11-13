@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from gateway import toolcall_detection
+
 PROTOCOL_FRONTENDS_CATALOG_PATH = (
     Path(__file__).resolve().parent.parent / "registry" / "protocol_frontends.yml"
 )
@@ -81,9 +83,9 @@ def _default_surface_guidance(protocols: Sequence[Mapping[str, Any]], *, numbere
     convenience = row.get("convenience_base_path")
     if numbered:
         text = f"4. Use {canonical} by default for new setup"
-        return text + (f"; {convenience} remains available for existing OpenAI-compatible clients."
+        return text + (toolcall_detection.GATEWAY_MESSAGES["surface_existing_clients"].format(convenience=convenience)
                        if convenience else ".")
-    text = f"Use canonical {canonical} endpoints for new OpenAI-compatible setup"
+    text = toolcall_detection.GATEWAY_MESSAGES["surface_new_setup"].format(canonical=canonical)
     return text + (f"; {convenience} remains a convenience route for existing clients."
                    if convenience else ".")
 

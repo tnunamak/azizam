@@ -1191,3 +1191,17 @@ test("a link that names a workflow this list lacks says so, and selects none", a
   expect(select).not.toHaveTextContent("Working workflow");
   expect(select).not.toHaveTextContent("Other workflow");
 });
+
+
+test("keeps the complete capabilityTryHelp map byte-identical", async () => {
+  const { capabilityTryHelp } = await import("@/lib/capability-words");
+  expect(capabilityTryHelp).toEqual({
+    "chat": "Send a message and get a reply.",
+    "image": "Describe the picture you want to make.",
+    "speech": "Enter text to hear it spoken aloud.",
+    "transcribe": "Upload a recording or record your voice to get the words as text.",
+    "decide": "Provide information to help pick one of the options.",
+    "embed": "Turn text into numbers that search tools can use.",
+    "mesh": "Turn a picture into a 3D model you can turn around and download."
+  });
+});

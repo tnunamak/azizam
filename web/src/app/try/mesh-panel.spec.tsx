@@ -567,3 +567,80 @@ test("a refusal at submit is still shown as it was, with no job stored", async (
   expect(await screen.findByRole("alert")).toHaveTextContent("The GPU is busy. Try again shortly.");
   expect(window.sessionStorage.getItem(MESH_JOB_STORAGE_KEY)).toBeNull();
 });
+
+const BUSY = "The graphics card is busy with other work. Try again soon.";
+const eventsReply = (...steps: number[]) =>
+  new Response(
+    JSON.stringify({ events: steps.map((step) => ({ event_type: "retry_after", payload: { step } })) }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
+/** A gateway whose first job is refused for capacity and whose second job succeeds. */
+function serveBusyThenFree(events: () => Response) {
+  let posts = 0;
+  fetchMock.mockImplementation(async (url: string) => {
+    if (url === "/v1/3d/generations/glb") {
+      posts += 1;
+      return job("queued", { id: `mj_${posts}` });
+    }
+    if (url.endsWith("/events")) return events();
+    if (url.endsWith("/content")) return glb();
+    if (url.endsWith("mj_1")) {
+      return job("failed", { id: "mj_1", error: BUSY, error_category: "capacity", error_code: "resource_unavailable", retryable: true });
+    }
+    return job("succeeded", { id: "mj_2" });
+  });
+  return () => posts;
+}
+
+test("a job refused for capacity says the card is busy and Try again sends the same picture and options once", async () => {
+  const posts = serveBusyThenFree(() => eventsReply(30));
+  const { container } = renderPanel();
+  await choosePicture(container);
+  await userEvent.selectOptions(screen.getByLabelText(/^Detail/), "512");
+  await userEvent.click(screen.getByRole("button", { name: "Make 3D model" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(BUSY);
+  expect(screen.getByText("The gateway suggests waiting about 30 seconds.")).toBeVisible();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(posts()).toBe(1); // no automatic loop
+
+  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(container.querySelector("model-viewer")).not.toBeNull());
+  expect(posts()).toBe(2);
+  const sends = fetchMock.mock.calls.filter(([url]) => url === "/v1/3d/generations/glb") as [string, RequestInit][];
+  const [first, second] = sends.map(([, init]) => init.body as FormData);
+  expect((second.get("image") as File).name).toBe((first.get("image") as File).name);
+  expect(second.get("resolution")).toBe("512");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+test("a capacity refusal with no recorded delay still offers Try again, without a number", async () => {
+  serveBusyThenFree(() => refusal(404, {}));
+  const { container } = renderPanel();
+  await start(container);
+  expect(await screen.findByRole("button", { name: "Try again" })).toBeEnabled();
+  expect(screen.queryByText(/suggests waiting/)).toBeNull();
+});
+
+test("a failure that is not a capacity refusal offers no Try again", async () => {
+  serve({ polls: [job("failed", { error: "The 3D engine failed.", error_category: "upstream", retryable: true })] });
+  const { container } = renderPanel();
+  await start(container);
+  expect(await screen.findByRole("alert")).toHaveTextContent("The 3D engine failed.");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+test("a 503 resource_unavailable answer to the send offers Try again with the Retry-After delay", async () => {
+  fetchMock.mockResolvedValue(
+    new Response(JSON.stringify({ error: { message: BUSY, code: "resource_unavailable" } }), {
+      status: 503,
+      headers: { "content-type": "application/json", "retry-after": "30" },
+    }),
+  );
+  const { container } = renderPanel();
+  await start(container);
+  expect(await screen.findByRole("alert")).toHaveTextContent(BUSY);
+  expect(screen.getByText("The gateway suggests waiting about 30 seconds.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+});

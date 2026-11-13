@@ -63,7 +63,7 @@ class _FakeVideoAsyncClient:
     async def get(self, url: str, **_kwargs: Any) -> _StubHistoryResponse:
         if url.endswith("/queue"):
             return _StubHistoryResponse(200, self.queue)
-        # url is f"{COMFY_HOST}/history/{prompt_id}"
+        # url is f"{GRAPH_HOST}/history/{prompt_id}"
         prompt_id = url.rsplit("/", 1)[-1]
         if prompt_id in self.history:
             return _StubHistoryResponse(200, {prompt_id: self.history[prompt_id]})
@@ -103,7 +103,7 @@ class VideoRegistryTestCase(unittest.IsolatedAsyncioTestCase):
         proxy._video_progress.clear()
         proxy._video_workflows.clear()
         self.addCleanup(self._restore)
-        self.enabled_patch = derived_patch("COMFY_ENABLED", True)
+        self.enabled_patch = derived_patch("GRAPH_ENABLED", True)
         self.enabled_patch.start()
         self.addCleanup(self.enabled_patch.stop)
         self.service_patch = patch.object(
@@ -469,7 +469,7 @@ class TestVideosDelete(VideoRegistryTestCase):
         self.assertNotIn("p1", proxy._video_workflows)
         # No cancel call for an already-terminal job -- only history delete.
         self.assertEqual(len(client.posts), 1)
-        self.assertEqual(client.posts[0][0], f"{proxy.DERIVED.COMFY_HOST}/history")
+        self.assertEqual(client.posts[0][0], f"{proxy.DERIVED.GRAPH_HOST}/history")
         self.assertEqual(client.posts[0][1], {"delete": ["p1"]})
 
     async def test_known_but_not_yet_in_history_still_deletable(self) -> None:
@@ -497,8 +497,8 @@ class TestVideosDelete(VideoRegistryTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(json.loads(response.body)["deleted"])
         self.assertEqual(len(client.posts), 2)
-        self.assertEqual(client.posts[0][0], f"{proxy.DERIVED.COMFY_HOST}/api/jobs/p1/cancel")
-        self.assertEqual(client.posts[1][0], f"{proxy.DERIVED.COMFY_HOST}/history")
+        self.assertEqual(client.posts[0][0], f"{proxy.DERIVED.GRAPH_HOST}/api/jobs/p1/cancel")
+        self.assertEqual(client.posts[1][0], f"{proxy.DERIVED.GRAPH_HOST}/history")
 
     async def test_cancel_failure_returns_409_not_deleted(self) -> None:
         """If ComfyUI can't confirm the cancel, we must not claim

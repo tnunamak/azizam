@@ -73,7 +73,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with derived_patch("COMFY_WORKFLOWS_DIR", workflows_dir):
+            with derived_patch("GRAPH_WORKFLOWS_DIR", workflows_dir):
                 self.assertIsNone(proxy.load_graph_workflow("bad"))
 
     def test_proxy_loader_resolves_imported_package_workflow_artifacts(self) -> None:
@@ -118,7 +118,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 facts=STANDARD_FACTS,
             )
 
-            with patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry), derived_patch("COMFY_WORKFLOWS_DIR", package_dir / "empty",
+            with patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry), derived_patch("GRAPH_WORKFLOWS_DIR", package_dir / "empty",
             ):
                 workflow = proxy.load_graph_workflow("demo")
                 manifest = proxy._find_image_manifest("image.generate", "demo")

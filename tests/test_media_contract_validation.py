@@ -45,7 +45,7 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             ("configured_downstream_headers", lambda *a: {}),
         ):
             self.stack.enter_context(patch.object(proxy, name, value))
-        self.stack.enter_context(derived_patch("COMFY_ENABLED", True))
+        self.stack.enter_context(derived_patch("GRAPH_ENABLED", True))
         self.stack.enter_context(patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient))
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []

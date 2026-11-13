@@ -58,7 +58,7 @@ def _fail(rig) -> None:
 
 
 def _never(rig) -> None:
-    rig.set(proxy, "COMFY_TIMEOUT", 2)
+    rig.set(proxy, "GRAPH_TIMEOUT", 2)
     base._comfy(rig, comfy_exchanges(history=NEVER_HISTORY, strict=False,
                                      queue={"queue_running": [], "queue_pending": [[0, "p1", {}, {}, []]]}))
 
@@ -73,7 +73,7 @@ def _down(rig) -> None:
 
 
 def _disable(rig) -> None:
-    set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
+    set_derived(rig.monkeypatch, "GRAPH_ENABLED", False)
 
 
 def _rows(rig, path: Path, table: str, skip: tuple[str, ...] = ()) -> list[dict[str, Any]]:
@@ -1413,8 +1413,8 @@ def test_audio_84_cancel_while_running_wins_over_success(tmp_path):
     with GatewayRig("audio-84", tmp_path) as rig:
         base._audio_comfy(rig, strict=False)
         base._capture_scheduling(rig)
-        held = _HeldHistory(rig.fakes.router._routes[base.COMFY_HOST])
-        rig.fakes.router._routes[base.COMFY_HOST] = held
+        held = _HeldHistory(rig.fakes.router._routes[base.GRAPH_HOST])
+        rig.fakes.router._routes[base.GRAPH_HOST] = held
         attempts: list[str] = []
         real_update = media_jobs.update_status
 

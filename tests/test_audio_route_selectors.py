@@ -19,7 +19,7 @@ from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, 
 from tests.support.config_snapshot import publish_section
 from tests.test_adapter_differential import _wav
 
-COMFY_HOST = "comfy.fk.test"
+GRAPH_HOST = "comfy.fk.test"
 BODY = {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}
 
 
@@ -42,8 +42,8 @@ def build(tmp_path: Path, answer: dict[str, Any], **settings: Any):
     rig = GatewayRig("audio-route-selectors", tmp_path)
     made = rig.__enter__()
     fake = made.engine("comfy", scenario("comfyui", "audio-route-selectors", comfy_exchanges(
-        history=answer, views=[(_wav(), "audio/wav")], strict=False)), host=COMFY_HOST)
-    made.set(proxy, "COMFY_HOST", fake.base_url)
+        history=answer, views=[(_wav(), "audio/wav")], strict=False)), host=GRAPH_HOST)
+    made.set(proxy, "GRAPH_HOST", fake.base_url)
     if settings:
         publish_section(made.monkeypatch, "workflow_execution", settings)
     return rig, made

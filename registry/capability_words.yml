@@ -7,72 +7,106 @@ modality_words: [text, image, audio, video, mesh]
 media_type_modalities: {model/gltf-binary: mesh}
 capabilities:
   - id: chat
+    models_explainer: "Answers, writing and code, for chat apps and agents."
+    try_help: "Send a message and get a reply."
     display_order: 0
     label: Chat
     recommended_alias: default
     alias_hides_declared_names: true   # a chat alias shows its own name, not the title its target model declares
   - id: image
+    models_explainer: "Make or edit a picture from a description."
+    try_help: "Describe the picture you want to make."
+    request_noun: "Image"
     display_order: 1
     label: Images
+    task_name: Make a picture
     recommended_alias: image
     summary: Generate or edit images from your prompts.
     policy_protocol: openai.images
   - id: video
+    models_explainer: "Make a short video from a description or a picture."
     display_order: 2
     label: Video
+    task_name: Make a video
     recommended_alias: video
     summary: Video from a prompt or image.
     policy_protocol: openai.video
   - id: speech
+    models_explainer: "Read text aloud."
+    try_help: "Enter text to hear it spoken aloud."
     display_order: 6
     label: Voice
+    task_name: Read text aloud
     recommended_alias: tts
     summary: Turn text into spoken audio.
     policy_protocol: openai.audio
   - id: transcribe
+    models_explainer: "Turn a recording into text."
+    try_help: "Upload a recording or record your voice to get the words as text."
     display_order: 8
     label: Transcription
+    task_name: Transcribe a recording
     recommended_alias: stt
     summary: Turn recorded speech into text.
     policy_protocol: openai.audio
   - id: music
+    models_explainer: "Songs and instrumentals from a description."
     display_order: 4
     label: Music
+    task_name: Make music
     recommended_alias: music
     summary: Songs and instrumentals from a prompt.
     policy_protocol: openai.audio
   - id: sfx
+    models_explainer: "Short sounds from a description."
     display_order: 5
     label: Sound effects
+    task_name: Make a sound effect
     recommended_alias: sfx
     summary: Sound effects from a description.
     policy_protocol: openai.audio
   - id: audio
+    models_explainer: "Music and sounds from a description."
     display_order: 7
     label: Audio
+    task_name: Make music or sounds
     hidden_by: [speech, transcribe, music, sfx]
     icon: sfx
     summary: Generate audio from your prompts.
     policy_protocol: openai.audio
   - id: decide
+    models_explainer: "Pick one answer from options you give, for routing and yes-or-no checks."
+    try_help: "Provide information to help pick one of the options."
+    request_noun: "Decision"
     display_order: 9
     label: Decisions
+    member_label: Choose an option
     recommended_alias: decide
     summary: Choose an outcome from your options.
   - id: embed
+    models_explainer: "Vectors that let apps search text and find similar passages."
+    try_help: "Turn text into numbers that search tools can use."
     display_order: 10
     label: Document search
+    member_label: Turn text into numbers
     recommended_alias: embed
     summary: Create vectors for search and similarity.
     policy_protocol: openai.embeddings
   - id: rerank
+    models_explainer: "Sort search results by how well they match."
+    request_noun: "Rerank"
     display_order: 11
     label: Reranking
+    task_name: Sort search results
     recommended_alias: rerank
     summary: Order search results by relevance.
   - id: mesh
+    models_explainer: "Make a 3D model from one picture."
+    try_help: "Turn a picture into a 3D model you can turn around and download."
+    request_noun: "3D model"
     display_order: 3
     label: 3D models
+    task_name: Make a 3D model
     summary: A 3D model from one picture.
     policy_protocol: openai.mesh
 protocol_words:

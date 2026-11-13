@@ -19,8 +19,8 @@ from tests.support.graph_service import GRAPH_CAPABILITIES, graph_record
 
 RENAMED = "graph-one"
 FAMILIES = ("images", "videos", "audio.generate")
-ADDRESS_KEYS = ("COMFY_HOST", "COMFY_ENABLED", "COMFY_TIMEOUT", "COMFY_DEFAULT_MODEL", "COMFY_WORKFLOWS_DIR",
-                "COMFY_VIDEO_TIMEOUT", "COMFY_VIDEO_WORKFLOWS_DIR", "_GRAPH_BINDING")
+ADDRESS_KEYS = ("GRAPH_HOST", "GRAPH_ENABLED", "GRAPH_TIMEOUT", "GRAPH_DEFAULT_MODEL", "GRAPH_WORKFLOWS_DIR",
+                "GRAPH_VIDEO_TIMEOUT", "GRAPH_VIDEO_WORKFLOWS_DIR", "_GRAPH_BINDING")
 
 
 def _record(port: int, **fields: Any) -> dict[str, Any]:
@@ -51,8 +51,8 @@ def test_a_renamed_record_derives_what_the_old_id_derived():
     renamed = _derive({RENAMED: _record(7890, **fields)})
     old = _derive({"comfyui": _record(7890, **fields)})
     assert _projection(renamed) == _projection(old)
-    assert renamed["COMFY_ENABLED"] is True and renamed["COMFY_HOST"] == "http://203.0.113.7:7890"
-    assert renamed["COMFY_TIMEOUT"] == 77 and renamed["COMFY_VIDEO_TIMEOUT"] == 88
+    assert renamed["GRAPH_ENABLED"] is True and renamed["GRAPH_HOST"] == "http://203.0.113.7:7890"
+    assert renamed["GRAPH_TIMEOUT"] == 77 and renamed["GRAPH_VIDEO_TIMEOUT"] == 88
     for family in FAMILIES:
         assert renamed["GRAPH_SERVICES"][family].service_id == RENAMED
         assert old["GRAPH_SERVICES"][family].service_id == "comfyui"
@@ -63,7 +63,7 @@ def test_no_record_declaring_a_family_leaves_it_off_with_no_id():
     for family in FAMILIES:
         view = derived["GRAPH_SERVICES"][family]
         assert (view.service_id, view.host, view.enabled) == ("", "", False)
-    assert derived["COMFY_HOST"] == "" and derived["COMFY_ENABLED"] is False
+    assert derived["GRAPH_HOST"] == "" and derived["GRAPH_ENABLED"] is False
 
 
 def test_a_family_is_served_only_by_a_record_that_declares_it():
@@ -116,14 +116,14 @@ def test_a_winner_that_cannot_serve_stays_the_selection_with_no_runner_up(winner
     for family in FAMILIES:
         view = derived["GRAPH_SERVICES"][family]
         assert view.service_id == "winner" and view.enabled is False
-    assert derived["COMFY_ENABLED"] is False
-    assert derived["COMFY_HOST"] != "http://203.0.113.7:7002"
+    assert derived["GRAPH_ENABLED"] is False
+    assert derived["GRAPH_HOST"] != "http://203.0.113.7:7002"
 
 
 def test_an_addressless_winner_has_an_empty_host():
     derived = _derive({"winner": {"enabled": True, "capabilities": list(GRAPH_CAPABILITIES), "priority": 1},
                        "runner-up": _record(7002, priority=2)})
-    assert derived["COMFY_HOST"] == ""
+    assert derived["GRAPH_HOST"] == ""
     assert all(derived["GRAPH_SERVICES"][family].host == "" for family in FAMILIES)
 
 
@@ -135,7 +135,7 @@ def test_a_candidate_config_derives_from_itself_not_from_the_live_config(monkeyp
     before = copy.deepcopy(candidate)
     derived = _derive(candidate)
     assert {derived["GRAPH_SERVICES"][family].service_id for family in FAMILIES} == {"candidate-one"}
-    assert derived["COMFY_HOST"] == "http://203.0.113.7:9002" and derived["COMFY_TIMEOUT"] == 22
+    assert derived["GRAPH_HOST"] == "http://203.0.113.7:9002" and derived["GRAPH_TIMEOUT"] == 22
     assert candidate == before
     # And the other way round: a candidate with no graph record derives none while the live config has one.
     assert _derive({})["GRAPH_SERVICES"]["images"].service_id == ""
@@ -151,10 +151,10 @@ def test_split_records_give_each_family_its_own_values():
                           workflows_dir="./not-used-either", video_timeout=61, video_workflows_dir="./motion"),
     }
     derived = _derive(backends)
-    assert derived["COMFY_HOST"] == "http://203.0.113.7:7001"
-    assert (derived["COMFY_TIMEOUT"], derived["COMFY_DEFAULT_MODEL"], derived["COMFY_WORKFLOWS_DIR"].name) == (31, "pic-model", "pictures")
+    assert derived["GRAPH_HOST"] == "http://203.0.113.7:7001"
+    assert (derived["GRAPH_TIMEOUT"], derived["GRAPH_DEFAULT_MODEL"], derived["GRAPH_WORKFLOWS_DIR"].name) == (31, "pic-model", "pictures")
     # The video values come from the record that serves videos, not the images record.
-    assert (derived["COMFY_VIDEO_TIMEOUT"], derived["COMFY_VIDEO_WORKFLOWS_DIR"].name) == (61, "motion")
+    assert (derived["GRAPH_VIDEO_TIMEOUT"], derived["GRAPH_VIDEO_WORKFLOWS_DIR"].name) == (61, "motion")
     assert derived["GRAPH_SERVICES"]["videos"].host == "http://203.0.113.7:7002"
     assert derived["GRAPH_SERVICES"]["images"].host == "http://203.0.113.7:7001"
 
@@ -234,8 +234,8 @@ def test_health_probes_the_family_selected_id(monkeypatch):
         return True
 
     monkeypatch.setattr(proxy, "check_service_health", probe)
-    assert asyncio.run(proxy.check_comfy_health("images")) is True
-    assert asyncio.run(proxy.check_comfy_health("videos")) is True
+    assert asyncio.run(proxy.check_graph_engine_health("images")) is True
+    assert asyncio.run(proxy.check_graph_engine_health("videos")) is True
     assert probed == ["pictures", "motion"]
 
 
@@ -254,7 +254,7 @@ def test_health_is_false_without_a_probe_when_the_family_service_cannot_serve(mo
 
     monkeypatch.setattr(proxy, "check_service_health", probe)
     for family in FAMILIES:
-        assert asyncio.run(proxy.check_comfy_health(family)) is False
+        assert asyncio.run(proxy.check_graph_engine_health(family)) is False
     assert probed == []
 
 

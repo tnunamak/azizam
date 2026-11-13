@@ -86,7 +86,7 @@ class VideoAssetExtractionTests(unittest.TestCase):
             }
         }
 
-        assets = video_media_jobs.extract_comfyui_video_assets(history_job)
+        assets = video_media_jobs.extract_graph_video_assets(history_job)
 
         self.assertEqual(len(assets), 2)
         self.assertEqual(assets[0]["kind"], "video")
