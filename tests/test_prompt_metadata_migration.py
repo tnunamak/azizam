@@ -3,6 +3,7 @@ import asyncio
 import io
 import os
 import shutil
+import sqlite3
 import struct
 import subprocess
 import threading
@@ -257,3 +258,20 @@ def test_legacy_scratch_failure_is_honest(tmp_path):
     (scratch / ("b" * 32 + ".in.mp4")).mkdir()
     result = migration.strip_cached_assets(cache, state)
     assert result.pending == 1 and not result.complete
+
+
+def test_gif_migrates_after_an_old_version_was_marked_complete(tmp_path):
+    cache, state = tmp_path / "assets", tmp_path / "state.db"
+    stream = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(stream, "GIF", comment=SECRET.encode())
+    path, _ = asset(cache, suffix=".gif", content=stream.getvalue())
+    migration.strip_cached_assets(cache, state)
+    # A prior completion must not exempt files from the new stricter parser.
+    path.write_bytes(stream.getvalue())
+    with sqlite3.connect(state) as db:
+        db.execute("UPDATE prompt_metadata_migration SET version=1, fingerprint=?",
+                   (migration._fingerprint(path.stat()),))
+    result = migration.strip_cached_assets(cache, state)
+    assert result.complete and result.stripped == 1
+    assert SECRET.encode() not in path.read_bytes()
+    assert Image.open(io.BytesIO(path.read_bytes())).size == (2, 2)

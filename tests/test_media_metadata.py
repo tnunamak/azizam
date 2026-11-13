@@ -20,9 +20,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import pytest
 from PIL import Image  # noqa: E402
 
 from gateway import media_metadata as mm  # noqa: E402
+from gateway import media_delivery
+from tests.test_adapter_differential_s7_mesh_rows import rig as mesh_rig
 
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 SKIP_FF = "ffmpeg/ffprobe not installed"
@@ -341,7 +344,7 @@ def test_missing_ffmpeg_fails_closed_even_when_no_codec_is_installed():
         side_effect=AssertionError("must reject before allocating media buffers"),
     ):
         try:
-            mm.strip_metadata(b"tagged private media", ".mp4")
+            mm.strip_metadata(b"\x00\x00\x00\x18ftypisom", ".mp4")
         except mm.MediaMetadataError as exc:
             assert str(exc) == "ffmpeg not found"
         else:
@@ -455,7 +458,16 @@ class FfmpegTests(unittest.TestCase):
         self.assertNotIn("workflow", after)
         self.assertIn(after.get("encoder"), (None, "Lavf"))  # bitexact: no version
         for sel in selectors:
-            self.assertEqual(self.md5(out, suffix, sel), self.md5(src, suffix, sel), sel)
+            if sel.endswith("v"):
+                # Codec user-data units intentionally change; decoded pixels must not.
+                def pixels(data):
+                    path = self.tmp / ("pixels" + mm._suffix(suffix))
+                    path.write_bytes(data)
+                    return _ff("-i", str(path), "-map", sel, "-threads", "1",
+                               "-f", "rawvideo", "-pix_fmt", "rgb24", "-").stdout
+                self.assertEqual(pixels(out), pixels(src), sel)
+            else:
+                self.assertEqual(self.md5(out, suffix, sel), self.md5(src, suffix, sel), sel)
         self.assertEqual(list(self.work.iterdir()), [])  # temp files cleaned
         return out
 
@@ -660,7 +672,7 @@ def test_missing_ffmpeg_fails_closed_even_when_no_codec_is_installed():
         ),
     ):
         try:
-            mm.strip_metadata(b"tagged private media", ".mp4")
+            mm.strip_metadata(b"\x00\x00\x00\x18ftypisom", ".mp4")
         except mm.MediaMetadataError as exc:
             assert str(exc) == "ffmpeg not found"
         else:
@@ -696,8 +708,6 @@ class AnonymousBufferTests(unittest.TestCase):
             self._assert_anonymous()
 
 # Fail-closed regressions: all fixtures are synthetic.
-import pytest
-from gateway import media_delivery
 
 
 @pytest.mark.parametrize("declared", [".png", ".jpg", ".webp", ".gif", ".bin"])
@@ -781,6 +791,7 @@ def test_codec_userdata_removed_or_codec_refused(tmp_path, codec):
     if codec.encode() not in encoders:
         pytest.skip(f"{codec} encoder unavailable")
     command = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "color=size=16x16:rate=1",
+               "-f", "lavfi", "-i", "sine=duration=0.1", "-c:a", "aac",
                "-frames:v", "1", "-threads", "1", "-c:v", codec]
     if codec == "libx264":
         command += ["-bsf:v", "h264_metadata=sei_user_data=00112233-4455-6677-8899-aabbccddeeff+SYNTHETIC_CAMERA_LOCATION"]
@@ -796,9 +807,143 @@ def test_codec_userdata_removed_or_codec_refused(tmp_path, codec):
     assert marker in source
     clean = mm.strip_metadata(source, ".mp4")
     assert marker not in clean
+    assert mm._probe_streams(clean) == mm._probe_streams(source)
     stripped = tmp_path / "stripped.mp4"
     stripped.write_bytes(clean)
     def pixels(filename):
         return subprocess.run(["ffmpeg", "-v", "error", "-i", str(filename), "-frames:v", "1",
                                "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], check=True, capture_output=True).stdout
     assert pixels(path) == pixels(stripped)
+
+
+@pytest.mark.parametrize("source,declared", [
+    (b"RIFF\x04\x00\x00\x00WAVE", ".mp4"),
+    (b"\x00\x00\x00\x18ftypisom", ".wav"),
+    (b"\x1a\x45\xdf\xa3", ".mp4"),
+    (b"OggS", ".flac"),
+    (b"fLaC", ".mp3"),
+    (b"\xff\xf1\x50\x80", ".mp3"),
+    (b"ID3\x04\x00\x00\x00\x00\x00\x00", ".aac"),
+    (b"RIFF\x04\x00\x00\x00AVI ", ".webm"),
+])
+def test_container_family_mismatch_refused(source, declared):
+    with pytest.raises(mm.MediaMetadataError, match="container"):
+        mm.strip_metadata(source, declared)
+
+
+def test_missing_ffprobe_refused(monkeypatch):
+    original = mm.shutil.which
+    monkeypatch.setattr(mm.shutil, "which", lambda name: None if name == "ffprobe" else original(name))
+    with pytest.raises(mm.MediaMetadataError, match="ffprobe"):
+        mm.strip_metadata(b"\x00\x00\x00\x18ftypisom", ".mp4")
+
+
+@pytest.mark.parametrize("source,suffix", [
+    (b"GIF89a", ".gif"),
+    (b"GIF89a" + b"\x00" * 7, ".gif"),
+    (b"GIF89a" + b"\x00" * 7 + b"\x21\xfe\x05abc", ".gif"),
+    (b"glTF", ".glb"),
+    (b"glTF" + struct.pack("<II", 2, 12), ".glb"),
+    (b"glTF" + struct.pack("<II", 2, 24) + b"\x00" * 4, ".glb"),
+])
+def test_malformed_new_containers_refused(source, suffix):
+    with pytest.raises(mm.MediaMetadataError):
+        mm.strip_metadata(source, suffix)
+
+
+def test_pcm_row_cannot_hide_known_metadata():
+    source = _png_with_text()
+    clean = mm.strip_metadata(source, "audio/pcm")
+    assert mm.png_text_chunks(clean) == {}
+    assert _px(clean) == _px(source)
+    assert mm.strip_metadata(b"\x00\x01\x02\x03", "audio/pcm") == b"\x00\x01\x02\x03"
+
+
+
+
+def test_pixal3d_glb_job_download_still_loads(mesh_rig, monkeypatch):
+    from tests import test_adapter_differential_s7_mesh_rows as journey
+    from tests.support import mesh_harness
+    source_json = {"asset": {"version": "2.0", "generator": "PRIVATE_MARKER", "copyright": "PRIVATE_MARKER"},
+                   "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0, "extras": {"secret": 1}}],
+                   "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+                   "buffers": [{"byteLength": 36}], "bufferViews": [{"buffer": 0, "byteLength": 36}],
+                   "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                                  "min": [0, 0, 0], "max": [1, 1, 0]}]}
+    raw = json.dumps(source_json).encode()
+    raw += b" " * (-len(raw) % 4)
+    binary = struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)
+    body = struct.pack("<I4s", len(raw), b"JSON") + raw + struct.pack("<I4s", len(binary), b"BIN\x00") + binary
+    source = b"glTF" + struct.pack("<II", 2, len(body) + 12) + body
+    monkeypatch.setattr(mesh_harness, "PIXAL3D_GLB", source)
+    monkeypatch.setattr(journey, "PNG", _png_with_text())
+
+    async def go(client):
+        created = await client.post(journey.SYNC, headers=journey.ASYNC, data={"model": "mesh.generate.pixal3d"},
+                                    files=journey.form()["files"])
+        assert created.status_code == 202, created.text
+        finished = await journey.settle(client, journey.job_id_of(created))
+        assert finished["status"] == "succeeded", finished
+        content = await client.get(created.json()["content_url"])
+        assert content.status_code == 200, content.text
+        clean = content.content
+        assert b"PRIVATE_MARKER" not in clean and b'"extras"' not in clean
+        size = struct.unpack_from("<I", clean, 12)[0]
+        value = json.loads(clean[20:20 + size])
+        assert value["meshes"][0]["primitives"][0]["attributes"]["POSITION"] == 0
+        assert value["accessors"][0]["count"] == 3
+        assert clean[28 + size:] == binary
+        return {"status": content.status_code}
+    assert journey.run(mesh_rig, go)["status"] == 200
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason=SKIP_FF)
+def test_av1_metadata_obu_removed_with_pixels_intact(tmp_path):
+    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True).stdout
+    if b"libaom-av1" not in encoders:
+        pytest.skip("libaom-av1 encoder unavailable")
+    ivf = tmp_path / "synthetic.ivf"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=size=16x16:rate=1",
+                    "-frames:v", "1", "-c:v", "libaom-av1", "-cpu-used", "8", "-threads", "1", str(ivf)],
+                   check=True, capture_output=True)
+    original = ivf.read_bytes()
+    frame_size = struct.unpack_from("<I", original, 32)[0]
+    packet = original[44:44 + frame_size]
+    # Insert a registered ITU-T T.35 metadata OBU immediately after the sequence header.
+    pos = 0
+    while pos < len(packet):
+        header = packet[pos]
+        end = pos + 1 + bool(header & 4)
+        size, shift = 0, 0
+        while True:
+            byte = packet[end]
+            end += 1
+            size |= (byte & 127) << shift
+            shift += 7
+            if byte < 128:
+                break
+        end += size
+        if (header >> 3) & 15 == 1:
+            break
+        pos = end
+    else:
+        pytest.fail("synthetic AV1 frame lacks a sequence header")
+    marker = b"SYNTHETIC_CAMERA_LOCATION"
+    metadata = b"\x04\xb5\x00\x3c" + marker + b"\x80"
+    obu = b"\x2a" + bytes([len(metadata)]) + metadata
+    packet = packet[:end] + obu + packet[end:]
+    ivf.write_bytes(original[:32] + struct.pack("<I", len(packet)) + original[36:44] + packet)
+    path = tmp_path / "tagged.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(ivf), "-c", "copy", str(path)],
+                   check=True, capture_output=True)
+    source = path.read_bytes()
+    assert marker in source
+    clean = mm.strip_metadata(source, ".mp4")
+    assert marker not in clean
+    output = tmp_path / "clean.mp4"
+    output.write_bytes(clean)
+    def pixels(filename):
+        return subprocess.run(["ffmpeg", "-v", "error", "-i", str(filename), "-frames:v", "1",
+                               "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                              check=True, capture_output=True).stdout
+    assert pixels(output) == pixels(path)

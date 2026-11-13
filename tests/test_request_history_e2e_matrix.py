@@ -26,6 +26,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.media_test_bytes import mp4_bytes
 from tests.support.graph_service import GRAPH_SERVICE_ID, set_derived
 import responses_store
 from gateway import (
@@ -45,7 +46,6 @@ from tests.test_request_history_capture import _kept_rows, _mint_member_key
 NAMESPACE = "com.azizam.prompts"
 FORGET = {NAMESPACE: {"mode": "forget"}}
 MARKER = "matrix harmless request text"
-MP4_HEAD = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"  # the run route measures an upload's type from its bytes
 MODEL = "garage-chat"
 LIMIT = int(retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["max_record_bytes"])
 
@@ -138,7 +138,7 @@ class World:
     shape: Shape | None = None
     calls: list[str] = field(default_factory=list)
     reply_payload: dict = field(default_factory=dict)
-    # The file the fake graph engine returns for a video result; None: the bare MP4_HEAD stand-in.
+    # The file the fake graph engine returns for a video result; None: a small decodable H.264 fixture.
     view_bytes: bytes | None = None
 
 
@@ -228,7 +228,7 @@ def world(fake_upstreams, monkeypatch, tmp_path):
                 # The save node of the workflow each shape runs: the rife video one, the qwen image edit one.
                 "6" if video else "10": {"images": [{"filename": filename, "type": "output"}]}}}})
         if request.url.path == "/view":
-            return httpx.Response(200, content=(w.view_bytes or MP4_HEAD + b"rendered-video") if video else comfy_png(),
+            return httpx.Response(200, content=(w.view_bytes or mp4_bytes()) if video else comfy_png(),
                                   headers={"content-type": "video/mp4" if video else "image/png"})
         pytest.fail("unexpected graph HTTP path")
 
@@ -328,7 +328,7 @@ async def _send(w: World, shape: Shape, *, forget: str | None = None,
                 # is awaited so the engine call and the result are part of what this shape proves.
                 data["inputs"] = json.dumps({"multiplier": 2})
                 headers["prefer"] = "wait=30"
-                files = {"source_video": ("sample.mp4", MP4_HEAD + b"input-video-bytes", "video/mp4")}
+                files = {"source_video": ("sample.mp4", mp4_bytes(), "video/mp4")}
             files.update(extra_files or {})
             if forget == "body":
                 controls.update(FORGET)

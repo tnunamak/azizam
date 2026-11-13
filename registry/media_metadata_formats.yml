@@ -32,9 +32,16 @@ formats:
     suffixes: [.avi]
     mime_types: [video/x-msvideo]
     muxer: avi
-  - handler: null
+  - handler: gif
     suffixes: [.gif]
-    mime_types: []
+    mime_types: [image/gif]
+  - handler: glb
+    suffixes: [.glb]
+    mime_types: [model/gltf-binary]
+  # Headerless samples: the entire file is content, with no metadata channel.
+  - handler: content
+    suffixes: [.pcm]
+    mime_types: [audio/pcm]
   - handler: audio
     suffixes: [.wav]
     mime_types: [audio/wav, audio/x-wav, audio/wave, audio/vnd.wave]

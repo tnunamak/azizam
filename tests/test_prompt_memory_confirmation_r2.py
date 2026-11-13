@@ -9,11 +9,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.media_test_bytes import mp4_bytes
 from gateway import admin_store, identity_api, media_delivery, media_jobs, media_metadata, prompt_memory, receipt_store
 from tests.test_identity_api import BINDING, GOOD, PHOTO, TEMPLATE, FakeClient
 from tests.support.gateway import gateway_client
 from tests.test_prompt_memory_final_cleanup import household
-from tests.test_request_history_e2e_matrix import MP4_HEAD, SHAPES, fake_upstreams, world  # noqa: F401
+from tests.test_request_history_e2e_matrix import SHAPES, fake_upstreams, world  # noqa: F401
 from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
 from tests.test_identity_api import build
@@ -63,7 +64,7 @@ def _run_video_edit(world, extensions: dict | None) -> dict:
     world.shape = next(shape for shape in SHAPES if shape.name == "workflow_upload")   # the fake engine renders a video
     world.view_bytes = _tagged_video()
     parts = {"inputs": (None, json.dumps({"multiplier": 2})),
-             "source_video": ("sample.mp4", MP4_HEAD + b"input-video-bytes", "video/mp4")}
+             "source_video": ("sample.mp4", mp4_bytes(), "video/mp4")}
     if extensions is not None:
         parts["extensions"] = (None, json.dumps(extensions))
 

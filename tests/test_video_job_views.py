@@ -98,7 +98,10 @@ def test_content_of_an_unfinished_job_is_404_not_ready_with_the_status_word(shap
     assert f"status={word}" in body(answer)["error"]["message"]
 
 
-def test_content_of_a_finished_job_is_its_one_file(shape):
+def test_content_of_a_finished_job_is_its_one_file(shape, monkeypatch):
+    from gateway import media_delivery
+    # This wire test uses stand-in bytes; codec tests exercise real stripping.
+    monkeypatch.setattr(media_delivery, "deliver_bytes", lambda content, suffix, mode: content)
     core = FakeRunCore()
     jobs = FakeJobService(core)
     done = view(status="succeeded", results=(ResultRef("video", 0, "video/mp4", asset_id="a"),))

@@ -33,7 +33,7 @@ _ASSET_ID = re.compile(r"^(?:img|aud|vid)_([0-9a-f]{64})$")
 _DDL = """CREATE TABLE IF NOT EXISTS prompt_metadata_migration (
     path TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version INTEGER NOT NULL
 )"""
-_VERSION = 1
+_VERSION = 2
 _ATTEMPTS_DDL = """CREATE TABLE IF NOT EXISTS prompt_metadata_migration_attempts (
     path TEXT PRIMARY KEY, attempted_at INTEGER NOT NULL
 )"""
@@ -193,10 +193,9 @@ def strip_cached_assets(
                 continue
             if not _DIGEST.fullmatch(path.stem) or (digests is not None and path.stem not in digests):
                 continue
-            # Sidecars and signing secrets are not media. Recognize GIF/PCM
-            # explicitly so unsupported tagged GIFs stay honestly pending.
+            # Sidecars and signing secrets are not media; only declared formats migrate.
             kind = media_metadata.media_kind(path.suffix)
-            if kind is None and path.suffix not in {".gif", ".pcm"}:
+            if kind is None:
                 continue
             try:
                 before = path.stat(follow_symlinks=False)
@@ -219,8 +218,6 @@ def strip_cached_assets(
                        (str(path.absolute()), time.time_ns()))
             db.commit()
             try:
-                if path.suffix == ".gif":
-                    raise media_metadata.MediaMetadataError("unsupported cached format")
                 fingerprint = _strip_file(path, before)
                 if fingerprint is None:
                     result.pending += 1

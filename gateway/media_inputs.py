@@ -33,7 +33,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from gateway import asset_types
+from gateway import asset_types, media_metadata
 from gateway.media_input_leases import HOLDER_KINDS, MediaInputLedger
 from gateway.workflow_call import sniff
 
@@ -216,7 +216,10 @@ class MediaInputResolver:
             raise MediaInputError(FORBIDDEN, "asset_id is not accessible for this API key")
         # The size limit is for bytes the gateway fetches or receives. A file already in the store got in under that
         # rule, and a route that served it before this resolver existed never measured it, so it is not refused here.
-        data = self._assets.read(asset_id)
+        try:
+            data = self._assets.read(asset_id)
+        except media_metadata.MediaMetadataError as exc:
+            raise MediaInputError(UNSUPPORTED, "the input is not a file type this model accepts") from exc
         measured = self._check_bytes(data, accepts, capped=False)
         owner = self._assets.owner_key(auth) or ""
         lease_id = self._lease(asset_id, owner, holder, effect_id=None)

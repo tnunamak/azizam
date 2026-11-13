@@ -15,7 +15,7 @@ EXPECTED_SUFFIX_KIND = {
     ".jpg": "jpeg", ".jpeg": "jpeg", ".jpe": "jpeg", ".jfif": "jpeg",
     ".webp": "webp",
     ".mp4": "video", ".m4v": "video", ".mov": "video", ".webm": "video",
-    ".mkv": "video", ".avi": "video", ".gif": None,
+    ".mkv": "video", ".avi": "video", ".gif": "gif", ".glb": "glb", ".pcm": "content",
     ".wav": "audio", ".flac": "audio", ".mp3": "audio", ".ogg": "audio",
     ".oga": "audio", ".opus": "audio", ".m4a": "audio", ".aac": "audio",
     ".mka": "audio",
@@ -23,7 +23,7 @@ EXPECTED_SUFFIX_KIND = {
 
 EXPECTED_MIME_KIND = {
     "image/png": "png", "image/jpeg": "jpeg", "image/jpg": "jpeg",
-    "image/webp": "webp",
+    "image/webp": "webp", "image/gif": "gif", "model/gltf-binary": "glb", "audio/pcm": "content",
     "video/mp4": "video", "video/webm": "video",
     "video/quicktime": "video", "video/x-matroska": "video",
     "video/x-msvideo": "video",
@@ -64,7 +64,7 @@ def test_suffix_muxer_table_is_pinned():
 
 
 @pytest.mark.parametrize("suffix", [".not-a-format", ".known-without-muxer"])
-def test_unhandled_formats_are_unchanged_and_never_call_ffmpeg(monkeypatch, suffix):
+def test_unhandled_strip_refused_without_ffmpeg(monkeypatch, suffix):
     if suffix == ".known-without-muxer":
         # A synthetic recognized video kind without any matching muxer.
         monkeypatch.setitem(mm._SUFFIX_KIND, suffix, "video")
@@ -78,7 +78,8 @@ def test_unhandled_formats_are_unchanged_and_never_call_ffmpeg(monkeypatch, suff
 
     monkeypatch.setattr(mm, "_ffmpeg_rewrite", forbidden)
     original = b"opaque media bytes"
-    assert mm.strip_metadata(original, suffix) is original
+    with pytest.raises(mm.MediaMetadataError):
+        mm.strip_metadata(original, suffix)
     assert mm.strip_audio(original, suffix) is original
     assert mm.embed_media_tags(original, suffix, {"prompt": "private"}) is original
 

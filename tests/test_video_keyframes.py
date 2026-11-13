@@ -884,7 +884,7 @@ def _mp4_with_audio() -> bytes:
             ["ffmpeg", "-nostdin", "-v", "error", "-y",
              "-f", "lavfi", "-i", "color=c=black:s=16x16:d=0.25:r=5",
              "-f", "lavfi", "-i", "sine=frequency=440:duration=0.25",
-             "-c:v", "mpeg4", "-c:a", "aac", "-shortest", str(output)],
+             "-c:v", "libx264", "-threads", "1", "-c:a", "aac", "-shortest", str(output)],
             capture_output=True, check=True,
         )
         return output.read_bytes()
