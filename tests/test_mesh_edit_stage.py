@@ -14,14 +14,15 @@ import proxy
 from gateway import registry_snapshot, service_registry
 from gateway.discovery import WorkflowRegistry
 from gateway.manifests import Provenance, enforce_contract
+from tests.media_test_bytes import glb_bytes
 from tests.support.gateway import gateway_client
 from tests.support.mesh_harness import PNG
 from tests.test_adapter_differential_s7_mesh_rows import rig  # noqa: F401
 
 STAGE_ID = "mesh.edit.test-stage"
 STAGE_URL = "http://127.0.0.1:8899"
-STAGE_GLB = b"glTF\x02\x00\x00\x00" + b"staged-model" * 8
-STAGE_IN = b"glTF\x02\x00\x00\x00" + b"input-model" * 8
+STAGE_GLB = glb_bytes(b"staged-model" * 8)
+STAGE_IN = glb_bytes(b"input-model" * 8)
 
 
 def stage_document() -> dict:

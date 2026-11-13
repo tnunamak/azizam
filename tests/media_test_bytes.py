@@ -28,3 +28,31 @@ def png_bytes(color: tuple[int, int, int] = (0, 0, 0)) -> bytes:
     out = io.BytesIO()
     Image.new("RGB", (2, 2), color).save(out, format="PNG")
     return out.getvalue()
+
+
+def glb_bytes(tag: bytes = b"") -> bytes:
+    """A valid minimal GLB already in stripped form (strip_metadata returns it unchanged).
+
+    `tag` goes in a BIN chunk, NUL-padded to 4 bytes, so different tags give different files."""
+    import struct
+
+    doc = b'{"asset":{"version":"2.0"}}'
+    doc += b" " * (-len(doc) % 4)
+    chunks = struct.pack("<I4s", len(doc), b"JSON") + doc
+    if tag:
+        tag += b"\x00" * (-len(tag) % 4)
+        chunks += struct.pack("<I4s", len(tag), b"BIN\x00") + tag
+    return b"glTF" + struct.pack("<II", 2, len(chunks) + 12) + chunks
+
+
+def wav_bytes(frames: int = 80, rate: int = 8000) -> bytes:
+    """A real tiny mono 16-bit PCM WAV of silence."""
+    import wave
+
+    out = io.BytesIO()
+    with wave.open(out, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b"\x00\x00" * frames)
+    return out.getvalue()

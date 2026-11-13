@@ -66,7 +66,7 @@ def _long_mp4() -> bytes:
         path = Path(directory) / "clip.mp4"
         subprocess.run(
             ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=64x64:d=2:r=10",
-             "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-fflags", "+bitexact", "-flags:v", "+bitexact",
+             "-pix_fmt", "yuv420p", "-c:v", "libx264", "-threads", "1", "-fflags", "+bitexact", "-flags:v", "+bitexact",
              "-map_metadata", "-1", str(path)],
             capture_output=True, check=True)
         return path.read_bytes()

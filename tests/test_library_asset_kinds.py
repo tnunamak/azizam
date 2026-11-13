@@ -10,10 +10,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.media_test_bytes import glb_bytes, png_bytes
 from gateway import accounts, admin_store, asset_types, media_jobs, me_media, prompt_memory, receipt_store, workflow_call
 from gateway.admin_oidc import AdminSession
 
-GLB = b"glTF\x02\x00\x00\x00" + b"\x00" * 24
+GLB = glb_bytes(b"\x00" * 24)
 
 
 @pytest.mark.parametrize("suffix,media_type,kind", [
@@ -121,7 +122,7 @@ def test_a_stored_file_is_found_again_by_its_id(library):
 
 # --- what made a stored file: any workflow, no workflow named in the store ---------------------------------------------
 
-PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
+PNG = png_bytes()
 
 
 def _store_output(library, **overrides):
@@ -316,8 +317,8 @@ def test_a_source_only_picture_still_opens_from_the_item_that_uses_it(library):
 
 
 def test_a_picture_that_was_made_stays_listed_when_a_later_run_uses_it(library):
-    first = _store_output(library, data=PNG + b"made", suffix=".png", inputs=())
-    again = asset_types.OutputInput(PNG + b"made", "first.png", "image/png")
+    first = _store_output(library, data=png_bytes((9, 9, 9)), suffix=".png", inputs=())
+    again = asset_types.OutputInput(png_bytes((9, 9, 9)), "first.png", "image/png")
     second = _store_output(library, inputs=(again,))
     assert first in _listed_ids(library, "&kind=image")
     assert second in _listed_ids(library, "&kind=model")
