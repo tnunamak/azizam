@@ -324,7 +324,7 @@ def test_anonymous_media_guard_allows_the_hevc_header_rebuild(tmp_path, monkeypa
             ["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout:
         pytest.skip("no HEVC encoder")
     source = tmp_path / "clip.mp4"
-    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.2",
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=160x120:d=2",
                     "-c:v", "libx265", "-x265-params", "log-level=none", str(source)], check=True)
     clean, commands = _guarded_strip(tmp_path, monkeypatch, source.read_bytes(), ".mp4")
     assert clean[4:8] == b"ftyp"
