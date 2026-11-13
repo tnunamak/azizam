@@ -70,7 +70,7 @@ CONFIG_SCALAR_KEYS = (
     "priority", "managed", "base_url_env", "api_base_env", "default_model", "activation_model", "model_id", "model",
     "execution_substrate", "paid_remote", "remote_provider", "preset_id", "provider_id", "provider_type", "cost_class",
     "cost_model", "litellm_model", "litellm_provider", "provider_adapter", "concurrency_limit", "id_param", "cost_path",
-    "path", "config_path", "gateway_lifecycle_api_key_ref", "model_file_scope", "state_type", "kind", "description",
+    "path", "config_path", "gateway_lifecycle_api_key_ref", "model_file_scope", "kind", "description",
     "display_name", "note", "placement", "queue_name", "video_timeout", "video_workflows_dir", "workflows_dir",
     "vram_budget_key", "health_success_path", "configured", "missing", "builder", "chain_workflow", "save_node",
     "id", "max_app_concurrency", "max_seconds", "min_seconds", "chain_segment_seconds", "max_total_seconds", "control_after_generate",
@@ -80,7 +80,7 @@ CONFIG_SCALAR_KEYS = (
 CONFIG_DESCRIPTOR_KEYS = (
     "capabilities", "engine_capabilities", "transforms", "engine_check", "engine_tests", "chunking", "aux", "offerings",
     "billing_dimensions", "spend_caps_usd", "price", "generation_stats", "model_listing", "auth_test", "protocols",
-    "default_models", "protocol_operations", "control_file_roots", "loaded_model_identity", "gateway_lifecycle",
+    "default_models", "protocol_operations", "control_file_roots", "loaded_model_identity", "loaded_model_probe", "gateway_lifecycle",
     "auth_inject", "recommendations", "connection", "workflows", "status_panels",
     # The exclusive pool's closed schema (gateway/exclusive_pool.py). It holds numbers and an observer's names, no
     # secret; unclassified, a read hid it and the Overview showed only a count, so the operator could not see it.

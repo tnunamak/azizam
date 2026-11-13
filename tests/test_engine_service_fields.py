@@ -57,7 +57,7 @@ class TestActivationRequiresAbsolutePath:
 
 
 def _path_service(port: int, **fields) -> dict:
-    return {"host": "127.0.0.1", "port": port, "state_type": "llama_cpp", **fields}
+    return {"host": "127.0.0.1", "port": port, "loaded_model_probe": {"endpoint": "/props", "model_key": "model_path"}, **fields}
 
 
 def _seed_from_name(backend: str) -> None:
@@ -138,9 +138,7 @@ class TestAuxProbe:
         pgrep = _Pgrep()
         backends = {service_id: _path_service(5051, **fields)}
         proxy._loaded_state.clear()
-        with patch.object(proxy, "config", {"backends": backends}), patch.object(
-            proxy, "_BACKEND_STATE_STRATEGIES", {"llama_cpp": {"endpoint": "/props", "model_key": "model_path"}}
-        ), patch.object(proxy, "_seed_loaded_state", wraps=proxy._seed_loaded_state), patch.object(
+        with patch.object(proxy, "config", {"backends": backends}), patch.object(proxy, "_seed_loaded_state", wraps=proxy._seed_loaded_state), patch.object(
             proxy.subprocess, "run", pgrep
         ), patch.object(proxy, "_engine_probe_json_sync", side_effect=OSError("no server")):
             return proxy._currently_loaded_aux_for(service_id), pgrep
