@@ -333,3 +333,76 @@ def test_malformed_data_pack_names_file_and_id_without_partial_registration(tmp_
     assert "fixture-invalid" in str(error.value)
     assert "param" in str(error.value)
     assert registry.names() == []
+
+# File-only validation: no primitive constructor behavior is changed.
+@pytest.mark.parametrize(("spec", "field"), [
+    ({"kind":"value-map","param":"x","mapp":{}}, "mapp"),
+    ({"kind":"drop-params","dropp":[]}, "dropp"),
+    ({"kind":"default-params","sett":{}}, "sett"),
+    ({"kind":"param-map","from":"x","to":"y","too":"z"}, "too"),
+    ({"kind":"message-inject","texxt":"hello"}, "texxt"),
+    ({"kind":"clamp","param":"x","min":0,"mx":2}, "mx"),
+    ({"kind":"default-params","phsae":"response"}, "phsae"),
+    ({"kind":"default-params","phase":"respnse"}, "phase"),
+    ({"kind":"default-params","when":[{"field":"x","op":"presnt"}]}, "op"),
+    ({"kind":"default-params","when":[{"op":"present"}]}, "field"),
+    ({"kind":"default-params","when":[{"field":"x"}]}, "op"),
+    ({"kind":"default-params","when":{}}, "when"),
+    ({"kind":"default-params","when":[1]}, "when"),
+    ({"kind":"default-params","when":[{"field":"x","op":"present","typo":1}]}, "typo"),
+    ({"kind":"default-params","when":[{"field":"","op":"present"}]}, "field"),
+    ({"kind":"clamp","param":"x"}, "min"),
+    ({"kind":"clamp","param":"x","min":2,"max":1}, "min"),
+    ({"kind":"clamp","param":""}, "param"),
+    ({"kind":"value-map","param":" x"}, "param"),
+    ({"kind":"param-map","from":"x ","to":"y"}, "from"),
+    ({"kind":"param-map","from":"x","to":" y"}, "to"),
+    ({"kind":"default-params","set":{" x":1}}, "set"),
+    ({"kind":"drop-params","drop":["x "]}, "drop"),
+    (None, "max"),  # raw YAML repeated key, not representable by a dict
+])
+def test_pack_file_refusals_are_atomic_and_located(tmp_path, spec, field):
+    path = tmp_path / "closed-pack-fields.yml"
+    if spec is None:
+        text = (
+            "schema_version: 1\npacks:\n"
+            "  - id: good-before-bad\n    source: fixture\n"
+            "    specs: [{kind: default-params, set: {good: 1}}]\n"
+            "  - id: fixture-invalid\n    source: fixture\n    specs:\n"
+            "      - kind: clamp\n        param: x\n"
+            "        max: 2\n        max: 3\n"
+        )
+    else:
+        text = yaml.safe_dump({
+            "schema_version": 1,
+            "packs": [
+                {"id": "good-before-bad", "source": "fixture",
+                 "specs": [{"kind": "default-params", "set": {"good": 1}}]},
+                {"id": "fixture-invalid", "source": "fixture", "specs": [spec]},
+            ],
+        }, sort_keys=False)
+    path.write_text(text, encoding="utf-8")
+    target = TransformRegistry()
+    target.register("existing", {"kind": "default-params", "set": {"keep": 1}})
+    existing = target.resolve("existing")
+    with pytest.raises(ValueError) as error:
+        load_transform_packs(path, target)
+    assert str(path) in str(error.value)
+    assert "fixture-invalid" in str(error.value)
+    assert field in str(error.value)
+    assert target.names() == ["existing"]
+    assert target.resolve("existing") is existing
+    assert run_request_pipeline(["existing"], {}, registry=target) == {"keep": 1}
+
+
+def test_shipped_pack_file_still_loads_both_packs():
+    target = TransformRegistry()
+    load_transform_packs(TRANSFORM_PACKS_FILE, target)
+    assert set(target.names()) == {"llamacpp-cache-prompt", "mistral-penalty-clamp"}
+    assert len(target.resolve("llamacpp-cache-prompt")) == 1
+    assert len(target.resolve("mistral-penalty-clamp")) == 2
+    assert run_request_pipeline(["llamacpp-cache-prompt"], {}, registry=target) == {"cache_prompt": True}
+    assert run_request_pipeline(
+        ["mistral-penalty-clamp"], {"frequency_penalty": -5, "presence_penalty": 5},
+        registry=target,
+    ) == {"frequency_penalty": -2.0, "presence_penalty": 2.0}
