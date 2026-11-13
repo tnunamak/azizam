@@ -533,3 +533,26 @@ def test_the_job_content_route_serves_the_model(rig):
         return {"status": content.status_code, "type": content.headers.get("content-type"), "bytes": content.content}
     got = run(rig, go)
     assert (got["status"], got["type"], got["bytes"]) == (200, "model/gltf-binary", GLB)
+
+
+def test_a_job_refused_for_capacity_tells_its_caller_the_card_is_busy(rig):
+    """The async job a person polls says the card is busy and that waiting works: the plain sentence, the typed facts
+    unchanged, and a ``retry_after`` event whose delay the client reads."""
+    rig.run_slots(4)
+    gate = Gate(rig)
+
+    async def go(c):
+        first = await c.post(SYNC, headers=ASYNC, **form())
+        await gate.started.wait()
+        third = await c.post(SYNC, headers=ASYNC, **form())
+        await settle(c, job_id_of(third))
+        row = _providers()[0](job_id_of(third), audience="client")
+        events = media_jobs.events(job_id_of(third), audience="client")
+        gate.release.set()
+        await settle(c, job_id_of(first))
+        return {"row": row, "events": events}
+    got = run(rig, go)
+    row = got["row"]
+    assert row["error"] == "The graphics card is busy. Try again in a minute."
+    assert (row["error_code"], row["error_category"], row["retryable"]) == ("resource_unavailable", "capacity", True)
+    assert [e["payload"].get("step") for e in got["events"] if e["event_type"] == "retry_after"] == [30]
