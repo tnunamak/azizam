@@ -50,12 +50,12 @@ def _call(body: dict[str, Any], *, manifest: dict[str, Any], template: dict[str,
             loaded.append(cfg.get("file"))
         return json.loads(json.dumps(template))
 
-    with derived_patch("COMFY_ENABLED", True), \
+    with derived_patch("GRAPH_ENABLED", True), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_resolve_audio_workflow", return_value=("fx", {"file": "config/elsewhere.json"})), \
             patch.object(proxy, "_load_audio_workflow_manifest", new=lambda _name: manifest), \
             patch.object(proxy, "_load_audio_workflow_file", new=load), \
-            derived_patch("COMFY_HOST", f"http://{HOST}"), \
+            derived_patch("GRAPH_HOST", f"http://{HOST}"), \
             patch.object(proxy, "configured_downstream_headers", new=lambda *_a, **_k: {}):
         return asyncio.run(proxy.proxy_audio_generate(_JsonRequest(body), access_context()))
 

@@ -459,7 +459,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         }
         self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
 
-        with derived_patch("COMFY_ENABLED", True), \
+        with derived_patch("GRAPH_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_prompt_metadata():
@@ -527,7 +527,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         }
         self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
 
-        with derived_patch("COMFY_ENABLED", True), \
+        with derived_patch("GRAPH_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_prompt_metadata():
@@ -598,7 +598,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
         self.addCleanup(lambda: setattr(_FakeVideoAsyncClient, "prompt_id", old_prompt))
 
-        with derived_patch("COMFY_ENABLED", True), \
+        with derived_patch("GRAPH_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_index():

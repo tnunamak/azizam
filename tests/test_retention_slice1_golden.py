@@ -593,7 +593,7 @@ class _MediaRoute(unittest.IsolatedAsyncioTestCase):
         _patch_route_stores(self, self.root)
         self.admin_db = self.root / "admin.db"
         admin_store.init_db(self.admin_db)
-        p = derived_patch("COMFY_ENABLED", True)
+        p = derived_patch("GRAPH_ENABLED", True)
         p.start()
         self.addCleanup(p.stop)
         p = patch.object(proxy.ADMIN_STORE, "path", self.admin_db)
@@ -615,7 +615,7 @@ class _MediaRoute(unittest.IsolatedAsyncioTestCase):
                 return body
 
         comfy = fakes.asgi(load_scenario("comfyui/image-complete-png", png_hex=_comfy_png_with(SENTINEL).hex()))
-        set_derived(monkeypatch, "COMFY_HOST", comfy.base_url)
+        set_derived(monkeypatch, "GRAPH_HOST", comfy.base_url)
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
         with patch.object(proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
                 proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)), patch.object(

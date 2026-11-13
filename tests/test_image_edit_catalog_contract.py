@@ -115,7 +115,7 @@ def test_catalog_example_request_runs_on_the_edit_route(record, image_round, fak
             "response": {"json": {"name": f"uploaded-{index}.png", "subfolder": "", "type": "input"}},
         } for index in range(len(parts))],
     }))
-    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
     items = list(example["form"].items())
     colors = {}
     for index, (name, field) in enumerate(parts):

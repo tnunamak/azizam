@@ -332,8 +332,8 @@ def main(argv: list[str]) -> int:
         ("POST", "/v1/images/generations", {"prompt": "a cat", "model": "image-fast"}),
         ("POST", "/v1/embeddings", {"model": "nomic-embed-text-v1.5", "input": "hi"}),
     ]
-    hosts = ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST")
-    flags = ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "COMFY_ENABLED")
+    hosts = ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "GRAPH_HOST")
+    flags = ("TTS_ENABLED", "STT_ENABLED", "EMBEDDINGS_ENABLED", "GRAPH_ENABLED")
     empty = proxy._derive_backend_constants({"backends": {}})
     report: dict = {"derived": {k: empty[k] for k in (*hosts, *flags)}, "statuses": [], "sent": []}
     with GatewayRig("fresh-no-egress", scratch) as rig:

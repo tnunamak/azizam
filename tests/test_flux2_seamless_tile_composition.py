@@ -263,7 +263,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
             "background": "transparent",
         }
 
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy,
             "configured_downstream_headers",
             lambda _auth_context, _service: {},
@@ -361,7 +361,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
                 proxy,
                 "_image_url_signing_secret",
                 b"test-secret",
-            ), derived_patch("COMFY_ENABLED", True,
+            ), derived_patch("GRAPH_ENABLED", True,
             ), patch.object(
                 proxy,
                 "configured_downstream_headers",

@@ -25,11 +25,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 CLASS_A = (
     "LLM_BACKEND_HOSTS", "TTS_ENABLED", "TTS_HOST", "STT_ENABLED", "STT_HOST", "STT_TIMEOUT",
-    "EMBEDDINGS_ENABLED", "EMBEDDINGS_HOST", "COMFY_ENABLED", "COMFY_HOST",
+    "EMBEDDINGS_ENABLED", "EMBEDDINGS_HOST", "GRAPH_ENABLED", "GRAPH_HOST",
 )
 CLASS_B = (
-    "TTS_TIMEOUT", "EMBEDDINGS_HEALTH_ENDPOINT", "EMBEDDINGS_TIMEOUT", "EMBEDDINGS_BACKEND_MODEL", "COMFY_TIMEOUT",
-    "COMFY_DEFAULT_MODEL", "COMFY_VIDEO_TIMEOUT", "COMFY_WORKFLOWS_DIR", "COMFY_VIDEO_WORKFLOWS_DIR", "_GRAPH_BINDING",
+    "TTS_TIMEOUT", "EMBEDDINGS_HEALTH_ENDPOINT", "EMBEDDINGS_TIMEOUT", "EMBEDDINGS_BACKEND_MODEL", "GRAPH_TIMEOUT",
+    "GRAPH_DEFAULT_MODEL", "GRAPH_VIDEO_TIMEOUT", "GRAPH_WORKFLOWS_DIR", "GRAPH_VIDEO_WORKFLOWS_DIR", "_GRAPH_BINDING",
 )
 ROUTE_POLICIES = (
     "_PROTOCOL_ROUTE_REGISTRY", "CANONICAL_PROTOCOL_ROUTE_ALIASES", "_RUNTIME_ROUTE_POLICY",
@@ -116,7 +116,7 @@ def test_class_a_a_registry_edit_moves_the_address_the_switch_and_the_host_map(l
     assert proxy.DERIVED.TTS_HOST == "http://203.0.113.9:18880" and proxy.DERIVED.TTS_ENABLED is False
     assert proxy.DERIVED.STT_HOST == "http://203.0.113.8:15092" and proxy.DERIVED.STT_TIMEOUT == 77
     assert proxy.DERIVED.EMBEDDINGS_HOST == "http://203.0.113.7:15061" and proxy.DERIVED.EMBEDDINGS_ENABLED is True
-    assert proxy.DERIVED.COMFY_HOST == "http://203.0.113.6:17890" and proxy.DERIVED.COMFY_ENABLED is False
+    assert proxy.DERIVED.GRAPH_HOST == "http://203.0.113.6:17890" and proxy.DERIVED.GRAPH_ENABLED is False
     assert proxy.DERIVED.LLM_BACKEND_HOSTS["chat-engine"] == "http://203.0.113.5:15000"
 
     backends["tts"].update(host="203.0.113.4", port=18881, enabled=True)
@@ -141,10 +141,10 @@ def test_class_b_a_registry_edit_moves_the_timeouts_the_default_model_the_direct
     assert proxy.DERIVED.TTS_TIMEOUT == 41
     assert proxy.DERIVED.EMBEDDINGS_TIMEOUT == 42
     assert proxy.DERIVED.EMBEDDINGS_BACKEND_MODEL == "embed-edited" and proxy.DERIVED.EMBEDDINGS_HEALTH_ENDPOINT == "/ready"
-    assert proxy.DERIVED.COMFY_TIMEOUT == 43 and proxy.DERIVED.COMFY_VIDEO_TIMEOUT == 44
-    assert proxy.DERIVED.COMFY_DEFAULT_MODEL == "graph-edited"
-    assert proxy.DERIVED.COMFY_WORKFLOWS_DIR == tmp_path / "image-flows"
-    assert proxy.DERIVED.COMFY_VIDEO_WORKFLOWS_DIR == (ROOT / "video-flows").resolve()
+    assert proxy.DERIVED.GRAPH_TIMEOUT == 43 and proxy.DERIVED.GRAPH_VIDEO_TIMEOUT == 44
+    assert proxy.DERIVED.GRAPH_DEFAULT_MODEL == "graph-edited"
+    assert proxy.DERIVED.GRAPH_WORKFLOWS_DIR == tmp_path / "image-flows"
+    assert proxy.DERIVED.GRAPH_VIDEO_WORKFLOWS_DIR == (ROOT / "video-flows").resolve()
     assert proxy.DERIVED._GRAPH_BINDING == proxy._graph_adapter(proxy._GRAPH_CAPABILITY).binding
 
 

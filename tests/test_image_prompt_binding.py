@@ -41,8 +41,8 @@ def image_round(monkeypatch, fake_upstreams):
         'compute_max_batch': Mock(return_value=1),
     }.items():
         monkeypatch.setattr(proxy, name, value)
-    set_derived(monkeypatch, 'COMFY_HOST', fake.base_url)
-    set_derived(monkeypatch, 'COMFY_ENABLED', True)
+    set_derived(monkeypatch, 'GRAPH_HOST', fake.base_url)
+    set_derived(monkeypatch, 'GRAPH_ENABLED', True)
     monkeypatch.setattr(proxy.media_delivery, 'current', lambda: None)
     monkeypatch.setattr(proxy.random, 'randint', lambda *args: 41)
     monkeypatch.setattr(proxy, '_build_image_response_payload',

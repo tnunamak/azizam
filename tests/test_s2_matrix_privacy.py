@@ -229,7 +229,7 @@ class SubmittedCanaryCarrierTests(unittest.IsolatedAsyncioTestCase):
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        enabled = derived_patch("COMFY_ENABLED", True)
+        enabled = derived_patch("GRAPH_ENABLED", True)
         enabled.start()
         self.addCleanup(enabled.stop)
         overrides = patch.object(proxy.ADMIN_STORE, "operator_overrides",
@@ -250,7 +250,7 @@ class SubmittedCanaryCarrierTests(unittest.IsolatedAsyncioTestCase):
             {"prompt": CANARY_PROMPT, "seed": CANARY_SEED, "duration": CANARY_DURATION},
             wrap_intent=route["submit"]["body"]["intent"])
         fake = self.fakes.asgi(_audio_scenario())
-        with derived_patch("COMFY_HOST", fake.base_url), patch.object(proxy.asyncio, "sleep", AsyncMock()):
+        with derived_patch("GRAPH_HOST", fake.base_url), patch.object(proxy.asyncio, "sleep", AsyncMock()):
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_Request(auth), payload=built.json, audience="client")  # type: ignore[arg-type]
             assert response is not None and response.status_code == 202, getattr(response, "body", b"")

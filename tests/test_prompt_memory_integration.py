@@ -147,7 +147,7 @@ def test_image_job_submit_receipt_has_no_outcome_and_worker_receipt_reports_the_
                 views=[(PNG_1X1, "image/png")], strict=False,
             )), host="comfy.receipt.test",
         )
-        rig.set(proxy, "COMFY_HOST", fake.base_url)
+        rig.set(proxy, "GRAPH_HOST", fake.base_url)
         asyncio.run(drive(rig))
         work = next(row for row in receipt_store.recent(path=rig.receipts_db, audience="client")
                     if row["path"] == "/v1/images/generations")

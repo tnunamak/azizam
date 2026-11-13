@@ -50,7 +50,7 @@ status_words:
     baseline_field: comfy_baseline_bytes
     audio_decode_class: LTXVAudioVAEDecode
     two_stage_class: LTXVCropGuides
-    client_id_attr: COMFY_CLIENT_ID
+    client_id_attr: GRAPH_CLIENT_ID
   chat:
     card_name: llama-turbo
     props_section: llama_props_slots

@@ -66,7 +66,7 @@ def probed(monkeypatch):
 def test_derived_hosts_keep_the_explicit_url(field, url):
     rec = _record(field, url)
     derived = proxy._derive_backend_constants({"backends": declared({"tts": rec, "stt": rec, "embeddings": rec, "comfyui": rec})})
-    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST"):
+    for key in ("TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "GRAPH_HOST"):
         assert derived[key] == url, key
 
 

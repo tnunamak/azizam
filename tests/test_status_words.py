@@ -25,7 +25,7 @@ SHIPPED_IMAGES = {
     "queue_running_series": "comfy_queue_running", "queue_pending_series": "comfy_queue_pending",
     "dir_env": "AZIZAM_COMFY_DIR", "output_dir_env": "AZIZAM_COMFY_OUTPUT_DIR",
     "custom_nodes_env": "AZIZAM_COMFY_CUSTOM_NODES_DIR", "baseline_field": "comfy_baseline_bytes",
-    "audio_decode_class": "LTXVAudioVAEDecode", "two_stage_class": "LTXVCropGuides", "client_id_attr": "COMFY_CLIENT_ID",
+    "audio_decode_class": "LTXVAudioVAEDecode", "two_stage_class": "LTXVCropGuides", "client_id_attr": "GRAPH_CLIENT_ID",
 }
 
 

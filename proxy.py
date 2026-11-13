@@ -526,7 +526,7 @@ def runtime() -> config_runtime.RuntimeSnapshot:
 class _DerivedValues:
     """The values the published snapshot derived from its config and the registry (``RuntimeSnapshot.derived``).
 
-    ``DERIVED.COMFY_HOST`` is read from the snapshot of the call (the request's own, else the latest), never from a
+    ``DERIVED.GRAPH_HOST`` is read from the snapshot of the call (the request's own, else the latest), never from a
     module name that a reload assigns, so a reader sees one snapshot whole and a registry edit reaches it without a
     restart. Each name is a key ``_derive_backend_constants`` returns (docs/design/CONFIG_HOMES.md, 5.1, class A and B).
     """
@@ -1225,7 +1225,7 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
 # The embeddings, ComfyUI (graph engine) and speech/transcription addresses, timeouts, workflow directories and default
 # model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
 # edit reaches every reader without a restart. Video workflows live separately from image workflows so they are
-# version-controlled next to proxy.py rather than inside the ComfyUI directory (``DERIVED.COMFY_VIDEO_WORKFLOWS_DIR``).
+# version-controlled next to proxy.py rather than inside the ComfyUI directory (``DERIVED.GRAPH_VIDEO_WORKFLOWS_DIR``).
 # The graph engine's service is selected per route family by the capability that family needs (``_graph_service``), never
 # by a fixed id: an install may name it anything, and the three families may be served by three different records. The
 # adapter and protocol description come from the selected record and the family's capability; the manifest binding key
@@ -1583,12 +1583,12 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "STT_HOST": service_registry.engine_base_address(stt_c),
         "EMBEDDINGS_HOST": service_registry.engine_base_address(emb_c),
         "GRAPH_SERVICES": graph,
-        "COMFY_HOST": images.host,
+        "GRAPH_HOST": images.host,
         "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
         "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
         "STT_TIMEOUT": int(_record_default(_TRANSCRIPTION_CAPABILITY, stt_c, "timeout")),
         "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
-        "COMFY_ENABLED": images.enabled,
+        "GRAPH_ENABLED": images.enabled,
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
@@ -1596,11 +1596,11 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "EMBEDDINGS_HEALTH_ENDPOINT": _record_default(_EMBEDDINGS_CAPABILITY, emb_c, "health_endpoint"),
         "EMBEDDINGS_TIMEOUT": int(_record_default(_EMBEDDINGS_CAPABILITY, emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": images.timeout,
-        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, images.record, "default_model"),
-        "COMFY_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_timeout")),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, images.record, "workflows_dir")),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_workflows_dir")),
+        "GRAPH_TIMEOUT": images.timeout,
+        "GRAPH_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, images.record, "default_model"),
+        "GRAPH_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_timeout")),
+        "GRAPH_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, images.record, "workflows_dir")),
+        "GRAPH_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_workflows_dir")),
         "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(images.record, _GRAPH_CAPABILITY).binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
@@ -3619,7 +3619,7 @@ def is_openai_model_alias(model_name: str) -> bool:
 
 def _image_default_model() -> str:
     """The workflow a generation request runs when it names none: the deployment's configured default."""
-    return DERIVED.COMFY_DEFAULT_MODEL
+    return DERIVED.GRAPH_DEFAULT_MODEL
 
 
 def default_model_for_operation(operation: str, requested_model: str = "") -> str:
@@ -3964,7 +3964,7 @@ async def _ensure_litellm_local_backend_target(
     requested_model: str,
     backend: Optional[str],
     target_model: Optional[str],
-    target_mmproj: Optional[str] = None,
+    target_projector: Optional[str] = None,
     target_profile: Optional[str] = None,
     enforce_gateway_policy: bool = True,
 ) -> Response | None:
@@ -3977,7 +3977,7 @@ async def _ensure_litellm_local_backend_target(
         ready = await ensure_target(
             backend,
             target_model,
-            target_mmproj,
+            target_projector,
             profile=target_profile,
         )
     except SwapDeferred as deferred:
@@ -4029,7 +4029,7 @@ async def _prepare_litellm_local_llm_request(
     )
     target_backend = local_activation.backend if local_activation else None
     target_model = local_activation.model if local_activation else None
-    target_mmproj = local_activation.mmproj if local_activation else None
+    target_projector = local_activation.mmproj if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if resolved_target is None:
         try:
@@ -4070,7 +4070,7 @@ async def _prepare_litellm_local_llm_request(
             target_backend in _vision_members
         ) or (
             _aux_grants_vision(target_backend)
-            and bool(target_mmproj)
+            and bool(target_projector)
         )
         if not target_can_serve_vision:
             return Response(
@@ -4117,7 +4117,7 @@ async def _prepare_litellm_local_llm_request(
         requested_model=model_name,
         backend=target_backend,
         target_model=target_model,
-        target_mmproj=target_mmproj,
+        target_projector=target_projector,
         target_profile=target_profile,
         enforce_gateway_policy=enforce_gateway_policy,
     )
@@ -4141,7 +4141,7 @@ async def _activate_prepared_litellm_local_target(
     )
     target_backend = local_activation.backend if local_activation else None
     target_model = local_activation.model if local_activation else None
-    target_mmproj = local_activation.mmproj if local_activation else None
+    target_projector = local_activation.mmproj if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if not target_backend or (
         enforce_gateway_policy and _target_activation(auth_context) == "existing_only"
@@ -4152,7 +4152,7 @@ async def _activate_prepared_litellm_local_target(
         requested_model=requested_model,
         backend=target_backend,
         target_model=target_model,
-        target_mmproj=target_mmproj,
+        target_projector=target_projector,
         target_profile=target_profile,
         enforce_gateway_policy=enforce_gateway_policy,
     )
@@ -6525,7 +6525,7 @@ def _load_graph_workflow_outcome(model_name: str, intent: str | None) -> tuple[O
             print(f"[proxy] WARNING: graph for {model_name!r} refused: {exc}", flush=True)
             return None, True
     else:
-        workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        workflow_path = DERIVED.GRAPH_WORKFLOWS_DIR / f"{model_name}.json"
         if not workflow_path.exists() and found is not None:
             workflow_path = _resolve_workflow_artifact_path(*found)
     if not workflow_path.exists():
@@ -10449,7 +10449,7 @@ VIDEO_ID_PREFIX = "video_"
 
 # Stable client_id used for both the websocket connection and the /prompt POST
 # body. ComfyUI routes events for a submission to the matching client_id.
-COMFY_CLIENT_ID = uuid.uuid4().hex
+GRAPH_CLIENT_ID = uuid.uuid4().hex
 
 # prompt_id -> {status, percent, step, total, node, phase, error, updated_at}
 _video_progress: dict[str, dict] = {}
@@ -11049,7 +11049,7 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            async with contextlib.aclosing(adapter.watch(conn, COMFY_CLIENT_ID, on_open=opened, stop=stop_event.is_set)) as events:
+            async with contextlib.aclosing(adapter.watch(conn, GRAPH_CLIENT_ID, on_open=opened, stop=stop_event.is_set)) as events:
                 async for evt in events:
                     if stop_event.is_set():
                         break
@@ -11941,7 +11941,7 @@ async def _submit_video_graph(
                 return admission
             # client_id routes ws events for this submission to our listener.
             resp = await _graph(client, "videos").submit(
-                _build_graph_submit_payload(workflow, _VIDEO_GRAPH_CAPABILITY, client_id=COMFY_CLIENT_ID), headers=headers,
+                _build_graph_submit_payload(workflow, _VIDEO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID), headers=headers,
             )
             if resp.status != 200:
                 # Do NOT record _video_progress here: no prompt_id means there
@@ -14365,7 +14365,7 @@ async def _serve(app: FastAPI):
     print(f"[proxy] Model compatibility: {'enabled' if model_compat_enabled() else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
-    node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
+    node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "graph_object_info"
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -14395,7 +14395,7 @@ async def _serve(app: FastAPI):
     video_reconcile_task = None
     if _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
         graph_ws_task = asyncio.create_task(_graph_ws_listener(graph_ws_stop))
-        print(f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
+        print(f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} ws listener started (client_id={GRAPH_CLIENT_ID})", flush=True)
 
         # Startup reconciliation: safety net for any persisted/hydrated
         # _video_progress (currently in-memory only, so this is usually a
@@ -20582,7 +20582,7 @@ async def admin_config_reload(request: Request):
     """Hot-reload the runtime config from the DB service registry.
 
     Re-derives all backend host constants (LLM_BACKEND_HOSTS, TTS_HOST,
-    STT_HOST, EMBEDDINGS_HOST, COMFY_HOST …) without a process restart.
+    STT_HOST, EMBEDDINGS_HOST, GRAPH_HOST …) without a process restart.
     Requests that arrive after this returns will see the new values.
 
     Note: the LiteLLM subprocess still requires a separate restart to pick up
@@ -20609,7 +20609,7 @@ async def admin_config_reload(request: Request):
                     "tts": public(updates["TTS_HOST"]),
                     "stt": public(updates["STT_HOST"]),
                     "embeddings": public(updates["EMBEDDINGS_HOST"]),
-                    updates["_GRAPH_BINDING"]: public(updates["COMFY_HOST"]),
+                    updates["_GRAPH_BINDING"]: public(updates["GRAPH_HOST"]),
                 },
             },
         )
@@ -25896,7 +25896,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 path=media_jobs.DB_PATH,
             )
 
-        deadline = time.monotonic() + max(1, DERIVED.COMFY_VIDEO_TIMEOUT)
+        deadline = time.monotonic() + max(1, DERIVED.GRAPH_VIDEO_TIMEOUT)
         last_progress = 5
         while time.monotonic() < deadline:
             await asyncio.sleep(_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS)
@@ -28904,7 +28904,7 @@ async def proxy_audio_generate(
             if admission is not None:
                 return admission
             resp = await graph.submit(
-                _build_graph_submit_payload(workflow, _AUDIO_GRAPH_CAPABILITY, client_id=COMFY_CLIENT_ID),
+                _build_graph_submit_payload(workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID),
                 headers=headers,
             )
             if resp.status != 200:

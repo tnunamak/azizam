@@ -85,8 +85,8 @@ def _proxy_submission(model: str, body: dict[str, Any], *, with_ui: bool, fake_u
         except httpx.HTTPError:
             pass
 
-    with derived_patch("COMFY_ENABLED", True), \
-            derived_patch("COMFY_HOST", f"http://{ORACLE_HOST}"), \
+    with derived_patch("GRAPH_ENABLED", True), \
+            derived_patch("GRAPH_HOST", f"http://{ORACLE_HOST}"), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_load_audio_workflow_manifest", new=lambda _name: copy.deepcopy(manifest)), \
             patch.object(proxy, "_derive_ui_workflow", new=(_ui_twin if with_ui else (lambda _api, _address="": None))), \
@@ -134,7 +134,7 @@ def _adapter_submission(model: str, body: dict[str, Any], *, with_ui: bool, fake
     manifest = _manifest(name)
     assert manifest["bindings"][proxy.DERIVED._GRAPH_BINDING]["workflow"] == cfg["file"], "manifest and config name different graphs"
     doc = description.load_registry(description.REGISTRY_DIR)["node-graph"]
-    adapter = NodeGraphAdapter(doc, workflow_root=ROOT, client_id=proxy.COMFY_CLIENT_ID,
+    adapter = NodeGraphAdapter(doc, workflow_root=ROOT, client_id=proxy.GRAPH_CLIENT_ID,
                                derive_ui=(_ui_twin if with_ui else None))
     effective = _effective_for_test(manifest, _limits(cfg))
     inputs = audio_graph.manifest_inputs(dict(body, model=model), manifest=effective)
@@ -216,8 +216,8 @@ def test_refused_requests_name_the_same_field_as_the_route(model, body, param, f
     async def route():
         return await proxy.proxy_audio_generate(_JsonRequest({"model": model, **body}), access_context())
 
-    with derived_patch("COMFY_ENABLED", True), \
-            derived_patch("COMFY_HOST", f"http://{ORACLE_HOST}"), \
+    with derived_patch("GRAPH_ENABLED", True), \
+            derived_patch("GRAPH_HOST", f"http://{ORACLE_HOST}"), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None):
         response = asyncio.run(route())
     assert response.status_code == 400
@@ -239,5 +239,5 @@ def test_the_route_still_submits_the_graph_the_meta_path_submitted(model, body, 
     if pin_random:
         monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: PINNED_RANDOM_SEED)
     actual = _proxy_submission(model, body, with_ui=with_ui, fake_upstreams=fake_upstreams)
-    assert actual.pop("client_id") == proxy.COMFY_CLIENT_ID  # drawn once per process, so not in the golden
+    assert actual.pop("client_id") == proxy.GRAPH_CLIENT_ID  # drawn once per process, so not in the golden
     assert _canonical(actual) == _canonical(GOLDEN[request.node.callspec.id])
