@@ -78,8 +78,12 @@ def test_unhandled_strip_refused_without_ffmpeg(monkeypatch, suffix):
 
     monkeypatch.setattr(mm, "_ffmpeg_rewrite", forbidden)
     original = b"opaque media bytes"
-    with pytest.raises(mm.MediaMetadataError):
-        mm.strip_metadata(original, suffix)
+    if suffix == ".not-a-format":
+        # A File that is not media passes unchanged, and still never reaches ffmpeg.
+        assert mm.strip_metadata(original, suffix) is original
+    else:
+        with pytest.raises(mm.MediaMetadataError):
+            mm.strip_metadata(original, suffix)
     assert mm.strip_audio(original, suffix) is original
     assert mm.embed_media_tags(original, suffix, {"prompt": "private"}) is original
 
