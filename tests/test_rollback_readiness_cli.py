@@ -363,6 +363,8 @@ def test_the_target_reads_tombstones_only_when_it_contains_the_tombstone_reader_
     for rev in (None, "", "no-such-commit", "--help", "-q"):
         assert readiness.target_reads_tombstones(rev, repo) is False
     assert readiness.target_reads_tombstones(after, tmp_path / "not-a-repo") is False
+    _git(repo, "replace", before, after)  # a local replace ref must not make the old target look newer
+    assert readiness.target_reads_tombstones(before, repo) is False
 
 
 def _load_script():

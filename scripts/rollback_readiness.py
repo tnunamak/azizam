@@ -44,7 +44,8 @@ def target_reads_tombstones(rev: str | None, repo: Path = REPO) -> bool:
         return False
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", TOMBSTONE_READER_COMMIT, rev],
+            # The real history decides: a local replace ref must not make an older target look newer.
+            ["git", "--no-replace-objects", "-C", str(repo), "merge-base", "--is-ancestor", TOMBSTONE_READER_COMMIT, rev],
             capture_output=True, timeout=10, check=False,
         )
     except (OSError, subprocess.SubprocessError):
