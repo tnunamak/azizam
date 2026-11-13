@@ -930,10 +930,10 @@ class TestEngineKnowledgeRatchet:
             for path in _production_files()
         }
         assert _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline()) == []
-        sources["gateway/lifecycle_drivers.py"] += '\n\ndef _mutant(engine_id):\n    if engine_id == "newengine-flux9":\n        return 1\n'
+        sources["proxy.py"] += '\n\ndef _mutant(engine_id):\n    if engine_id == "newengine-flux9":\n        return 1\n'
         sources["gateway/brand_new_module.py"] = 'DEFAULT = "chatterbox"\n'
         violations = _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline())
-        assert any("gateway/lifecycle_drivers.py" in v and "rose" in v for v in violations)
+        assert any("proxy.py" in v and "rose" in v for v in violations)
         assert any("gateway/brand_new_module.py" in v and "new file" in v for v in violations)
 
 
