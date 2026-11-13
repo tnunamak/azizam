@@ -1,0 +1,122 @@
+{
+  "files": {
+    "firehose_render.py": {
+      "/system_stats": 1,
+      "GPU0": 5,
+      "GPU1": 3,
+      "class_type": 7,
+      "model_path": 1,
+      "nvidia-smi": 1
+    },
+    "gateway/a1111_api.py": {
+      "model_path": 1
+    },
+    "gateway/backends/llm_execution.py": {
+      "chat_template_kwargs": 1
+    },
+    "gateway/category_api.py": {
+      "/history": 1
+    },
+    "gateway/chat_extensions.py": {
+      "chat_template_kwargs": 1
+    },
+    "gateway/engine_protocol/node_catalog.py": {
+      "class_type": 5
+    },
+    "gateway/engine_protocol/node_graph.py": {
+      "/history": 3,
+      "/object_info": 1,
+      "/prompt": 1,
+      "/system_stats": 1,
+      "/upload/image": 1,
+      "/view": 2,
+      "class_type": 3,
+      "extra_pnginfo": 1
+    },
+    "gateway/engine_protocol/node_info.py": {
+      "/object_info": 1,
+      "class_type": 13
+    },
+    "gateway/engine_protocol/node_ui_graph.py": {
+      "class_type": 11,
+      "widgets_values": 3
+    },
+    "gateway/engine_protocol/node_validation.py": {
+      "class_type": 3
+    },
+    "gateway/image_graph_roles.py": {
+      "class_type": 1
+    },
+    "gateway/lifecycle_drivers.py": {
+      "activation_": 7,
+      "gguf": 2,
+      "mmproj": 1
+    },
+    "gateway/local_capabilities.py": {
+      "mmproj": 1
+    },
+    "gateway/me_media.py": {
+      "response_cost": 1
+    },
+    "gateway/model_files.py": {
+      "activation_": 2,
+      "mmproj": 2,
+      "model_path": 3
+    },
+    "gateway/model_ids.py": {
+      "gguf": 1
+    },
+    "gateway/projection_types.py": {
+      "activation_": 3
+    },
+    "gateway/providers.py": {
+      "x-litellm": 1
+    },
+    "gateway/receipts.py": {
+      "response_cost": 1
+    },
+    "gateway/segment_chain.py": {
+      "class_type": 6
+    },
+    "gateway/transforms.py": {
+      "<think>": 3,
+      "chat_template_kwargs": 1,
+      "enable_thinking": 1
+    },
+    "gateway/transition_gate.py": {
+      "activation_": 1
+    },
+    "gateway/vram_observer.py": {
+      "nvidia-smi": 1
+    },
+    "metrics_sampler.py": {
+      "nvidia-smi": 1
+    },
+    "proxy.py": {
+      "/view": 2,
+      "GPU0": 1,
+      "SaveImage": 1,
+      "activation_": 44,
+      "chat_template_kwargs": 1,
+      "class_type": 3,
+      "mmproj": 5,
+      "model_path": 7,
+      "nvidia-smi": 4,
+      "x-litellm": 7
+    },
+    "responses_translator.py": {
+      "chat_template_kwargs": 3,
+      "enable_thinking": 1
+    },
+    "status_endpoint.py": {
+      "/props": 1,
+      "/system_stats": 1,
+      "GPU0": 6,
+      "GPU1": 4,
+      "LoadImage": 1,
+      "class_type": 15,
+      "model_path": 3,
+      "nvidia-smi": 3
+    }
+  }
+}
