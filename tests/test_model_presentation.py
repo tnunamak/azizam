@@ -588,6 +588,22 @@ def test_3d_choices_are_the_picture_to_3d_models_with_the_data_default_first():
         ("mesh.generate.pixal3d", ["mesh.generate.trellis-2", "mesh.generate.pixal3d"])]
 
 
+def test_a_route_that_needs_no_file_keeps_every_name_of_its_kind():
+    """A copy of the live data, 11-12: narrowing names to the recommendation's inputs dropped image edit models, video
+    image-to-video and keyframes, and ACE-Step itself from Home. The composer of a text-first route attaches files as it
+    goes, so only a route that needs a file narrows its names to the routes that need the same files."""
+    from gateway.model_presentation import group_product_capabilities
+    picture = [{"name": "image", "label": "image", "modality": "image", "accepts": ["image/png"]}]
+    rows = [{"capability": "video", "status": "ready", "available": True, "use_name": "video", "use_names": ["video"],
+             "required_input_modalities": ["text"]},
+            {"capability": "video", "status": "ready", "available": True, "use_name": "video-i2v", "use_names": ["video-i2v"],
+             "required_input_modalities": ["image"], "required_media_inputs": picture},
+            {"capability": "video", "status": "ready", "available": True, "use_name": "video.edit.mux",
+             "use_names": ["video.edit.mux"], "required_input_modalities": ["asset", "audio"]}]
+    grouped = group_product_capabilities(rows)
+    assert [(r["use_name"], r["use_names"]) for r in grouped] == [("video", ["video", "video-i2v", "video.edit.mux"])]
+
+
 def test_partial_summary_names_unavailable_capability_and_safe_reason():
     from gateway.model_presentation import product_status_summary
     rows = [{"capability": "chat", "capability_title": "Chat", "status": "ready", "available": True},

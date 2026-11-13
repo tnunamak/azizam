@@ -435,8 +435,10 @@ def group_product_capabilities(rows: list[dict[str, Any]], *,
 
     The recommendation is an available row first, then a row a person can choose by name, then the lowest
     ``selection_rank`` of its name (the data's place among rivals for one route; unranked last), then the best status.
-    The names offered with it are those whose requests carry the same inputs, so one composer can run every one of them:
-    a 3D model made from a picture and a step that edits a 3D model file are not offered as choices of each other.
+    When the recommendation needs a file, the names offered with it are those whose requests carry the same inputs, so
+    the composer that asks for that file can run every one of them: a 3D model made from a picture and a step that edits
+    a 3D model file are not offered as choices of each other. A recommendation that needs no file keeps every name of
+    its kind, because its composer attaches files as the person goes (image edit, image-to-video).
     """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -451,7 +453,7 @@ def group_product_capabilities(rows: list[dict[str, Any]], *,
                     rank.get(status, 0), name in {"default", kind}, "alias" in row.get("tags", []))
         best = dict(max(candidates, key=preference))
         shape = _request_shape(best)
-        names = list(dict.fromkeys(name for row in candidates if _request_shape(row) == shape
+        names = list(dict.fromkeys(name for row in candidates if not shape[1] or _request_shape(row) == shape
                                    for name in row.get("use_names", [])))
         # The public role spelling covers its internal role: identity only when
         # that public spelling was independently permitted in this projection.
