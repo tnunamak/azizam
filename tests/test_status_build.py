@@ -80,7 +80,7 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
         for name, result in {
             "_run": (1, "", "unavailable"), "_gpus_raw": [],
             "_vram_attribution": {}, "_ram_attribution": {}, "_repo_state": {},
-            "_comfy_custom_nodes": [], "_disk_partitions": [], "_dir_summary": {},
+            "_graph_custom_nodes": [], "_disk_partitions": [], "_dir_summary": {},
             "_read_sensors": {}, "_cpu_usage_quick": {}, "_recent_renders_videos": [],
             "_recent_renders_images": [], "_read_vram_estimates": {}, "_read_gpu_budget": {},
             "_record_backend_health_samples": None, "_metrics_section": {},
