@@ -7,12 +7,15 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import subprocess
 
 from fastapi import FastAPI
+import pytest
 
 from scripts import deploy_openapi_check as check
 
 RELOAD = "/admin/api/config/reload post"
+REWORDED = "Reload the configuration from the admin store."
 
 
 def _document(reload_doc: str = "Reload the configuration.", models_doc: str = "List models.",
@@ -35,76 +38,131 @@ def _document(reload_doc: str = "Reload the configuration.", models_doc: str = "
     return app.openapi()
 
 
-def _hashes(document: dict) -> dict[str, str]:
-    return check.entry_hashes(document)
-
-
 def _deploy(live_before: dict, live_after: dict, pin_before: dict, pin_after: dict):
-    return check.compare(_hashes(live_before), _hashes(live_after), _hashes(pin_before), _hashes(pin_after))
+    return check.compare(*(check.entries(document) for document in (live_before, live_after, pin_before, pin_after)))
+
+
+def _names(lines: list[str]) -> list[str]:
+    return [line.split(":")[0] for line in lines]
 
 
 def test_a_reworded_docstring_that_the_gate_re_pinned_deploys_without_a_rollback():
-    old, new = _document(), _document(reload_doc="Reload the configuration from the admin store.")
+    old, new = _document(), _document(reload_doc=REWORDED)
     failures, notes = _deploy(old, new, old, new)
     assert failures == []
-    assert [line.split(":")[0] for line in notes] == ["pin moved " + RELOAD]
+    assert _names(notes) == ["pin moved " + RELOAD]
 
 
 def test_an_openapi_change_the_pin_does_not_record_rolls_back():
-    old, new = _document(), _document(reload_doc="Reload the configuration from the admin store.")
-    failures, _notes = _deploy(old, new, old, old)
-    assert [line.split(":")[0] for line in failures] == [RELOAD]
+    old, new = _document(), _document(reload_doc=REWORDED)
+    assert _names(_deploy(old, new, old, old)[0]) == [RELOAD]
 
 
 def test_a_live_document_that_differs_from_the_new_pin_rolls_back():
-    old = _document()
-    pinned = _document(reload_doc="Reload the configuration from the admin store.")
-    live_after = _document(reload_doc="Reload the configuration from the admin store.", models_doc="Models.")
-    failures, _notes = _deploy(old, live_after, old, pinned)
-    assert [line.split(":")[0] for line in failures] == ["/v1/models get"]
+    old, pinned = _document(), _document(reload_doc=REWORDED)
+    live_after = _document(reload_doc=REWORDED, models_doc="Models.")
+    assert _names(_deploy(old, live_after, old, pinned)[0]) == ["/v1/models get"]
 
 
 def test_operations_the_pin_adds_or_removes_must_appear_or_leave_live():
     old, new = _document(), _document(extra_path=True)
     assert _deploy(old, new, old, new)[0] == []
-    assert [line.split(":")[0] for line in _deploy(old, old, old, new)[0]] == ["/v1/extra get"]
+    assert _names(_deploy(old, old, old, new)[0]) == ["/v1/extra get"]
     assert _deploy(new, old, new, old)[0] == []
-    assert [line.split(":")[0] for line in _deploy(new, new, new, old)[0]] == ["/v1/extra get"]
+    assert _names(_deploy(new, new, new, old)[0]) == ["/v1/extra get"]
 
 
-def test_an_entry_live_data_shapes_must_hold_still_unless_the_pin_moves_it():
+def test_an_operation_that_appears_only_after_the_deploy_rolls_back():
+    old, new = _document(), _document(extra_path=True)
+    assert _names(_deploy(old, new, old, old)[0]) == ["/v1/extra get"]
+
+
+def test_a_top_level_change_the_pin_does_not_record_rolls_back():
+    old = _document()
+    live_after = copy.deepcopy(old)
+    live_after["security"] = [{"bearer": []}]
+    assert _names(_deploy(old, live_after, old, old)[0]) == ["document"]
+    live_after = copy.deepcopy(old)
+    live_after["info"]["version"] = "2"
+    assert _names(_deploy(old, live_after, old, old)[0]) == ["document"]
+
+
+def test_components_are_judged_one_by_one():
     pin = _document()
     live = copy.deepcopy(pin)
-    live["components"] = {"schemas": {"OwnerWorkflow": {"type": "object"}}}  # an owner's workflow, not in the pin
+    live["components"] = {"schemas": {"OwnerWorkflow": {"type": "object"}}}  # live data the pin lacks
+    moved_pin = copy.deepcopy(pin)
+    moved_pin.setdefault("components", {}).setdefault("schemas", {})["NewPinned"] = {"type": "string"}
+    live_after = copy.deepcopy(live)
+    live_after["components"]["schemas"]["NewPinned"] = {"type": "string"}
+    assert _deploy(live, live_after, pin, moved_pin)[0] == []
+    live_after["components"]["schemas"]["OwnerWorkflow"]["title"] = "Changed"
+    assert _names(_deploy(live, live_after, pin, moved_pin)[0]) == ["components schemas/OwnerWorkflow"]
+
+
+def test_an_entry_live_data_shapes_holds_still_and_must_reach_the_new_pin_when_the_pin_moves_it():
+    pin = _document()
+    live = _document(models_doc="Models, with an owner's addition.")  # live differs from the pin before the deploy
     assert _deploy(live, live, pin, pin)[0] == []
-    moved = copy.deepcopy(live)
-    moved["components"]["schemas"]["OwnerWorkflow"]["title"] = "Changed"
-    assert [line.split(":")[0] for line in _deploy(live, moved, pin, pin)[0]] == ["components"]
-    repinned = copy.deepcopy(pin)
-    repinned["components"] = {"schemas": {"NewPinned": {"type": "string"}}}
-    assert _deploy(live, moved, pin, repinned)[0] == []
+    assert _names(_deploy(live, pin, pin, pin)[0]) == ["/v1/models get"]
+    repinned = _document(models_doc="List the models.")
+    assert _names(_deploy(live, live, pin, repinned)[0]) == ["/v1/models get"]
+    assert _names(_deploy(live, _document(models_doc="Something else."), pin, repinned)[0]) == ["/v1/models get"]
+    without = copy.deepcopy(live)
+    del without["paths"]["/v1/models"]
+    assert _names(_deploy(live, without, pin, repinned)[0]) == ["/v1/models get"]
+    assert _deploy(live, repinned, pin, repinned)[0] == []
 
 
-def test_the_cli_reads_the_deploy_kit_snapshot_and_exits_nonzero_on_an_unpinned_move(tmp_path: Path, capsys):
-    old, new = _document(), _document(reload_doc="Reload the configuration from the admin store.")
+@pytest.mark.parametrize("document", [[], {}, {"openapi_code": 200, "openapi": ["/v1/x get 1111111111111111"]},
+                                      {"paths": {"/v1/x": None}}, {"paths": {}, "components": {"schemas": []}}])
+def test_anything_but_an_openapi_document_is_refused(document):
+    with pytest.raises(ValueError):
+        check.entries(document)
 
-    def snapshot(document: dict) -> Path:
-        path = tmp_path / f"snap-{len(list(tmp_path.iterdir()))}.json"
-        rows = sorted(f"{key} {value}" for key, value in check.entry_hashes(document).items())
-        path.write_text(json.dumps({"openapi_code": 200, "openapi": rows}))
-        return path
 
-    def document(value: dict) -> Path:
-        path = tmp_path / f"pin-{len(list(tmp_path.iterdir()))}.json"
-        path.write_text(json.dumps(value))
-        return path
+def _write(tmp_path: Path, name: str, value) -> str:
+    path = tmp_path / name
+    path.write_text(json.dumps(value) if not isinstance(value, str) else value)
+    return str(path)
 
-    pre, post = snapshot(old), snapshot(new)
-    assert check.main(["--pre", str(pre), "--post", str(post), "--pins", str(document(old)), str(document(new))]) == 0
+
+def test_the_cli_reads_two_pins_and_exits_nonzero_on_an_unpinned_move(tmp_path: Path, capsys):
+    old, new = _document(), _document(reload_doc=REWORDED)
+    pre, post = _write(tmp_path, "pre.json", old), _write(tmp_path, "post.json", new)
+    old_pin, new_pin = _write(tmp_path, "old-pin.json", old), _write(tmp_path, "new-pin.json", new)
+    assert check.main(["--pre", pre, "--post", post, "--pins", old_pin, new_pin]) == 0
     assert "OPENAPI PIN PASS" in capsys.readouterr().out
-    assert check.main(["--pre", str(pre), "--post", str(post), "--pins", str(document(old)), str(document(old))]) == 1
+    assert check.main(["--pre", pre, "--post", post, "--pins", old_pin, old_pin]) == 1
     assert "FAIL " + RELOAD in capsys.readouterr().out
-    failed = tmp_path / "failed.json"
-    failed.write_text(json.dumps({"openapi_code": 502, "openapi": []}))
-    assert check.main(["--pre", str(pre), "--post", str(failed), "--pins", str(document(old)), str(document(new))]) == 1
+    for broken in ("not json", {"openapi_code": 502}):
+        assert check.main(["--pre", pre, "--post", _write(tmp_path, "broken.json", broken),
+                           "--pins", old_pin, new_pin]) == 1
+        assert "OPENAPI PIN FAIL: cannot read the inputs" in capsys.readouterr().out
+
+
+def test_the_cli_reads_the_pin_at_each_commit(tmp_path: Path, capsys):
+    repo = tmp_path / "repo"
+    (repo / "tests" / "fixtures").mkdir(parents=True)
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True,
+                              env={"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+                                   "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                                   "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+                                   "PATH": "/usr/bin:/bin"}).stdout.strip()
+
+    old, new = _document(), _document(reload_doc=REWORDED)
+    git("init", "-q")
+    commits = []
+    for document in (old, new):
+        (repo / check.PIN).write_text(json.dumps(document))
+        git("add", "-A")
+        git("commit", "-q", "-m", "pin")
+        commits.append(git("rev-parse", "HEAD"))
+    pre, post = _write(tmp_path, "pre.json", old), _write(tmp_path, "post.json", new)
+    assert check.main(["--pre", pre, "--post", post, "--commits", *commits, "--repo", str(repo)]) == 0
+    assert "OPENAPI PIN PASS" in capsys.readouterr().out
+    assert check.main(["--pre", pre, "--post", post, "--commits", commits[0], commits[0], "--repo", str(repo)]) == 1
+    assert check.main(["--pre", pre, "--post", post, "--commits", "0" * 40, commits[1], "--repo", str(repo)]) == 1
     assert "cannot read the inputs" in capsys.readouterr().out
