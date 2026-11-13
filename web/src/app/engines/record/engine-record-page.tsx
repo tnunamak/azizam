@@ -285,6 +285,12 @@ function RecordForm({
     enabled: nativeMode,
   });
   const selectedProtocol = protocolCatalog?.protocols.find((row) => row.id === protocol.protocol);
+  // With protocol dispatch, the tasks are the operations the chosen description declares (the add-engine dialog
+  // offers the same list), then any saved task it does not declare, so that task stays visible and can be unticked.
+  // A task the definition does not name is labelled by its id and serves no model kind.
+  const capabilityChoices = nativeMode && selectedProtocol
+    ? [...new Set([...selectedProtocol.operations, ...view.capabilities])].map((id) => definition.capabilities.find((c) => c.id === id) ?? { id, label: id, kinds: [] })
+    : definition.capabilities;
   const protocolValid = !nativeMode || Boolean(protocolCatalogReady && !protocolCatalogFetching && !protocolCatalogError && selectedProtocol?.dispatch_supported && selectedProtocol.validation.valid);
   const protocolDormantFields = nativeMode ? new Set(["headers", "path_prefix", "reply_timeout_s", "transforms"]) : null;
   const mismatched = addressUnsupported;
@@ -381,7 +387,10 @@ function RecordForm({
     };
     if ("address" in unsupported) delete (body.values as unknown as Record<string, unknown>).address;
     if (offeringsEditable) {
-      body.capabilities = definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
+      // Protocol mode sends the record's tasks unchanged until the description loads, sorted, so loading it is not an edit.
+      body.capabilities = !nativeMode
+        ? capabilityChoices.filter((c) => ticked.has(c.id)).map((c) => c.id)
+        : (selectedProtocol ? capabilityChoices.filter((c) => ticked.has(c.id)).map((c) => c.id) : [...ticked]).sort();
       body.models = modelsBody(models);
     }
     return body;
@@ -406,7 +415,7 @@ function RecordForm({
   const refusedHere = (field: string) => (refusedField === field ? refusal?.message : undefined);
   const refusedKind = refusal ? kindRefusal(refusedField, refusal.message) : null;
   // The kinds the ticked capabilities serve. The Capability pick-list offers only these.
-  const offeredKinds = definition.capabilities.filter((c) => ticked.has(c.id)).flatMap((c) => c.kinds);
+  const offeredKinds = capabilityChoices.filter((c) => ticked.has(c.id)).flatMap((c) => c.kinds);
   const optionErrors: Record<string, string> = refusedField && optionKeys.has(refusedField) && refusal ? { [refusedField]: refusal.message } : {};
   useEffect(() => {
     if (saveError) focusFirstInvalid(root.current);
@@ -584,7 +593,7 @@ function RecordForm({
   // ---- What it can do
   const rows: CapabilityRow[] = (() => {
     if (nativeMode)
-      return definition.capabilities.map((c) => ticked.has(c.id)
+      return capabilityChoices.map((c) => ticked.has(c.id)
         ? { id: c.id, label: c.label, level: "declared" as const, evidence: "Declared for this engine. This page has not checked a dispatched request." }
         : { id: c.id, label: c.label, level: "unchecked" as const });
     const fromSession = fresh?.result.capabilities;
@@ -733,9 +742,9 @@ function RecordForm({
     {n2 && <p>The configured key belongs to the previous address. Save the address before replacing the key for this origin.</p>}
   </div>;
 
-  const capabilityIds = definition.capabilities.filter((c) => ticked.has(c.id)).map((c) => c.id);
+  const capabilityIds = capabilityChoices.filter((c) => ticked.has(c.id)).map((c) => c.id);
   const modelNames = models.filter((m) => m.on).map((m) => m.public_name.trim() || m.id);
-  const savedCapabilities = definition.capabilities.filter((c) => view.capabilities.includes(c.id)).map((c) => c.id);
+  const savedCapabilities = capabilityChoices.filter((c) => view.capabilities.includes(c.id)).map((c) => c.id);
   const savedNames = view.models.filter((m) => m.enabled !== false).map((m) => m.public_name.trim() || m.id);
   const sameList = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
   const modelsChanged = !sameList(capabilityIds, savedCapabilities) || !sameList(modelNames, savedNames);

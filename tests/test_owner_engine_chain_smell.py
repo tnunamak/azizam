@@ -17,7 +17,7 @@ import pytest
 
 from tests.support.engine_dns import use_fake_engine_dns
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - fixture
-from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401 - gateway is a fixture
+from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin, signed_in  # noqa: F401 - gateway is a fixture
 
 ROOT = Path(__file__).resolve().parent.parent
 SMELL = ROOT / "tests" / "fixtures" / "engine_protocol" / "d0" / "smell.yml"
@@ -471,3 +471,194 @@ def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner,
     )
     assert disabled.status_code == 200, disabled.text
     assert smell_rows() == []
+
+
+# --- Plans decide the described task: categories are labels, a plan includes all of them or a selected list ---------
+
+SMELL_CATEGORY = "smell-lab"
+
+
+def _label_smell_model(gateway, tmp_path, monkeypatch):
+    """The owner's category rules for this test only: the model smell-1 is in the category smell-lab.
+
+    The owner category routes write the store the gateway opened when it was imported, which every test shares; so
+    the gate is pointed at this test's own store and the snapshot is activated the way
+    tests/test_category_visibility.py does it. The plans that decide are changed through the owner routes."""
+    from gateway import admin_store, category_enforcement, category_policy as policy
+    from gateway.category_api import snapshot_to_json
+    from gateway.category_store import CategoryStore
+
+    path = tmp_path / "categories.db"
+    monkeypatch.setattr(category_enforcement, "_GATE", None)  # restored after the test
+    category_enforcement.configure(path, owner_id=lambda: admin_store.instance_owner_id(path=gateway.path))
+    fact = policy.Assertion(SMELL_CATEGORY, "included", "owner", True, "2026-01-01", "2026-01-01", "owner", "owner-edit-1")
+    service = policy.Service("smell-1@r1", (policy.Subject("smell-1@r1", "workflow", (fact,)),))
+    category = policy.Category(SMELL_CATEGORY, "Smell lab", values=("included",), applies_to=("release", "workflow"))
+    store = CategoryStore(path)
+    row = store.create_candidate(snapshot_to_json(policy.PolicyVersion("rules", {SMELL_CATEGORY: category}, {}, {}, {service.id: service})),
+                                 None, "owner", "smell rules")
+    store.activate(row.revision, None)
+
+
+def _plan_body(client, plan_id) -> dict:
+    got = client.get(f"/admin/api/access-plans/{plan_id}")
+    assert got.status_code == 200, got.text
+    plan = got.json()["access_plan"]
+    return {"name": plan["name"], **plan["plan"]}
+
+
+def _set_categories(client, plan_id, categories):
+    body = {**_plan_body(client, plan_id), "categories": categories}
+    put = client.put(f"/admin/api/access-plans/{plan_id}", headers=csrf_for(client), json=body)
+    assert put.status_code == 200, put.text
+    assert put.json()["access_plan"]["plan"]["categories"] == categories
+
+
+def _copy_plan(client, plan_from, name, categories) -> str:
+    created = client.post("/admin/api/access-plans", headers=csrf_for(client),
+                          json={**_plan_body(client, plan_from), "name": name, "categories": categories})
+    assert created.status_code == 201, created.text
+    return created.json()["access_plan"]["id"]
+
+
+def _member_app_key(client, gateway, plan_from, categories) -> tuple[str, str]:
+    """An App key for a household member (not the owner, whose own identity is the one category exemption), on a new
+    plan that copies `plan_from` with the given categories. The member's own plan is a copy that includes every
+    category, so the App plan alone decides."""
+    member_id = gateway.user("helper@example.test")["id"]
+    person_plan = _copy_plan(client, plan_from, "Smell member plan", "all")
+    assigned = client.patch(f"/admin/api/people/{member_id}", headers=csrf_for(client), json={"access_plan": person_plan})
+    assert assigned.status_code == 200, assigned.text
+    plan_id = _copy_plan(client, plan_from, "Smell app plan", categories)
+    app = client.post("/admin/api/apps", headers=csrf_for(client),
+                      json={"name": "smell-member-app", "kind": "service", "access_plan": plan_id, "owner_user_id": member_id})
+    assert app.status_code == 201, app.text
+    # Only the person an App answers for adds its key.
+    member, _ = signed_in(gateway, sub="helper", email="helper@example.test", groups=["/Trusted"])
+    key = member.post(f"/admin/api/apps/{app.json()['app']['id']}/keys", headers=csrf_for(member), json={"display_name": "k"})
+    assert key.status_code == 201, key.text
+    return plan_id, key.json()["credential"]["api_key"]
+
+
+def test_plans_a_plan_without_the_smell_category_refuses_the_job_until_the_owner_adds_it(owner, smell_engine, gateway, tmp_path, monkeypatch):
+    client, overlay, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    _enabled_engine(client)
+    _label_smell_model(gateway, tmp_path, monkeypatch)
+    app_plan, key = _member_app_key(client, gateway, plan_id, [])
+    before = _jobs_made()
+    refused = _submit(gateway, key)
+    # A category the plan leaves out hides the item: the same answer as for an item that does not exist.
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "policy_denied"
+    assert refused.json()["error"]["message"] == f"category rules: CATEGORY_HIDDEN {SMELL_CATEGORY}"
+    assert smell_engine.posts == [] and _jobs_made() == before
+    # The owner selects the category on the App's plan; the same key runs the job, with no restart.
+    _set_categories(client, app_plan, [SMELL_CATEGORY])
+    with gateway.client() as public:
+        _submit_and_read(public, key, smell_engine)
+
+
+def test_plans_an_app_the_owner_answers_for_is_decided_by_its_own_plan(owner, smell_engine, gateway, tmp_path, monkeypatch):
+    """Only the owner's own identity is exempt from categories; an App the owner runs is not the owner in person."""
+    client, overlay, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    _enabled_engine(client)
+    _label_smell_model(gateway, tmp_path, monkeypatch)
+    app_plan = _copy_plan(client, plan_id, "Owner app plan", [])
+    key = _app_key(client, owner_id, app_plan)
+    before = _jobs_made()
+    refused = _submit(gateway, key)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["message"] == f"category rules: CATEGORY_HIDDEN {SMELL_CATEGORY}"
+    assert smell_engine.posts == [] and _jobs_made() == before
+
+
+def test_plans_a_plan_with_all_categories_runs_the_job_in_a_category_made_after_it(owner, smell_engine, gateway, tmp_path, monkeypatch):
+    client, overlay, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    _enabled_engine(client)
+    _, key = _member_app_key(client, gateway, plan_id, "all")
+    _label_smell_model(gateway, tmp_path, monkeypatch)  # the category is made after the plan chose "all"
+    with gateway.client() as public:
+        _submit_and_read(public, key, smell_engine)
+
+
+# --- Updating an installed description ----------------------------------------------------------------------------
+
+SECOND_OPERATION = "smell.describe"
+
+
+def _with_second_operation(text: str) -> str:
+    """The smell description with a second operation that speaks the same wire."""
+    head, ops = text.split("operations:\n", 1)
+    second = ops.replace("  smell.infer:\n", f"  {SECOND_OPERATION}:\n", 1)
+    return head + "operations:\n" + ops + second
+
+
+def test_update_an_installed_description_in_place_and_offer_its_new_task_without_a_restart(owner, smell_engine, gateway, fake_upstreams):  # noqa: F811
+    from gateway import admin_store
+    from gateway.engine_protocol import dispatch
+
+    client, overlay, owner_id, plan_id = owner
+    created = _install_description(client)
+    assert created.status_code == 201, created.text
+    _enabled_engine(client)
+    updated_text = _with_second_operation(SMELL.read_text(encoding="utf-8"))
+    updated = client.put("/admin/api/engine-protocols/d0-smell", content=updated_text,
+                         headers={**csrf_for(client), "Content-Type": "application/yaml", "If-Match": created.headers["ETag"]})
+    assert updated.status_code == 200, updated.text
+    assert updated.headers["ETag"] != created.headers["ETag"]
+    row = {r["id"]: r for r in client.get("/admin/api/engine-protocols").json()["protocols"]}["d0-smell"]
+    assert sorted(row["operations"]) == sorted(["smell.infer", SECOND_OPERATION])
+    # The engine offers the new task once the owner ticks it, as the record editor saves it; the running gateway
+    # resolves it at once and a public job for it runs on the engine.
+    ticked = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client),
+                          json={"capabilities": ["smell.infer", SECOND_OPERATION]})
+    assert ticked.status_code == 200, ticked.text
+    registry = admin_store.get_service_registry_with_generation(path=gateway.path)["value"]
+    assert registry["services"]["smell-box"]["capabilities"] == ["smell.infer", SECOND_OPERATION]
+    assert dispatch.resolve(registry, "smell-1", SECOND_OPERATION).engine_id == "smell-box"
+    key = _app_key(client, owner_id, plan_id)
+    fake_upstreams.router.add("127.0.0.1:4011", EmptyModelCatalog())
+    with gateway.client() as public:
+        models = public.get("/v1/models", headers={"authorization": f"Bearer {key}"})
+        assert models.status_code == 200, models.text
+        listed = {r["id"]: r for r in models.json()["data"]}
+        assert sorted(listed["smell-1"]["azizam_operations"]) == sorted(["smell.infer", SECOND_OPERATION])
+        submitted = public.post("/gateway/v1/media/jobs", headers={"authorization": f"Bearer {key}"},
+                                json={"intent": SECOND_OPERATION, "model": "smell-1", "input": {"vector": [1.0]}})
+        assert submitted.status_code == 202, submitted.text
+        for _ in range(100):
+            polled = public.get(f"/gateway/v1/media/jobs/{submitted.json()['id']}", headers={"authorization": f"Bearer {key}"}).json()
+            if polled["status"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.1)
+    assert polled["status"] == "succeeded", polled
+    assert smell_engine.posts == [{"input": {"vector": [1.0]}}]
+
+
+def test_update_an_invalid_or_stale_description_update_is_refused_and_the_old_one_stays(owner, smell_engine, gateway):
+    client, overlay, *_ = owner
+    created = _install_description(client)
+    assert created.status_code == 201, created.text
+    _enabled_engine(client)
+    original = SMELL.read_text(encoding="utf-8")
+    headers = {**csrf_for(client), "Content-Type": "application/yaml"}
+    tries = {
+        # Not a valid description.
+        "invalid": (original.replace("executor: http-v1", "executor: no-such-executor"), created.headers["ETag"], 422),
+        # Another id inside the document than in the address.
+        "id_mismatch": (original.replace("id: d0-smell", "id: d0-other"), created.headers["ETag"], 422),
+        # A stale revision.
+        "stale": (_with_second_operation(original), '"not-the-current-tag"', 412),
+        # Drops the task the enabled engine offers.
+        "in_use": (original.replace("smell.infer:", f"{SECOND_OPERATION}:"), created.headers["ETag"], 409),
+    }
+    for name, (text, tag, status) in tries.items():
+        refused = client.put("/admin/api/engine-protocols/d0-smell", content=text, headers={**headers, "If-Match": tag})
+        assert refused.status_code == status, (name, refused.text)
+        stored = client.get("/admin/api/engine-protocols/d0-smell")
+        assert stored.headers["ETag"] == created.headers["ETag"] and stored.json()["text"] == original, name
+    row = {r["id"]: r for r in client.get("/admin/api/engine-protocols").json()["protocols"]}["d0-smell"]
+    assert row["operations"] == ["smell.infer"]
