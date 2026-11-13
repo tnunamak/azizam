@@ -242,6 +242,15 @@ def test_an_alias_to_a_service_that_is_gone_is_applied_and_shown_dangling_never_
     assert app.problems() == [] and SECTION not in (app.home.holder.current().problems.get("config") or {})
 
 
+def _without_transcript_flag(section):
+    """The model_aliases section as the C0 golden captured it: train 59 added only OmniVoice's custom_voice_transcript
+    flag to the deployment fixture (test_config_homes_goldens lists model_aliases as moved on purpose)."""
+    section = copy.deepcopy(section)
+    engine = (((section.get("speech") or {}).get("engines") or {}).get("omnivoice") or {})
+    assert engine.pop("custom_voice_transcript", None) is True
+    return section
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # The boot import
 # ---------------------------------------------------------------------------------------------------------------------
@@ -250,7 +259,7 @@ def test_the_import_of_the_tracked_file_gives_the_c0_golden_and_the_block_itself
     raw = golden.raw_config("tracked")
     effective = golden.effective_config(proxy, "tracked", tmp_path / "admin.db")
     want = golden.load_golden()["inputs"]["tracked"]
-    assert golden.digest(effective[SECTION]) == want["section_digests"][SECTION]
+    assert golden.digest(_without_transcript_flag(effective[SECTION])) == want["section_digests"][SECTION]
     assert golden.digest(effective[SECTION]) == golden.digest(raw[SECTION]), "the effective section is the legacy block"
     # The whole-config digest is held by test_config_homes_goldens, with the entries C10 changes on purpose.
     assert golden.alias_table(proxy, effective) == want["aliases"]
@@ -276,7 +285,7 @@ def test_the_live_like_import_report_holds_the_three_live_pointers_and_gives_the
     assert stored == set(by_pointer) and {row["origin"] for row in rows(db)} == {"legacy-import"}
     effective = golden.effective_config(proxy, "live_like", tmp_path / "admin.db")
     want = golden.load_golden()["inputs"]["live_like"]
-    assert golden.digest(effective[SECTION]) == want["section_digests"][SECTION]
+    assert golden.digest(_without_transcript_flag(effective[SECTION])) == want["section_digests"][SECTION]
     assert golden.alias_table(proxy, effective) == want["aliases"]
 
 
