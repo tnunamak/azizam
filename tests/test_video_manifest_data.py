@@ -635,3 +635,57 @@ def test_a_later_file_with_the_same_id_takes_the_place_of_a_refused_one(monkeypa
     assert [(record.id, record.source_path) for record in registry.records()] == [(usable["id"], tmp_path / "b.yml")]
     assert [(error.source_path, error.message) for error in registry.errors] == [
         (tmp_path / "a.yml", f"{usable['id']}: claims a taken reference")]
+
+
+# --------------------------------------------------------------------------------------- registry wire reasons
+
+
+def test_video_grid_registry_loads_published_reasons(monkeypatch) -> None:
+    from gateway import video_grid
+
+    reasons = video_grid.load_stride_reasons(ROOT / "registry" / "video_grid.yml")
+    assert reasons == {
+        "default": "frame_count_stride", "by_step": {8: "ltx_latent_8np1_stride"},
+    }
+    assert all(type(step) is int for step in reasons["by_step"])
+    monkeypatch.setattr(video_grid, "_STRIDE_REASONS", reasons)
+    assert video_grid.stride_reason(8) == "ltx_latent_8np1_stride"
+    for step in (1, 4, 17):
+        assert video_grid.stride_reason(step) == "frame_count_stride"
+
+
+@pytest.mark.parametrize("invalid", [
+    {"stride_reasons": {"default": "generic", "by_step": {}}, "typo": True},
+    {"stride_reasons": {"default": "generic", "by_step": {}, "typo": "reason"}},
+    {"stride_reasons": {"default": "", "by_step": {}}},
+    {"stride_reasons": {"default": "generic", "by_step": {8: ""}}},
+    {"stride_reasons": {"default": "Capital", "by_step": {}}},
+    {"stride_reasons": {"default": "generic", "by_step": {8: "Capital"}}},
+    {"stride_reasons": {"default": "has space", "by_step": {}}},
+    {"stride_reasons": {"default": "generic", "by_step": {8: "has space"}}},
+    {"stride_reasons": {"by_step": {8: "selected"}}},
+], ids=["unknown-root", "unknown-reasons", "blank-default", "blank-step",
+        "capital-default", "capital-step", "space-default", "space-step", "missing-default"])
+def test_video_grid_registry_rejects_invalid_reasons(tmp_path: Path, invalid: dict) -> None:
+    from gateway import video_grid
+
+    path = tmp_path / "video_grid.yml"
+    path.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        video_grid.load_stride_reasons(path)
+    assert str(path) in str(caught.value)
+
+
+@pytest.mark.parametrize("step", ["8", True, 0, -1, 8.0],
+                         ids=["string", "bool", "zero", "negative", "float"])
+def test_video_grid_registry_requires_positive_integer_steps(tmp_path: Path, step) -> None:
+    from gateway import video_grid
+
+    path = tmp_path / "video_grid.yml"
+    path.write_text(yaml.safe_dump({
+        "stride_reasons": {"default": "generic", "by_step": {step: "selected"}},
+    }), encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        video_grid.load_stride_reasons(path)
+    assert str(path) in str(caught.value)
+    assert "positive integers" in str(caught.value)

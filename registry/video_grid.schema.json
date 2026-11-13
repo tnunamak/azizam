@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/video_grid.schema.json",
+  "title": "Video grid stride reasons",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stride_reasons"
+  ],
+  "properties": {
+    "stride_reasons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "default",
+        "by_step"
+      ],
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/reason"
+        },
+        "by_step": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[1-9][0-9]*$": {
+              "$ref": "#/$defs/reason"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "not": {
+        "pattern": "[^a-z0-9_]"
+      }
+    }
+  }
+}
