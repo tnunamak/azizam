@@ -78,3 +78,9 @@ def test_a_record_that_serves_two_roles_takes_each_roles_default(monkeypatch):
     both = {"host": "127.0.0.1", "port": 18101, "capabilities": ["audio.speech", "audio.transcriptions"]}
     derived = proxy._derive_backend_constants({"backends": {"voice-and-ears": both}})
     assert (derived["TTS_TIMEOUT"], derived["STT_TIMEOUT"]) == (11, 22)
+
+
+def test_speech_record_without_a_model_keeps_the_release_model(monkeypatch):
+    cfg = {"backends": {"speaker": {"capabilities": ["audio.speech"]}}}
+    monkeypatch.setattr(proxy, "config", cfg)
+    assert proxy.tts_backend_model() == "mistralai/Voxtral-4B-TTS-2603"
