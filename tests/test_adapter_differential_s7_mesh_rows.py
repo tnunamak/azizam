@@ -16,7 +16,8 @@ answers JSON that carries the model. In every cell the engine saw the same reque
 (the oracle test below). Differences
 that hold for every cell: (a) the old ``x-request-id`` and ``x-asset-id`` headers and the route's receipt rows are gone
 (the run core keeps a job row and a Library asset; no per-request receipt); (b) a failed run's message is the run core's
-generic text ("The job failed."), the status and code carry the reason (old: a sentence per case); (c) the job is a
+generic text ("The job failed."), the status and code carry the reason (old: a sentence per case); the one exception is the
+capacity refusal ``resource_unavailable``, which says "The graphics card is busy. Try again in a minute."; (c) the job is a
 workflow job (``intent: workflow.run``, ``workflow_id`` names the workflow), not a mesh job with its own mode.
 
 * ``success_raw`` -> ``success``: status 200, ``model/gltf-binary`` and the exact model bytes, as before.
