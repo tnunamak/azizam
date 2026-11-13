@@ -49,6 +49,7 @@ __all__ = [
     "metadata_handling",
     "METADATA_REMOVED",
     "METADATA_UNCHANGED",
+    "METADATA_REFUSED",
     "METADATA_NOTES",
     "strip_metadata",
     "embed_png_text",
@@ -623,9 +624,11 @@ _HEIF_BRANDS = frozenset({b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx",
 
 METADATA_REMOVED = "removed"
 METADATA_UNCHANGED = "unchanged"
+METADATA_REFUSED = "refused"
 METADATA_NOTES = {
     METADATA_REMOVED: "Azizam removed the metadata it knows how to find in this file.",
     METADATA_UNCHANGED: "Azizam left this file's bytes unchanged and did not remove any metadata from it.",
+    METADATA_REFUSED: "Azizam cannot remove this file's metadata, so it will not deliver the file.",
 }
 
 
@@ -817,12 +820,17 @@ def _codec_strip_options(streams: list[dict[str, str]]) -> tuple[list[str], bool
 
 
 def metadata_handling(content: bytes, suffix_or_mime: str) -> str:
-    """What strip_metadata does to these bytes: METADATA_UNCHANGED for a pass-through, else METADATA_REMOVED.
+    """What strip_metadata decides for these bytes, without running it.
 
+    METADATA_UNCHANGED for a File that passes through, METADATA_REFUSED for a family with no handler or
+    declared media with unrecognised bytes, else METADATA_REMOVED (a handler can still refuse a broken file).
     A prefix of the file is enough (the sniff reads the first bytes only).
     """
-    if sniff_metadata_type(content) is None and media_kind(suffix_or_mime) in (None, "content"):
-        return METADATA_UNCHANGED
+    actual = sniff_metadata_type(content)
+    if actual in _UNHANDLED_FAMILIES:
+        return METADATA_REFUSED
+    if actual is None:
+        return METADATA_UNCHANGED if media_kind(suffix_or_mime) in (None, "content") else METADATA_REFUSED
     return METADATA_REMOVED
 
 

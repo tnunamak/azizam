@@ -773,6 +773,7 @@ def test_metadata_bearing_formats_with_no_handler_never_pass_as_files(make, decl
     assert b"PRIVATE_MARKER" in source or "PRIVATE_MARKER".encode("utf-16-be") in source
     with pytest.raises(mm.MediaMetadataError):
         mm.strip_metadata(source, declared)
+    assert mm.metadata_handling(source[:4096], declared) == mm.METADATA_REFUSED
 
 
 def test_media_that_is_stripped_says_removed(tmp_path):
