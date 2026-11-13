@@ -135,7 +135,8 @@ def test_a_repeated_key_is_refused_not_last_wins(tmp_path):
 def test_every_handler_has_strip_code():
     """Each handler a row may name reaches a strip branch, so no shipped kind returns its bytes unchanged."""
     import inspect
-    body = inspect.getsource(mm.strip_metadata)
+    # strip_metadata takes its refusals and pass-throughs from the one decision it shares with the label.
+    body = inspect.getsource(mm.strip_metadata) + inspect.getsource(mm._strip_decision)
     for handler in mm._HANDLERS:
         assert f'"{handler}"' in body, handler
 

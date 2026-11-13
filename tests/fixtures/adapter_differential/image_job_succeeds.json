@@ -157,7 +157,8 @@
           "accept-ranges": "bytes",
           "cache-control": "private, max-age=3600",
           "content-length": "77",
-          "content-type": "image/png"
+          "content-type": "image/png",
+          "x-azizam-metadata": "removed"
         },
         "status": 200
       }
