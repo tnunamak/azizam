@@ -1048,3 +1048,40 @@ def test_h264_strip_is_a_fixed_point():
     clean = mm.strip_metadata(source, ".mp4")
     assert mm.strip_metadata(clean, ".mp4") == clean
     assert b"btrt" not in clean
+
+
+def _decision_samples():
+    from tests.media_test_bytes import glb_bytes, png_bytes, wav_bytes
+    return {"png": png_bytes(), "glb": glb_bytes(), "wav": wav_bytes(), "plain": b"hello",
+            "bmff": b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isommp42" + b"\x00" * 64,
+            "tiff": _tiff_bytes(), "pdf": _pdf_bytes()}
+
+
+@pytest.mark.parametrize("declared", [".png", ".bin", ".zzunknown", ".wav", ".mp3", ".glb", ".pcm", "text/plain"])
+def test_the_label_agrees_with_what_strip_does(declared):
+    # The Library and the download header read metadata_handling; it must never disagree with strip_metadata.
+    for name, sample in _decision_samples().items():
+        label = mm.metadata_handling(sample[:4096], declared)
+        if label == mm.METADATA_REFUSED:
+            with pytest.raises(mm.MediaMetadataError):
+                mm.strip_metadata(sample, declared)
+        elif label == mm.METADATA_UNCHANGED:
+            assert mm.strip_metadata(sample, declared) == sample, (name, declared)
+        elif name != "bmff":  # The stub MP4 would reach ffmpeg; every other sample is a valid file.
+            mm.strip_metadata(sample, declared)
+
+
+@pytest.mark.parametrize("sample", [
+    b"\n\r\n%PDF-1.7\n",  # a header after leading junk
+    b"8BPS\x00\x01" + b"\x00" * 32,  # Photoshop
+    b"\x00\x00\x00\x0cjP  \r\n\x87\n" + b"\x00" * 32,  # JPEG 2000
+    b"\xff\x4f\xff\x51" + b"\x00" * 32,  # JPEG 2000 codestream
+    b"IIRO\x08\x00\x00\x00" + b"\x00" * 32,  # Olympus raw
+    b"\x00\x00\x00\x00ftypisom\x00\x00\x00\x00mp41heic" + b"\x00" * 16,  # ftyp running to the end
+    b"\x00\x00\x00\x01ftyp" + (32).to_bytes(8, "big") + b"isom\x00\x00\x00\x00mif1" + b"\x00" * 16,  # 64-bit ftyp
+    b"\x00\x00\x00\x14ftypavci\x00\x00\x00\x00avci",  # HEIF holding AVC
+], ids=["pdf-junk", "psd", "jp2", "j2k", "orf", "ftyp-size0", "ftyp-size1", "avci"])
+def test_more_metadata_bearing_headers_are_refused_as_files(sample):
+    with pytest.raises(mm.MediaMetadataError):
+        mm.strip_metadata(sample, ".bin")
+    assert mm.metadata_handling(sample, ".bin") == mm.METADATA_REFUSED

@@ -1361,16 +1361,12 @@ def _metadata_fields(path: Path | None) -> dict[str, str | None]:
     """Say honestly what the stored copy went through: a File that is not media passed unchanged."""
     if path is None:
         return {"metadata_handling": None, "metadata_note": None}
-    suffix = path.suffix
-    head = b""
-    if media_metadata.media_kind(suffix) in (None, "content"):
-        # Only an undeclared file needs its first bytes: media stored under a File name was sniffed and stripped.
-        try:
-            with path.open("rb") as handle:
-                head = handle.read(4096)
-        except OSError:
-            return {"metadata_handling": None, "metadata_note": None}
-    handling = media_metadata.metadata_handling(head, suffix)
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(4096)  # The decision reads the first bytes only.
+    except OSError:
+        return {"metadata_handling": None, "metadata_note": None}
+    handling = media_metadata.metadata_handling(head, path.suffix)
     return {"metadata_handling": handling, "metadata_note": media_metadata.METADATA_NOTES[handling]}
 
 

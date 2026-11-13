@@ -618,9 +618,13 @@ def strip_audio(content: bytes, suffix_or_mime: str, *, workdir: Path | None = N
 
 # Families that carry metadata (EXIF, XMP, GPS, an author) but have no handler here. They are
 # refused, never passed through as a File: an iPhone photo is HEIC and carries GPS.
-_UNHANDLED_FAMILIES = frozenset({"tiff", "heif", "pdf", "jxl"})
-_HEIF_BRANDS = frozenset({b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx",
-                          b"mif1", b"mif2", b"msf1", b"avif", b"avis"})
+_UNHANDLED_FAMILIES = frozenset({"tiff", "heif", "pdf", "jxl", "jp2", "psd"})
+_HEIF_BRANDS = frozenset({b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"heif",
+                          b"mif1", b"mif2", b"msf1", b"miaf", b"MiHE", b"MiHB", b"MiHA",
+                          b"avif", b"avis", b"avci", b"avcs"})
+_DIRECT_FAMILIES = frozenset({"png", "jpeg", "webp", "gif", "glb"})
+_MUXER_FAMILY = {"mp4": "bmff", "mov": "bmff", "webm": "ebml", "matroska": "ebml", "avi": "avi",
+                 "wav": "wav", "flac": "flac", "mp3": "mp3", "ogg": "ogg", "adts": "adts"}
 
 METADATA_REMOVED = "removed"
 METADATA_UNCHANGED = "unchanged"
@@ -633,9 +637,14 @@ METADATA_NOTES = {
 
 
 def _ftyp_brands(content: bytes) -> set[bytes]:
-    size = int.from_bytes(content[:4], "big")
-    end = min(size if size >= 16 else 16, len(content))
-    return {content[8:12]} | {content[i:i + 4] for i in range(16, end - 3, 4)}
+    """The major and compatible brands of a leading ftyp box (size 0 runs to the end, size 1 is 64-bit)."""
+    size, start = int.from_bytes(content[:4], "big"), 8
+    if size == 1:
+        size, start = int.from_bytes(content[8:16], "big"), 16
+    elif size == 0:
+        size = len(content)
+    end = min(max(size, start + 8), len(content), 4096)
+    return {content[start:start + 4]} | {content[i:i + 4] for i in range(start + 8, end - 3, 4)}
 
 
 def sniff_metadata_type(content: bytes) -> str | None:
@@ -647,14 +656,19 @@ def sniff_metadata_type(content: bytes) -> str | None:
                             (b"\x1a\x45\xdf\xa3", "ebml"),
                             (b"II*\x00", "tiff"), (b"MM\x00*", "tiff"),
                             (b"II+\x00", "tiff"), (b"MM\x00+", "tiff"),
+                            (b"IIRO", "tiff"), (b"IIU\x00", "tiff"),
                             (b"%PDF-", "pdf"), (b"\xff\x0a", "jxl"),
-                            (b"\x00\x00\x00\x0cJXL \r\n\x87\n", "jxl")):
+                            (b"\x00\x00\x00\x0cJXL \r\n\x87\n", "jxl"),
+                            (b"\x00\x00\x00\x0cjP  \r\n\x87\n", "jp2"), (b"\xff\x4f\xff\x51", "jp2"),
+                            (b"8BPS", "psd")):
         if content.startswith(signature):
             return kind
     if len(content) >= 12 and content[:4] == b"RIFF":
         return {b"WEBP": "webp", b"WAVE": "wav", b"AVI ": "avi"}.get(content[8:12])
     if len(content) >= 12 and content[4:8] == b"ftyp":
         return "heif" if _ftyp_brands(content) & _HEIF_BRANDS else "bmff"
+    if b"%PDF-" in content[:1024]:
+        return "pdf"  # PDF readers accept a header after leading junk in the first kilobyte.
     if len(content) >= 2 and content[0] == 0xff:
         if content[1] & 0xf6 == 0xf0:
             return "adts"
@@ -819,45 +833,52 @@ def _codec_strip_options(streams: list[dict[str, str]]) -> tuple[list[str], bool
     return options, rebuild_headers
 
 
+def _strip_decision(content: bytes, suffix_or_mime: str) -> tuple[str | None, str | None]:
+    """The one decision strip_metadata and metadata_handling share: (sniffed family, refusal reason or None).
+
+    A None family with no refusal is a File that passes unchanged. Reads only the first bytes.
+    """
+    actual = sniff_metadata_type(content)
+    if actual in _DIRECT_FAMILIES:
+        return actual, None
+    if actual in _UNHANDLED_FAMILIES:
+        return actual, "media metadata format has no handler"
+    kind = media_kind(suffix_or_mime)
+    if actual is None:
+        # A File that is not media (an upload or an engine result) or the explicit headerless PCM row:
+        # no known metadata channel, so the bytes pass unchanged and metadata_handling says so.
+        return None, None if kind in (None, "content") else "declared media has unrecognised bytes"
+    if kind not in ("audio", "video"):
+        return actual, "unsupported media metadata format"
+    if _MUXER_FAMILY.get(_MUXER.get(_suffix(suffix_or_mime)) or "") != actual:
+        return actual, "unknown or contradictory media container"
+    return actual, None
+
+
 def metadata_handling(content: bytes, suffix_or_mime: str) -> str:
     """What strip_metadata decides for these bytes, without running it.
 
-    METADATA_UNCHANGED for a File that passes through, METADATA_REFUSED for a family with no handler or
-    declared media with unrecognised bytes, else METADATA_REMOVED (a handler can still refuse a broken file).
-    A prefix of the file is enough (the sniff reads the first bytes only).
+    METADATA_UNCHANGED for a File that passes through, METADATA_REFUSED when strip_metadata refuses before
+    any handler runs, else METADATA_REMOVED (a handler can still refuse a broken file). A prefix is enough.
     """
-    actual = sniff_metadata_type(content)
-    if actual in _UNHANDLED_FAMILIES:
+    actual, refusal = _strip_decision(content, suffix_or_mime)
+    if refusal is not None:
         return METADATA_REFUSED
-    if actual is None:
-        return METADATA_UNCHANGED if media_kind(suffix_or_mime) in (None, "content") else METADATA_REFUSED
-    return METADATA_REMOVED
+    return METADATA_UNCHANGED if actual is None else METADATA_REMOVED
 
 
 def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
     """Strip by actual bytes; refuse unknown or contradictory container declarations."""
-    actual = sniff_metadata_type(content)
+    actual, refusal = _strip_decision(content, suffix_or_mime)
+    if refusal is not None:
+        raise MediaMetadataError(refusal)
+    if actual is None:
+        return content
     handlers = {"png": _strip_png, "jpeg": _strip_jpeg, "webp": _strip_webp,
                 "gif": _strip_gif, "glb": _strip_glb}
     if actual in handlers:
         return handlers[actual](content)
-    if actual in _UNHANDLED_FAMILIES:
-        raise MediaMetadataError("media metadata format has no handler")
-    kind = media_kind(suffix_or_mime)
-    if actual is None:
-        if kind in (None, "content"):
-            # A File that is not media (an upload or an engine result) or the explicit headerless PCM row:
-            # no known metadata channel, so the bytes pass unchanged and metadata_handling says so.
-            return content
-        raise MediaMetadataError("declared media has unrecognised bytes")
-    if kind not in ("audio", "video"):
-        raise MediaMetadataError("unsupported media metadata format")
-    suffix = _suffix(suffix_or_mime)
-    muxer = _MUXER.get(suffix)
-    families = {"mp4": "bmff", "mov": "bmff", "webm": "ebml", "matroska": "ebml",
-                "avi": "avi", "wav": "wav", "flac": "flac", "mp3": "mp3", "ogg": "ogg", "adts": "adts"}
-    if muxer is None or actual is None or families.get(muxer) != actual:
-        raise MediaMetadataError("unknown or contradictory media container")
+    muxer = _MUXER[_suffix(suffix_or_mime)]
     if actual == "wav":
         return _strip_wav(content)
     if actual == "flac":

@@ -533,3 +533,14 @@ def _download(asset_id):
                                 "query_string": b"", "headers": [(b"host", b"ai.example"),
                                                                  (b"authorization", b"Bearer test-app-credential")]})
     return TestClient(proxy.app).get(proxy.build_signed_asset_url(request, asset_id, "none"))
+
+
+def test_a_stored_picture_is_labelled_removed_by_its_real_bytes(tmp_path):
+    # The label reads the stored file's first bytes even when its name already says media.
+    from tests.media_test_bytes import png_bytes
+    picture = tmp_path / "a.png"
+    picture.write_bytes(png_bytes())
+    assert me_media._metadata_fields(picture)["metadata_handling"] == "removed"
+    plain = tmp_path / "a.zzunknown"
+    plain.write_bytes(b"hello")
+    assert me_media._metadata_fields(plain)["metadata_handling"] == "unchanged"
