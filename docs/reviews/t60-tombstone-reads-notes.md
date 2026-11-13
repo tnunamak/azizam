@@ -83,3 +83,6 @@ Tests which inspect physical retention after deletion now explicitly include del
 ## Validation
 
 The first targeted hermetic run passed: `233 passed, 11 subtests passed in 11.82s` (store, image jobs, S7 core, workflow routes, adapter units and protocol traits). Follow-up verification adds explicit deleted-terminal protocol replay and multipart dispatch guards, plus a positive HTTP get before deletion. Seven new pytest cases in total; the protocol replay case extends an existing test.
+
+
+The strengthened second run found a fixture error: `1 failed, 305 passed, 11 subtests passed in 14.15s`. The imported API router retained its original database path, so get returned 404 even before deletion. The HTTP test now binds the production getter route to its isolated store with the production audience and ownership callbacks, while the content route uses its existing per-request DB_PATH resolution.
