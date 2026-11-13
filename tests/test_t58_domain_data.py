@@ -14,7 +14,7 @@ import yaml
 import proxy
 from gateway import (admin_store, capability_ids, discovery_metadata, domain_rows,
                      engine_admin, identity_api, media_job_intents, openai_media_schemas,
-                     toolcall_detection, workflow_openapi, workflow_request_maps)
+                     gateway_messages, workflow_openapi, workflow_request_maps)
 from gateway.resource_admission_http import advise_route_admission, admission_http_response
 from tests.test_domain_literal_ratchet import all_sites, partition_reviewed_sites
 
@@ -88,10 +88,10 @@ def _without_reference(tmp_path, document):
 
 
 def test_discovery_guidance_reads_copy(monkeypatch):
-    messages = dict(toolcall_detection.GATEWAY_MESSAGES)
+    messages = dict(gateway_messages.GATEWAY_MESSAGES)
     messages.update(surface_existing_clients="; legacy at {convenience}.",
                     surface_new_setup="Begin at {canonical}")
-    monkeypatch.setattr(toolcall_detection, "GATEWAY_MESSAGES", messages)
+    monkeypatch.setattr(gateway_messages, "GATEWAY_MESSAGES", messages)
     protocols = [{"default": True, "canonical_base_path": "/api", "convenience_base_path": "/old"}]
     assert discovery_metadata._default_surface_guidance(protocols, numbered=True) == (
         "4. Use /api by default for new setup; legacy at /old.")
@@ -100,7 +100,7 @@ def test_discovery_guidance_reads_copy(monkeypatch):
 
 
 def test_recommendation_templates_preserve_bytes_and_accept_changed_copy():
-    messages = toolcall_detection.GATEWAY_MESSAGES
+    messages = gateway_messages.GATEWAY_MESSAGES
     assert messages["long_video_not_supported"].format(model="demo", max_seconds="8") == (
         "Model demo cannot render shots or clips longer than 8 s; use video-long, ltx-2.5-long or minimax-h3")
     assert messages["video_extend_not_supported"].format(model=repr("demo")) == (
@@ -140,10 +140,10 @@ def test_recommendation_copy_reaches_both_video_routes(tmp_path, monkeypatch):
     from tests.support import video_rig
     from tests.support.config_snapshot import publish_section
     from tests.support.video_rig import MODEL
-    messages = {**toolcall_detection.GATEWAY_MESSAGES,
+    messages = {**gateway_messages.GATEWAY_MESSAGES,
                 "long_video_not_supported": "Select configured long renderer for {model} ({max_seconds}).",
                 "video_extend_not_supported": "Select configured extension renderer for {model}."}
-    monkeypatch.setattr(toolcall_detection, "GATEWAY_MESSAGES", messages)
+    monkeypatch.setattr(gateway_messages, "GATEWAY_MESSAGES", messages)
 
     async def exercise(world):
         workflows = copy.deepcopy(proxy.config["videos"]["workflows"])

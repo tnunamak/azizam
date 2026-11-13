@@ -123,7 +123,7 @@ from gateway import request_history, request_history_api, request_history_captur
 from gateway.http_tls import tls_context
 from gateway import asset_types, declared_operation_job, domain_rows, policy_protocol, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
-from gateway import video_grid, video_source
+from gateway import gateway_messages, video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import image_graph_roles, image_map_targets
 from gateway import realtime_proxy
@@ -12307,7 +12307,7 @@ async def _proxy_graph_video_create(
             chain_name, chain_cfg = _chain_workflow_for(requested_model)
             if chain_cfg is None:
                 return _gateway_input_error(
-                    toolcall_detection.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                    gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
                         model=workflow_name, max_seconds=f"{workflow_cfg.get('max_seconds', 8):g}"),
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported",
@@ -13278,7 +13278,7 @@ async def proxy_graph_video_extend(
         requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
-        return _json_error(400, toolcall_detection.GATEWAY_MESSAGES["video_extend_not_supported"].format(model=repr(requested)),
+        return _json_error(400, gateway_messages.GATEWAY_MESSAGES["video_extend_not_supported"].format(model=repr(requested)),
                            param="model", code="video_extend_not_supported")
     public_model = str(body.get("model") or source_model or "video-long")
     return await _with_request_media_inputs(lambda holder: _submit_video_chain(
@@ -29873,9 +29873,9 @@ def _current_loaded_model_entry(model_id: str = USE_LOADED_MODEL_ALIAS) -> dict[
         "created": int(time.time()),
         "owned_by": "gateway",
         "description": (
-            toolcall_detection.GATEWAY_MESSAGES["current_loaded_fast_model_description"]
+            gateway_messages.GATEWAY_MESSAGES["current_loaded_fast_model_description"]
             if fast
-            else toolcall_detection.GATEWAY_MESSAGES["current_loaded_model_description"]
+            else gateway_messages.GATEWAY_MESSAGES["current_loaded_model_description"]
         ),
         "capabilities": ["chat", "completion"],
         "azizam_alias": True,
