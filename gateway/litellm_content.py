@@ -20,9 +20,54 @@ import yaml
 from gateway import engine_egress
 
 
+PROFILE_PATH = Path(__file__).resolve().parent.parent / "registry/litellm_no_content.yml"
+_SETTING_SECTIONS = ("general_settings", "litellm_settings", "router_settings")
+
+
+def load_profile(path: Path = PROFILE_PATH) -> dict[str, Any]:
+    """Read the no-content profile; a repeated key, a blank name or a wrong shape fails here, naming the field."""
+    from gateway.strict_yaml import safe_load_strict
+
+    def fail(where: str, message: str) -> None:
+        raise ValueError(f"{path}: {where}: {message}")
+
+    def word(value: object) -> bool:
+        return isinstance(value, str) and bool(value) and not any(char.isspace() for char in value)
+
+    try:
+        document = safe_load_strict(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{path}: could not read the profile: {error}") from error
+    if not isinstance(document, dict):
+        fail("document", "must be a mapping")
+    required = {*_SETTING_SECTIONS, "environment"}
+    if missing := required - document.keys():
+        fail("document", f"missing sections: {', '.join(sorted(missing))}")
+    if unknown := document.keys() - required - {"legacy_spend_cleanup_proposal"}:
+        fail("document", f"unknown sections: {', '.join(sorted(map(str, unknown)))}")
+    for section in _SETTING_SECTIONS:
+        settings = document[section]
+        if not isinstance(settings, dict) or not settings:
+            fail(section, "must be a nonempty mapping")
+        for key, value in settings.items():
+            if not word(key):
+                fail(section, f"setting name must be a word without whitespace: {key!r}")
+            if not isinstance(value, (bool, int, str, list)) or (isinstance(value, str) and not value.strip()):
+                fail(f"{section}.{key}", "must be a boolean, number, nonblank string or list")
+    environment = document["environment"]
+    if not isinstance(environment, dict) or not environment:
+        fail("environment", "must be a nonempty mapping")
+    for name, value in environment.items():
+        if not word(name) or name != name.upper():
+            fail("environment", f"variable name must be an upper-case word: {name!r}")
+        if not isinstance(value, str) or not value.strip():
+            fail(f"environment.{name}", "must be a nonblank string")
+    return document
+
+
 @lru_cache(maxsize=1)
 def profile() -> dict[str, Any]:
-    return yaml.safe_load((Path(__file__).resolve().parent.parent / "registry/litellm_no_content.yml").read_text())
+    return load_profile()
 
 
 def config_problem(config: Mapping[str, Any]) -> str | None:
