@@ -15,7 +15,7 @@ def mp4_bytes() -> bytes:
         output = Path(directory) / "sample.mp4"
         subprocess.run(
             ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
-             "color=c=black:s=16x16:d=0.2:r=5", "-c:v", "mpeg4", str(output)],
+             "color=c=black:s=16x16:d=0.2:r=5", "-c:v", "libx264", "-threads", "1", str(output)],
             capture_output=True, check=True,
         )
         return output.read_bytes()

@@ -589,7 +589,9 @@ class AvDeliveryTests(unittest.TestCase):
         try:
             path = workdir / f"x{suffix}"
             path.write_bytes(content)
-            out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0", "-c", "copy", "-f", "md5", "-"],
+            # User-data removal changes the compressed packet hash, not decoded pixels.
+            payload = ["-pix_fmt", "rgb24", "-threads", "1"] if suffix in {".mp4", ".webm"} else ["-c", "copy"]
+            out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0", *payload, "-f", "md5", "-"],
                                  check=True, capture_output=True, text=True).stdout
             return out.strip()
         finally:

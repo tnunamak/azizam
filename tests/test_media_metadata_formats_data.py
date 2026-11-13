@@ -10,20 +10,20 @@ from gateway import media_metadata as mm
 
 ROWS = Path(__file__).resolve().parents[1] / "registry" / "media_metadata_formats.yml"
 
-# Copied literally from base 1250d80426a29527ade69bce42f0f50e7dd7aac6.
+# Reviewed literal pins, including the fail-closed GIF/GLB and PCM rows.
 EXPECTED_SUFFIX_KIND = {
     ".png": "png",
     ".jpg": "jpeg", ".jpeg": "jpeg", ".jpe": "jpeg", ".jfif": "jpeg",
     ".webp": "webp",
     ".mp4": "video", ".m4v": "video", ".mov": "video", ".webm": "video",
-    ".mkv": "video", ".avi": "video", ".gif": None,
+    ".mkv": "video", ".avi": "video", ".gif": "gif", ".glb": "glb", ".pcm": "content",
     ".wav": "audio", ".flac": "audio", ".mp3": "audio", ".ogg": "audio",
     ".oga": "audio", ".opus": "audio", ".m4a": "audio", ".aac": "audio",
     ".mka": "audio",
 }
 EXPECTED_MIME_KIND = {
     "image/png": "png", "image/jpeg": "jpeg", "image/jpg": "jpeg",
-    "image/webp": "webp",
+    "image/webp": "webp", "image/gif": "gif", "model/gltf-binary": "glb", "audio/pcm": "content",
     "video/mp4": "video", "video/webm": "video", "video/quicktime": "video",
     "video/x-matroska": "video", "video/x-msvideo": "video",
     "audio/wav": "audio", "audio/x-wav": "audio", "audio/wave": "audio",
@@ -62,7 +62,7 @@ def write_rows(tmp_path, value):
 def test_shipped_tables_equal_complete_literal_base():
     assert mm.load_media_metadata_formats(ROWS) == EXPECTED_TABLES
     assert (mm._SUFFIX_KIND, mm._MIME_KIND, mm._MUXER, mm._MIME_SUFFIX) == EXPECTED_TABLES
-    assert ".gif" in mm._SUFFIX_KIND and mm._SUFFIX_KIND[".gif"] is None
+    assert ".gif" in mm._SUFFIX_KIND and mm._SUFFIX_KIND[".gif"] == "gif"
 
 
 def test_extra_container_row_reaches_exactly_the_four_expected_tables(tmp_path):
@@ -87,7 +87,7 @@ def test_extra_container_row_reaches_exactly_the_four_expected_tables(tmp_path):
     ("duplicate-suffix", "formats row 2", "duplicate suffix"),
     ("duplicate-mime", "formats row 2", "duplicate MIME type"),
     ("muxer-without-suffix", "formats row 1", "muxer requires at least one suffix"),
-    ("unknown-handler", "formats row 1", "handler must be null or one of audio, jpeg, png, video, webp: 'pgn'"),
+    ("unknown-handler", "formats row 1", "handler must be null or one of audio, content, gif, glb, jpeg, png, video, webp: 'pgn'"),
 ])
 def test_invalid_rows_name_file_and_location(tmp_path, case, where, message):
     value = {"schema_version": 1, "formats": [{
@@ -138,3 +138,12 @@ def test_every_handler_has_strip_code():
     body = inspect.getsource(mm.strip_metadata)
     for handler in mm._HANDLERS:
         assert f'"{handler}"' in body, handler
+
+
+@pytest.mark.parametrize("handler", ["audio", "video"])
+def test_stream_handler_requires_muxer(tmp_path, handler):
+    path = write_rows(tmp_path, {"schema_version": 1, "formats": [
+        {"handler": handler, "suffixes": [".bad"], "mime_types": []},
+    ]})
+    with pytest.raises(ValueError, match="formats row 1.*muxer"):
+        mm.load_media_metadata_formats(path)

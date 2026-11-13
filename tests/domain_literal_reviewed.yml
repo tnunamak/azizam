@@ -2,14 +2,14 @@ schema_version: 1
 sites:
   - file: gateway/media_metadata.py
     literal: video
-    count: 4
+    count: 6
     category: media_type
-    reason: Compares media_kind results with the handler names of registry/media_metadata_formats.yml to pick the stripping and embedding algorithm; _HANDLERS lists the same names once so a row naming a handler without strip code fails at load.
+    reason: Loader requires muxers for stream handlers and codec probing selects stream-copy filters by protocol codec type; compares media_kind results with the handler names of registry/media_metadata_formats.yml to pick the stripping and embedding algorithm; _HANDLERS lists the same names once so a row naming a handler without strip code fails at load.
   - file: gateway/media_metadata.py
     literal: audio
-    count: 4
+    count: 5
     category: media_type
-    reason: Compares media_kind results with the handler names of registry/media_metadata_formats.yml to pick the stripping and embedding algorithm; _HANDLERS lists the same names once so a row naming a handler without strip code fails at load.
+    reason: Loader requires muxers for stream handlers and codec probing selects stream-copy filters by protocol codec type; compares media_kind results with the handler names of registry/media_metadata_formats.yml to pick the stripping and embedding algorithm; _HANDLERS lists the same names once so a row naming a handler without strip code fails at load.
   - file: gateway/video_subject.py
     literal: image
     count: 1
