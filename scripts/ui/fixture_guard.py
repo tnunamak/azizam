@@ -73,6 +73,8 @@ def _anonymous_media_command(executable, command):
     if middle[:6] == clear:
         # The strip may drop metadata units per video stream (media_metadata._codec_strip_options).
         filters = middle[6:]
+        if filters[-2:] == ["-write_btrt", "0"] and command[-2] in {"mp4", "mov"}:
+            filters = filters[:-2]
         return len(filters) % 2 == 0 and all(
             flag.startswith("-bsf:v:") and flag[7:].isdecimal() and value in _STRIP_FILTERS
             for flag, value in zip(filters[::2], filters[1::2])

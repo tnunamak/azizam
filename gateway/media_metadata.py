@@ -801,6 +801,10 @@ def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None 
         content = _ffmpeg_rewrite(content, suffix_or_mime, workdir, options, output_muxer="mpegts")
         if _probe_streams(content) != streams:
             raise MediaMetadataError("codec header rewrite changed streams")
+    if muxer in ("mp4", "mov"):
+        # The bitrate hint box would carry the source's figures through a filtered
+        # copy, so a second strip would change it: leave it out to keep strip idempotent.
+        options += ["-write_btrt", "0"]
     return _ffmpeg_rewrite(content, suffix_or_mime, workdir, options)
 
 

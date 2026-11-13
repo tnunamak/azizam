@@ -343,6 +343,11 @@ def test_anonymous_media_guard_rejects_unknown_stream_filters(tmp_path):
         tail = ["-c", "copy", "-fflags", "+bitexact", "-f", "mp4", dst]
         allowed = head + ["-bsf:v:0", "filter_units=remove_types=6"] + tail
         check_event("subprocess.Popen", ("ffmpeg", allowed, None, None), {18750}, media)
+        no_btrt = head + ["-bsf:v:0", "filter_units=remove_types=6", "-write_btrt", "0"] + tail
+        check_event("subprocess.Popen", ("ffmpeg", no_btrt, None, None), {18750}, media)
+        with pytest.raises(RuntimeError, match="child process"):
+            check_event("subprocess.Popen", ("ffmpeg", no_btrt[:-2] + ["mpegts", dst], None, None),
+                        {18750}, media)
         for flags in (["-bsf:v:0", "noise=amount=1"], ["-bsf:a:0", "filter_units=remove_types=6"],
                       ["-bsf:v:x", "filter_units=remove_types=6"], ["-vf", "scale=2:2"],
                       ["-bsf:v:0"]):
