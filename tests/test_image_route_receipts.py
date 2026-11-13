@@ -1024,6 +1024,29 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("comfy_disabled", receipt.fallback_reasons)
 
+    async def test_service_refusal_reasons_follow_registry_words(self) -> None:
+        from gateway import status_words
+
+        shipped = status_words.words("images")
+        handlers = (
+            proxy.proxy_graph_image_request,
+            proxy.proxy_graph_image_edit_request,
+            proxy.proxy_graph_image_variations_request,
+        )
+        for key, enabled in (("disabled_reason", False), ("operator_mode_reason", True)):
+            for reason in (shipped[key], "operator-selected-reason"):
+                for handler in handlers:
+                    with self.subTest(key=key, reason=reason, handler=handler.__name__):
+                        receipt = self._receipt()
+                        with derived_patch("GRAPH_ENABLED", enabled), patch.object(
+                            proxy, "_GRAPH_WORDS", {**shipped, key: reason}
+                        ), patch.object(
+                            proxy, "_service_availability_response", return_value=Response(status_code=503)
+                        ):
+                            response = await handler(object(), OWNER_CONTEXT, receipt=receipt)
+                        self.assertEqual(response.status_code, 503)
+                        self.assertIn(reason, receipt.fallback_reasons)
+
     async def test_invalid_json_records_body_rejection(self) -> None:
         receipt, response = await self._run_with_json_body(ValueError("nope"))
         self.assertEqual(response.status_code, 400)

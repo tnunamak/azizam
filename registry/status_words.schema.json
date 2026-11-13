@@ -43,7 +43,9 @@
             "baseline_field",
             "audio_decode_class",
             "two_stage_class",
-            "client_id_attr"
+            "client_id_attr",
+            "disabled_reason",
+            "operator_mode_reason"
           ],
           "properties": {
             "label": {
@@ -135,6 +137,14 @@
               "minLength": 1
             },
             "client_id_attr": {
+              "type": "string",
+              "minLength": 1
+            },
+            "disabled_reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "operator_mode_reason": {
               "type": "string",
               "minLength": 1
             }
