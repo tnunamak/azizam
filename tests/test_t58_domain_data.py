@@ -31,7 +31,7 @@ def test_published_queue_name_is_preserved():
         intent="image.generate", service_available=True, queue_key=proxy._MEDIA_JOB_QUEUE_KEY,
         max_queue_depth=1, queue_depths={proxy._MEDIA_JOB_QUEUE_KEY: 1})
     response = admission_http_response(decision, audience="owner")
-    assert response.body["error"]["message"] == "queue full: comfyui-media"
+    assert response.body["error"]["message"] == "queue full: media"
     assert proxy._AUDIO_SECTION == "audio"
     assert (proxy._IMAGE_FIELD, proxy._VIDEO_FIELD, proxy._VIDEO_OBJECT,
             proxy._NODE_IMAGE_INPUT, proxy._STREAM_FORMAT_AUDIO) == ("image", "video", "video", "image", "audio")

@@ -660,6 +660,14 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         _add_app_history_columns(conn)
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    # A service's state_type becomes the loaded_model_probe it meant; recorded by name, so no version gate.
+    from gateway import loaded_model_probe_migration
+
+    if not conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?",
+                        (loaded_model_probe_migration.STEP_NAME,)).fetchone():
+        loaded_model_probe_migration.migrate_registry(conn)
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)",
+                     (loaded_model_probe_migration.STEP_NAME,))
     _grant_mesh_to_starter_plan(conn)
     conn.commit()
     # Until the ownership cut-over is applied, live App keys keep the person the audit log proves for them.

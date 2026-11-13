@@ -27,12 +27,118 @@ import wave
 
 import yaml
 
+from gateway.strict_yaml import safe_load_strict
+
 from gateway.resource_claims import AdmissionRequest, CapacitySnapshot, QueueClass, ResourceClaim, evaluate_admission
 from gateway import off_loop_spawn, private_io, private_tmp, stt_chunking, stt_measure as measure, stt_samples
 from gateway.engine_admin import EngineRouteError, EngineService
 from gateway.local_capabilities import transcription_triggers
 
 POLICY = Path(__file__).resolve().parent.parent / "registry/stt_measurement.yml"
+
+_POLICY_KEYS = {
+    "sample_ids", "lengths", "search_widths", "max_samples", "max_trial_seconds",
+    "audio_seconds_per_sample", "max_download_bytes", "deadline_seconds", "resamples",
+    "min_trial_seconds", "max_gateway_requests", "max_gpu_utilization_pct",
+    "recommendation", "gpu_min_free_mb", "length_refusal_statuses",
+}
+_RECOMMENDATION_KEYS = {
+    "min_length_rows", "min_length_words", "min_length_blocks", "length_block_seconds",
+    "min_seam_pairs", "min_seam_words", "min_noise_pairs", "min_noise_words",
+    "length_noninferiority_pp", "seam_noninferiority_pp", "target_margin",
+}
+
+
+def load_policy(path: Path) -> dict:
+    """Read and validate owner policy on every call, before any trial is started."""
+    path = Path(path)
+
+    def fail(key: str, reason: str) -> None:
+        raise ValueError(f"{path}: {key}: {reason}")
+
+    text = ""
+    try:
+        text = path.read_text(encoding="utf-8")
+        policy = safe_load_strict(text)
+    except OSError as exc:
+        fail("policy", exc.strerror or "cannot read policy")
+    except (yaml.YAMLError, UnicodeError) as exc:
+        key = "policy"
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            try:
+                root = yaml.compose(text, Loader=yaml.SafeLoader)
+            except yaml.YAMLError:
+                root = None
+            if isinstance(root, yaml.MappingNode):
+                for field, value in root.value:
+                    if not isinstance(field, yaml.ScalarNode):
+                        continue
+                    if field.start_mark.index == mark.index:
+                        key = field.value
+                    if field.value == "recommendation" and isinstance(value, yaml.MappingNode):
+                        for nested, _ in value.value:
+                            if isinstance(nested, yaml.ScalarNode) and nested.start_mark.index == mark.index:
+                                key = "recommendation." + nested.value
+        fail(key, getattr(exc, "problem", None) or "invalid YAML")
+
+    def keys(value: Any, expected: set[str], prefix: str = "") -> None:
+        if not isinstance(value, dict):
+            fail(prefix.rstrip(".") or "policy", "must be a mapping")
+        for key in value:
+            if key not in expected:
+                fail(prefix + str(key), "unknown key")
+        for key in sorted(expected):
+            if key not in value:
+                fail(prefix + key, "missing key")
+
+    def integer(key: str, value: Any, minimum: int = 1, maximum: int | None = None) -> None:
+        if (not isinstance(value, int) or isinstance(value, bool) or value < minimum
+                or (maximum is not None and value > maximum)):
+            fail(key, f"must be an integer in {minimum}..{maximum if maximum is not None else 'unbounded'}")
+
+    def integers(key: str, minimum: int = 1, maximum: int | None = None,
+                 unique: bool = True) -> None:
+        values = policy[key]
+        if not isinstance(values, list) or not values:
+            fail(key, "must be a nonempty list")
+        for value in values:
+            integer(key, value, minimum, maximum)
+        if unique and len(set(values)) != len(values):
+            fail(key, "must not contain duplicates")
+
+    keys(policy, _POLICY_KEYS)
+    keys(policy["recommendation"], _RECOMMENDATION_KEYS, "recommendation.")
+    ids = policy["sample_ids"]
+    if (not isinstance(ids, list) or not ids
+            or any(not isinstance(value, str) or not value.strip() for value in ids)):
+        fail("sample_ids", "must be a nonempty list of nonempty strings")
+    if len(set(ids)) != len(ids):
+        fail("sample_ids", "must not contain duplicates")
+    integers("lengths")
+    integers("search_widths", 0)
+    integers("length_refusal_statuses", 400, 599, unique=False)
+    integer("max_gpu_utilization_pct", policy["max_gpu_utilization_pct"], 1, 100)
+    for key in _POLICY_KEYS - {
+        "sample_ids", "lengths", "search_widths", "length_refusal_statuses",
+        "max_gpu_utilization_pct", "recommendation",
+    }:
+        integer(key, policy[key])
+    if policy["min_trial_seconds"] > policy["max_trial_seconds"]:
+        fail("min_trial_seconds", "must be <= max_trial_seconds")
+    for key, value in policy["recommendation"].items():
+        name = "recommendation." + key
+        if key in {"length_noninferiority_pp", "seam_noninferiority_pp", "target_margin"}:
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or (isinstance(value, float) and not math.isfinite(value)) or value < 0):
+                fail(name, "must be a finite nonnegative number")
+            if key == "target_margin" and not 0 < value <= 1:
+                fail(name, "must be in (0, 1]")
+        else:
+            integer(name, value)
+    return policy
+
+
 SETTING_KEYS = frozenset({"target_seconds", "search_seconds", "max_segment_seconds",
                          "native_long_audio_offline", "native_long_audio_streaming"})
 TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
@@ -244,7 +350,11 @@ class Measurements:
         return record, generation
 
     def options(self) -> dict:
-        policy = yaml.safe_load(self.policy_path.read_text())
+        try:
+            policy = load_policy(self.policy_path)
+        except ValueError as exc:
+            detail = str(exc).removeprefix(f"{self.policy_path}: ")
+            raise EngineRouteError(500, "measurement_policy_invalid", detail) from None
         specs = stt_samples.load_manifest()
         return {"policy": policy, "samples": [{"id": s.id, "title": s.title, "speakers": s.speakers,
                 "timing": s.timing, "download_bytes": s.download_bytes(), "licence": s.licence.name,

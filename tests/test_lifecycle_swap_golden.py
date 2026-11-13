@@ -834,7 +834,6 @@ class TestEnsureTargetDriverPath(unittest.TestCase):
         with patch.object(_lcd._systemd_driver, "swap", side_effect=_fake_swap), \
              patch("os.path.isabs", return_value=True), \
              patch("os.path.exists", return_value=True), \
-             patch.object(proxy, "is_literal_gguf_path", return_value=True), \
              patch.object(proxy, "currently_loaded_model", return_value="/old.gguf"), \
              patch.object(proxy, "currently_loaded_aux", return_value=None):
             result = _run(proxy.ensure_target("kobold", _GGUF, _MMPROJ))

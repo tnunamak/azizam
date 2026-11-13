@@ -397,7 +397,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         declaration = {**fallback, "tags": ["tool-use"]}
         self.backends = {
             "kobold": {"base_url": "http://kobold.test", "health_endpoint": "/health",
-                       "priority": 1, "state_type": "llama_cpp",
+                       "priority": 1, "loaded_model_probe": {"endpoint": "/props", "model_key": "model_path"},
                        "loaded_model_identity": "path",
                        "context_window_probe": {"endpoint": "/v1/models"},
                        "protocol": "openai-compatible",
@@ -410,7 +410,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                               "model_metadata": copy.deepcopy(fallback)} for alias in sorted(DYNAMIC)],
                        ]},
             "other": {"base_url": "http://other.test", "health_endpoint": "/health",
-                      "priority": 2, "state_type": "llama_cpp",
+                      "priority": 2, "loaded_model_probe": {"endpoint": "/props", "model_key": "model_path"},
                       "loaded_model_identity": "path",
                       "protocol": "openai-compatible",
                       "capabilities": ["chat", "openai"], "models": [
@@ -888,9 +888,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
     def _strata_after_a_weight_swap(self, *, listed: list[dict]) -> None:
         """The engine's primary id changed; the records still ask for the old id the engine keeps as an alias."""
         backend = self.backends["kobold"]
-        for key in ("loaded_model_identity", "context_window_probe"):
+        for key in ("loaded_model_identity", "context_window_probe", "loaded_model_probe"):
             backend.pop(key, None)
-        backend["state_type"] = "openai_compatible"
         declared = {"type": "language", "input_modalities": ["text", "image"], "output_modalities": ["text"],
                     "tags": ["reasoning", "tool-use", "vision"], "max_tokens": 262144}
         strata = {"id": "strata", "upstream_model": "strata-old-name", "context_window": 262144,

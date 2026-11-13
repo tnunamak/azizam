@@ -247,8 +247,8 @@ _live: Projection = Projection(MappingProxyType({}), MappingProxyType({}))
 def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> Projection:
     """Build the map from these services without making it live, so a failure here changes nothing.
 
-    ``extra_probe_paths`` names further metadata paths a record's kind reads (the loaded-state endpoint of its
-    ``state_type``): the engine kinds are known to the caller, not to this module.
+    ``extra_probe_paths`` names further metadata paths a record reads (its ``loaded_model_probe`` endpoint, or the
+    default one): the caller knows the probe fields, not this module.
 
     Warning: a path that is listed as a probe path is sent without a lease. The paths are exact so that a health
     check never wakes an engine. A path whose mere access starts or loads a model, such as the base URL of a backend

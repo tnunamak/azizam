@@ -67,7 +67,7 @@ appears in core (`if engine ==` / `if backend ==` branches with engine literals,
 `*<Engine>*Transform` classes, engine CLI flag literals like `--tool-call-parser`
 / `--jinja`). proxy.py has no allowlist entries, and there is no quarantine module:
 behaviour that differs by backend is a field on the service record (lifecycle
-`driver_config`, `loaded_model_identity`, `aux`, `context_window_probe`).
+`driver_config`, `loaded_model_identity`, `loaded_model_probe`, `aux`, `context_window_probe`).
 `gateway/engine_quarantine.py` stays deleted; the guard fails if it returns.
 A per-file ratchet (`tests/engine_knowledge_baseline.json`) counts every engine
 name in production Python and may only fall. The guard scans `proxy.py` and
@@ -89,7 +89,7 @@ attributes and def/class names, not only `if` conditions. The per-file counts
 live in `tests/engine_knowledge_baseline.json`. A count may only fall: a rise or
 a new file fails the test, and a fall fails until you lower the baseline with
 `python tests/test_engine_knowledge_boundary.py --lower-baseline`. There is no
-allowlist; the target is an empty baseline.
+allowlist; the baseline is empty (train 63) and stays empty.
 
 The full design and the four-bucket classification of every engine-touching
 item live in `docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md`. Read it before adding

@@ -86,6 +86,19 @@ class ModelAvailabilityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return {entry["id"]: entry for entry in response.json()["data"]}
 
+    def test_absolute_path_ids_are_dropped_whatever_their_suffix(self) -> None:
+        async def with_paths(*_args, **_kwargs):
+            payload = await _payload()
+            payload["data"] += [{"id": i, "object": "model", "created": 1, "owned_by": "openai"}
+                                for i in ("/models/a.bin", "/models/b.safetensors", "rel/c.bin")]
+            return payload
+        with patch.object(proxy, "_litellm_models_payload", with_paths):
+            listed = self._entries()
+        self.assertNotIn("/models/a.bin", listed)
+        self.assertNotIn("/models/b.safetensors", listed)
+        self.assertIn("rel/c.bin", listed)
+        self.assertIn("up-model", listed)
+
     def test_only_service_down_is_unavailable_and_hidden_only_on_request(self) -> None:
         entry = self._entries()["down-model"]
         self.assertEqual(entry["azizam_availability"]["state"], "unavailable")

@@ -675,6 +675,10 @@
         "type": "external"
       },
       "loaded_model_identity": "path",
+      "loaded_model_probe": {
+        "endpoint": "/props",
+        "model_key": "model_path"
+      },
       "managed": false,
       "model_policy_schema_version": 1,
       "models": [
@@ -912,7 +916,6 @@
       "priority": 100,
       "protocol": "openai-compatible",
       "role": "required",
-      "state_type": "llama_cpp",
       "transforms": [
         "reasoning-effort-final-chat"
       ],
