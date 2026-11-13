@@ -1644,3 +1644,14 @@ test("NUMBERS busiest models sort numerically before top-five truncation and exp
   await userEvent.setup().click(screen.getByRole("button", { name: "Show top 5 models" }));
   expect(visibleCounts()).toEqual(["100 requests", "20 requests", "10 requests", "3 requests", "2 requests"]);
 });
+
+
+test("keeps the complete capabilityRequestNouns map byte-identical", async () => {
+  const { capabilityRequestNouns } = await import("@/lib/capability-words");
+  expect(capabilityRequestNouns).toEqual({
+    "image": "Image",
+    "mesh": "3D model",
+    "decide": "Decision",
+    "rerank": "Rerank"
+  });
+});

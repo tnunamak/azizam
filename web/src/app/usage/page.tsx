@@ -17,6 +17,7 @@ import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { formatTimestamp } from "@/lib/format";
 import { networkFetch } from "@/lib/network-error";
 import { memberTerms, taskNames } from "@/lib/terms";
+import { capabilityLabels as registeredCapabilityLabels, capabilityRequestNouns } from "@/lib/capability-words";
 import { RequestReceiptSheet } from "../activity/requests";
 import { useModelName } from "@/lib/use-model-name";
 import { sourceGroups, usageCsv, type UsageSource } from "./source-options";
@@ -155,18 +156,21 @@ const capabilityLabels: Record<UsageCapability, string> = {
 };
 
 // The noun in a receipt's title: "Image request", as Home and Activity say it.
+const requestNoun = (capability: keyof typeof registeredCapabilityLabels): string =>
+  (capabilityRequestNouns as Partial<Record<keyof typeof registeredCapabilityLabels, string>>)[capability]
+  ?? registeredCapabilityLabels[capability];
 const requestNouns: Record<UsageCapability, string> = {
-  chat: "Chat",
-  image: "Image",
-  video: "Video",
-  mesh: "3D model",
-  audio: "Audio",
-  voice: "Voice",
-  transcribe: "Transcription",
-  decide: "Decision",
-  embed: "Document search",
-  embeddings: "Document search",
-  rerank: "Rerank",
+  chat: requestNoun("chat"),
+  image: requestNoun("image"),
+  video: requestNoun("video"),
+  mesh: requestNoun("mesh"),
+  audio: requestNoun("audio"),
+  voice: requestNoun("speech"),
+  transcribe: requestNoun("transcribe"),
+  decide: requestNoun("decide"),
+  embed: requestNoun("embed"),
+  embeddings: requestNoun("embed"),
+  rerank: requestNoun("rerank"),
   other: "Other",
 };
 

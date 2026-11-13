@@ -320,3 +320,72 @@ def test_generated_capability_words_are_current():
         cwd=ROOT, capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# Byte-exact screen copy, independent of loader/generator projections.
+MODELS_EXPLAINERS = {
+    "chat": "Answers, writing and code, for chat apps and agents.",
+    "image": "Make or edit a picture from a description.",
+    "video": "Make a short video from a description or a picture.",
+    "speech": "Read text aloud.",
+    "transcribe": "Turn a recording into text.",
+    "music": "Songs and instrumentals from a description.",
+    "sfx": "Short sounds from a description.",
+    "audio": "Music and sounds from a description.",
+    "decide": "Pick one answer from options you give, for routing and yes-or-no checks.",
+    "embed": "Vectors that let apps search text and find similar passages.",
+    "rerank": "Sort search results by how well they match.",
+    "mesh": "Make a 3D model from one picture.",
+}
+
+TRY_HELP = {
+    "chat": "Send a message and get a reply.",
+    "image": "Describe the picture you want to make.",
+    "speech": "Enter text to hear it spoken aloud.",
+    "transcribe": "Upload a recording or record your voice to get the words as text.",
+    "decide": "Provide information to help pick one of the options.",
+    "embed": "Turn text into numbers that search tools can use.",
+    "mesh": "Turn a picture into a 3D model you can turn around and download.",
+}
+
+REQUEST_NOUNS = {
+    "image": "Image",
+    "decide": "Decision",
+    "rerank": "Rerank",
+    "mesh": "3D model",
+}
+
+
+def test_screen_words_match_literal_goldens_and_data_order(tmp_path):
+    source, data = _tree(tmp_path, DATA.read_text(encoding="utf-8"))
+    module = _import(source)
+    actual = module.load_capability_screen_words(data)
+    for table, expected in zip(actual, (MODELS_EXPLAINERS, TRY_HELP, REQUEST_NOUNS), strict=True):
+        assert dict(table) == expected
+        assert list(table) == list(expected)
+
+
+@pytest.mark.parametrize("field", ["models_explainer", "try_help", "request_noun"])
+@pytest.mark.parametrize("value", [None, 7, True, [], {}, "", "   ", " padded", "padded ", "\tword\n"])
+def test_invalid_screen_word_fails_loading(tmp_path, field, value):
+    document = _document()
+    document["capabilities"][0][field] = value
+    source, _ = _tree(tmp_path, document)
+    with pytest.raises(ValueError, match=field):
+        _import(source)
+
+
+def test_screen_words_are_optional_and_preserve_member_loader(tmp_path):
+    source, data = _tree(tmp_path, _document())
+    module = _import(source)
+    assert module.load_capability_screen_words(data) == ({}, {}, {})
+    assert len(module.load_capability_member_words(data)) == 2
+    assert len(module._load_capability_data(data)) == 4
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_screen_word_maps_are_immutable(tmp_path, index):
+    source, data = _tree(tmp_path, DATA.read_text(encoding="utf-8"))
+    table = _import(source).load_capability_screen_words(data)[index]
+    with pytest.raises(TypeError):
+        table["chat"] = "Changed"

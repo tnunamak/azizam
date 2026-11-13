@@ -45,3 +45,35 @@ export const capabilityMemberLabels = {
   "rerank": "Reranking",
   "mesh": "3D models",
 } as const;
+
+export const capabilityModelsExplainers = {
+  "chat": "Answers, writing and code, for chat apps and agents.",
+  "image": "Make or edit a picture from a description.",
+  "video": "Make a short video from a description or a picture.",
+  "speech": "Read text aloud.",
+  "transcribe": "Turn a recording into text.",
+  "music": "Songs and instrumentals from a description.",
+  "sfx": "Short sounds from a description.",
+  "audio": "Music and sounds from a description.",
+  "decide": "Pick one answer from options you give, for routing and yes-or-no checks.",
+  "embed": "Vectors that let apps search text and find similar passages.",
+  "rerank": "Sort search results by how well they match.",
+  "mesh": "Make a 3D model from one picture.",
+} as const;
+
+export const capabilityTryHelp = {
+  "chat": "Send a message and get a reply.",
+  "image": "Describe the picture you want to make.",
+  "speech": "Enter text to hear it spoken aloud.",
+  "transcribe": "Upload a recording or record your voice to get the words as text.",
+  "decide": "Provide information to help pick one of the options.",
+  "embed": "Turn text into numbers that search tools can use.",
+  "mesh": "Turn a picture into a 3D model you can turn around and download.",
+} as const;
+
+export const capabilityRequestNouns = {
+  "image": "Image",
+  "decide": "Decision",
+  "rerank": "Rerank",
+  "mesh": "3D model",
+} as const;
