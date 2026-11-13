@@ -1184,3 +1184,76 @@ def test_measurement_startup_cleanup_refuses_scratch_symlink_without_crashing(se
     assert scratch.is_symlink()
     assert runner._lease_fd is None
 
+
+def test_checked_policy_matches_shipped_yaml():
+    import yaml
+    assert sm.load_policy(sm.POLICY) == yaml.safe_load(sm.POLICY.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(("key", "value", "mode"), [
+    ("unknown_budget", 1, "set"),
+    ("max_samples", None, "delete"),
+    ("recommendation.typo", 1, "set"),
+    ("max_samples", True, "set"),
+    ("max_download_bytes", 0, "set"),
+    ("lengths", [20, 20], "set"),
+    ("lengths", [], "set"),
+    ("lengths", [False], "set"),
+    ("search_widths", [-1], "set"),
+    ("search_widths", [0, 0], "set"),
+    ("sample_ids", ["", "valid"], "set"),
+    ("sample_ids", ["same", "same"], "set"),
+    ("max_gpu_utilization_pct", 101, "set"),
+    ("recommendation.target_margin", 0, "set"),
+    ("recommendation.target_margin", 1.1, "set"),
+    ("recommendation.length_noninferiority_pp", -1, "set"),
+    ("recommendation.min_seam_words", False, "set"),
+    ("length_refusal_statuses", [302], "set"),
+    ("min_trial_seconds", 100000, "set"),
+    ("max_gateway_requests", None, "duplicate"),
+    ("recommendation.target_margin", None, "duplicate"),
+])
+def test_checked_policy_refuses_bad_keys_and_values(tmp_path, key, value, mode):
+    import yaml
+    data = yaml.safe_load(sm.POLICY.read_text(encoding="utf-8"))
+    if mode == "duplicate":
+        text = sm.POLICY.read_text(encoding="utf-8")
+        if key.startswith("recommendation."):
+            text = text.replace("  target_margin: 0.75", "  target_margin: 0.75\n  target_margin: 0.5")
+        else:
+            text += "\nmax_gateway_requests: 160\n"
+    else:
+        target = data["recommendation"] if key.startswith("recommendation.") else data
+        field = key.split(".")[-1]
+        if mode == "delete":
+            del target[field]
+        else:
+            target[field] = value
+        text = yaml.safe_dump(data)
+    path = tmp_path / "measurement-policy.yml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError) as error:
+        sm.load_policy(path)
+    assert str(path) in str(error.value)
+    assert key in str(error.value)
+
+
+def test_options_rereads_policy_and_maps_error_without_absolute_path(tmp_path, monkeypatch):
+    import yaml
+    runner, _ = _measurement_record_runner(tmp_path, ["transcriptions"])
+    runner.policy_path = tmp_path / "policy.yml"
+    monkeypatch.setattr(sm.stt_samples, "load_manifest", lambda: [])
+    data = yaml.safe_load(sm.POLICY.read_text(encoding="utf-8"))
+    runner.policy_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert runner.options()["policy"]["max_samples"] == data["max_samples"]
+    data["max_samples"] += 1
+    runner.policy_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert runner.options()["policy"]["max_samples"] == data["max_samples"]
+    data["max_samples"] = True
+    runner.policy_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(sm.EngineRouteError) as error:
+        runner.options()
+    assert error.value.status_code == 500
+    assert error.value.code == "measurement_policy_invalid"
+    assert "max_samples" in str(error.value)
+    assert str(tmp_path) not in str(error.value)
