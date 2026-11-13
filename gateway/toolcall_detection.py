@@ -45,6 +45,7 @@ logger = logging.getLogger("gateway.toolcall")
 _GATEWAY_MESSAGES_PATH = Path(__file__).resolve().parents[1] / "registry" / "gateway_messages.yml"
 _MESSAGE_FIELDS = frozenset({
     "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "current_loaded_model_description", "current_loaded_fast_model_description",
     "long_video_not_supported", "video_extend_not_supported", "surface_existing_clients", "surface_new_setup",
 })
 
@@ -89,6 +90,8 @@ def load_gateway_messages(path: str | Path = _GATEWAY_MESSAGES_PATH) -> Mapping[
     _validate_message_template(document["video_extend_not_supported"], "video_extend_not_supported", {"model"})
     _validate_message_template(document["surface_existing_clients"], "surface_existing_clients", {"convenience"})
     _validate_message_template(document["surface_new_setup"], "surface_new_setup", {"canonical"})
+    for name in ("current_loaded_model_description", "current_loaded_fast_model_description"):
+        _validate_message_template(document[name], name, set())
     return MappingProxyType({name: document[name] for name in _MESSAGE_FIELDS})
 
 

@@ -192,6 +192,7 @@ records:
         translator: identity
         intent: audio.transcriptions
         canonical: /v1/audio/transcriptions
+        request_defaults: {model: whisper-1}
         mcp: {
           "target": "transcription",
           "mode": "sync",

@@ -154,7 +154,7 @@ def test_voice_failure_shape_and_retry_value(tmp_path, failure, status, code, re
              patch.object(client_errors, "retry_after", wraps=client_errors.retry_after) as retry_after:
             store.return_value.get_voice.return_value = {"id": "test"}
             store.return_value.reference_path.return_value = source
-            response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True}, None, "omnivoice", receipt=receipt)
+            response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True, "custom_voice_transcript": True}, None, "omnivoice", receipt=receipt)
         if getattr(failure, "decision", None) is not None:
             reasons = receipt.to_dict()["resource_decision"]["reasons"]
             assert reasons == failure.decision.details.as_dict(failure.decision.status.value)["reasons"]

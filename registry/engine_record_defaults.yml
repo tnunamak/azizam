@@ -16,6 +16,7 @@
 #   JSON it returns under output_key. A record that names its own status_panels replaces these.
 defaults:
   audio.speech:
+    default_model: mistralai/Voxtral-4B-TTS-2603
     timeout: 120
     health_endpoint: /health
     status_panels:
@@ -24,6 +25,7 @@ defaults:
         title: Voxtral (TTS)
         short_title: Voxtral (TTS)
   audio.transcriptions:
+    default_model: parakeet-tdt-0.6b-v3
     timeout: 120
     health_endpoint: /health
     status_panels:

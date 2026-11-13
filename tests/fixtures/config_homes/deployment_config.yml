@@ -1487,6 +1487,7 @@ model_aliases:
         service: tts
         model: k2-fsa/OmniVoice
         custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
+        custom_voice_transcript: true
         default_voice: alloy
         # The 13 OpenAI voice names, each one fixed speaker identity (a reference clip the engine clones),
         # then the multilingual design presets. `voices` is the complete list: another voice is refused.

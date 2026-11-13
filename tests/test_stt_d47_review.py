@@ -276,7 +276,7 @@ def test_voice_contention_returns_retryable_busy_response(tmp_path):
                  patch.object(proxy, "_custom_voice_engines", return_value=["test"]):
                 store.return_value.get_voice.return_value = {"id": "test"}
                 store.return_value.reference_path.return_value = source
-                response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True},
+                response = await proxy._apply_custom_voice({}, "test", {"custom_voices": True, "custom_voice_transcript": True},
                     None, "omnivoice")
             assert response.status_code == 503
             assert response.headers.get("Retry-After") == "5", response.body
