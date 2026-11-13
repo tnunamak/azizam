@@ -87,6 +87,7 @@ def test_extra_container_row_reaches_exactly_the_four_expected_tables(tmp_path):
     ("duplicate-suffix", "formats row 2", "duplicate suffix"),
     ("duplicate-mime", "formats row 2", "duplicate MIME type"),
     ("muxer-without-suffix", "formats row 1", "muxer requires at least one suffix"),
+    ("unknown-handler", "formats row 1", "handler must be null or one of audio, jpeg, png, video, webp: 'pgn'"),
 ])
 def test_invalid_rows_name_file_and_location(tmp_path, case, where, message):
     value = {"schema_version": 1, "formats": [{
@@ -104,6 +105,8 @@ def test_invalid_rows_name_file_and_location(tmp_path, case, where, message):
         value["formats"].append({
             "handler": None, "suffixes": [], "mime_types": ["audio/x-wavpack"],
         })
+    elif case == "unknown-handler":
+        row["handler"] = "pgn"
     else:
         row["suffixes"] = []
     path = write_rows(tmp_path, value)
@@ -114,3 +117,24 @@ def test_invalid_rows_name_file_and_location(tmp_path, case, where, message):
     assert where in text
     assert message in text
     assert (mm._SUFFIX_KIND, mm._MIME_KIND, mm._MUXER, mm._MIME_SUFFIX) == EXPECTED_TABLES
+
+
+def test_a_repeated_key_is_refused_not_last_wins(tmp_path):
+    path = tmp_path / "media-formats.yml"
+    path.write_text(
+        "schema_version: 1\nformats:\n"
+        "  - handler: png\n    handler: audio\n    suffixes: [.wv]\n    mime_types: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as error:
+        mm.load_media_metadata_formats(path)
+    assert "could not read format rows" in str(error.value)
+    assert "duplicate key 'handler'" in str(error.value)
+
+
+def test_every_handler_has_strip_code():
+    """Each handler a row may name reaches a strip branch, so no shipped kind returns its bytes unchanged."""
+    import inspect
+    body = inspect.getsource(mm.strip_metadata)
+    for handler in mm._HANDLERS:
+        assert f'"{handler}"' in body, handler

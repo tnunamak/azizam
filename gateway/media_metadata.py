@@ -38,6 +38,8 @@ from typing import Mapping
 
 import yaml
 
+from gateway.strict_yaml import safe_load_strict
+
 __all__ = [
     "MediaMetadataError",
     "media_kind",
@@ -57,6 +59,8 @@ class MediaMetadataError(RuntimeError):
 
 
 _FORMAT_ROWS_PATH = Path(__file__).resolve().parents[1] / "registry" / "media_metadata_formats.yml"
+# The kinds strip_metadata has code for. A row naming any other handler would silently keep its metadata.
+_HANDLERS = frozenset({"png", "jpeg", "webp", "audio", "video"})
 
 
 def load_media_metadata_formats(
@@ -93,7 +97,7 @@ def load_media_metadata_formats(
         return [token(value, where, field) for value in values]
 
     try:
-        document = yaml.safe_load(source.read_text(encoding="utf-8"))
+        document = safe_load_strict(source.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         fail("document", f"could not read format rows: {error}")
     fields(document, {"schema_version", "formats"}, set(), "document")
@@ -112,6 +116,8 @@ def load_media_metadata_formats(
         handler = row["handler"]
         if handler is not None:
             handler = token(handler, where, "handler")
+            if handler not in _HANDLERS:
+                fail(where, f"handler must be null or one of {', '.join(sorted(_HANDLERS))}: {handler!r}")
         suffixes = tokens(row, "suffixes", where)
         mime_types = tokens(row, "mime_types", where)
         for suffix in suffixes:
