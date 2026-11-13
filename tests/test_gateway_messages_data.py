@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from gateway import extension_catalog as catalog
+from gateway import gateway_messages
 from gateway import toolcall_detection as detection
 from tests.support import c2d_parity
 
@@ -86,7 +87,7 @@ def test_catalog_and_advisory_copy_are_data(tmp_path, monkeypatch):
         "backend_label": " on [{backend_hint}]",
         "unknown_family": "unidentified",
     })
-    monkeypatch.setattr(detection, "GATEWAY_MESSAGES", detection.load_gateway_messages(_write(tmp_path, changed)))
+    monkeypatch.setattr(gateway_messages, "GATEWAY_MESSAGES", gateway_messages.load_gateway_messages(_write(tmp_path, changed)))
 
     for audience, original in before.items():
         result = catalog.summarize_extensions(registry, audience)
@@ -114,28 +115,28 @@ def test_gateway_messages_schema_is_closed(tmp_path):
     valid = _document()
     for key in ("unexpected", "python_import", "backend_overrides"):
         with pytest.raises(ValueError, match="unknown keys"):
-            detection.load_gateway_messages(_write(tmp_path, {**valid, key: "package.module:handler"}))
+            gateway_messages.load_gateway_messages(_write(tmp_path, {**valid, key: "package.module:handler"}))
     for key in {"schema_version", *MESSAGE_FIELDS}:
         missing = dict(valid)
         del missing[key]
         with pytest.raises(ValueError, match="missing keys"):
-            detection.load_gateway_messages(_write(tmp_path, missing))
+            gateway_messages.load_gateway_messages(_write(tmp_path, missing))
 
 
 def test_gateway_messages_require_mapping_and_exact_version(tmp_path):
     for document in (None, [], "messages", 1):
         with pytest.raises(ValueError, match="mapping"):
-            detection.load_gateway_messages(_write(tmp_path, document))
+            gateway_messages.load_gateway_messages(_write(tmp_path, document))
     for version in (True, False, None, "1", 1.0, 0, 2):
         with pytest.raises(ValueError, match="schema_version"):
-            detection.load_gateway_messages(_write(tmp_path, {**_document(), "schema_version": version}))
+            gateway_messages.load_gateway_messages(_write(tmp_path, {**_document(), "schema_version": version}))
 
 
 def test_gateway_messages_require_nonempty_text(tmp_path):
     for field in MESSAGE_FIELDS:
         for value in (None, False, 1, [], {}, "", "   "):
             with pytest.raises(ValueError, match=field):
-                detection.load_gateway_messages(_write(tmp_path, {**_document(), field: value}))
+                gateway_messages.load_gateway_messages(_write(tmp_path, {**_document(), field: value}))
 
 
 def test_gateway_message_templates_refuse_nonliteral_fields(tmp_path):
@@ -160,18 +161,24 @@ def test_gateway_message_templates_refuse_nonliteral_fields(tmp_path):
     )
     for field, template in invalid:
         with pytest.raises(ValueError, match=field):
-            detection.load_gateway_messages(_write(tmp_path, {**_document(), field: template}))
+            gateway_messages.load_gateway_messages(_write(tmp_path, {**_document(), field: template}))
     valid = _document()
     valid["tool_call_advisory"] = "{{literal}} {family}{backend_label}"
     valid["backend_label"] = " ({backend_hint})"
-    messages = detection.load_gateway_messages(_write(tmp_path, valid))
+    messages = gateway_messages.load_gateway_messages(_write(tmp_path, valid))
     assert messages["tool_call_advisory"].format(family="new", backend_label=" (server)") == "{literal} new (server)"
 
 
 def test_gateway_messages_are_immutable_and_missing_file_fails_closed(tmp_path):
-    messages = detection.load_gateway_messages(MESSAGES)
+    messages = gateway_messages.load_gateway_messages(MESSAGES)
     assert set(messages) == MESSAGE_FIELDS
     with pytest.raises(TypeError):
         messages["metadata_description"] = "replacement"
     with pytest.raises(FileNotFoundError):
-        detection.load_gateway_messages(tmp_path / "missing.yml")
+        gateway_messages.load_gateway_messages(tmp_path / "missing.yml")
+
+
+def test_toolcall_detection_does_not_export_message_loader():
+    from gateway import toolcall_detection
+
+    assert not hasattr(toolcall_detection, "load_gateway_messages")

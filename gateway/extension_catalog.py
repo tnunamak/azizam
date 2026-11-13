@@ -12,7 +12,7 @@ import yaml
 from starlette.convertors import CONVERTOR_TYPES
 from starlette.routing import PARAM_REGEX
 
-from gateway import toolcall_detection as _message_data
+from gateway import gateway_messages
 from gateway.strict_yaml import safe_load_strict
 from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
@@ -183,7 +183,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                         "name": "metadata",
                         "values": ["full", "none"],
                         "default": "the app profile's media_metadata.default",
-                        "description": _message_data.GATEWAY_MESSAGES["metadata_description"],
+                        "description": gateway_messages.GATEWAY_MESSAGES["metadata_description"],
                     }
                 ],
                 "routes": [
