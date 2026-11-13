@@ -568,7 +568,7 @@ test("a refusal at submit is still shown as it was, with no job stored", async (
   expect(window.sessionStorage.getItem(MESH_JOB_STORAGE_KEY)).toBeNull();
 });
 
-const BUSY = "The graphics card is busy. Try again in a minute.";
+const BUSY = "The graphics card is busy with other work. Try again soon.";
 const eventsReply = (...steps: number[]) =>
   new Response(
     JSON.stringify({ events: steps.map((step) => ({ event_type: "retry_after", payload: { step } })) }),

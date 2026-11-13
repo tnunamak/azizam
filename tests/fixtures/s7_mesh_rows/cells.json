@@ -90,7 +90,7 @@
    "json": {
     "error": {
      "code": "resource_unavailable",
-     "message": "The graphics card is busy. Try again in a minute.",
+     "message": "The graphics card is busy with other work. Try again soon.",
      "type": "api_error"
     }
    },
@@ -391,7 +391,7 @@
    "json": {
     "error": {
      "code": "resource_unavailable",
-     "message": "The graphics card is busy. Try again in a minute.",
+     "message": "The graphics card is busy with other work. Try again soon.",
      "type": "api_error"
     }
    },
