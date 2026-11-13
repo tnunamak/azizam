@@ -20581,8 +20581,8 @@ async def admin_logout(request: Request):
 async def admin_config_reload(request: Request):
     """Hot-reload the runtime config from the DB service registry.
 
-    Re-derives all backend host constants (LLM_BACKEND_HOSTS, TTS_HOST,
-    STT_HOST, EMBEDDINGS_HOST, GRAPH_HOST …) without a process restart.
+    Re-derives every backend address from the service records without a
+    process restart.
     Requests that arrive after this returns will see the new values.
 
     Note: the LiteLLM subprocess still requires a separate restart to pick up

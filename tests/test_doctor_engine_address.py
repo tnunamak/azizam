@@ -14,7 +14,7 @@ def test_the_probe_address_is_the_comfyui_service_of_the_effective_registry(tmp_
     from gateway import admin_store
     admin_store.init_db(db)
     _store(db, {"comfyui": {"kind": "comfyui", "capabilities": ["images"], "host": "203.0.113.9", "port": 24680, "enabled": True}})
-    monkeypatch.setenv("GRAPH_HOST", "http://203.0.113.1:1")  # a removed variable: it must change nothing
+    monkeypatch.setenv("COMFY_HOST", "http://203.0.113.1:1")  # a removed variable: it must change nothing
     assert doctor.default_comfy_url(db) == "http://203.0.113.9:24680"
 
 
