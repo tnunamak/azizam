@@ -38,7 +38,7 @@ BASE_ROUTE = {
 # gateway/capabilities.py:107-153 capture the entire base value, not a subset.
 BASE_FACTS = Capability(
     intent="mesh.generate", backend="trellis", workflow="mesh.generate.trellis-2",
-    capability="mesh", title="3D models", input_modalities=("image",),
+    capability="mesh", title="TRELLIS.2 image to 3D", input_modalities=("image",),
     output_modalities=("mesh",), execution="sync", protocol="openai.mesh",
     output_media_types=("model/gltf-binary",), exposure="default",
     trust_tier="stable", resource_tier="batch",
@@ -166,6 +166,8 @@ def test_custom_identity_drives_workflow_facts_title_and_service_check(record, c
     _row(record).update(capability="sculpture", intent="sculpture.create")
     _row(record)["runtime_policy"]["intent"] = "sculpture.create"
     contract.update(capability="sculpture", intent="sculpture.create")
+    # A workflow that states no display name is titled by its capability's label (here the custom one).
+    contract.pop("display_name", None)
     manifest = _workflow(contract)
     assert manifest.intent == "sculpture.create"
     facts = mesh_api.discovery_facts(manifest, [record])

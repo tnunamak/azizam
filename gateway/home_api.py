@@ -19,7 +19,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from gateway.workflow_view import settable_inputs
-from gateway import admin_store, asset_types, providers, sqlite_startup
+from gateway import admin_store, asset_types, providers, sqlite_startup, workflow_policy
 from gateway.admin_api import AdminAuthError
 from gateway.admin_runtime import access_for_person, identity_from_access_row, person_for_app_credential
 from gateway.alias_policy import service_model_records
@@ -455,7 +455,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             new_identity = _new_app_identity(store.path, person_id=session.subject)
             new_caps = _resolved_capabilities(new_identity, capabilities, registry)
             rows = _capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records)
-            rows = group_product_capabilities(rows)
+            places = {record.id: workflow_policy.rank_of(record.facts) for record in records}
+            rows = group_product_capabilities(rows, selection_rank=lambda name: places.get(name, workflow_policy.UNRANKED))
             summary = product_status_summary(rows)
             base = (public_base_url(request) or "").rstrip("/")
             activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())

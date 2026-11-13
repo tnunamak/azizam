@@ -281,6 +281,40 @@ test("a 3D edit stage lists under Workflow, not Photo to 3D", async () => {
   expect(await screen.findByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
 });
 
+// The live texture step takes a reference picture beside the model file. It still edits a model, so it must not count
+// as Photo to 3D (live 11-12: it sorted first, was unavailable, and hid the tab).
+const textureStepRow = (availability: Record<string, unknown>) => ({
+  ...editStageRow(availability),
+  id: "mesh.edit.texture-refine",
+  title: "Refine the texture of a 3D model",
+  inputs: [
+    ...editStageRow(availability).inputs,
+    { name: "reference", type: "string", required: true, asset: true, media_type: "image/*", label: "reference" },
+  ],
+});
+
+test("a 3D edit stage that also takes a reference picture does not decide the Photo to 3D tab", async () => {
+  serve(
+    catalogWith(
+      textureStepRow({ available: false, status: "unavailable", reason: "The 3D stages service is off." }),
+      meshRow({ available: true }),
+    ),
+  );
+  render(<TryPage />);
+  expect(await screen.findByRole("tab", { name: "Photo to 3D" })).toBeInTheDocument();
+});
+
+test("the data's first-ranked picture-to-3D workflow decides the tab, whatever the listing order", async () => {
+  serve(
+    catalogWith(
+      { ...meshRow({ available: false, status: "unavailable" }), selection_rank: 2 },
+      { ...meshRow({ available: true }), id: "mesh.generate.pixal3d", title: "Pixal3D image to 3D", selection_rank: 1 },
+    ),
+  );
+  render(<TryPage />);
+  expect(await screen.findByRole("tab", { name: "Photo to 3D" })).toBeInTheDocument();
+});
+
 test("the mesh workflow is not also listed under Workflow", async () => {
   serve(catalogWith(meshRow({ available: true })));
   render(<TryPage />);

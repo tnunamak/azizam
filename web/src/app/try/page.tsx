@@ -42,7 +42,7 @@ import {
   type WorkflowJob,
 } from "./workflow-media";
 import { outputKindOf } from "./workflow-input-meta";
-import { MESH_FILE_SLOTS, makesAModelFromAPicture, meshDetailChoices, meshModeState } from "./mesh-mode";
+import { MESH_FILE_SLOTS, makesAModelFromAPicture, meshDetailChoices, meshModeState, photoTo3dOrder } from "./mesh-mode";
 import { MeshMode } from "./mesh-panel";
 import { assignHandoffFiles, hasRequiredHandoffFiles, type PanelFiles } from "./handoff-files";
 import { TRANSCRIBE_FILE_SLOTS } from "./transcribe-mode";
@@ -168,6 +168,8 @@ type WorkflowOption = {
   jobRoutes?: { poll?: { path?: string }; content?: { path?: string } };
   outputs?: Array<{ kind?: string; type?: string; media_type?: string }>;
   engine_binding?: string;
+  /** The data's place among rival workflows for one route (lower is first); absent when unranked. */
+  selectionRank?: number;
   native_route?: string | null;
   example_request?: {
     method?: string;
@@ -1078,6 +1080,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
         ? (record.inputs as WorkflowInput[])
         : [],
       engine_binding: stringValue(record.engine_binding) ?? undefined,
+      selectionRank: typeof record.selection_rank === "number" ? record.selection_rank : undefined,
       native_route:
         record.native_route === null
           ? null
@@ -2013,7 +2016,7 @@ export default function TryPage() {
         const all = groupWorkflows(await response.json());
         grouped = {
           workflow: all.filter((option) => !makesAModelFromAPicture(option.workflow)),
-          mesh: all.filter((option) => makesAModelFromAPicture(option.workflow)),
+          mesh: photoTo3dOrder(all.filter((option) => makesAModelFromAPicture(option.workflow))),
         };
       } else if (response.ok) {
         const payload = await response.json();

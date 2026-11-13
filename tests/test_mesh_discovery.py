@@ -48,7 +48,7 @@ def test_the_facts_name_the_route_and_its_tiers_and_carry_no_state() -> None:
     assert capability.backend == "trellis"
     assert capability.workflow == "mesh.generate.trellis-2"
     assert capability.capability == "mesh"
-    assert capability.title == "3D models"
+    assert capability.title == "TRELLIS.2 image to 3D"  # the workflow's own name, not the capability label
     assert capability.protocol == "openai.mesh"
     assert capability.output_media_types == ("model/gltf-binary",)
     assert capability.input_modalities == ("image",)

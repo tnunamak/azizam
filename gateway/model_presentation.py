@@ -1,6 +1,6 @@
 """Human catalog labels and placement from operator-authored service data."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from ipaddress import ip_address
 from pathlib import Path
 import re
@@ -423,8 +423,21 @@ def _is_technical_description(value: str) -> bool:
     return any(pattern.search(lowered) for pattern in PRESENTATION_WORDS["technical_patterns"])
 
 
-def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One usable recommendation per taxonomy, retaining permitted caller names."""
+def _request_shape(row: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """What a request to this row must carry: its required input modalities and, in order, the kind of each required file."""
+    return (tuple(row.get("required_input_modalities") or ()),
+            tuple(str(item.get("modality")) for item in row.get("required_media_inputs") or () if isinstance(item, Mapping)))
+
+
+def group_product_capabilities(rows: list[dict[str, Any]], *,
+                               selection_rank: Callable[[str], float] = lambda _name: float("inf")) -> list[dict[str, Any]]:
+    """One usable recommendation per taxonomy, retaining permitted caller names.
+
+    The recommendation is an available row first, then a row a person can choose by name, then the lowest
+    ``selection_rank`` of its name (the data's place among rivals for one route; unranked last), then the best status.
+    The names offered with it are those whose requests carry the same inputs, so one composer can run every one of them:
+    a 3D model made from a picture and a step that edits a 3D model file are not offered as choices of each other.
+    """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         grouped.setdefault(row["capability"], []).append(row)
@@ -432,11 +445,14 @@ def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any
     result = []
     for kind, candidates in grouped.items():
         def preference(row):
-            return (rank.get(row.get("status", (row.get("availability") or {}).get("status")), 0),
-                    row.get("use_name") in {"default", kind}, "alias" in row.get("tags", []),
-                    bool(row.get("use_name")))
+            status = row.get("status", (row.get("availability") or {}).get("status"))
+            name = row.get("use_name")
+            return (status in {"ready", "idle"}, bool(name), -selection_rank(str(name)) if name else float("-inf"),
+                    rank.get(status, 0), name in {"default", kind}, "alias" in row.get("tags", []))
         best = dict(max(candidates, key=preference))
-        names = list(dict.fromkeys(name for row in candidates for name in row.get("use_names", [])))
+        shape = _request_shape(best)
+        names = list(dict.fromkeys(name for row in candidates if _request_shape(row) == shape
+                                   for name in row.get("use_names", [])))
         # The public role spelling covers its internal role: identity only when
         # that public spelling was independently permitted in this projection.
         best["use_names"] = [name for name in names

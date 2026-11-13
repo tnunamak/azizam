@@ -211,6 +211,9 @@ def _workflow_row(
     }
     if "license" in record.contract:
         row["license"] = record.contract["license"]
+    # The data's place among rival workflows for one route (lower is first), so a page lists the route's default first.
+    if record.facts is not None and record.facts.selection_rank is not None:
+        row["selection_rank"] = record.facts.selection_rank
     if technical_notes:
         row["technical_notes"] = technical_notes
     return row
