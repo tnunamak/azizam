@@ -768,3 +768,13 @@ def render_sync(record: Any) -> dict[str, Any] | None:
 def render_async(record: Any) -> dict[str, Any] | None:
     """Render the selected execution row's async route, or None when absent."""
     return _MAPS.execution.render_async(record)
+
+
+def input_for_field(field: str, *, maps: RequestMaps | None = None) -> str:
+    """The unique logical input mapped to a wire field in the declared request maps."""
+    source = _MAPS if maps is None else maps
+    names = {name for row in source.rows for name, placement in row.inputs.items()
+             if placement.field == field}
+    if len(names) != 1:
+        raise ValueError(f"{source.path}: field {field!r} must map exactly one logical input")
+    return names.pop()

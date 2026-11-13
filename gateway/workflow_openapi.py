@@ -72,7 +72,7 @@ _IMAGE_EDIT_MANAGED = frozenset(
 # The multipart part the OpenAI-compatible edit route reads pictures from. One
 # part per picture, in submission order; the field repeats.
 # The contract input a video request's ``input_reference`` fills. The projection and the route read it from here.
-VIDEO_REFERENCE_INPUT = "image"
+VIDEO_REFERENCE_INPUT = workflow_request_maps.input_for_field("input_reference")
 _MESH_PATH = "/v1/3d/generations/glb"
 
 _JSON_TYPES = {

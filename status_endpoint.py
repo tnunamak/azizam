@@ -41,8 +41,9 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 import httpx
 import yaml
 
-from gateway import engine_egress, engine_record_defaults, lifecycle_drivers, service_priority, service_registry
+from gateway import engine_egress, engine_record_defaults, lifecycle_drivers, service_priority, service_registry, status_words
 from gateway import http_tls
+from gateway.engine_protocol import reviewed as reviewed_adapters
 from gateway.resource_awareness import ResourceObserver, age_resource_view
 from gateway.http_tls import tls_context
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload, connect_failure_kind
@@ -164,14 +165,17 @@ def _optional_path(env_key: str, default: str | None = None) -> Path | None:
     return Path(val) if val else None
 
 
-_COMFY_OUTPUT_ROOT = _optional_path(
-    "AZIZAM_COMFY_OUTPUT_DIR",
-    os.environ.get("AZIZAM_COMFY_DIR", "") and os.path.join(os.environ["AZIZAM_COMFY_DIR"], "output") or "",
+_GRAPH_WORDS = status_words.words("images")  # what the status page calls the graph engine's keys and figures
+_CHAT_WORDS = status_words.words("chat")
+_SPEECH_WORDS = status_words.words("audio.speech")
+_GRAPH_OUTPUT_ROOT = _optional_path(
+    _GRAPH_WORDS["output_dir_env"],
+    os.environ.get(_GRAPH_WORDS["dir_env"], "") and os.path.join(os.environ[_GRAPH_WORDS["dir_env"]], "output") or "",
 )
 _HOTSPOT_DIRS = [
     entry for entry in [
-        ("comfy_output_root", _COMFY_OUTPUT_ROOT),
-        ("comfy_output_video", Path(_COMFY_OUTPUT_ROOT / "video") if _COMFY_OUTPUT_ROOT else None),
+        (_GRAPH_WORDS["output_root_key"], _GRAPH_OUTPUT_ROOT),
+        (_GRAPH_WORDS["output_video_key"], Path(_GRAPH_OUTPUT_ROOT / "video") if _GRAPH_OUTPUT_ROOT else None),
         ("openai_image_cache", _IMAGE_CACHE_DIR),
         ("daisy_audit", _optional_path("AZIZAM_DAISY_DIR")),
     ]
@@ -631,7 +635,7 @@ def _managed_chat_origin(config: Mapping[str, Any]) -> str:
     return ""
 
 
-async def _llama_props_and_slots(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[list[dict]]]:
+async def _chat_props_and_slots(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[list[dict]]]:
     """Fetch non-invasive llama-server metadata.
 
     ``/slots`` is deliberately not queried here. llama-server implements that
@@ -672,7 +676,7 @@ def _aux_probe(config: Optional[Mapping[str, Any]]) -> Optional[tuple[str, str]]
     return None
 
 
-def _llama_server_args(config: Optional[Mapping[str, Any]] = None) -> Optional[list[str]]:
+def _chat_server_args(config: Optional[Mapping[str, Any]] = None) -> Optional[list[str]]:
     """The command line of the model server process a record's ``aux`` block names, or None when none does."""
     probe = _aux_probe(config)
     if probe is None:
@@ -736,7 +740,7 @@ def _annotate_tensor_split(raw: Optional[str]) -> Optional[dict]:
         "weights": weights,
         "fractions": [round(f, 4) for f in fractions],
         "summary": summary,
-        "interpretation": "ratio (llama.cpp default; values are relative weights)",
+        "interpretation": _CHAT_WORDS["tensor_split_note"],
     }
 
 
@@ -767,7 +771,7 @@ def _resolve_parallel_arg(
 
 
 def _resolve_tts_engine(
-    cmdline_args: Optional[list[str]], voxtral_health: Optional[dict]
+    cmdline_args: Optional[list[str]], speech_health: Optional[dict]
 ) -> dict:
     """Return labeled service-unit / engine framework / model triple for TTS.
 
@@ -784,7 +788,7 @@ def _resolve_tts_engine(
     unit: Optional[str] = None
     engine: Optional[str] = None
     exec_start: Optional[str] = None
-    candidates = ("voxtral-int4-tts.service", "voxtral-tts.service", "tts.service")
+    candidates = _SPEECH_WORDS["unit_candidates"]
     for u in candidates:
         rc, out, _ = _run(["systemctl", "--user", "is-active", u], timeout=1.0)
         if rc == 0 and out.strip() == "active":
@@ -804,17 +808,13 @@ def _resolve_tts_engine(
             break
     if exec_start:
         es_lower = exec_start.lower()
-        if "vllm" in es_lower:
-            engine = "vLLM"
-        elif "voxtral-int4" in es_lower or "/voxtral-int4/" in exec_start:
-            engine = "voxtral-int4 (custom serve.py, flow-matching)"
-        elif "voxtral" in es_lower:
-            engine = "Voxtral (vLLM-Omni)"
-        elif "tts" in es_lower:
-            engine = "tts (custom)"
+        for row in _SPEECH_WORDS["exec_labels"]:
+            if row["contains"] in es_lower:
+                engine = row["label"]
+                break
     model: Optional[str] = None
-    if isinstance(voxtral_health, dict):
-        model = voxtral_health.get("model")
+    if isinstance(speech_health, dict):
+        model = speech_health.get("model")
     return {
         "unit": unit,
         "engine": engine,
@@ -889,10 +889,18 @@ def _safe_float(s: str) -> Optional[float]:
 
 
 _SPEECH_ROLE = "audio.speech"  # the capability role whose service the models section describes
-_GRAPH_SERVICE_ID = "comfyui"  # the id of the graph engine's service record; the gateway selects it by capability (proxy._graph_service), the status page does not yet
+_GRAPH_CAPABILITY = "images"  # the family whose selected service the status page describes as the graph engine
 
 
-async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:
+def _graph_record(config: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
+    """The record of the graph engine's service, selected as the gateway selects it (proxy._graph_service), or ``{}``."""
+    speakers = {service_id: record for service_id, record in ((config or {}).get("backends") or {}).items()
+                if isinstance(record, Mapping) and reviewed_adapters.speaks_serving_adapter(record, _GRAPH_CAPABILITY)}
+    selected = service_priority.selected_service(speakers, _GRAPH_CAPABILITY)
+    return selected[1] if selected else {}
+
+
+async def _graph_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[dict], Optional[dict]]:
     async def _get(client, url):
         try:
             r = await client.get(url, extensions=engine_egress.probe())
@@ -900,7 +908,7 @@ async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[di
         except Exception:
             return None
 
-    graph = ((config or {}).get("backends") or {}).get(_GRAPH_SERVICE_ID) or {}
+    graph = _graph_record(config)
     origin = _configured_engine_base(graph)
     if not origin:  # the record names no address: the graph engine is not configured
         return None, None
@@ -936,7 +944,7 @@ async def _comfy_queue_and_stats(config: Mapping[str, Any]) -> tuple[Optional[di
 
 async def _gpu_workloads(
     gpus: Optional[list[dict]],
-    comfy_queue: Optional[dict],
+    graph_queue: Optional[dict],
     slots: Optional[list[dict]],
 ) -> Optional[list[dict]]:
     if gpus is None:
@@ -946,22 +954,22 @@ async def _gpu_workloads(
         idx = g.get("index")
         workload: dict[str, Any] = {"label": "idle", "detail": None}
         if idx == 0:
-            if comfy_queue is None:
-                workload = {"label": "unknown", "detail": "comfyui queue unavailable"}
+            if graph_queue is None:
+                workload = {"label": "unknown", "detail": _GRAPH_WORDS["label"].lower() + " queue unavailable"}
             else:
-                running = int(comfy_queue.get("running", 0) or 0)
-                pending = int(comfy_queue.get("pending", 0) or 0)
+                running = int(graph_queue.get("running", 0) or 0)
+                pending = int(graph_queue.get("pending", 0) or 0)
                 if running == 0 and pending == 0:
                     workload = {
                         "label": "idle",
-                        "detail": "ComfyUI: 0 running, 0 pending",
+                        "detail": f"{_GRAPH_WORDS['label']}: 0 running, 0 pending",
                         "running": 0,
                         "pending": 0,
                     }
                 else:
                     workload = {
                         "label": "running",
-                        "detail": f"ComfyUI: {running} running, {pending} pending",
+                        "detail": f"{_GRAPH_WORDS['label']}: {running} running, {pending} pending",
                         "running": running,
                         "pending": pending,
                     }
@@ -1136,9 +1144,9 @@ def _read_proc_comm(pid: int) -> Optional[str]:
 
 
 _REPO_PATH = os.environ.get("AZIZAM_REPO_PATH", str(Path(__file__).parent))
-_COMFY_CUSTOM_NODES = _optional_path(
-    "AZIZAM_COMFY_CUSTOM_NODES_DIR",
-    os.environ.get("AZIZAM_COMFY_DIR", "") and os.path.join(os.environ["AZIZAM_COMFY_DIR"], "custom_nodes") or "",
+_GRAPH_CUSTOM_NODES = _optional_path(
+    _GRAPH_WORDS["custom_nodes_env"],
+    os.environ.get(_GRAPH_WORDS["dir_env"], "") and os.path.join(os.environ[_GRAPH_WORDS["dir_env"]], "custom_nodes") or "",
 )
 
 
@@ -1252,15 +1260,15 @@ def _repo_state() -> dict:
     return out
 
 
-def _comfy_custom_nodes() -> list[dict]:
+def _graph_custom_nodes() -> list[dict]:
     """List immediate child dirs of ComfyUI/custom_nodes with the latest
     activity timestamp we can reach (.git/HEAD mtime if it's a git checkout,
     falling back to the dir's own mtime). Cheap: just stats — no git fork.
     """
-    if not _COMFY_CUSTOM_NODES or not _COMFY_CUSTOM_NODES.is_dir():
+    if not _GRAPH_CUSTOM_NODES or not _GRAPH_CUSTOM_NODES.is_dir():
         return []
     out: list[dict] = []
-    for child in _COMFY_CUSTOM_NODES.iterdir():
+    for child in _GRAPH_CUSTOM_NODES.iterdir():
         if not child.is_dir() or child.name.startswith("."):
             continue
         head = child / ".git" / "HEAD"
@@ -1519,7 +1527,7 @@ def _read_gpu_budget() -> Optional[dict]:
         return None
 
     keys_of_interest = {
-        "GPU_TOTAL_GB", "GPU0_DESKTOP", "GPU0_TTS", "GPU0_COMFYUI", "GPU0_HEADROOM",
+        "GPU_TOTAL_GB", "GPU0_DESKTOP", "GPU0_TTS", _GRAPH_WORDS["gpu_budget_var"], "GPU0_HEADROOM",
         "GPU1_LLM", "GPU1_HEADROOM",
     }
     found: dict[str, int] = {}
@@ -1549,7 +1557,7 @@ def _read_gpu_budget() -> Optional[dict]:
         "total_gb": total,
         "desktop_gb": found.get("GPU0_DESKTOP"),
         "tts_gb": found.get("GPU0_TTS"),
-        "comfyui_gb": found.get("GPU0_COMFYUI"),
+        _GRAPH_WORDS["gpu_budget_key"]: found.get(_GRAPH_WORDS["gpu_budget_var"]),
         "headroom_gb": found.get("GPU0_HEADROOM"),
     }
     gpu1 = {
@@ -1617,7 +1625,7 @@ def _read_vram_estimates() -> Optional[dict]:
                 except (TypeError, ValueError):
                     marginal = peak
                 try:
-                    baseline = int(v.get("comfy_baseline_bytes", 0))
+                    baseline = int(v.get(_GRAPH_WORDS["baseline_field"], 0))
                 except (TypeError, ValueError):
                     baseline = 0
                 try:
@@ -1650,7 +1658,7 @@ def _read_vram_estimates() -> Optional[dict]:
                 "key": k,
                 "peak_bytes": peak,
                 "marginal_bytes": marginal,
-                "comfy_baseline_bytes": baseline,
+                _GRAPH_WORDS["baseline_field"]: baseline,
                 "model_state": model_state,
                 "samples_count": samples_count,
                 "trusted": trusted,
@@ -1669,7 +1677,7 @@ def _read_vram_estimates() -> Optional[dict]:
             "unavailable_reason": (
                 None if any_trusted else (
                     "No trusted VRAM marginal measurements yet. The in-run "
-                    "probe samples ComfyUI's per-process VRAM on GPU0 via "
+                    f"probe samples {_GRAPH_WORDS['label']}'s per-process VRAM on GPU0 via "
                     "nvidia-smi during inference; entries appear here after "
                     "the next image generation completes. Untrusted rows "
                     "(if any) are legacy v1/v2 values or probe-fallback "
@@ -1738,9 +1746,9 @@ def _read_workflow_caps(path: Path) -> dict:
                 supports_i2v = True
             if ct == "LoadImage":
                 supports_i2v = True
-            if ct == "LTXVAudioVAEDecode":
+            if ct == _GRAPH_WORDS["audio_decode_class"]:
                 supports_audio = True
-            if ct == "LTXVCropGuides":
+            if ct == _GRAPH_WORDS["two_stage_class"]:
                 two_stage = True
     result = {
         "supports_i2v": supports_i2v,
@@ -1809,8 +1817,8 @@ def _capabilities(config: dict) -> list[dict]:
 def _image_capabilities(config: dict) -> list[dict]:
     out: list[dict] = []
     try:
-        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
-        wf_dir = comfy_cfg.get("workflows_dir")
+        graph_cfg = _graph_record(config)
+        wf_dir = graph_cfg.get("workflows_dir")
         if not wf_dir:
             return out
         p = Path(wf_dir)
@@ -2549,8 +2557,8 @@ def _cpu_usage_quick(config: Optional[Mapping[str, Any]] = None) -> dict:
 
 # --- recent renders -------------------------------------------------------
 
-_VIDEO_DIR = Path(_COMFY_OUTPUT_ROOT / "video") if _COMFY_OUTPUT_ROOT else None
-_IMAGE_DIR = _COMFY_OUTPUT_ROOT
+_VIDEO_DIR = Path(_GRAPH_OUTPUT_ROOT / "video") if _GRAPH_OUTPUT_ROOT else None
+_IMAGE_DIR = _GRAPH_OUTPUT_ROOT
 
 # File identity includes size and nanosecond mtime, including in-place rewrites.
 _FFPROBE_CACHE: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
@@ -2824,7 +2832,7 @@ def _voices_summary(proxy_module) -> Optional[dict]:
                 sources["openai_alias"] += 1
                 openai_alias_map[voice_id] = mapped
             else:
-                sources["voxtral_native"] += 1
+                sources[_SPEECH_WORDS["native_voice_source"]] += 1
                 native_voices.append(voice_id)
         return {
             "count": count,
@@ -2837,7 +2845,7 @@ def _voices_summary(proxy_module) -> Optional[dict]:
                 "curl -s \"$AZIZAM_URL\"/v1/audio/speech "
                 "-H 'Authorization: Bearer $AZIZAM_KEY' "
                 "-H 'Content-Type: application/json' "
-                "-d '{\"model\":\"voxtral-4b-tts\",\"voice\":\"nova\",\"input\":\"hello\"}' "
+                "-d '{\"model\":\"" + _SPEECH_WORDS["example_model"] + "\",\"voice\":\"nova\",\"input\":\"hello\"}' "
                 "--output out.mp3"
             ),
             "list_endpoint": "/v1/audio/voices",
@@ -3190,10 +3198,10 @@ def _swap_state(proxy_module) -> dict:
     return out
 
 
-def _comfy_ws_state(proxy_module) -> dict:
+def _graph_ws_state(proxy_module) -> dict:
     return {
         "connected": bool(getattr(proxy_module, "_graph_ws_connected", False)),
-        "client_id": getattr(proxy_module, "COMFY_CLIENT_ID", None),
+        "client_id": getattr(proxy_module, _GRAPH_WORDS["client_id_attr"], None),
     }
 
 
@@ -3951,13 +3959,13 @@ async def build_status_payload(config: dict) -> dict:
     # Phase 1: the sections that need only the config and the stores. They run at once, each within its budget.
     first = await gather_sections({
         "backends": _backend_grid(config),
-        "comfy_queue": _comfy_queue_and_stats(config),
-        "llama_props_slots": _llama_props_and_slots(config),
+        _GRAPH_WORDS["queue_key"]: _graph_queue_and_stats(config),
+        _CHAT_WORDS["props_section"]: _chat_props_and_slots(config),
         "aux_health": _enriched_aux_health(config),
         "gpus": _section(_gpus_raw),
         "ram_attribution": _section(_ram_attribution, config),
         "repo_state": _section(_repo_state),
-        "comfy_custom_nodes": _section(_comfy_custom_nodes),
+        _GRAPH_WORDS["custom_nodes_key"]: _section(_graph_custom_nodes),
         "capabilities": _section(_capabilities, config),
         "image_capabilities": _section(_image_capabilities, config),
         "xids": _section(_journal_xids),
@@ -3990,11 +3998,11 @@ async def build_status_payload(config: dict) -> dict:
 
     backends = first["backends"]
     gpus_raw = first["gpus"]
-    comfy_queue, comfy_stats = (first["comfy_queue"] or (None, None))
-    props, slots = (first["llama_props_slots"] or (None, None))
+    graph_queue, graph_stats = (first[_GRAPH_WORDS["queue_key"]] or (None, None))
+    props, slots = (first[_CHAT_WORDS["props_section"]] or (None, None))
     aux_health = first["aux_health"] or {}
     speech_key = _aux_role_key(_SPEECH_ROLE)
-    voxtral_health = aux_health.get(speech_key) if isinstance(aux_health, dict) and speech_key else None
+    speech_health = aux_health.get(speech_key) if isinstance(aux_health, dict) and speech_key else None
     video_meta = first["video_meta"] or {}
 
     # In-process projection of loop-owned state: no I/O and no await.
@@ -4059,8 +4067,8 @@ async def build_status_payload(config: dict) -> dict:
     # Phase 2: the sections that read phase 1 answers. The backend history is read here and written by the backend
     # sampler, at its own cadence. A build adds no samples, so they do not come at the times a build happens to run.
     second = await gather_sections({
-        "models": _section(_build_models, config, props, slots, voxtral_health=voxtral_health),
-        "gpu_workloads": _gpu_workloads(gpus_raw, comfy_queue, slots),
+        "models": _section(_build_models, config, props, slots, speech_health=speech_health),
+        "gpu_workloads": _gpu_workloads(gpus_raw, graph_queue, slots),
         "vram_attribution": _section(_vram_attribution, gpus_raw, config),
         "metrics": _section(_metrics_section, gpus_raw, disk, backends),
     }, errors=errors, stale=stale)
@@ -4079,16 +4087,16 @@ async def build_status_payload(config: dict) -> dict:
         lambda: _live_video_jobs(proxy_module, video_meta) if proxy_module else [],
     ) or []
     swap_state = loop_section("swap_state", lambda: _swap_state(proxy_module) if proxy_module else {})
-    comfy_ws_state = loop_section("comfy_ws_state", lambda: _comfy_ws_state(proxy_module) if proxy_module else {})
+    graph_ws_state = loop_section(_GRAPH_WORDS["ws_state_key"], lambda: _graph_ws_state(proxy_module) if proxy_module else {})
 
     # ComfyUI system_stats — VRAM headroom from comfy's perspective.
-    comfy_view: Optional[dict] = None
-    if comfy_stats:
+    graph_view: Optional[dict] = None
+    if graph_stats:
         try:
-            devices = comfy_stats.get("devices") or []
-            sysd = comfy_stats.get("system") or {}
-            comfy_view = {
-                "comfyui_version": sysd.get("comfyui_version"),
+            devices = graph_stats.get("devices") or []
+            sysd = graph_stats.get("system") or {}
+            graph_view = {
+                _GRAPH_WORDS["version_key"]: sysd.get(_GRAPH_WORDS["version_key"]),
                 "python_version": sysd.get("python_version"),
                 "pytorch_version": sysd.get("pytorch_version"),
                 "ram_total_bytes": sysd.get("ram_total"),
@@ -4097,7 +4105,7 @@ async def build_status_payload(config: dict) -> dict:
                 "device": devices[0] if devices else None,
             }
         except Exception as e:
-            errors["comfy_stats"] = _safe_err(e)
+            errors[_GRAPH_WORDS["stats_error_key"]] = _safe_err(e)
 
     # Enrich each backend entry with typed history for UI service rows.
     # Sourced from the already-computed metrics.services block — no extra I/O.
@@ -4141,7 +4149,7 @@ async def build_status_payload(config: dict) -> dict:
     drift = first["workflow_drift"]
     ram_attr = first["ram_attribution"]
     repo_state = first["repo_state"]
-    comfy_custom_nodes = first["comfy_custom_nodes"] or []
+    graph_custom_nodes = first[_GRAPH_WORDS["custom_nodes_key"]] or []
     capabilities = first["capabilities"] or []
     image_capabilities = first["image_capabilities"] or []
     config_snapshot = first["config_snapshot"] or {}
@@ -4317,10 +4325,10 @@ async def build_status_payload(config: dict) -> dict:
         "resource_awareness": resource_awareness,
         "ram_attribution": ram_attr,
         "repo_state": repo_state,
-        "comfy_custom_nodes": comfy_custom_nodes,
-        "comfy_queue": comfy_queue,
-        "comfy_view": comfy_view,
-        "comfy_ws_state": comfy_ws_state,
+        _GRAPH_WORDS["custom_nodes_key"]: graph_custom_nodes,
+        _GRAPH_WORDS["queue_key"]: graph_queue,
+        _GRAPH_WORDS["view_key"]: graph_view,
+        _GRAPH_WORDS["ws_state_key"]: graph_ws_state,
         "swap_state": swap_state,
         "models": models,
         "video_jobs": video_jobs,
@@ -4356,13 +4364,13 @@ def _build_models(
     config: dict,
     props: Optional[dict],
     slots: Optional[list[dict]],
-    voxtral_health: Optional[dict] = None,
+    speech_health: Optional[dict] = None,
 ) -> dict:
     """The models section, built from the props and slots the first phase already fetched."""
-    args = _llama_server_args(config)
+    args = _chat_server_args(config)
     loaded_path = _extract_arg(args, "--model") if args else None
     aux_flag = (_aux_probe(config) or ("", ""))[1]
-    mmproj = _extract_arg(args, aux_flag) if args and aux_flag else None
+    aux_path = _extract_arg(args, aux_flag) if args and aux_flag else None
     ctx_size_str = _extract_arg(args, "--ctx-size") if args else None
     cache_k_arg = _extract_arg(args, "--cache-type-k") if args else None
     cache_v_arg = _extract_arg(args, "--cache-type-v") if args else None
@@ -4427,8 +4435,8 @@ def _build_models(
 
     image_workflows: list[str] = []
     try:
-        comfy_cfg = config.get("backends", {}).get(_GRAPH_SERVICE_ID, {})
-        wf_dir = comfy_cfg.get("workflows_dir")
+        graph_cfg = _graph_record(config)
+        wf_dir = graph_cfg.get("workflows_dir")
         if wf_dir:
             p = Path(wf_dir)
             if p.is_dir():
@@ -4442,13 +4450,13 @@ def _build_models(
     except Exception:
         pass
 
-    tts = _resolve_tts_engine(args, voxtral_health)
+    tts = _resolve_tts_engine(args, speech_health)
 
     loaded_name = props_model_alias or (Path(loaded_path).name if loaded_path else None)
     if vision_modality is not None:
         vision_capable = bool(vision_modality)
     else:
-        vision_capable = bool(mmproj)
+        vision_capable = bool(aux_path)
 
     total_slots_value = (
         props_total_slots if props_total_slots is not None else len(slot_details)
@@ -4459,9 +4467,9 @@ def _build_models(
     return {
         "loaded_llm_path": props_model_path or loaded_path,
         "loaded_llm_name": loaded_name,
-        "mmproj_path": mmproj,
+        _CHAT_WORDS["aux_path_key"]: aux_path,
         "vision_capable": vision_capable,
-        "vision_source": "props" if vision_modality is not None else ("cmdline" if mmproj else "unknown"),
+        "vision_source": "props" if vision_modality is not None else ("cmdline" if aux_path else "unknown"),
         "ctx_size": props_n_ctx or ctx_size,
         "ctx_used": ctx_used,
         # Back-compat: keep flat field for any consumers still reading the

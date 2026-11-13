@@ -100,6 +100,23 @@ describe("followMeshJob", () => {
     });
   });
 
+  test("a capacity refusal that can be retried says so, with the gateway's delay when it has one", async () => {
+    const busy = { status: "failed", error: "The graphics card is busy with other work. Try again soon.", category: "capacity", retryable: true };
+    expect(await followMeshJob("mj_1", deps([{ ...busy, retryAfterS: 30 }]).value)).toEqual({
+      kind: "failed",
+      message: "The graphics card is busy with other work. Try again soon.",
+      retry: { afterS: 30 },
+    });
+    expect(await followMeshJob("mj_1", deps([busy]).value)).toMatchObject({ retry: { afterS: null } });
+  });
+
+  test("another failure, or a capacity failure that cannot be retried, offers no retry", async () => {
+    const upstream = await followMeshJob("mj_1", deps([{ status: "failed", error: "x", category: "upstream", retryable: true }]).value);
+    const final = await followMeshJob("mj_1", deps([{ status: "failed", error: "x", category: "capacity", retryable: false }]).value);
+    expect(upstream).not.toHaveProperty("retry");
+    expect(final).not.toHaveProperty("retry");
+  });
+
   test("a canceled job ends as canceled", async () => {
     expect(await followMeshJob("mj_1", deps([{ status: "canceled" }]).value)).toEqual({
       kind: "canceled",

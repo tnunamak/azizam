@@ -93,8 +93,8 @@ def test_status_probes_keep_the_prefix(field, url, probed):
         "tts": _record(field, url), "comfyui": _record(field, url),
         "chat": _record(field, url, capabilities=["chat"], lifecycle={"driver": "systemd"})})}
     asyncio.run(status_endpoint._enriched_aux_health(config))
-    asyncio.run(status_endpoint._comfy_queue_and_stats(config))
-    asyncio.run(status_endpoint._llama_props_and_slots(config))
+    asyncio.run(status_endpoint._graph_queue_and_stats(config))
+    asyncio.run(status_endpoint._chat_props_and_slots(config))
     assert sorted(probed) == sorted([f"{url}/health", f"{url}/queue", f"{url}/system_stats", f"{url}/props"])
 
 
@@ -119,8 +119,8 @@ def _disabled_config(address, enabled):
 def test_disabled_records_are_not_probed_or_listed(address, enabled, probed):
     config = _disabled_config(address, enabled)
     asyncio.run(status_endpoint._enriched_aux_health(config))
-    asyncio.run(status_endpoint._comfy_queue_and_stats(config))
-    asyncio.run(status_endpoint._llama_props_and_slots(config))
+    asyncio.run(status_endpoint._graph_queue_and_stats(config))
+    asyncio.run(status_endpoint._chat_props_and_slots(config))
     assert probed == []
     assert status_endpoint._unconfigured_rows(config) == []
     assert status_endpoint._managed_chat_origin(config) in ("", None)
@@ -130,7 +130,7 @@ def test_a_disabled_chat_record_does_not_win_the_props_selection(probed):
     config = {"backends": {
         "off": {**COMPLETE, "enabled": "off", "capabilities": ["chat"], "lifecycle": {"driver": "systemd"}},
         "on": {"host": "203.0.113.10", "port": 1234, "capabilities": ["chat"], "lifecycle": {"driver": "systemd"}}}}
-    asyncio.run(status_endpoint._llama_props_and_slots(config))
+    asyncio.run(status_endpoint._chat_props_and_slots(config))
     assert probed == ["http://203.0.113.10:1234/props"]
 
 
@@ -170,8 +170,8 @@ def test_status_probes_join_the_endpoint_before_the_query(field, base, pattern, 
         "tts": _record(field, base), "comfyui": _record(field, base),
         "chat": _record(field, base, capabilities=["chat"], lifecycle={"driver": "systemd"})})}
     asyncio.run(status_endpoint._enriched_aux_health(config))
-    asyncio.run(status_endpoint._comfy_queue_and_stats(config))
-    asyncio.run(status_endpoint._llama_props_and_slots(config))
+    asyncio.run(status_endpoint._graph_queue_and_stats(config))
+    asyncio.run(status_endpoint._chat_props_and_slots(config))
     assert sorted(probed) == sorted(pattern.format(e) for e in ("health", "queue", "system_stats", "props"))
 
 
