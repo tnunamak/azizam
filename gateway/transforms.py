@@ -28,6 +28,8 @@ from typing import Any, Optional, Protocol, TypeAlias, runtime_checkable
 
 import yaml
 
+from .strict_yaml import safe_load_strict
+
 # ---------------------------------------------------------------------------
 # Context
 # ---------------------------------------------------------------------------
@@ -558,14 +560,107 @@ class TransformRegistry:
 TRANSFORM_PACKS_FILE = Path(__file__).resolve().parent.parent / "registry" / "transform_packs.yml"
 
 
+
+_PACK_FIELDS = {
+    "value-map": {"param", "map", "default"},
+    "drop-params": {"drop"},
+    "default-params": {"set"},
+    "param-map": {"from", "to", "only_if_destination_absent"},
+    "message-inject": {"role", "text", "mode"},
+    "clamp": {"param", "min", "max"},
+}
+
+
+def _validate_pack_spec(cfg: dict[str, Any]) -> None:
+    """File-only policy: do not tighten live engine-record construction."""
+    kind = cfg.get("kind")
+    if not isinstance(kind, str) or kind not in _PACK_FIELDS:
+        raise ValueError(f"kind: unknown transform kind {kind!r}")
+    allowed = {"kind", "phase", "when"} | _PACK_FIELDS[kind]
+    for field in cfg:
+        if field not in allowed:
+            raise ValueError(f"unknown field {field!r} for {kind}")
+    if "phase" in cfg and cfg["phase"] not in ("request", "response"):
+        raise ValueError("phase must be request or response")
+    if "when" in cfg:
+        if not isinstance(cfg["when"], list):
+            raise ValueError("when must be a list")
+        for index, clause in enumerate(cfg["when"]):
+            label = f"when[{index}]"
+            if not isinstance(clause, Mapping):
+                raise ValueError(f"{label} must be a mapping")
+            for field in clause:
+                if field not in {"field", "op", "value"}:
+                    raise ValueError(f"{label}: unknown field {field!r}")
+            if not isinstance(clause.get("field"), str) or not clause["field"].strip():
+                raise ValueError(f"{label}.field must be a nonempty string")
+            op = clause.get("op")
+            if not isinstance(op, str) or op not in {
+                "present", "absent", "equals", "in", "non_empty", "gt", "lt"
+            }:
+                raise ValueError(f"{label}.op is missing or unsupported")
+
+    def path_field(field: str, value: Any) -> None:
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise ValueError(f"{field} must be a nonempty string without surrounding whitespace")
+
+    for field in ("param", "from", "to"):
+        if field in cfg:
+            path_field(field, cfg[field])
+    if kind == "default-params" and isinstance(cfg.get("set"), Mapping):
+        for key in cfg["set"]:
+            path_field("set", key)
+    if kind == "drop-params" and isinstance(cfg.get("drop"), list):
+        for item in cfg["drop"]:
+            path_field("drop", item)
+    if kind == "clamp":
+        if "min" not in cfg and "max" not in cfg:
+            raise ValueError("clamp requires min or max")
+        lo, hi = cfg.get("min"), cfg.get("max")
+        if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and lo > hi:
+            raise ValueError("min must be <= max")
+
+
+def _pack_yaml_error_label(text: str, exc: yaml.YAMLError) -> str:
+    """Locate the enclosing pack using safe syntax nodes, never accepted data."""
+    mark = getattr(exc, "problem_mark", None)
+    if mark is None:
+        return ""
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return ""
+    if not isinstance(root, yaml.MappingNode):
+        return ""
+    for key, packs in root.value:
+        if not isinstance(key, yaml.ScalarNode) or key.value != "packs":
+            continue
+        if not isinstance(packs, yaml.SequenceNode):
+            continue
+        for index, row in enumerate(packs.value, 1):
+            if not (row.start_mark.index <= mark.index < row.end_mark.index):
+                continue
+            label = f"at row {index}"
+            if isinstance(row, yaml.MappingNode):
+                for field, value in row.value:
+                    if (isinstance(field, yaml.ScalarNode) and field.value == "id"
+                            and isinstance(value, yaml.ScalarNode)):
+                        label = repr(value.value)
+                        break
+            return f"pack {label}: "
+    return ""
+
+
 def load_transform_packs(path: Path, registry: TransformRegistry) -> None:
     """Validate data-defined packs through register before publishing any row."""
     path = Path(path)
+    text = ""
     try:
-        with path.open(encoding="utf-8") as handle:
-            data = yaml.safe_load(handle)
+        text = path.read_text(encoding="utf-8")
+        data = safe_load_strict(text)
     except (OSError, yaml.YAMLError) as exc:
-        raise ValueError(f"{path}: cannot load transform packs: {exc}") from exc
+        label = _pack_yaml_error_label(text, exc) if isinstance(exc, yaml.YAMLError) else ""
+        raise ValueError(f"{path}: {label}cannot load transform packs: {exc}") from exc
     if (
         not isinstance(data, Mapping)
         or set(data) != {"schema_version", "packs"}
@@ -596,6 +691,8 @@ def load_transform_packs(path: Path, registry: TransformRegistry) -> None:
                 raise ValueError("specs must be a nonempty list of primitive mappings")
             if pack_id in names:
                 raise ValueError("duplicate or already registered pack id")
+            for spec in specs:
+                _validate_pack_spec(spec)
             staged.register(pack_id, specs)
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"{path}: pack {label}: {exc}") from exc
