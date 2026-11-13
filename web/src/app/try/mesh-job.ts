@@ -30,8 +30,8 @@ export type MeshJobDeps = {
 
 export type MeshJobOutcome =
   | { kind: "done"; blob: Blob }
-  /** `retry` is set when the gateway refused for capacity and says asking again can work. */
-  | { kind: "failed"; message: string; retry?: { afterS: number | null } }
+  /** `tryAgain` is set when the gateway refused for capacity and says asking again can work. */
+  | { kind: "failed"; message: string; tryAgain?: { afterS: number | null } }
   | { kind: "canceled" }
   | { kind: "stopped" }
   /** Every request failed for `unreachableAfterMs`. The job is not touched; asking again may find it. */
@@ -65,7 +65,7 @@ export async function followMeshJob(id: string, deps: MeshJobDeps): Promise<Mesh
       if (job.status === "failed") {
         const message = job.error?.trim() || FAILED_FALLBACK;
         return job.category === "capacity" && job.retryable === true
-          ? { kind: "failed", message, retry: { afterS: job.retryAfterS ?? null } }
+          ? { kind: "failed", message, tryAgain: { afterS: job.retryAfterS ?? null } }
           : { kind: "failed", message };
       }
       if (job.status === "canceled") return { kind: "canceled" };

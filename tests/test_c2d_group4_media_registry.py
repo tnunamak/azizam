@@ -135,6 +135,8 @@ def test_error_param_does_not_use_response_properties(tmp_path):
 
 def test_error_params_without_registry_endpoint_keep_syntax_validation(tmp_path):
     document = yaml.safe_load(REGISTRY_PATH.read_text(encoding="utf-8"))
+    # The shipped registry binds identity_scene to its endpoint; this case is about a group with no binding.
+    document["wire_error_param_endpoints"].pop("identity_scene", None)
     document["wire_error_params"]["identity_scene"]["reference_photos"] = "reference_image"
     registry = schemas.load_media_schema_registry(_write(tmp_path, document))
     assert schemas.wire_error_param("identity_scene", "reference_photos", registry=registry) == "reference_image"

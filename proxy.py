@@ -4548,7 +4548,7 @@ def _backend_banner_lines(derived: Mapping[str, Any]) -> list[str]:
     """The startup lines for the speech, transcription and ComfyUI backends; each address is shown without user info or query."""
     return [
         f"[proxy] {label} backend: {projection.public_url(str(derived[key + '_HOST'] or ''))} (enabled: {derived[key + '_ENABLED']})"
-        for label, key in (("TTS", "TTS"), ("STT", "STT"), (_graph_engine_label(derived), "COMFY"))
+        for label, key in (("TTS", "TTS"), ("STT", "STT"), (_graph_engine_label(derived), "GRAPH"))
     ]
 
 

@@ -306,7 +306,7 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
       } else {
         setPhase("error");
         setMessage(outcome.message);
-        setRetry(outcome.retry ?? null);
+        setRetry(outcome.tryAgain ?? null);
       }
     } catch (error) {
       if (run.signal.aborted) return;

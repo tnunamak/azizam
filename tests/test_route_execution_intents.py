@@ -416,11 +416,21 @@ def test_the_realtime_resource_class_the_chain_asset_kind_and_the_operation_keys
     wire_enum) and left out of it: the resource class a realtime route admits under (an admission choice, not a
     published value), the resolver mode ``kind="video"`` the chain passes (an internal video/image switch, not
     the published assets[].kind), and the operation table keys (the code side of the registry rows' ``intent``,
-    not in the route graph or OpenAPI bytes). A broad proxy.py allowance for these words would also excuse handlers."""
+    not in the route graph or OpenAPI bytes). A broad proxy.py allowance for these words would also excuse handlers.
+
+    Since 2026-11-13 the bare words ``audio`` and ``video`` each hold one narrow wire allowance of two sites (the OpenAI
+    speech ``stream_format`` value and the startup file's section key; the OpenAI Videos body field and object
+    discriminator). Sites above a reviewed count stay unreviewed (test_domain_literal_ratchet), so a new handler site
+    still counts; the intent spellings stay unreviewed."""
     document = yaml.safe_load((ROOT / "tests" / "domain_literal_reviewed.yml").read_text(encoding="utf-8"))
-    allowed = {entry["literal"] for entry in document["sites"] if entry["file"] == "proxy.py"}
-    assert not allowed & {"audio", "video", "audio.speech", "audio.transcriptions", "audio.translations",
+    entries = [entry for entry in document["sites"] if entry["file"] == "proxy.py"]
+    allowed = {entry["literal"] for entry in entries}
+    assert not allowed & {"audio.speech", "audio.transcriptions", "audio.translations",
                           "audio.generate", "audio.models", "audio.realtime"}
+    for word in ("audio", "video"):
+        rows = [entry for entry in entries if entry["literal"] == word]
+        assert all(row["category"] == "wire_enum" for row in rows), rows
+        assert sum(row.get("count", 1) for row in rows) <= 2, rows
 
 
 def test_graph_admission_refuses_an_intent_without_a_modality_row(monkeypatch):

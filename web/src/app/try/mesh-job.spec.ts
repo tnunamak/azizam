@@ -105,16 +105,16 @@ describe("followMeshJob", () => {
     expect(await followMeshJob("mj_1", deps([{ ...busy, retryAfterS: 30 }]).value)).toEqual({
       kind: "failed",
       message: "The graphics card is busy with other work. Try again soon.",
-      retry: { afterS: 30 },
+      tryAgain: { afterS: 30 },
     });
-    expect(await followMeshJob("mj_1", deps([busy]).value)).toMatchObject({ retry: { afterS: null } });
+    expect(await followMeshJob("mj_1", deps([busy]).value)).toMatchObject({ tryAgain: { afterS: null } });
   });
 
   test("another failure, or a capacity failure that cannot be retried, offers no retry", async () => {
     const upstream = await followMeshJob("mj_1", deps([{ status: "failed", error: "x", category: "upstream", retryable: true }]).value);
     const final = await followMeshJob("mj_1", deps([{ status: "failed", error: "x", category: "capacity", retryable: false }]).value);
-    expect(upstream).not.toHaveProperty("retry");
-    expect(final).not.toHaveProperty("retry");
+    expect(upstream).not.toHaveProperty("tryAgain");
+    expect(final).not.toHaveProperty("tryAgain");
   });
 
   test("a canceled job ends as canceled", async () => {
