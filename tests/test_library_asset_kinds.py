@@ -518,7 +518,7 @@ def test_a_file_says_its_bytes_were_left_unchanged_and_media_says_removed(librar
     assert download.status_code == 200 and download.content == b"hello"
     assert download.headers["x-azizam-metadata"] == "unchanged"
     from tests.media_test_bytes import png_bytes
-    image = library.client.get(f"/me/api/media/{_store(library, png_bytes(), '.png')}").json()
+    image = library.client.get(f"/me/api/media/{_store(library, png_bytes(), '.png')}").json()["asset"]
     assert image["metadata_handling"] == "removed"
     assert image["metadata_note"] == "Azizam removed the metadata it knows how to find in this file."
     assert _download(image["asset_id"]).headers["x-azizam-metadata"] == "removed"
