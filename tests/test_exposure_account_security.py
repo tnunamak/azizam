@@ -457,7 +457,7 @@ def test_admin_config_reload_cookie_session_requires_valid_csrf(
             "TTS_HOST": "",
             "STT_HOST": "",
             "EMBEDDINGS_HOST": "",
-            "COMFY_HOST": "",
+            "GRAPH_HOST": "",
             "_GRAPH_BINDING": proxy.DERIVED._GRAPH_BINDING,
         }
 
@@ -501,7 +501,7 @@ def test_admin_config_reload_bearer_admin_does_not_require_csrf(
             "TTS_HOST": "",
             "STT_HOST": "",
             "EMBEDDINGS_HOST": "",
-            "COMFY_HOST": "",
+            "GRAPH_HOST": "",
             "_GRAPH_BINDING": proxy.DERIVED._GRAPH_BINDING,
         }
 

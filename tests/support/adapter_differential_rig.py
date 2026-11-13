@@ -29,7 +29,7 @@ def _object_info_module():
     """The module with the blocking ``/object_info`` lookup, wherever this checkout keeps it."""
     import importlib
 
-    for name in ("gateway.comfy_object_info", "gateway.engine_protocol.node_info"):
+    for name in ("gateway.graph_object_info", "gateway.engine_protocol.node_info"):
         try:
             return importlib.import_module(name)
         except ImportError:
@@ -39,8 +39,8 @@ def _object_info_module():
 
 # The repo's conftest replaces the lookup's ``lookup`` for every test; a scenario that wants the real
 # one (a blocking client) puts this one back.
-comfy_object_info = _object_info_module()
-REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup
+graph_object_info = _object_info_module()
+REAL_OBJECT_INFO_LOOKUP = graph_object_info.lookup
 
 PROVENANCE = {
     "source": "hand-written",
@@ -301,7 +301,7 @@ class GatewayRig:
         patch(proxy, "IMAGE_CACHE_DIR", self.cache)
         patch(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.tmp / "payloads")
         patch(proxy, "_image_url_signing_secret", b"adapter-differential-secret")
-        graph_service.set_derived(self.monkeypatch, "COMFY_ENABLED", True)
+        graph_service.set_derived(self.monkeypatch, "GRAPH_ENABLED", True)
         # The VRAM probe samples on a real-time timer; one sample before and one after a round is the
         # deterministic part (a round that outlasts the interval would add a timer-driven /system_stats).
         patch(proxy, "_VRAM_PROBE_INTERVAL_MIN_S", 3600.0)

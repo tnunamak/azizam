@@ -365,7 +365,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                 return _Response({})
 
         client = _Client()
-        with derived_patch("COMFY_TIMEOUT", 0):
+        with derived_patch("GRAPH_TIMEOUT", 0):
             err, images = await proxy._graph_run_round(
                 client,  # type: ignore[arg-type]
                 {},
@@ -414,7 +414,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                 return True
 
         client = _Client()
-        with derived_patch("COMFY_TIMEOUT", 1):
+        with derived_patch("GRAPH_TIMEOUT", 1):
             err, images = await proxy._graph_run_round(
                 client,  # type: ignore[arg-type]
                 {},
@@ -462,7 +462,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
             raise proxy.asyncio.CancelledError()
 
         client = _Client()
-        with derived_patch("COMFY_TIMEOUT", 1), patch.object(proxy.asyncio, "sleep", raise_cancelled):
+        with derived_patch("GRAPH_TIMEOUT", 1), patch.object(proxy.asyncio, "sleep", raise_cancelled):
             with self.assertRaises(proxy.asyncio.CancelledError):
                 await proxy._graph_run_round(
                     client,  # type: ignore[arg-type]

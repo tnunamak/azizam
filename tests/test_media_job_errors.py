@@ -182,7 +182,7 @@ class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         # The audio family selects its service by capability; the base config declares none for it.
-        engine = derived_patch("COMFY_ENABLED", True)
+        engine = derived_patch("GRAPH_ENABLED", True)
         engine.__enter__()
         self.addCleanup(engine.__exit__, None, None, None)
 
@@ -204,7 +204,7 @@ class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         """The real route refuses duration 2 against a 5 second floor; the job says so."""
         job_id = await self.submit({"model": "tangoflux", "prompt": PROMPT, "type": "sfx", "duration": 2})
         sync = None
-        with derived_patch("COMFY_ENABLED", True), patch.multiple(
+        with derived_patch("GRAPH_ENABLED", True), patch.multiple(
             proxy,
             _dispatch_admission_response=lambda *a, **kw: None,
             _service_availability_response=lambda *a, **kw: None,
@@ -246,7 +246,7 @@ URL = "https://clips.caller-example.test/private/fox-secret.mp4"
 @contextlib.contextmanager
 def _routes_open(**extra: Any):
     """The checks every media route makes before it reads a body, switched open."""
-    with derived_patch("COMFY_ENABLED", True), patch.multiple(
+    with derived_patch("GRAPH_ENABLED", True), patch.multiple(
         proxy, _image_media_job_max_attempts=lambda: 1,
         _dispatch_admission_response=lambda *a, **kw: None,
         _service_availability_response=lambda *a, **kw: None, **extra,
@@ -301,7 +301,7 @@ class ImageVideoJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         patches = [patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload)]
         if create is not None:
             patches.append(patch.object(proxy, "proxy_graph_video_create", create))
-        with _routes_open(), patches[0], (patches[1] if create is not None else derived_patch("COMFY_ENABLED", True)):
+        with _routes_open(), patches[0], (patches[1] if create is not None else derived_patch("GRAPH_ENABLED", True)):
             await proxy._run_video_media_job(job.job_id)
         return self.failed(job.job_id)
 

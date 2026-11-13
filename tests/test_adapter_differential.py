@@ -6,7 +6,7 @@ traces to be identical, records the trace for the junit dump, and compares it wi
 ``docs/verification/ENGINE_W6B_DIFFERENTIAL.md``.
 
 The engine is the scenario-driven ``comfyui`` fake (tests/support/fake_upstream), served
-in process at ``http://comfy.fk.test`` with ``proxy.DERIVED.COMFY_HOST`` pointed at it. A scenario
+in process at ``http://comfy.fk.test`` with ``proxy.DERIVED.GRAPH_HOST`` pointed at it. A scenario
 that needs the engine to be down routes the host to a transport that refuses.
 
 Not reachable hermetically: the image background decision ``background: "auto"`` asks a
@@ -33,10 +33,10 @@ import proxy
 from tests.media_test_bytes import mp4_bytes
 from tests.support.adapter_differential_rig import trace_property  # noqa: F401
 from tests.support.adapter_differential_rig import (
-    REAL_OBJECT_INFO_LOOKUP, comfy_exchanges, comfy_object_info, exchange, history_done, play, scenario,
+    REAL_OBJECT_INFO_LOOKUP, comfy_exchanges, graph_object_info, exchange, history_done, play, scenario,
 )
 
-COMFY_HOST = "comfy.fk.test"
+GRAPH_HOST = "comfy.fk.test"
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 
 
@@ -73,23 +73,23 @@ def _long_mp4() -> bytes:
 
 
 def _comfy(rig, exchanges, name="comfy"):
-    fake = rig.engine(name, scenario("comfyui", f"{rig.name}-comfy", exchanges), host=COMFY_HOST)
-    rig.set(proxy, "COMFY_HOST", fake.base_url)
+    fake = rig.engine(name, scenario("comfyui", f"{rig.name}-comfy", exchanges), host=GRAPH_HOST)
+    rig.set(proxy, "GRAPH_HOST", fake.base_url)
     # The engine is declared as a deployment declares one: a service record the run core finds by its protocol, with the
     # wait the scenario set (a run waits as long as the record it was pinned to says).
     rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), name: {
-        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph",
-        "timeout": proxy.runtime().derived["COMFY_TIMEOUT"]}})
+        "enabled": True, "host": GRAPH_HOST, "port": 80, "protocol": "node-graph",
+        "timeout": proxy.runtime().derived["GRAPH_TIMEOUT"]}})
     return fake
 
 
 def _comfy_down(rig, error=None, name="comfy"):
-    rig.set(proxy, "COMFY_HOST", f"http://{COMFY_HOST}")
-    rig.down_engine(COMFY_HOST, error)
+    rig.set(proxy, "GRAPH_HOST", f"http://{GRAPH_HOST}")
+    rig.down_engine(GRAPH_HOST, error)
     # The engine is declared as `_comfy` declares it: down is an engine the run core finds and cannot reach.
     rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), name: {
-        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph",
-        "timeout": proxy.runtime().derived["COMFY_TIMEOUT"]}})
+        "enabled": True, "host": GRAPH_HOST, "port": 80, "protocol": "node-graph",
+        "timeout": proxy.runtime().derived["GRAPH_TIMEOUT"]}})
 
 
 def _capture_scheduling(rig) -> None:
@@ -297,7 +297,7 @@ def test_image_generation_timeout(tmp_path, record_testsuite_property):
     never = {"p1": {"status": {"status_str": "running", "completed": False, "messages": []}, "outputs": {}}}
 
     def setup(rig):
-        rig.set(proxy, "COMFY_TIMEOUT", 2)  # the round budget is counted in skipped sleeps, not wall time
+        rig.set(proxy, "GRAPH_TIMEOUT", 2)  # the round budget is counted in skipped sleeps, not wall time
         _comfy(rig, comfy_exchanges(history=never, queue={"queue_running": [], "queue_pending": [[0, "p1", {}, {}, []]]}))
 
     async def drive(rig):
@@ -525,10 +525,10 @@ def _object_info_handler(workflow: Path):
 def test_audio_generate_with_object_info(tmp_path, record_testsuite_property):
     """The UI workflow embedded in the prompt is derived from ComfyUI's /object_info (a blocking client)."""
     def setup(rig):
-        rig.set(comfy_object_info, "lookup", REAL_OBJECT_INFO_LOOKUP)
-        rig.set(comfy_object_info, "_CACHE", {})
-        rig.set(comfy_object_info, "_FAILED_AT", {})
-        rig.sync_engine(COMFY_HOST, _object_info_handler(Path(proxy.AUDIO_WORKFLOWS_DIR) / "tangoflux.json"))
+        rig.set(graph_object_info, "lookup", REAL_OBJECT_INFO_LOOKUP)
+        rig.set(graph_object_info, "_CACHE", {})
+        rig.set(graph_object_info, "_FAILED_AT", {})
+        rig.sync_engine(GRAPH_HOST, _object_info_handler(Path(proxy.AUDIO_WORKFLOWS_DIR) / "tangoflux.json"))
         _audio_comfy(rig)
 
     async def drive(rig):
@@ -666,7 +666,7 @@ def test_image_client_disconnect_during_poll(tmp_path, record_testsuite_property
     running = {"p1": {"status": {"status_str": "running", "completed": False, "messages": []}, "outputs": {}}}
 
     def setup(rig):
-        rig.set(proxy, "COMFY_TIMEOUT", 2)
+        rig.set(proxy, "GRAPH_TIMEOUT", 2)
         _comfy(rig, comfy_exchanges(history=running, strict=False))
 
     async def drive(rig):

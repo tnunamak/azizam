@@ -136,7 +136,7 @@ def test_manifestless_submission_matches_main_and_records_seeds(batch, monkeypat
     intent = "image.edit" if name.endswith("-edit") else "image.generate"
     source = ROOT / "workflows/images" / f"{MANIFESTLESS[name]}.json"
     (tmp_path / f"{name}.json").write_bytes(source.read_bytes())
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_WORKFLOWS_DIR", tmp_path)
+    monkeypatch.setitem(proxy.runtime().derived, "GRAPH_WORKFLOWS_DIR", tmp_path)
     assert proxy.load_graph_workflow(name) is not None
     assert proxy._find_image_manifest(intent, name) is None
     assert proxy.resolve_model_for_operation(operation, name).effective_model == name

@@ -119,7 +119,7 @@ def test_video_existing_submission_settles_failures_and_deadline(
     monkeypatch.setattr(proxy, "time",
                         SimpleNamespace(monotonic=Mock(side_effect=[0, 0, 2]),
                                         time=lambda: 100))
-    monkeypatch.setitem(proxy.runtime().derived, "COMFY_VIDEO_TIMEOUT", 1)
+    monkeypatch.setitem(proxy.runtime().derived, "GRAPH_VIDEO_TIMEOUT", 1)
     monkeypatch.setattr(proxy.asyncio, "sleep", AsyncMock())
 
     async def scenario():
@@ -224,7 +224,7 @@ def test_lifespan_cancels_and_joins_all_owned_worker_registries(jobs, tmp_path, 
     monkeypatch.setattr(proxy.providers, "recover_provider_spend", Mock())
     monkeypatch.setattr(proxy.firehose_metrics, "replay_persisted", lambda: {})
     monkeypatch.setattr(proxy.loop_watchdog, "start", lambda *a: None)
-    set_derived(monkeypatch, "COMFY_ENABLED", False)
+    set_derived(monkeypatch, "GRAPH_ENABLED", False)
     monkeypatch.setattr(proxy.metrics_sampler, "start_writer",
                         Mock(side_effect=RuntimeError("disabled test sampler")))
     monkeypatch.setattr(proxy.metrics_sampler, "close_writer", Mock())

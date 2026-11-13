@@ -109,7 +109,7 @@ class FakeComfy:
         out = [
             patch.object(proxy.httpx, "AsyncClient", self.client_class()),
             patch.object(proxy, "_service_availability_response", return_value=None),
-            derived_patch("COMFY_ENABLED", True),
+            derived_patch("GRAPH_ENABLED", True),
             patch.object(proxy, "configured_downstream_headers", lambda _ac, _b: {}),
         ]
         if probe is not None:

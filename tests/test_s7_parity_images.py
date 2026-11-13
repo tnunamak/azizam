@@ -105,7 +105,7 @@ def variation_ok(rig):
 def disabled(rig):
     """The image service is off, and the engine would refuse any call."""
     base._comfy_down(rig)
-    set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
+    set_derived(rig.monkeypatch, "GRAPH_ENABLED", False)
     for service_id, record in (proxy.config.get("backends") or {}).items():
         if isinstance(record, dict) and (record.get("protocol") == "node-graph" or service_id == GRAPH_SERVICE_ID):
             rig.monkeypatch.setitem(record, "enabled", False)       # the service record is where an operator switches it off
@@ -365,10 +365,10 @@ def _failing(history=None, prompt=None, down=False, extra=None):
     def setup(rig):
         if down:
             base._comfy_down(rig)
-            rig.set(proxy, "COMFY_HOST", f"http://{base.COMFY_HOST}:80")      # the record's address names its port
-            # The row path finds its engine by a service record, as a deployment declares one; the old route reads COMFY_HOST.
+            rig.set(proxy, "GRAPH_HOST", f"http://{base.GRAPH_HOST}:80")      # the record's address names its port
+            # The row path finds its engine by a service record, as a deployment declares one; the old route reads GRAPH_HOST.
             rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
-                "enabled": True, "host": base.COMFY_HOST, "port": 80, "protocol": "node-graph"}})
+                "enabled": True, "host": base.GRAPH_HOST, "port": 80, "protocol": "node-graph"}})
         else:
             kw = {}
             if history is not None:

@@ -265,8 +265,8 @@ def world(fake_upstreams, monkeypatch, tmp_path):
         "resolve_image_background_decision": AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
     }.items():
         monkeypatch.setattr(proxy, name, value)
-    set_derived(monkeypatch, "COMFY_ENABLED", True)
-    set_derived(monkeypatch, "COMFY_HOST", "http://matrix-graph.fk.test")
+    set_derived(monkeypatch, "GRAPH_ENABLED", True)
+    set_derived(monkeypatch, "GRAPH_HOST", "http://matrix-graph.fk.test")
     # Metadata encoding is outside retention; keep this video fixture independent of ffmpeg.
     monkeypatch.setattr(proxy.media_delivery, "deliver_bytes", lambda data, *_a, **_kw: data)
     monkeypatch.setattr(proxy.media_delivery, "attach_provenance", lambda data, *_a, **_kw: data)

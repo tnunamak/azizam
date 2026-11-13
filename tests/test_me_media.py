@@ -2064,7 +2064,7 @@ class MeMediaRouterTests(unittest.TestCase):
             rig.set(proxy, "_schedule_image_media_job", lambda job_id: rig.scheduled.append(job_id) or True)
             fake = rig.engine("comfy", scenario("comfyui", "usage-replay-comfy",
                                                 comfy_exchanges(history=failed, strict=False)), host="comfy.usage.test")
-            rig.set(proxy, "COMFY_HOST", fake.base_url)
+            rig.set(proxy, "GRAPH_HOST", fake.base_url)
 
             async def drive() -> tuple[str, str]:
                 first = await rig.call("POST", "/gateway/v1/media/jobs/image-generations", label="submit the image job",

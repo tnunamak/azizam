@@ -46,7 +46,7 @@ def test_video_routes_resolve_owner_keys_off_the_loop(call_route):
             return await proxy.proxy_graph_video_status(proxy._video_id_from_prompt_id("p1"), access_context())
 
     with patch.object(proxy, "_video_job_records", records), \
-            derived_patch("COMFY_ENABLED", True), \
+            derived_patch("GRAPH_ENABLED", True), \
             patch.object(proxy, "_graph_history", _no_history), \
             patch.object(proxy, "_graph_queue_status", _idle_queue), \
             patch.object(proxy, "_asset_owner_key", lambda _ctx: "owner-a"), \

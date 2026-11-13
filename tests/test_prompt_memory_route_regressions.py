@@ -64,7 +64,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             p = patch.object(target, name, value)
             p.start()
             self.addCleanup(p.stop)
-        comfy_enabled = derived_patch("COMFY_ENABLED", True)
+        comfy_enabled = derived_patch("GRAPH_ENABLED", True)
         comfy_enabled.start()
         self.addCleanup(comfy_enabled.stop)
         self.member = admin_store.upsert_oidc_user("iss", "robin", email="robin@example.test", path=self.admin_db)
@@ -81,7 +81,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
                 return body
 
         comfy = self.fakes.asgi(load_scenario("comfyui/image-complete-png", png_hex=_comfy_png_with(SENTINEL).hex()))
-        set_derived(self.monkeypatch, "COMFY_HOST", comfy.base_url)
+        set_derived(self.monkeypatch, "GRAPH_HOST", comfy.base_url)
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
         with patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(

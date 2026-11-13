@@ -27,7 +27,7 @@ def replay_with(tmp_path, change, *, golden: str = "image_sync_b64") -> str:
     def setup(rig):
         fake = rig.engine("comfy", scenario("comfyui", "sensitivity", comfy_exchanges(views=[(_png(), "image/png")])),
                           host="comfy.fk.test")
-        rig.set(proxy, "COMFY_HOST", fake.base_url)
+        rig.set(proxy, "GRAPH_HOST", fake.base_url)
         change(rig)
 
     async def drive(rig):
@@ -45,7 +45,7 @@ def test_the_unchanged_gateway_matches_the_golden(tmp_path):
     def setup(rig):
         fake = rig.engine("comfy", scenario("comfyui", "sensitivity", comfy_exchanges(views=[(_png(), "image/png")])),
                           host="comfy.fk.test")
-        rig.set(proxy, "COMFY_HOST", fake.base_url)
+        rig.set(proxy, "GRAPH_HOST", fake.base_url)
 
     async def drive(rig):
         await rig.call("POST", "/v1/images/generations", label="generate one image as b64_json",

@@ -387,7 +387,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             ])
         )
 
-        with derived_patch("COMFY_ENABLED", True):
+        with derived_patch("GRAPH_ENABLED", True):
             response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
@@ -995,7 +995,7 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
                     raise body
                 return body
 
-        with derived_patch("COMFY_ENABLED", True):
+        with derived_patch("GRAPH_ENABLED", True):
             with patch.object(
                 proxy,
                 "configured_downstream_headers",
@@ -1015,7 +1015,7 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
             async def json(self_inner) -> Any:  # pragma: no cover
                 return {}
 
-        with derived_patch("COMFY_ENABLED", False):
+        with derived_patch("GRAPH_ENABLED", False):
             response = await proxy.proxy_graph_image_request(
                 _StubRequest(),  # type: ignore[arg-type]
                 OWNER_CONTEXT,
@@ -1237,7 +1237,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1276,7 +1276,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
                 ),
             ]
         )
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy, "_service_availability_response", return_value=None
         ):
             response = await proxy.proxy_graph_image_edit_request(
@@ -1376,7 +1376,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1509,7 +1509,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1686,7 +1686,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1733,7 +1733,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1794,7 +1794,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -1840,7 +1840,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
 class TestEditWorkflowSelection(unittest.TestCase):
     def test_configured_image_defaults_and_fallback_workflows(self) -> None:
-        self.assertEqual(proxy.DERIVED.COMFY_DEFAULT_MODEL, "krea2-turbo")
+        self.assertEqual(proxy.DERIVED.GRAPH_DEFAULT_MODEL, "krea2-turbo")
         self.assertEqual(proxy.image_edit_default_model(), "qwen-image-2.1-edit")
         self.assertEqual(
             proxy._image_variations_default_workflow(), "qwen-image-2.1-edit"
@@ -1984,7 +1984,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -2038,7 +2038,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
                 ]
             )
             generate = AsyncMock()
-            with derived_patch("COMFY_ENABLED", True), derived_patch("COMFY_WORKFLOWS_DIR", builtin), patch.object(
+            with derived_patch("GRAPH_ENABLED", True), derived_patch("GRAPH_WORKFLOWS_DIR", builtin), patch.object(
                 proxy, "GATEWAY_WORKFLOW_REGISTRY", registry
             ), patch.object(proxy, "validate_workflow_graph", lambda _w: []), patch.object(
                 proxy, "configured_downstream_headers", lambda _a, _s: {}
@@ -2075,7 +2075,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -2123,7 +2123,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -2176,7 +2176,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -2256,7 +2256,7 @@ class TestJpegBackgroundAutoBypass(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy, "configured_downstream_headers", lambda _a, _b: {}
         ), patch.object(
             proxy, "load_graph_workflow", lambda _m, **_kw: copy.deepcopy(workflow)
@@ -2343,7 +2343,7 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,
@@ -2398,7 +2398,7 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
 class TestProxyComfyEditRequestOutputShape(unittest.IsolatedAsyncioTestCase):
     """output_format/output_compression/quality validation on /v1/images/edits.
 
-    These all fail before any ComfyUI upload, so no COMFY_ENABLED patch or
+    These all fail before any ComfyUI upload, so no GRAPH_ENABLED patch or
     workflow fixture is needed beyond enabling the route.
     """
 
@@ -2407,7 +2407,7 @@ class TestProxyComfyEditRequestOutputShape(unittest.IsolatedAsyncioTestCase):
             "/v1/images/edits", OWNER_CONTEXT
         )
         request = _MultipartRequest([("model", "flux2-klein-4b-edit"), *extra_fields])
-        with derived_patch("COMFY_ENABLED", True):
+        with derived_patch("GRAPH_ENABLED", True):
             response = await proxy.proxy_graph_image_edit_request(
                 request,  # type: ignore[arg-type]
                 OWNER_CONTEXT,
@@ -2501,7 +2501,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy.httpx, "AsyncClient", _FakeAsyncClient
         ), patch.object(
             proxy,

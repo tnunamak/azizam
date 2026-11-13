@@ -438,7 +438,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "prompt": "private prompt",
         }
 
-        with authenticated(), derived_patch("COMFY_ENABLED", False,
+        with authenticated(), derived_patch("GRAPH_ENABLED", False,
         ):
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_StubJsonRequest({}),  # type: ignore[arg-type]
@@ -545,7 +545,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "media_job_admission": {},
         }
 
-        with authenticated(), derived_patch("COMFY_ENABLED", True,
+        with authenticated(), derived_patch("GRAPH_ENABLED", True,
         ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",

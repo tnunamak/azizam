@@ -299,8 +299,8 @@ def image_gateway(fake_upstreams, monkeypatch, tmp_path):
          AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
     ):
         monkeypatch.setattr(target, name, value)
-    set_derived(monkeypatch, "COMFY_ENABLED", True)
-    set_derived(monkeypatch, "COMFY_HOST", comfy.base_url)
+    set_derived(monkeypatch, "GRAPH_ENABLED", True)
+    set_derived(monkeypatch, "GRAPH_HOST", comfy.base_url)
     return tmp_path, media
 
 

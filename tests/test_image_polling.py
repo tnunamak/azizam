@@ -38,7 +38,7 @@ class _Round:
 def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False, hold_deadline: bool = False) -> _Round:
     scenario = load_scenario(f"comfyui/{name}", text="poll test")
     fake = fakes.loopback(scenario) if wire else fakes.asgi(scenario, host="comfy.fk.test")
-    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
     deadline = read_deadline(monkeypatch, fakes.clock) if hold_deadline else None
     sleeps: list[float] = []
 
@@ -50,7 +50,7 @@ def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = Fal
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=timeout) as client:
             return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2, capability=proxy._GRAPH_CAPABILITY, **IMAGE_AT_NODE_1)
 
-    with patch.object(proxy.asyncio, "sleep", sleep), derived_patch("COMFY_TIMEOUT", 100):
+    with patch.object(proxy.asyncio, "sleep", sleep), derived_patch("GRAPH_TIMEOUT", 100):
         error, images = asyncio.run(call())
     if deadline is not None:
         assert deadline.read_fired == 1
@@ -97,7 +97,7 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         refused = f"http://127.0.0.1:{probe.getsockname()[1]}"
-    set_derived(monkeypatch, "COMFY_HOST", refused)
+    set_derived(monkeypatch, "GRAPH_HOST", refused)
 
     async def call():
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:

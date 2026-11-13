@@ -112,7 +112,7 @@ def world(tmp_path):
             return response
 
         rig.fakes.router.add_transport(HOST, HandlerTransport(handle))
-        rig.set(proxy, "COMFY_HOST", f"http://{HOST}")
+        rig.set(proxy, "GRAPH_HOST", f"http://{HOST}")
         rig.monkeypatch.setitem(proxy.config, "backends", {
             **(proxy.config.get("backends") or {}),
             "comfy": {"enabled": True, "host": HOST, "port": 80, "protocol": "node-graph"},
@@ -532,7 +532,7 @@ def test_video_42_disabled_capability_refuses_remix(world):
     async def drive():
         video_id = await source(world)
         before = len(world.engine.calls)
-        world.rig.set(proxy, "COMFY_ENABLED", False)
+        world.rig.set(proxy, "GRAPH_ENABLED", False)
         response = await world.rig.call("POST", f"/v1/videos/{video_id}/remix", json_body={"prompt": "new dusk"})
         assert response.status_code == 503, response.text
         assert len(world.engine.calls) == before
@@ -582,7 +582,7 @@ def test_video_48_edit_policy_refuses_before_engine(world):
 
 def test_video_49_disabled_capability_refuses_edit(world):
     async def drive():
-        world.rig.set(proxy, "COMFY_ENABLED", False)
+        world.rig.set(proxy, "GRAPH_ENABLED", False)
         response = await world.rig.call("POST", "/v1/videos/edits",
                                        json_body={"prompt": "new dusk", "video": {"id": "video_missing"}})
         assert response.status_code == 503, response.text

@@ -26,10 +26,10 @@ def test_the_release_defaults_give_the_values_the_code_gave():
     assert (derived["STT_TIMEOUT"], derived["TTS_TIMEOUT"], derived["EMBEDDINGS_TIMEOUT"]) == (120, 120, 120)
     assert derived["EMBEDDINGS_HEALTH_ENDPOINT"] == "/health"
     assert derived["EMBEDDINGS_BACKEND_MODEL"] == "nomic-embed-text-v1.5"
-    assert (derived["COMFY_TIMEOUT"], derived["COMFY_VIDEO_TIMEOUT"]) == (300, 1800)
-    assert derived["COMFY_DEFAULT_MODEL"] == "flux2-klein-4b"
-    assert derived["COMFY_WORKFLOWS_DIR"] == (ROOT / "workflows" / "images").resolve()
-    assert derived["COMFY_VIDEO_WORKFLOWS_DIR"] == (ROOT / "workflows").resolve()
+    assert (derived["GRAPH_TIMEOUT"], derived["GRAPH_VIDEO_TIMEOUT"]) == (300, 1800)
+    assert derived["GRAPH_DEFAULT_MODEL"] == "flux2-klein-4b"
+    assert derived["GRAPH_WORKFLOWS_DIR"] == (ROOT / "workflows" / "images").resolve()
+    assert derived["GRAPH_VIDEO_WORKFLOWS_DIR"] == (ROOT / "workflows").resolve()
 
 
 def test_a_value_in_the_record_beats_the_release_default():
@@ -38,8 +38,8 @@ def test_a_value_in_the_record_beats_the_release_default():
         comfyui={"timeout": 5, "video_timeout": 6, "default_model": "x", "workflows_dir": "/w/i", "video_workflows_dir": "/w/v"})
     assert derived["STT_TIMEOUT"] == 7
     assert (derived["EMBEDDINGS_HEALTH_ENDPOINT"], derived["EMBEDDINGS_BACKEND_MODEL"], derived["EMBEDDINGS_TIMEOUT"]) == ("/up", "m", 9)
-    assert (derived["COMFY_TIMEOUT"], derived["COMFY_VIDEO_TIMEOUT"], derived["COMFY_DEFAULT_MODEL"]) == (5, 6, "x")
-    assert derived["COMFY_WORKFLOWS_DIR"] == Path("/w/i") and derived["COMFY_VIDEO_WORKFLOWS_DIR"] == Path("/w/v")
+    assert (derived["GRAPH_TIMEOUT"], derived["GRAPH_VIDEO_TIMEOUT"], derived["GRAPH_DEFAULT_MODEL"]) == (5, 6, "x")
+    assert derived["GRAPH_WORKFLOWS_DIR"] == Path("/w/i") and derived["GRAPH_VIDEO_WORKFLOWS_DIR"] == Path("/w/v")
 
 
 def test_the_defaults_file_is_checked_by_its_schema_and_holds_no_address():
