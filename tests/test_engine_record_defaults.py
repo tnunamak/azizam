@@ -83,4 +83,5 @@ def test_a_record_that_serves_two_roles_takes_each_roles_default(monkeypatch):
 def test_speech_record_without_a_model_keeps_the_release_model(monkeypatch):
     cfg = {"backends": {"speaker": {"capabilities": ["audio.speech"]}}}
     monkeypatch.setattr(proxy, "config", cfg)
+    monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {})
     assert proxy.tts_backend_model() == "mistralai/Voxtral-4B-TTS-2603"
