@@ -738,6 +738,35 @@ def test_rollback_refuses_retained_deleted_jobs_until_the_normal_reap(rollback_d
     assert [row["job_id"] for row in media_jobs.recent(path=rollback_db)] == ["visible-finished"]
 
 
+def test_a_target_that_reads_tombstones_is_not_held_by_retained_deletes_but_running_and_unreadable_jobs_still_refuse(rollback_db):
+    _rollback_job(rollback_db, "deleted", status="failed", version=2)
+    media_jobs.tombstone_job("deleted", now=1_800_000_000, path=rollback_db)
+    before = _rollback_dump(rollback_db)
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db)
+    assert caught.value.code == "retained_deleted_jobs"
+    assert workflow_run.assert_rollback_ready(rollback_db, target_reads_tombstones=True) is None
+    assert _rollback_dump(rollback_db) == before
+
+    _rollback_job(rollback_db, "running", status="running", version=2)
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db, target_reads_tombstones=True)
+    assert (caught.value.code, caught.value.job_ids) == ("running_jobs", ["running"])
+    media_jobs.tombstone_job("running", now=1_800_000_000, path=rollback_db)  # a tombstone never hides a running job
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db, target_reads_tombstones=True)
+    assert caught.value.code == "running_jobs"
+
+
+def test_a_target_that_reads_tombstones_still_refuses_queued_jobs_it_cannot_read(rollback_db):
+    _rollback_job(rollback_db, "deleted", status="failed", version=2)
+    media_jobs.tombstone_job("deleted", now=1_800_000_000, path=rollback_db)
+    _rollback_job(rollback_db, "queued-v2", version=2)
+    with pytest.raises(workflow_run.RollbackRefused) as caught:
+        workflow_run.assert_rollback_ready(rollback_db, target_reads_tombstones=True)
+    assert (caught.value.code, caught.value.job_ids) == ("queued_jobs_unreadable_by_older_build", ["queued-v2"])
+
+
 def test_rollback_running_media_jobs_take_priority_then_clear_when_finished(rollback_db):
     _rollback_job(rollback_db, "z-workflow", status="running", version=2)
     _rollback_job(rollback_db, "a-other-media", status="running", identity="none")

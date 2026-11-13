@@ -13,6 +13,7 @@
       "additionalProperties": false,
       "properties": {
         "audio.speech": {"type": "object", "additionalProperties": false, "properties": {
+          "default_model": {"type": "string", "minLength": 1},
           "timeout": {"type": "integer", "minimum": 1},
           "health_endpoint": {"type": "string", "pattern": "^/"},
           "status_panels": {"type": "array", "items": {"type": "object", "additionalProperties": false,
@@ -22,6 +23,7 @@
               "title": {"type": "string", "minLength": 1},
               "short_title": {"type": "string", "minLength": 1}}}}}},
         "audio.transcriptions": {"type": "object", "additionalProperties": false, "properties": {
+          "default_model": {"type": "string", "minLength": 1},
           "timeout": {"type": "integer", "minimum": 1},
           "health_endpoint": {"type": "string", "pattern": "^/"},
           "status_panels": {"type": "array", "items": {"type": "object", "additionalProperties": false,

@@ -383,8 +383,14 @@ stays for robustness (a job queued during the deploy window by the old build).
   `queued_jobs_without_v2_envelope` check. The train's rollback note includes this complete inventory.
   Before changing builds, `assert_rollback_ready(path=None)` refuses with `RollbackRefused(code, job_ids)`: first
   `running_jobs` for every running media job, then `retained_deleted_jobs` for tombstoned job rows still present.
-  Both functions are read-only. The previous build does not understand tombstones, so rollback waits until the normal
-  24-hour reaper removes those rows; the guard never reaps or resurrects them. Keep submissions quiesced under the
+  Both functions are read-only. A build without tombstones would show those rows again, so for such a target rollback
+  waits until the normal 24-hour reaper removes them; the guard never reaps or resurrects them. Every build since
+  fc6e2b36d hides a tombstoned job from the same reads as the current build, so `scripts/rollback_readiness.py
+  --target-commit REV` passes `target_reads_tombstones=True` when REV contains that commit, and retained deleted rows
+  do not hold the rollback (a 2026-11-13 drill on a copy of the live data: six retained deleted jobs, hidden from get
+  and from both job lists on the current and the target build alike). Known gap in both builds: the low-level store
+  reads `media_jobs.get`, `get_many` and `get_by_request_id` do not filter tombstones; it is the same before and
+  after the switch, so it does not change the rollback answer. Keep submissions quiesced under the
   single-instance/drain protocol through the build switch: the readiness check is a snapshot, not an admission lock.
   The single-instance and drain claims are verified on the real rollback path before the train ships (a rehearsal with
   queued, running and retained-deleted jobs), not assumed from this design. Stored workflow records stay readable by the

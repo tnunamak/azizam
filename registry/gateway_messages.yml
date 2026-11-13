@@ -14,3 +14,5 @@ long_video_not_supported: "Model {model} cannot render shots or clips longer tha
 video_extend_not_supported: "model {model} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3"
 surface_existing_clients: "; {convenience} remains available for existing OpenAI-compatible clients."
 surface_new_setup: "Use canonical {canonical} endpoints for new OpenAI-compatible setup"
+current_loaded_model_description: "Use the currently loaded local LLM without activating a backend or swapping models."
+current_loaded_fast_model_description: "Use the currently loaded local LLM with Qwen thinking off; do not activate a backend or swap models."

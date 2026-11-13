@@ -17,7 +17,9 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway.service_priority import service_priority
-from gateway import engine_egress, engine_record_defaults
+from gateway import engine_egress, engine_record_defaults, status_words
+
+_GRAPH_WORDS = status_words.words("images")
 from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.frontend_shapes.video_views import VideoViews
 from gateway.video_ledger import CursorNotFound, JobHit, LegacyHit, VideoLedger
@@ -121,7 +123,7 @@ from gateway import request_history, request_history_api, request_history_captur
 from gateway.http_tls import tls_context
 from gateway import asset_types, declared_operation_job, domain_rows, policy_protocol, media_delivery, media_job_intents, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
-from gateway import video_grid, video_source
+from gateway import gateway_messages, video_grid, video_source
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import image_graph_roles, image_map_targets
 from gateway import realtime_proxy
@@ -3493,7 +3495,7 @@ def model_compat_aliases() -> Mapping[str, Any]:
 
 def tts_backend_model() -> str:
     record = (_speech_service() or ("", {}))[1]
-    return model_compat_defaults().get("speech") or record.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+    return model_compat_defaults().get("speech") or _record_default(_SPEECH_CAPABILITY, record, "default_model")
 
 
 SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3", "opus", "aac", "flac", "pcm"}
@@ -3509,7 +3511,7 @@ TTS_RESPONSE_MEDIA_TYPES = {
 
 def stt_backend_model() -> str:
     record = (_transcription_service() or ("", {}))[1]
-    return model_compat_defaults().get("transcriptions") or record.get("default_model", "parakeet-tdt-0.6b-v3")
+    return model_compat_defaults().get("transcriptions") or _record_default(_TRANSCRIPTION_CAPABILITY, record, "default_model")
 
 
 def embeddings_model() -> str:
@@ -4881,7 +4883,7 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
 async def _reference_transcript(
     owner: str | None, meta: Mapping[str, Any], reference: Path, *, receipt: RouteReceipt | None = None,
 ) -> str:
-    """Transcript of a voice's reference clip (OmniVoice clones from audio plus its exact text); cached in the voice record."""
+    """Transcript of a voice's reference clip; cached in the voice record."""
     if meta.get("transcript"):
         return str(meta["transcript"])
     selected = _transcription_service()
@@ -4902,7 +4904,7 @@ async def _reference_transcript(
             execution=stt_chunking.SttExecutionConfig.from_service(
                 service_id=stt_service_id, service_config=stt, config_directory=CONFIG_PATH.parent),
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
-            body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
+            body={"model": str(_record_default(_TRANSCRIPTION_CAPABILITY, stt, "default_model"))},
         )
         _require_egress_lease(stt_service_id)
         resp = await _stt_adapter(stt).invoke(
@@ -4980,7 +4982,7 @@ async def _apply_custom_voice(
     reference = store.reference_path(owner, voice_id)
     body_json["voice"] = "alloy"          # ignored by the engine when voice_ref is present
     body_json["voice_ref"] = str(reference)
-    if engine_id == "omnivoice":
+    if bool_from_config(engine.get("custom_voice_transcript"), False):
         try:
             body_json["ref_text"] = await _reference_transcript(owner, meta, reference, receipt=receipt)
         except custom_voices.VoiceError as exc:
@@ -6159,7 +6161,7 @@ async def proxy_stt_request(
             if not uploads:
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
 
-            requested_model = model_override or str(parsed.form.get("model", "whisper-1"))
+            requested_model = model_override or str(parsed.form.get("model", domain_rows.route_request_default("/v1/audio/transcriptions", "model")))
             model_resolution = resolve_model_for_operation(operation, requested_model)
             if resolved_model is not None and model_resolution.alias is not None:
                 resolved_model.update(
@@ -6838,7 +6840,7 @@ _vram_estimates_lock = threading.Lock()
 #   {
 #     "peak_bytes": int,            # == marginal_bytes; kept for status-page compat
 #     "marginal_bytes": int,        # comfy_used_peak - comfy_used_before (or - baseline)
-#     "comfy_baseline_bytes": int,  # min ComfyUI per-process VRAM in the 2s pre-run window
+#     <baseline_field from status words>: int,  # min graph-process VRAM in the 2s pre-run window
 #     "model_state": "warm" | "cold",
 #     "samples_count": int,
 #     "trusted": bool,
@@ -6887,7 +6889,7 @@ def _normalize_vram_entry(value) -> Optional[dict]:
         return {
             "peak_bytes": peak,
             "marginal_bytes": peak,
-            "comfy_baseline_bytes": 0,
+            _GRAPH_WORDS["baseline_field"]: 0,
             "model_state": "unknown",
             "samples_count": 0,
             "trusted": False,
@@ -6907,7 +6909,7 @@ def _normalize_vram_entry(value) -> Optional[dict]:
             except (TypeError, ValueError):
                 marginal = 0
             try:
-                baseline = int(value.get("comfy_baseline_bytes", 0))
+                baseline = int(value.get(_GRAPH_WORDS["baseline_field"], 0))
             except (TypeError, ValueError):
                 baseline = 0
             try:
@@ -6929,7 +6931,7 @@ def _normalize_vram_entry(value) -> Optional[dict]:
         return {
             "peak_bytes": marginal if has_v3 else peak,
             "marginal_bytes": marginal,
-            "comfy_baseline_bytes": baseline,
+            _GRAPH_WORDS["baseline_field"]: baseline,
             "model_state": state,
             "samples_count": samples,
             "trusted": trusted,
@@ -7011,7 +7013,7 @@ def record_vram_estimate(
     trusted: bool = True,
     source: str = "probe",
     model_state: str = "unknown",
-    comfy_baseline_bytes: int = 0,
+    graph_baseline_bytes: int = 0,
     samples_count: int = 0,
 ) -> None:
     """Persist a measured VRAM-per-image cost so restarts inherit the calibration.
@@ -7073,7 +7075,7 @@ def record_vram_estimate(
     cache[key] = {
         "peak_bytes": new_peak,
         "marginal_bytes": new_peak,
-        "comfy_baseline_bytes": int(comfy_baseline_bytes or 0),
+        _GRAPH_WORDS["baseline_field"]: int(graph_baseline_bytes or 0),
         "model_state": str(model_state or "unknown"),
         "samples_count": int(samples_count or 0),
         "trusted": new_trusted,
@@ -7103,7 +7105,7 @@ async def graph_vram_snapshot(
         total_i = int(total) if isinstance(total, (int, float)) else None
         return free_i, total_i
     except Exception as e:
-        print(f"[proxy] comfy_vram_snapshot: {log_scrub.describe_error(e)}", flush=True)
+        print(f"[proxy] graph_vram_snapshot: {log_scrub.describe_error(e)}", flush=True)
         return None, None
 
 
@@ -7142,7 +7144,7 @@ async def _free_graph_models_if_idle(client: httpx.AsyncClient, capability: str)
 _VRAM_PROBE_INTERVAL_S = 0.5
 _VRAM_PROBE_INTERVAL_MIN_S = 0.25
 # How long the "pre-run baseline" window stays open after probe start. Used to
-# compute ``comfy_baseline_bytes`` = min of ComfyUI per-process VRAM in this
+# compute the graph baseline = min of graph-process VRAM in this
 # window. With 500 ms cadence we get ~4 samples in 2 s.
 _VRAM_BASELINE_WINDOW_S = 2.0
 
@@ -8875,7 +8877,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
         source = "endpoint_diff"
     record_vram_estimate(
         workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
-        comfy_baseline_bytes=graph_baseline, samples_count=samples_count)
+        graph_baseline_bytes=graph_baseline, samples_count=samples_count)
     sys_peak = probe.system_peak_used_bytes() if probe is not None else None
     gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
     print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
@@ -9070,7 +9072,7 @@ async def _generate_images_with_adaptive_batching(
                         **_graph_result_source(manifest, _GRAPH_CAPABILITY),
                     )
         if models_freed:
-            response_headers["X-ComfyUI-Models-Freed"] = "true"
+            response_headers[domain_rows.result_header(_IMAGE_RESULT_ROW, "models_freed")] = "true"
         if err is None:
             _delivery = media_delivery.current()
             if _delivery is not None:
@@ -9278,7 +9280,7 @@ async def proxy_graph_image_request(
 
     if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_disabled")
+            receipt.add_fallback_reason(_GRAPH_WORDS["disabled_reason"])
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -9288,7 +9290,7 @@ async def proxy_graph_image_request(
         service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_operator_mode")
+            receipt.add_fallback_reason(_GRAPH_WORDS["operator_mode_reason"])
         return service_response
 
     try:
@@ -9666,7 +9668,7 @@ async def proxy_graph_image_edit_request(
 
     if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_disabled")
+            receipt.add_fallback_reason(_GRAPH_WORDS["disabled_reason"])
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -9676,7 +9678,7 @@ async def proxy_graph_image_edit_request(
         service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_operator_mode")
+            receipt.add_fallback_reason(_GRAPH_WORDS["operator_mode_reason"])
         return service_response
 
     form_dict: dict[str, Any] = {}
@@ -10290,7 +10292,7 @@ async def proxy_graph_image_variations_request(
 
     if not _graph_service(_GRAPH_CAPABILITY).enabled:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_disabled")
+            receipt.add_fallback_reason(_GRAPH_WORDS["disabled_reason"])
         return Response(
             content=json.dumps({"error": {"message": "Image generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -10300,7 +10302,7 @@ async def proxy_graph_image_variations_request(
         service_label=_graph_adapter(_GRAPH_CAPABILITY).label,))
     if service_response is not None:
         if receipt is not None:
-            receipt.add_fallback_reason("comfy_operator_mode")
+            receipt.add_fallback_reason(_GRAPH_WORDS["operator_mode_reason"])
         return service_response
 
     try:
@@ -12305,7 +12307,7 @@ async def _proxy_graph_video_create(
             chain_name, chain_cfg = _chain_workflow_for(requested_model)
             if chain_cfg is None:
                 return _gateway_input_error(
-                    toolcall_detection.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                    gateway_messages.GATEWAY_MESSAGES["long_video_not_supported"].format(
                         model=workflow_name, max_seconds=f"{workflow_cfg.get('max_seconds', 8):g}"),
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported",
@@ -12614,10 +12616,7 @@ async def _proxy_graph_video_create(
     for nid in length_targets:
         _set_field(nid, ["length", "value", "frames_number"], length)
     if length_targets and abs(actual_seconds - seconds_val) > 0.05:
-        # 8N+1 LTX latent stride => ~0.333s granularity at fps=24. Surface it.
-        duration_adjustment_reason = (
-            "ltx_latent_8np1_stride" if length_step == 8 else "frame_count_stride"
-        )
+        duration_adjustment_reason = video_grid.stride_reason(length_step)
 
     # Remix workflows slice the source clip; keep half a frame of slack past `length`.
     for nid in _as_list(meta.get("duration_node")):
@@ -13279,7 +13278,7 @@ async def proxy_graph_video_extend(
         requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
-        return _json_error(400, toolcall_detection.GATEWAY_MESSAGES["video_extend_not_supported"].format(model=repr(requested)),
+        return _json_error(400, gateway_messages.GATEWAY_MESSAGES["video_extend_not_supported"].format(model=repr(requested)),
                            param="model", code="video_extend_not_supported")
     public_model = str(body.get("model") or source_model or "video-long")
     return await _with_request_media_inputs(lambda holder: _submit_video_chain(
@@ -29874,11 +29873,9 @@ def _current_loaded_model_entry(model_id: str = USE_LOADED_MODEL_ALIAS) -> dict[
         "created": int(time.time()),
         "owned_by": "gateway",
         "description": (
-            "Use the currently loaded local LLM with Qwen thinking off; do "
-            "not activate a backend or swap models."
+            gateway_messages.GATEWAY_MESSAGES["current_loaded_fast_model_description"]
             if fast
-            else "Use the currently loaded local LLM without activating a "
-            "backend or swapping models."
+            else gateway_messages.GATEWAY_MESSAGES["current_loaded_model_description"]
         ),
         "capabilities": ["chat", "completion"],
         "azizam_alias": True,
@@ -30505,7 +30502,7 @@ async def v1_status(request: Request):
                 "banner": "bad",
                 "backends": [],
                 "gpus": None,
-                "comfy_queue": None,
+                _GRAPH_WORDS["queue_key"]: None,
                 "models": None,
                 "capabilities": [],
                 "recent_renders": [],

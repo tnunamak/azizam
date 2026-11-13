@@ -438,3 +438,9 @@ def test_graph_admission_refuses_an_intent_without_a_modality_row(monkeypatch):
     monkeypatch.delitem(media_job_intents.MODALITY_BY_INTENT, MADE_UP, raising=False)
     with pytest.raises(ValueError, match="media job intent 'frobnicate.widget' has no row in media_job_intents.yml"):
         proxy._graph_media_admission(MADE_UP, auth_context=object())
+
+
+def test_transcription_wire_default_remains_the_openai_alias():
+    from gateway import domain_rows
+
+    assert domain_rows.route_request_default("/v1/audio/transcriptions", "model") == "whisper-1"

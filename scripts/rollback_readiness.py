@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -27,6 +28,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # One budget covers private copying, verification and SQLite backup retries.
 BACKUP_TIMEOUT_SECONDS = 5.0
+
+# The commit that taught the job store's readers tombstones (JobService.delete: a deleted job is hidden from every
+# workflow read and listing, and reaped after its window). A rollback target that contains it hides a deleted job from
+# the same reads as this build, so deleted rows the reaper has not removed yet cannot resurface after the switch.
+# If a later change makes more reads hide deleted jobs, move this to that commit: an older target would show them again.
+TOMBSTONE_READER_COMMIT = "fc6e2b36d7fea6afbb23a8cb1679f0dbe5e29434"
+REPO = Path(__file__).resolve().parents[1]
+
+
+def target_reads_tombstones(rev: str | None, repo: Path = REPO) -> bool:
+    """True when ``rev`` names a commit that contains TOMBSTONE_READER_COMMIT. Anything git cannot answer is False."""
+    if not rev or rev.startswith("-"):
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", TOMBSTONE_READER_COMMIT, rev],
+            capture_output=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 class StoreRefused(Exception):
@@ -92,7 +114,7 @@ def refused(reason: str) -> tuple[int, dict]:
     return 3, {"ready": False, "reason": reason, "job_ids": [], "inventory": []}
 
 
-def inspect_store(store: str) -> tuple[int, dict]:
+def inspect_store(store: str, *, reads_tombstones: bool = False) -> tuple[int, dict]:
     deadline = time.monotonic() + BACKUP_TIMEOUT_SECONDS
     try:
         source = Path(store).resolve(strict=True)
@@ -162,7 +184,7 @@ def inspect_store(store: str) -> tuple[int, dict]:
             inventory = rollback_job_inventory(snapshot)
             _check_snapshot_deadline(deadline)
             try:
-                assert_rollback_ready(snapshot)
+                assert_rollback_ready(snapshot, target_reads_tombstones=reads_tombstones)
             except RollbackRefused as error:
                 verdict = 2, {
                     "ready": False, "reason": error.code,
@@ -190,8 +212,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--store", required=True, help="the job store, with submissions stopped")
     parser.add_argument("--json", action="store_true", help="emit one JSON result object")
+    parser.add_argument("--target-commit", help="the build the rollback switches to; a target that hides deleted jobs "
+                        "is not held by deleted rows the reaper has not removed yet")
     args = parser.parse_args(argv)
-    code, result = inspect_store(args.store)
+    reads = target_reads_tombstones(args.target_commit)
+    code, result = inspect_store(args.store, reads_tombstones=reads)
+    if args.target_commit is not None:
+        result = {**result, "target_reads_tombstones": reads}
     if args.json:
         print(json.dumps(result, sort_keys=True))
     else:
@@ -199,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(row, sort_keys=True))
         if result["job_ids"]:
             print("JOB_IDS " + json.dumps(result["job_ids"]))
+        if args.target_commit is not None:
+            print("TARGET_READS_TOMBSTONES " + ("yes" if reads else "no"))
         print("READY" if result["ready"] else "REFUSED " + result["reason"])
     return code
 

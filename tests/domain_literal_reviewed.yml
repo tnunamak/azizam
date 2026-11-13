@@ -161,11 +161,6 @@ sites:
     category: wire_enum
     reason: The OpenAPI document's info.description (published at /openapi.json); documents workflow discovery and the asynchronous route contract and does not select workflow behavior.
   - file: proxy.py
-    literal: X-ComfyUI-Models-Freed
-    count: 1
-    category: wire_enum
-    reason: Names the response header reporting that ComfyUI models were freed; the header name does not select backend behavior.
-  - file: proxy.py
     literal: video.generation
     count: 2
     category: wire_enum

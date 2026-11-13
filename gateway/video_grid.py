@@ -17,6 +17,20 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
+from pathlib import Path
+
+import yaml
+
+
+_STRIDE_REASONS = yaml.safe_load(
+    (Path(__file__).resolve().parent.parent / "registry" / "video_grid.yml").read_text(encoding="utf-8")
+)["stride_reasons"]
+
+
+def stride_reason(step: int) -> str:
+    """Published duration-adjustment reason for the frame grid used by a request."""
+    return _STRIDE_REASONS["by_step"].get(step, _STRIDE_REASONS["default"])
+
 
 DEFAULT_SIZE_WHEN_UNPARSED = (1024, 1024)
 MINIMUM_SIDE = 64

@@ -402,3 +402,25 @@ class RevocationOwnershipTests(CustomVoiceRouteCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_reference_transcript_requirement_follows_spec_under_any_engine_id(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    import yaml
+
+    document = yaml.safe_load((Path(__file__).parent / "fixtures/config_homes/deployment_config.yml").read_text())
+    spec = document["model_aliases"]["speech"]["engines"]["omnivoice"]
+    assert spec["custom_voices"] is True
+    assert spec["custom_voice_transcript"] is True
+    store = SimpleNamespace(get_voice=lambda *_: {}, reference_path=lambda *_: tmp_path / "clip.wav")
+    monkeypatch.setattr(proxy, "_voice_store", lambda: store)
+    monkeypatch.setattr(proxy, "_asset_owner_key", lambda _: "owner")
+    transcript = AsyncMock(return_value="reference words")
+    monkeypatch.setattr(proxy, "_reference_transcript", transcript)
+    for engine_id, required in (("renamed-engine", True), ("omnivoice", False)):
+        body = {}
+        result = asyncio.run(proxy._apply_custom_voice(
+            body, "voice-id", {**spec, "custom_voice_transcript": required}, object(), engine_id))
+        assert result is None
+        assert (body.get("ref_text") == "reference words") is required
+    assert transcript.await_count == 1

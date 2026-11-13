@@ -73,10 +73,10 @@ def test_tail_uses_one_deadline_and_removes_private_files(tmp_path, monkeypatch,
         finish_stage("inventory", 1.0)
         return result
 
-    def readiness(snapshot):
+    def readiness(snapshot, **options):
         record_snapshot(snapshot)
         events.append("readiness-enter")
-        result = original_readiness(snapshot)
+        result = original_readiness(snapshot, **options)
         finish_stage("readiness", 2.0)
         return result
 

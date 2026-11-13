@@ -1482,8 +1482,12 @@ def rollback_job_inventory(path: Path | None = None) -> list[dict[str, Any]]:
     return found
 
 
-def assert_rollback_ready(path: Path | None = None) -> None:
+def assert_rollback_ready(path: Path | None = None, *, target_reads_tombstones: bool = False) -> None:
     """Refuse running media first, then deleted rows an old reader would resurrect, then queued jobs it cannot read.
+
+    ``target_reads_tombstones`` says the rollback target hides a tombstoned job from the same reads this build does
+    (scripts/rollback_readiness.py decides it from the target commit). Then a deleted row the reaper has not removed
+    yet cannot resurface after the switch, so it does not refuse; the default assumes a target without tombstones.
 
     A queued job whose envelope the older build cannot read (``definition_unavailable``) would be failed by that build,
     so the rollback waits until the owner lets it finish or cancels it. ``pin_not_recorded`` jobs are not refused: on an
@@ -1510,7 +1514,7 @@ def assert_rollback_ready(path: Path | None = None) -> None:
             "SELECT j.job_id FROM media_jobs AS j "
             "JOIN workflow_job_tombstone AS t ON t.job_id=j.job_id ORDER BY j.job_id"
         )] if "workflow_job_tombstone" in tables else []
-        if retained:
+        if retained and not target_reads_tombstones:
             raise RollbackRefused("retained_deleted_jobs", retained)
     unreadable = [row["job_id"] for row in rollback_job_inventory(store) if row["reason"] == DEFINITION_UNAVAILABLE]
     if unreadable:

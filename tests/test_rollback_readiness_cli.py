@@ -338,3 +338,73 @@ def test_wal_without_shm_is_inspected_privately_and_matches_quiesced_store(tmp_p
     assert result.returncode == expected.returncode
     assert json.loads(result.stdout) == expected_body
     assert len(result.stdout.splitlines()) == 1
+
+
+def _git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True,
+                          env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                                   GIT_COMMITTER_EMAIL="t@t")).stdout.strip()
+
+
+def test_the_target_reads_tombstones_only_when_it_contains_the_tombstone_reader_commit(tmp_path, monkeypatch):
+    readiness = _load_script()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    shas = []
+    for name in ("before", "reader", "after"):
+        _git(repo, "commit", "-q", "--allow-empty", "-m", name)
+        shas.append(_git(repo, "rev-parse", "HEAD"))
+    before, reader, after = shas
+    monkeypatch.setattr(readiness, "TOMBSTONE_READER_COMMIT", reader)
+    assert readiness.target_reads_tombstones(reader, repo) is True
+    assert readiness.target_reads_tombstones(after, repo) is True
+    assert readiness.target_reads_tombstones(before, repo) is False
+    for rev in (None, "", "no-such-commit", "--help", "-q"):
+        assert readiness.target_reads_tombstones(rev, repo) is False
+    assert readiness.target_reads_tombstones(after, tmp_path / "not-a-repo") is False
+
+
+def _load_script():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rollback_readiness_script", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _retained_store(tmp_path):
+    path = tmp_path / "jobs.db"
+    media_jobs.init_db(path)
+    seed_job(path, "deleted-one", status="failed")
+    media_jobs.tombstone_job("deleted-one", now=1_800_000_000, path=path)
+    return path
+
+
+def test_cli_target_commit_decides_retained_deletes_and_reports_the_decision(tmp_path, monkeypatch, capsys):
+    path = _retained_store(tmp_path)
+    readiness = _load_script()
+    monkeypatch.setattr(readiness, "target_reads_tombstones", lambda rev: rev == "knows")
+    assert readiness.main(["--store", str(path), "--json", "--target-commit", "knows"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "ready": True, "reason": None, "job_ids": [], "inventory": [], "target_reads_tombstones": True}
+    assert readiness.main(["--store", str(path), "--target-commit", "knows"]) == 0
+    assert capsys.readouterr().out.splitlines()[-2:] == ["TARGET_READS_TOMBSTONES yes", "READY"]
+    assert readiness.main(["--store", str(path), "--json", "--target-commit", "older"]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ready": False, "reason": "retained_deleted_jobs", "job_ids": ["deleted-one"], "inventory": [],
+        "target_reads_tombstones": False}
+
+
+def test_cli_without_a_target_and_with_an_unknown_target_keeps_refusing_retained_deletes(tmp_path):
+    path = _retained_store(tmp_path)
+    result = run_cli(tmp_path, path, "--json")
+    assert result.returncode == 2
+    assert json.loads(result.stdout) == {
+        "ready": False, "reason": "retained_deleted_jobs", "job_ids": ["deleted-one"], "inventory": []}
+    temporary = tmp_path / "temporary-snapshots"
+    temporary.rmdir()
+    result = run_cli(tmp_path, path, "--json", "--target-commit", "no-such-commit-anywhere")
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["target_reads_tombstones"] is False
+    assert json.loads(result.stdout)["reason"] == "retained_deleted_jobs"

@@ -21,6 +21,7 @@
      "service": "tts",
      "model": "k2-fsa/OmniVoice",
      "custom_voices": true,
+     "custom_voice_transcript": true,
      "default_voice": "alloy",
      "voices": [
       {
