@@ -42,7 +42,7 @@ import {
   type WorkflowJob,
 } from "./workflow-media";
 import { outputKindOf } from "./workflow-input-meta";
-import { MESH_CAPABILITY, MESH_FILE_SLOTS, meshDetailChoices, meshModeState } from "./mesh-mode";
+import { MESH_FILE_SLOTS, makesAModelFromAPicture, meshDetailChoices, meshModeState } from "./mesh-mode";
 import { MeshMode } from "./mesh-panel";
 import { assignHandoffFiles, hasRequiredHandoffFiles, type PanelFiles } from "./handoff-files";
 import { TRANSCRIBE_FILE_SLOTS } from "./transcribe-mode";
@@ -2012,8 +2012,8 @@ export default function TryPage() {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
         const all = groupWorkflows(await response.json());
         grouped = {
-          workflow: all.filter((option) => option.workflow?.capability !== MESH_CAPABILITY),
-          mesh: all.filter((option) => option.workflow?.capability === MESH_CAPABILITY),
+          workflow: all.filter((option) => !makesAModelFromAPicture(option.workflow)),
+          mesh: all.filter((option) => makesAModelFromAPicture(option.workflow)),
         };
       } else if (response.ok) {
         const payload = await response.json();

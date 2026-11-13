@@ -5,8 +5,25 @@ import {
 } from "@/lib/workflow-availability";
 import type { WorkflowInput } from "./workflow-inputs";
 
-/** The catalog capability of the TRELLIS.2 workflow: its row lists under "mesh", not in Workflow. */
+/** The catalog capability of the 3D workflows. */
 export const MESH_CAPABILITY = "mesh";
+
+/**
+ * Whether a workflow belongs in Photo to 3D: a 3D workflow whose input contract requires a picture. A 3D stage that
+ * works on a model file (an edit stage) takes no picture, so it lists under Workflow instead and never decides
+ * whether the Photo to 3D tab is shown.
+ */
+export function makesAModelFromAPicture(workflow: { capability?: string; inputs: WorkflowInput[] } | undefined): boolean {
+  if (workflow?.capability !== MESH_CAPABILITY) return false;
+  return workflow.inputs.some(
+    (input) =>
+      input.asset === true &&
+      input.required === true &&
+      [input.media_type, ...(input.accepted_media_types ?? [])].some(
+        (type) => typeof type === "string" && type.startsWith("image/"),
+      ),
+  );
+}
 /** The gateway route the mesh workflow posts to. */
 export const MESH_PATH = "/v1/3d/generations/glb";
 export const MESH_MEDIA_TYPE = "model/gltf-binary";

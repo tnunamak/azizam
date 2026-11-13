@@ -241,6 +241,46 @@ test("the Photo to 3D tab shows once the mesh workflow is available, and runs a 
   );
 });
 
+// A 3D edit stage works on a model file, not a picture. The live listing put such a stage, unavailable, ahead of the
+// picture workflows, and the tab was judged by it and hidden.
+const editStageRow = (availability: Record<string, unknown>) => ({
+  id: "mesh.edit.retopo",
+  title: "Retopologize a 3D model",
+  capability: "mesh",
+  availability,
+  outputs: [{ modality: "mesh", media_type: "model/gltf-binary" }],
+  inputs: [
+    {
+      name: "mesh",
+      type: "string",
+      required: true,
+      asset: true,
+      media_type: "model/gltf-binary",
+      label: "model",
+    },
+    { name: "target_faces", type: "integer", minimum: 1000 },
+  ],
+});
+
+test("a 3D edit stage listed first does not decide the Photo to 3D tab", async () => {
+  serve(
+    catalogWith(
+      editStageRow({ available: false, status: "unavailable", reason: "The 3D stages service is off." }),
+      meshRow({ available: true }),
+    ),
+  );
+  render(<TryPage />);
+  expect(await screen.findByRole("tab", { name: "Photo to 3D" })).toBeInTheDocument();
+});
+
+test("a 3D edit stage lists under Workflow, not Photo to 3D", async () => {
+  serve(catalogWith(editStageRow({ available: true }), meshRow({ available: true })));
+  mocks.params = new URLSearchParams("workflow=mesh.edit.retopo");
+  render(<TryPage />);
+  await screen.findByRole("tab", { name: "Photo to 3D" });
+  expect(await screen.findByRole("tab", { name: "Workflow" })).toHaveAttribute("aria-selected", "true");
+});
+
 test("the mesh workflow is not also listed under Workflow", async () => {
   serve(catalogWith(meshRow({ available: true })));
   render(<TryPage />);
