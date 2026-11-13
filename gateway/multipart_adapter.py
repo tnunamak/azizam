@@ -266,7 +266,7 @@ class MultipartRunner:
 
     async def run(self, ctx: RunContext) -> None:
         path = self._host.jobs_path()
-        job = media_jobs.get(ctx.job_id, audience="internal", path=path) or {}
+        job = media_jobs.get(ctx.job_id, audience="internal", include_deleted=True, path=path) or {}
         if media_jobs.is_terminal(str(job.get("status") or "")):
             return
         if (job.get("metadata") or {}).get("protocol_submitting"):

@@ -487,3 +487,15 @@ def test_the_run_core_follows_the_jobs_database_it_was_built_for(served, monkeyp
     assert second is not first
     assert second._path == other
     assert proxy._workflow_run_core() is second
+
+
+def test_deleted_job_get_and_content_are_not_found(served):
+    created = call("post", ROUTE, json={"inputs": {"prompt": "hi"}}, headers={"Prefer": "wait=10"})
+    assert created.status_code == 200, created.text
+    job_id = created.json()["job_id"]
+    media_jobs.tombstone_job(job_id, path=served.media)
+    for suffix in ("", "/content"):
+        response = call("get", f"/gateway/v1/media/jobs/{job_id}{suffix}")
+        assert response.status_code == 404, response.text
+    assert media_jobs.get(job_id, include_deleted=True, path=served.media) is not None
+    assert served.engine_calls == 1

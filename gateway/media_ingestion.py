@@ -83,7 +83,7 @@ def index_sync_assets(
         # The request id is server-made per response, so a second index of it
         # is a retry of the same response: the first record wins.
         existing = media_jobs.get_by_request_id(
-            request_id, path=media_jobs.DB_PATH if path is None else path)
+            request_id, include_deleted=True, path=media_jobs.DB_PATH if path is None else path)
         return media_jobs._coerce_to_job(existing) if existing else None
 
 

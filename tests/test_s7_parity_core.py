@@ -515,7 +515,7 @@ def test_delete_cancels_a_queued_job_first(db, tmp_path):
     job_id = submit(core).job_id
     service = _service(port, db)
     service.delete(job_id, Caller())
-    assert media_jobs.get(job_id, path=db)["status"] == "canceled" and service.get(job_id, Caller()) is None
+    assert media_jobs.get(job_id, include_deleted=True, path=db)["status"] == "canceled" and service.get(job_id, Caller()) is None
 
 
 def test_a_cancel_that_is_not_confirmed_keeps_the_job_and_raises_a_conflict(db, tmp_path):
@@ -540,10 +540,10 @@ def test_a_deleted_job_is_reaped_after_the_retention_window_with_its_events_and_
     now = [1_000_000.0]
     service = _service(port, db, tombstone_retention_s=100, clock=lambda: now[0])
     service.delete(job_id, Caller())
-    assert media_jobs.get(job_id, path=db) is not None                # hidden, not yet removed
+    assert media_jobs.get(job_id, include_deleted=True, path=db) is not None                # hidden, not yet removed
     now[0] += 99
     media_jobs.reap_tombstones(before=int(now[0] - 100), path=db)
-    assert media_jobs.get(job_id, path=db) is not None
+    assert media_jobs.get(job_id, include_deleted=True, path=db) is not None
     now[0] += 2
     assert media_jobs.reap_tombstones(before=int(now[0] - 100), path=db) == 1
     assert media_jobs.get(job_id, path=db) is None and not media_jobs.tombstoned(job_id, path=db)

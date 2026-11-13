@@ -898,7 +898,7 @@ CREATE INDEX IF NOT EXISTS workflow_job_tombstone_at ON workflow_job_tombstone(d
 
 
 def tombstone_job(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> None:
-    """Mark a job deleted. Readers that honour tombstones (``tombstoned``, ``recent``) stop showing it at once, and
+    """Mark a job deleted. Store reads hide it at once unless explicitly included, and
     ``reap_tombstones`` removes it after the retention window. Marking twice keeps the first time."""
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -1527,14 +1527,16 @@ def get(
     job_id: str,
     *,
     audience: str = "internal",
+    include_deleted: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    """Return the stored job filtered for ``audience``, or None."""
+    """Return the stored job filtered for ``audience``, or None. Deleted jobs are hidden unless explicitly included."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT job_json FROM media_jobs WHERE job_id = ?",
+            "SELECT job_json FROM media_jobs WHERE job_id = ?"
+            + ("" if include_deleted else " AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"),
             (job_id,),
         ).fetchone()
         data = _safe_loads(row[0]) if row else None
@@ -1549,9 +1551,10 @@ def get_many(
     job_ids: Iterable[str],
     *,
     audience: str = "internal",
+    include_deleted: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, dict[str, Any]]:
-    """Return ``{job_id: job}`` as ``get`` would, in one query per 500 ids."""
+    """Return ``{job_id: job}`` as ``get`` would, in one query per 500 ids. Deleted jobs are hidden by default."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     ids = sorted({value for value in job_ids if value})
@@ -1560,7 +1563,8 @@ def get_many(
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
             rows = conn.execute(
-                f"SELECT job_id, job_json FROM media_jobs WHERE job_id IN ({','.join('?' for _ in chunk)})",
+                f"SELECT job_id, job_json FROM media_jobs WHERE job_id IN ({','.join('?' for _ in chunk)})"
+                + ("" if include_deleted else " AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"),
                 chunk,
             ).fetchall()
             for job_id, raw in rows:
@@ -1574,16 +1578,18 @@ def get_by_request_id(
     request_id: str,
     *,
     audience: str = "internal",
+    include_deleted: bool = False,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
-    """Return the job this request ID still replays; see ``REPLAY_WINDOW_S``."""
+    """Return the job this request ID still replays; see ``REPLAY_WINDOW_S``. Deleted jobs are hidden by default."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if not request_id:
         return None
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT job_json, status, updated_at FROM media_jobs WHERE request_id = ?",
+            "SELECT job_json, status, updated_at FROM media_jobs WHERE request_id = ?"
+            + ("" if include_deleted else " AND job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"),
             (request_id,),
         ).fetchone()
         data = _safe_loads(row[0]) if row and _replays(row[1], row[2]) else None

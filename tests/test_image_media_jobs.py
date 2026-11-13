@@ -378,6 +378,21 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.status_code, 202)
         self.assertEqual(json.loads(second.body.decode("utf-8"))["job_id"], job_id)
 
+    async def test_deleted_image_request_is_refused_without_scheduling_again(self) -> None:
+        body = {"model": "flux2-klein-4b", "prompt": "private prompt"}
+        headers = {"host": "gateway.test", "idempotency-key": "deleted-request"}
+        with authenticated(), patch.object(proxy, "_schedule_image_media_job", return_value=True) as schedule:
+            first = await proxy.gateway_image_generations_media_job(_StubJsonRequest(body, headers=headers))
+            self.assertEqual(first.status_code, 202)
+            job_id = json.loads(first.body)["job_id"]
+            media_jobs.tombstone_job(job_id, path=self.db)
+            retry = await proxy.gateway_image_generations_media_job(_StubJsonRequest(body, headers=headers))
+        self.assertEqual(retry.status_code, 404)
+        self.assertEqual(json.loads(retry.body)["error"]["code"], "job_deleted")
+        schedule.assert_called_once_with(job_id)
+        with media_jobs.connection(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0], 1)
+
     async def test_seeded_resubmission_after_replay_window_runs_again(self) -> None:
         body = {
             "model": "flux2-klein-4b",

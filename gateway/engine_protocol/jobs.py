@@ -171,7 +171,7 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
         require_egress()
     adapter = runtime.adapter
     v2 = _declares_v2(adapter)
-    current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH)
+    current = media_jobs.get(job_id, audience='internal', include_deleted=True, path=media_jobs.DB_PATH)
     if v2 and current is not None and media_jobs.is_terminal(str(current.get('status') or '')):
         # D3, first row: a finished job needs no recovery. Its marker or job id is not read, and nothing is polled again.
         return None
