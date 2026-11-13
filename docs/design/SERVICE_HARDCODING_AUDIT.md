@@ -88,7 +88,7 @@ management · [routing] request steering · [health] checks/status ·
 | proxy.py:505 | media | VIDEO_DEFAULT_WORKFLOW "video-ltx-13b-q8" |
 | proxy.py:15240 | media | AUDIO_DEFAULT_WORKFLOW "ace-step-1.5-xl-turbo" |
 | proxy.py:2096, 5874, 12104, 12109 | media | "flux2-klein-4b-edit"/"-inpaint" inline literals in handlers |
-| proxy.py:3502-3508 | health | check_comfy_health() via Comfy-specific /system_stats |
+| proxy.py:3502-3508 | health | check_graph_engine_health() via Comfy-specific /system_stats |
 | proxy.py:3307-3320 | media | load_comfy_workflow(): workflow JSON selected by filename == model name |
 | proxy.py:3819-3945, 4164-4179 | media | VRAM probe/budget tied to ComfyUI PIDs; 3 GiB cold-load threshold; IMAGE_VRAM_RESERVE_BYTES |
 | proxy.py:6613-6666 | lifecycle | persistent WebSocket listener to COMFY_HOST |
@@ -176,7 +176,7 @@ Rough tiers by tractability:
 | #31 (embeddings/health) | proxy.py:3040 | `check_embeddings_health()` delegates to `check_service_health("embeddings")`. |
 | #38 (tts/health) | proxy.py:3077 | `check_tts_health()` delegates to `check_service_health("tts")`. |
 | #45 (stt/health) | proxy.py:3211 | `check_stt_health()` delegates to `check_service_health("stt")`. |
-| #53 (comfyui/health) | proxy.py:3608 | `check_comfy_health()` delegates to `check_service_health("comfyui")` — uses `/system_stats` from registry. |
+| #53 (comfyui/health) | proxy.py:3608 | `check_graph_engine_health()` delegates to `check_service_health("comfyui")` — uses `/system_stats` from registry. |
 | #65 (kobold/health) | proxy.py:720–730 | Inline kobold health check in `get_active_backend()` replaced by `check_service_health("kobold")`. |
 | #70-partial (cross/routing) | proxy.py:441–463, 2685–2714 | `vision_capable_llm_backends()` helper added: membership query over `LLM_BACKEND_HOSTS` filtered by "vision" capability, ordered by priority. Vision gate in `_prepare_litellm_local_llm_request()` uses this instead of literal `active == "tabby"`. kobold mmproj/swap orchestration untouched. |
 

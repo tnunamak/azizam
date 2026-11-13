@@ -6,7 +6,7 @@
     "gateway/openai_media_schemas.py": 1,
     "gateway/video_media_jobs.py": 1,
     "metrics_sampler.py": 8,
-    "proxy.py": 146,
+    "proxy.py": 86,
     "status_endpoint.py": 103
   }
 }

@@ -215,8 +215,8 @@ def _no_host_gpu_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     import proxy
 
     monkeypatch.setattr(proxy, "_resolve_gpu0_uuid", lambda: None)
-    monkeypatch.setattr(proxy, "_resolve_comfy_pids", lambda: set())
-    monkeypatch.setattr(proxy, "_sample_comfy_vram_bytes", lambda _pids, _uuid: None)
+    monkeypatch.setattr(proxy, "_resolve_graph_pids", lambda: set())
+    monkeypatch.setattr(proxy, "_sample_graph_vram_bytes", lambda _pids, _uuid: None)
 
 
 @pytest.fixture(autouse=True)

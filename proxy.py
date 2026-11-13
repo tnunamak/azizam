@@ -1191,8 +1191,8 @@ def _normalize_models_catalog(raw) -> dict:
         # Require a known backend AND a local path (GGUF catalog — path is mandatory).
         if backend not in known_backends or not path:
             continue
-        mmproj_raw = item.get("mmproj")
-        mmproj_path = str(mmproj_raw).strip() if mmproj_raw else None
+        projector_raw = item.get("mmproj")
+        mmproj_path = str(projector_raw).strip() if projector_raw else None
         out[mid] = {
             "id": mid,
             "backend": backend,
@@ -6771,7 +6771,7 @@ def _manifest_job_envelope(
     )
 
 
-async def check_comfy_health(capability: str) -> bool:
+async def check_graph_engine_health(capability: str) -> bool:
     """Check if the graph service selected for family *capability* is healthy: false when none is selected, it is
     disabled or it names no address, without a probe."""
     service = _graph_service(capability)
@@ -7017,7 +7017,7 @@ def record_vram_estimate(
 
     ``bytes_per_image`` is flux's *marginal* per-image contribution (the
     per-image slice of ``comfy_used_peak - comfy_used_before`` or
-    ``comfy_used_peak - comfy_baseline``), NOT whole-GPU peak occupancy. This
+    ``comfy_used_peak - graph_baseline``), NOT whole-GPU peak occupancy. This
     is insensitive to concurrent voxtral / desktop / TTS activity because the
     sample stream is per-process (filtered to ComfyUI PID(s) on GPU0 via
     ``nvidia-smi --query-compute-apps``).
@@ -7186,7 +7186,7 @@ def _resolve_gpu0_uuid() -> Optional[str]:
         return None
 
 
-def _resolve_comfy_pids() -> set[int]:
+def _resolve_graph_pids() -> set[int]:
     """Identify all ComfyUI processes by scanning /proc.
 
     A process is considered "ComfyUI" if its cmdline contains ``main.py`` AND
@@ -7245,11 +7245,11 @@ def _resolve_comfy_pids() -> set[int]:
     return all_pids
 
 
-def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> Optional[int]:
+def _sample_graph_vram_bytes(graph_pids: set[int], gpu0_uuid: Optional[str]) -> Optional[int]:
     """Return ComfyUI's per-process VRAM occupancy on GPU0, in bytes.
 
     Sums ``used_memory`` rows from ``nvidia-smi --query-compute-apps`` where
-    the PID is in ``comfy_pids`` and (if ``gpu0_uuid`` is known) the gpu_uuid
+    the PID is in ``graph_pids`` and (if ``gpu0_uuid`` is known) the gpu_uuid
     matches GPU0. Returns None on nvidia-smi failure so the probe can flag
     the run as untrusted.
     """
@@ -7265,7 +7265,7 @@ def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> 
             timeout=2.0,
         )
     except Exception as e:
-        print(f"[proxy] _sample_comfy_vram_bytes: nvidia-smi failed: {e}", flush=True)
+        print(f"[proxy] _sample_graph_vram_bytes: nvidia-smi failed: {e}", flush=True)
         return None
     if p.returncode != 0:
         return None
@@ -7280,7 +7280,7 @@ def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> 
             used_mb = int(parts[2])
         except ValueError:
             continue
-        if pid not in comfy_pids:
+        if pid not in graph_pids:
             continue
         if gpu0_uuid and parts[1] != gpu0_uuid:
             continue
@@ -7299,8 +7299,8 @@ class _VramProbe:
     Marginal cost semantics (replacing the older whole-GPU ``total - min_free``):
 
       - ``comfy_used_before``    = first sample, taken before the /prompt POST.
-      - ``comfy_used_baseline``  = min comfy_used during the first ~2 s window.
-      - ``comfy_used_peak``      = max comfy_used across all samples.
+      - ``comfy_used_baseline``  = min graph_used during the first ~2 s window.
+      - ``comfy_used_peak``      = max graph_used across all samples.
 
     Marginal = ``peak - before`` for a warm run. When the run is cold (the
     model loaded for the first time), ``before`` already includes the loaded
@@ -7327,16 +7327,16 @@ class _VramProbe:
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._gpu0_uuid: Optional[str] = None
-        self._comfy_pids: set[int] = set()
+        self._graph_pids: set[int] = set()
         self._t_start: float = 0.0
         self.samples = 0
         # Whole-GPU view (legacy): retained for "system pressure" reporting.
         self.min_free: Optional[int] = None
         self.total: Optional[int] = None
         # Per-ComfyUI-process view: the new source of truth for the batcher.
-        self.comfy_before: Optional[int] = None
-        self.comfy_baseline_min: Optional[int] = None  # min within baseline window
-        self.comfy_peak: Optional[int] = None
+        self.graph_before: Optional[int] = None
+        self.graph_baseline_min: Optional[int] = None  # min within baseline window
+        self.graph_peak: Optional[int] = None
         self.error: Optional[str] = None
         # Set to True if at least one per-process sample succeeded.
         self.have_per_process_data = False
@@ -7355,25 +7355,25 @@ class _VramProbe:
         # Per-process side: poll nvidia-smi in a worker thread so we don't
         # block the event loop. ~5-15 ms per call on this box.
         try:
-            comfy_used = await asyncio.to_thread(
-                _sample_comfy_vram_bytes, self._comfy_pids, self._gpu0_uuid
+            graph_used = await asyncio.to_thread(
+                _sample_graph_vram_bytes, self._graph_pids, self._gpu0_uuid
             )
         except Exception as e:
             self.error = log_scrub.describe_error(e)
-            comfy_used = None
+            graph_used = None
 
-        if isinstance(comfy_used, int):
+        if isinstance(graph_used, int):
             self.have_per_process_data = True
-            if self.comfy_before is None:
-                self.comfy_before = comfy_used
-            if self.comfy_peak is None or comfy_used > self.comfy_peak:
-                self.comfy_peak = comfy_used
+            if self.graph_before is None:
+                self.graph_before = graph_used
+            if self.graph_peak is None or graph_used > self.graph_peak:
+                self.graph_peak = graph_used
             # Baseline window: only the first ~2 s after probe start. We
             # specifically want the MIN here (model may already be in the
             # process of loading on the very first sample of a cold run).
             if (time.monotonic() - self._t_start) <= _VRAM_BASELINE_WINDOW_S:
-                if self.comfy_baseline_min is None or comfy_used < self.comfy_baseline_min:
-                    self.comfy_baseline_min = comfy_used
+                if self.graph_baseline_min is None or graph_used < self.graph_baseline_min:
+                    self.graph_baseline_min = graph_used
 
         self.samples += 1
 
@@ -7382,15 +7382,15 @@ class _VramProbe:
             # Resolve identifiers once. Cheap; both calls are short subprocess
             # invocations gated by 2s timeouts.
             self._gpu0_uuid = await asyncio.to_thread(_resolve_gpu0_uuid)
-            self._comfy_pids = await asyncio.to_thread(_resolve_comfy_pids)
-            if not self._comfy_pids:
+            self._graph_pids = await asyncio.to_thread(_resolve_graph_pids)
+            if not self._graph_pids:
                 self.error = f"no {_graph_adapter(_GRAPH_CAPABILITY).label} PIDs resolved"
                 # Continue sampling anyway — at least the whole-GPU fields
                 # will be populated for the legacy fallback path.
 
             # Capture an immediate "before" baseline so we have at least one
             # data point even on very short rounds. This sample becomes
-            # ``comfy_before``.
+            # ``graph_before``.
             await self._record_sample()
             while not self._stop.is_set():
                 try:
@@ -7446,19 +7446,19 @@ class _VramProbe:
         """
         if not self.have_per_process_data:
             return None, "unknown"
-        if not isinstance(self.comfy_before, int) or not isinstance(self.comfy_peak, int):
+        if not isinstance(self.graph_before, int) or not isinstance(self.graph_peak, int):
             return None, "unknown"
         baseline = (
-            self.comfy_baseline_min
-            if isinstance(self.comfy_baseline_min, int)
-            else self.comfy_before
+            self.graph_baseline_min
+            if isinstance(self.graph_baseline_min, int)
+            else self.graph_before
         )
-        cold = (self.comfy_before - baseline) > _VRAM_COLD_LOAD_THRESHOLD_BYTES
+        cold = (self.graph_before - baseline) > _VRAM_COLD_LOAD_THRESHOLD_BYTES
         if cold:
-            marginal = self.comfy_peak - baseline
+            marginal = self.graph_peak - baseline
             state = "cold"
         else:
-            marginal = self.comfy_peak - self.comfy_before
+            marginal = self.graph_peak - self.graph_before
             state = "warm"
         if marginal <= 0:
             return None, state
@@ -8851,7 +8851,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
     measurement_trusted = False
     source = "probe"
     model_state = "unknown"
-    comfy_baseline = 0
+    graph_baseline = 0
     samples_count = probe.samples if probe is not None else 0
     free_after, _ = await graph_vram_snapshot(client, _GRAPH_CAPABILITY)
     if probe is not None and probe.trustworthy():
@@ -8861,7 +8861,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
             per_image_cost = marginal // max(1, batch_target)
             measurement_trusted = True
             source = "probe"
-        comfy_baseline = probe.comfy_baseline_min if isinstance(probe.comfy_baseline_min, int) else 0
+        graph_baseline = probe.graph_baseline_min if isinstance(probe.graph_baseline_min, int) else 0
     elif probe is not None and probe.error:
         print(f"[proxy] VRAM probe error for {workflow_name} {width}x{height}: {probe.error}", flush=True)
     if per_image_cost <= 0:
@@ -8874,13 +8874,13 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
         source = "endpoint_diff"
     record_vram_estimate(
         workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
-        comfy_baseline_bytes=comfy_baseline, samples_count=samples_count)
+        comfy_baseline_bytes=graph_baseline, samples_count=samples_count)
     sys_peak = probe.system_peak_used_bytes() if probe is not None else None
     gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
     print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
           f"(trusted={measurement_trusted}, source={source}, model_state={model_state}, probe_samples={samples_count}, "
-          f"comfy_before={gib(probe.comfy_before if probe is not None else None)}, "
-          f"comfy_peak={gib(probe.comfy_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
+          f"graph_before={gib(probe.graph_before if probe is not None else None)}, "
+          f"graph_peak={gib(probe.graph_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
     # Re-read; None when the measurement was untrusted (no scheduling decision is made from it).
     return get_vram_estimate(workflow_name, width, height)
 
@@ -14388,12 +14388,12 @@ async def _serve(app: FastAPI):
 
     # ComfyUI websocket listener for real-time video progress. Optional —
     # /v1/videos/{id} falls back to /history polling if this can't connect.
-    comfy_ws_stop = asyncio.Event()
-    comfy_ws_task = None
+    graph_ws_stop = asyncio.Event()
+    graph_ws_task = None
     video_reconcile_stop = asyncio.Event()
     video_reconcile_task = None
     if _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
-        comfy_ws_task = asyncio.create_task(_graph_ws_listener(comfy_ws_stop))
+        graph_ws_task = asyncio.create_task(_graph_ws_listener(graph_ws_stop))
         print(f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
 
         # Startup reconciliation: safety net for any persisted/hydrated
@@ -14520,11 +14520,11 @@ async def _serve(app: FastAPI):
         task.cancel()
     if owned_job_tasks:
         await asyncio.gather(*owned_job_tasks, return_exceptions=True)
-    if comfy_ws_task is not None:
-        comfy_ws_stop.set()
-        comfy_ws_task.cancel()
+    if graph_ws_task is not None:
+        graph_ws_stop.set()
+        graph_ws_task.cancel()
         try:
-            await comfy_ws_task
+            await graph_ws_task
         except asyncio.CancelledError:
             pass
         except Exception:

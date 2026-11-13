@@ -234,8 +234,8 @@ def test_health_probes_the_family_selected_id(monkeypatch):
         return True
 
     monkeypatch.setattr(proxy, "check_service_health", probe)
-    assert asyncio.run(proxy.check_comfy_health("images")) is True
-    assert asyncio.run(proxy.check_comfy_health("videos")) is True
+    assert asyncio.run(proxy.check_graph_engine_health("images")) is True
+    assert asyncio.run(proxy.check_graph_engine_health("videos")) is True
     assert probed == ["pictures", "motion"]
 
 
@@ -254,7 +254,7 @@ def test_health_is_false_without_a_probe_when_the_family_service_cannot_serve(mo
 
     monkeypatch.setattr(proxy, "check_service_health", probe)
     for family in FAMILIES:
-        assert asyncio.run(proxy.check_comfy_health(family)) is False
+        assert asyncio.run(proxy.check_graph_engine_health(family)) is False
     assert probed == []
 
 
