@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.media_test_bytes import png_bytes, wav_bytes
 from tests.support.access import access_context, auth_identity, store_plan  # noqa: E402
 from gateway import accounts, admin_store, custom_voices, media_ingestion, media_jobs, ownership, receipt_store, video_job_records, voices_api
 from gateway.admin_oidc import AdminSession
@@ -50,9 +51,12 @@ def owners(tmp_path, monkeypatch):
                            personal=personal, contexts=contexts, store=store, root=tmp_path)
 
 
+WAV = wav_bytes()
+
+
 def make_voice(store, owner, *, consent_id=None):
     return store.create_voice(
-        owner, name="Azizam narrator", voice_type="audio_sample", reference_wav=b"RIFF fixture",
+        owner, name="Azizam narrator", voice_type="audio_sample", reference_wav=WAV,
         duration_seconds=9, original=None, original_extension="wav", consent_id=consent_id,
         description=None, labels={}, measurements={}, warnings=[],
     )
@@ -101,7 +105,7 @@ def test_rotation_voice_http_reads_mutation_and_legacy_duplicates(owners, monkey
     ))
     client = TestClient(app)
     assert client.get(f"/v1/audio/voices/{voice['id']}").status_code == 200
-    assert client.get(f"/v1/audio/voices/{voice['id']}/sample").content == b"RIFF fixture"
+    assert client.get(f"/v1/audio/voices/{voice['id']}/sample").content == WAV
     page = client.get("/v1/audio/voices?limit=1").json()
     assert page["has_more"] is True
     assert owners.store.usage(ownership.owner_key(new))["voices"] == 2
@@ -120,9 +124,9 @@ def test_rotation_voice_http_reads_mutation_and_legacy_duplicates(owners, monkey
 def test_rotation_media_and_record_http_scopes(owners, monkeypatch):
     old, new, other = owners.contexts
     principal = ownership.owner_key(old)
-    asset = proxy.store_image_bytes(b"Azizam image", owner_key_hash=proxy._asset_owner_key(old))
+    asset = proxy.store_image_bytes(png_bytes((1, 0, 0)), owner_key_hash=proxy._asset_owner_key(old))
     assert proxy._read_asset_metadata(asset)["owner_key_hashes"] == [principal]
-    legacy_asset = proxy.store_image_bytes(b"Azizam legacy image")
+    legacy_asset = proxy.store_image_bytes(png_bytes((2, 0, 0)))
     proxy._write_asset_metadata(legacy_asset, {"owner_key_hashes": [owners.credentials[0]["hash"]]})
     db = owners.root / "media_jobs.db"
     receipts = owners.root / "receipts.db"
@@ -179,7 +183,7 @@ def test_personal_key_and_browser_session_share_user_items(owners):
     assert ownership.owner_key(key) == ownership.owner_key(session) == f"user:{owners.user['id']}"
     voice = make_voice(owners.store, ownership.owner_key(key))
     assert owners.store.get_voice(ownership.owner_key(session), voice["id"])["id"] == voice["id"]
-    asset = proxy.store_image_bytes(b"Azizam personal image", owner_key_hash=ownership.owner_key(key))
+    asset = proxy.store_image_bytes(png_bytes((3, 0, 0)), owner_key_hash=ownership.owner_key(key))
     assert proxy._asset_access_allowed(asset, session)
     assert not proxy._asset_access_allowed(asset, owners.contexts[2])
     db = owners.root / "media_jobs.db"
@@ -193,7 +197,7 @@ def test_personal_key_and_browser_session_share_user_items(owners):
 def test_unknown_credential_and_local_do_not_share_scoped_assets(owners):
     unknown = proxy.AuthContext(identity=SimpleNamespace(key_hash="sha256:unmapped"))
     assert ownership.readable_owner_keys(unknown) == ("sha256:unmapped",)
-    asset = proxy.store_image_bytes(b"Azizam local image")
+    asset = proxy.store_image_bytes(png_bytes((4, 0, 0)))
     assert proxy._asset_access_allowed(asset, proxy.NO_AUTH_CONTEXT)  # unowned assets belong to no identity
     assert not proxy._asset_access_allowed(asset, unknown)
     assert not proxy._asset_access_allowed(asset, owners.contexts[0])
@@ -203,7 +207,7 @@ def test_authenticated_current_key_is_a_read_alias_without_a_registry_row(owners
     auth = proxy.AuthContext(identity=auth_identity(name="Azizam imported", key_hash="sha256:fixture-imported", app_id="fixture-imported-app"))
     aliases = ownership.readable_owner_keys(auth)
     assert aliases == ("app:fixture-imported-app", "sha256:fixture-imported")
-    asset = proxy.store_image_bytes(b"Azizam imported media")
+    asset = proxy.store_image_bytes(png_bytes((5, 0, 0)))
     proxy._write_asset_metadata(asset, {"owner_key_hashes": [auth.identity.key_hash]})
     assert proxy._asset_access_allowed(asset, auth)
     assert not proxy._asset_access_allowed(asset, owners.contexts[0])

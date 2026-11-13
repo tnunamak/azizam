@@ -2,7 +2,7 @@
   "assets": [
     {
       "json": {
-        "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+        "asset_id": "vid_eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54",
         "origin": {
           "request_id": "<req:1>",
           "takes_text": true,
@@ -13,14 +13,14 @@
         ],
         "updated_at": "<time>"
       },
-      "name": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99.meta.json",
+      "name": "eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54.meta.json",
       "size": 262,
       "suffix": ".json"
     },
     {
-      "name": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99.mp4",
-      "sha256": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
-      "size": 11572,
+      "name": "eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54.mp4",
+      "sha256": "eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54",
+      "size": 2724,
       "suffix": ".mp4"
     }
   ],
@@ -187,9 +187,9 @@
           {
             "body": {
               "kind": "binary",
-              "len": 11572,
-              "magic": "0000001c66747970",
-              "sha256": "4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99"
+              "len": 2724,
+              "magic": "0000002066747970",
+              "sha256": "eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54"
             },
             "crlf_after_body": true,
             "headers": "Content-Disposition: form-data; name=\"image\"; filename=\"video_<job:1>.mp4\"\r\nContent-Type: video/mp4"
@@ -201,7 +201,7 @@
         "accept": "*/*",
         "accept-encoding": "gzip, deflate, br",
         "connection": "keep-alive",
-        "content-length": "11779",
+        "content-length": "2931",
         "content-type": "multipart/form-data; boundary=<boundary>",
         "host": "comfy.fk.test"
       },
@@ -342,7 +342,7 @@
     ],
     "media_job_asset_origins": [
       {
-        "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+        "asset_id": "vid_eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54",
         "job_id": "<job:1>",
         "origin_id": "<req:1>"
       }
@@ -425,7 +425,7 @@
           "app_profile": null,
           "assets": [
             {
-              "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+              "asset_id": "vid_eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54",
               "media_type": "video/mp4"
             }
           ],
@@ -561,7 +561,7 @@
               "count": 1,
               "kind": "assets",
               "name": "video",
-              "size_bytes": 11572
+              "size_bytes": 3420
             }
           ]
         }
@@ -570,14 +570,14 @@
     "result_stage": [
       {
         "attempt": 1,
-        "bytes": 11572,
+        "bytes": 3420,
         "count": 1,
         "created": "<time>",
         "items_json": [
           {
-            "asset_ref": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+            "asset_ref": "vid_eb63beed550e4cde9441827584c0b63fec2c4b69abc407f7d670422c118ddd54",
             "media_type": "video/mp4",
-            "size_bytes": 11572
+            "size_bytes": 3420
           }
         ],
         "job_id": "<job:1>",
@@ -1013,7 +1013,7 @@
                   "count": 1,
                   "kind": "assets",
                   "name": "video",
-                  "size_bytes": 11572
+                  "size_bytes": 3420
                 }
               ]
             },
