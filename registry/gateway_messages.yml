@@ -10,3 +10,7 @@ tool_call_advisory: >-
   the loaded model's chat template supports tools.
 backend_label: " ({backend_hint})"
 unknown_family: unknown
+long_video_not_supported: "Model {model} cannot render shots or clips longer than {max_seconds} s; use video-long, ltx-2.5-long or minimax-h3"
+video_extend_not_supported: "model {model} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3"
+surface_existing_clients: "; {convenience} remains available for existing OpenAI-compatible clients."
+surface_new_setup: "Use canonical {canonical} endpoints for new OpenAI-compatible setup"

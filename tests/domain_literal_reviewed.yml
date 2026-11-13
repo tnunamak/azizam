@@ -215,3 +215,56 @@ sites:
     count: 1
     category: wire_enum
     reason: "Emitted object discriminator of the gateway audio-generation response (created, job_id, data), the gateway extension's response object contract, not a claimed OpenAI discriminator."
+  - file: proxy.py
+    literal: image
+    count: 2
+    category: wire_enum
+    reason: OpenAI Images multipart field and the graph adapter node input contract.
+  - file: proxy.py
+    literal: video
+    count: 2
+    category: wire_enum
+    reason: OpenAI Videos body field and resource object discriminator.
+  - file: proxy.py
+    literal: audio
+    count: 2
+    category: wire_enum
+    reason: OpenAI speech stream_format value and the config file's section key, a file-format
+      contract shared with the config schema.
+  - file: proxy.py
+    literal: comfyui-media
+    count: 1
+    category: wire_enum
+    reason: Published queue name in admission-denial bodies and decision evidence.
+  - file: gateway/backends/llm_execution.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: OpenAI Chat Completions audio request field in the accepted wire body keys.
+  - file: gateway/providers.py
+    literal: image
+    count: 1
+    category: wire_enum
+    reason: OpenAI media request field checked by the unbounded payload guard.
+  - file: gateway/providers.py
+    literal: video
+    count: 1
+    category: wire_enum
+    reason: OpenAI Videos request field checked by the unbounded payload guard.
+  - file: gateway/redaction.py
+    literal: video
+    count: 1
+    category: wire_enum
+    reason: OpenAI Videos media payload key redacted before recording.
+  - file: gateway/redaction.py
+    literal: audio
+    count: 1
+    category: wire_enum
+    reason: OpenAI Chat Completions media payload key redacted before recording.
+  - file: gateway/identity_api.py
+    literal: image
+    count: 4
+    category: wire_enum
+    reason: The first two sites are the identity sidecar's HTTP multipart contract (field
+      and filename); the next two are a field of Azizam's own public identity API request
+      shape.

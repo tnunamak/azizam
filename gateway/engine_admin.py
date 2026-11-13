@@ -1235,7 +1235,8 @@ class EngineService:
         record = registry.get("services", {}).get(service_id)
         if record is None:
             raise EngineRouteError(404, "service_not_found", "No engine has that id.")
-        if not {"transcriptions", "audio.transcriptions"}.intersection(record.get("capabilities", [])):
+        from gateway.domain_rows import route_intent
+        if not {"transcriptions", route_intent("/v1/audio/transcriptions")}.intersection(record.get("capabilities", [])):
             raise EngineRouteError(400, "not_transcription_engine", "Choose an engine that offers transcription.")
         config = copy.deepcopy(record.get("config") or {})
         saved_chunking = config.get("chunking")
