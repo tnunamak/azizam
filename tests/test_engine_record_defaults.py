@@ -55,8 +55,8 @@ def test_the_defaults_file_is_checked_by_its_schema_and_holds_no_address():
 def test_a_missing_default_is_an_error_not_a_guess():
     assert "audio.speech" in engine_record_defaults.release_defaults()
     with pytest.raises(KeyError) as missing:
-        engine_record_defaults.record_value("audio.speech", {}, "default_model")
-    assert missing.value.args == ("default_model",)
+        engine_record_defaults.record_value("audio.speech", {}, "workflows_dir")
+    assert missing.value.args == ("workflows_dir",)
 
 
 @pytest.mark.parametrize("defaults", [
@@ -85,3 +85,19 @@ def test_speech_record_without_a_model_keeps_the_release_model(monkeypatch):
     monkeypatch.setattr(proxy, "config", cfg)
     monkeypatch.setattr(proxy, "model_compat_defaults", lambda: {})
     assert proxy.tts_backend_model() == "mistralai/Voxtral-4B-TTS-2603"
+
+
+def test_model_defaults_follow_roles_then_records_then_compatibility(monkeypatch):
+    defaults = {role: dict(values) for role, values in engine_record_defaults.release_defaults().items()}
+    defaults["audio.speech"]["default_model"] = "release-speaker"
+    defaults["audio.transcriptions"]["default_model"] = "release-listener"
+    monkeypatch.setattr(engine_record_defaults, "release_defaults", lambda: defaults)
+    record = {"capabilities": ["audio.speech", "audio.transcriptions"]}
+    monkeypatch.setattr(proxy, "config", {"backends": {"both": record}})
+    compat = {}
+    monkeypatch.setattr(proxy, "model_compat_defaults", lambda: compat)
+    assert (proxy.tts_backend_model(), proxy.stt_backend_model()) == ("release-speaker", "release-listener")
+    record["default_model"] = "record-model"
+    assert (proxy.tts_backend_model(), proxy.stt_backend_model()) == ("record-model", "record-model")
+    compat.update(speech="compat-speaker", transcriptions="compat-listener")
+    assert (proxy.tts_backend_model(), proxy.stt_backend_model()) == ("compat-speaker", "compat-listener")

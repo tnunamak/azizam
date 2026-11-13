@@ -48,6 +48,11 @@ def route_intent(path: str) -> str:
     return str(intent)
 
 
+def route_request_default(path: str, field: str) -> Any:
+    """The wire default for an omitted request field, declared by the route row."""
+    return _item(path)["request_defaults"][field]
+
+
 def route_execution_intent(path: str, role: str) -> str:
     """The intent the row serving ``path`` declares for ``role`` (``admission`` or ``receipt``)."""
     value = (_item(path).get("execution_intents") or {}).get(role)

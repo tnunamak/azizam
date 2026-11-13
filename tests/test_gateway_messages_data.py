@@ -24,6 +24,7 @@ EXPECTED_METADATA = {
 }
 MESSAGE_FIELDS = {
     "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "current_loaded_model_description", "current_loaded_fast_model_description",
     "long_video_not_supported", "video_extend_not_supported", "surface_existing_clients", "surface_new_setup",
 }
 
@@ -140,6 +141,8 @@ def test_gateway_messages_require_nonempty_text(tmp_path):
 
 def test_gateway_message_templates_refuse_nonliteral_fields(tmp_path):
     invalid = (
+        ("current_loaded_model_description", "Unexpected {model}."),
+        ("current_loaded_fast_model_description", "Unexpected {model}."),
         ("tool_call_advisory", "No labels."),
         ("tool_call_advisory", "{family}"),
         ("tool_call_advisory", "{family}{backend_label}{family}"),
@@ -175,3 +178,21 @@ def test_gateway_messages_are_immutable_and_missing_file_fails_closed(tmp_path):
         messages["metadata_description"] = "replacement"
     with pytest.raises(FileNotFoundError):
         detection.load_gateway_messages(tmp_path / "missing.yml")
+
+
+def test_current_loaded_descriptions_keep_bytes_and_read_copy(monkeypatch):
+    import proxy
+
+    expected = (
+        (proxy.USE_LOADED_MODEL_ALIAS, "current_loaded_model_description",
+         "Use the currently loaded local LLM without activating a backend or swapping models."),
+        (proxy.USE_LOADED_FAST_MODEL_ALIAS, "current_loaded_fast_model_description",
+         "Use the currently loaded local LLM with Qwen thinking off; do not activate a backend or swap models."),
+    )
+    messages = dict(detection.GATEWAY_MESSAGES)
+    for alias, key, text in expected:
+        assert proxy._current_loaded_model_entry(alias)["description"].encode() == text.encode()
+        messages[key] = "Replacement " + key
+    monkeypatch.setattr(detection, "GATEWAY_MESSAGES", messages)
+    for alias, key, _text in expected:
+        assert proxy._current_loaded_model_entry(alias)["description"] == messages[key]

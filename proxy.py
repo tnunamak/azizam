@@ -3495,7 +3495,7 @@ def model_compat_aliases() -> Mapping[str, Any]:
 
 def tts_backend_model() -> str:
     record = (_speech_service() or ("", {}))[1]
-    return model_compat_defaults().get("speech") or record.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+    return model_compat_defaults().get("speech") or _record_default(_SPEECH_CAPABILITY, record, "default_model")
 
 
 SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3", "opus", "aac", "flac", "pcm"}
@@ -3511,7 +3511,7 @@ TTS_RESPONSE_MEDIA_TYPES = {
 
 def stt_backend_model() -> str:
     record = (_transcription_service() or ("", {}))[1]
-    return model_compat_defaults().get("transcriptions") or record.get("default_model", "parakeet-tdt-0.6b-v3")
+    return model_compat_defaults().get("transcriptions") or _record_default(_TRANSCRIPTION_CAPABILITY, record, "default_model")
 
 
 def embeddings_model() -> str:
@@ -4883,7 +4883,7 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
 async def _reference_transcript(
     owner: str | None, meta: Mapping[str, Any], reference: Path, *, receipt: RouteReceipt | None = None,
 ) -> str:
-    """Transcript of a voice's reference clip (OmniVoice clones from audio plus its exact text); cached in the voice record."""
+    """Transcript of a voice's reference clip; cached in the voice record."""
     if meta.get("transcript"):
         return str(meta["transcript"])
     selected = _transcription_service()
@@ -4904,7 +4904,7 @@ async def _reference_transcript(
             execution=stt_chunking.SttExecutionConfig.from_service(
                 service_id=stt_service_id, service_config=stt, config_directory=CONFIG_PATH.parent),
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
-            body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
+            body={"model": str(_record_default(_TRANSCRIPTION_CAPABILITY, stt, "default_model"))},
         )
         _require_egress_lease(stt_service_id)
         resp = await _stt_adapter(stt).invoke(
@@ -4982,7 +4982,7 @@ async def _apply_custom_voice(
     reference = store.reference_path(owner, voice_id)
     body_json["voice"] = "alloy"          # ignored by the engine when voice_ref is present
     body_json["voice_ref"] = str(reference)
-    if engine_id == "omnivoice":
+    if bool_from_config(engine.get("custom_voice_transcript"), False):
         try:
             body_json["ref_text"] = await _reference_transcript(owner, meta, reference, receipt=receipt)
         except custom_voices.VoiceError as exc:
@@ -6161,7 +6161,7 @@ async def proxy_stt_request(
             if not uploads:
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
 
-            requested_model = model_override or str(parsed.form.get("model", "whisper-1"))
+            requested_model = model_override or str(parsed.form.get("model", domain_rows.route_request_default("/v1/audio/transcriptions", "model")))
             model_resolution = resolve_model_for_operation(operation, requested_model)
             if resolved_model is not None and model_resolution.alias is not None:
                 resolved_model.update(
@@ -29873,11 +29873,9 @@ def _current_loaded_model_entry(model_id: str = USE_LOADED_MODEL_ALIAS) -> dict[
         "created": int(time.time()),
         "owned_by": "gateway",
         "description": (
-            "Use the currently loaded local LLM with Qwen thinking off; do "
-            "not activate a backend or swap models."
+            toolcall_detection.GATEWAY_MESSAGES["current_loaded_fast_model_description"]
             if fast
-            else "Use the currently loaded local LLM without activating a "
-            "backend or swapping models."
+            else toolcall_detection.GATEWAY_MESSAGES["current_loaded_model_description"]
         ),
         "capabilities": ["chat", "completion"],
         "azizam_alias": True,
