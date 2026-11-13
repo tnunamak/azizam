@@ -70,6 +70,7 @@ Inspected all production Python calls using AST traversal and `git grep`, includ
 | `proxy.py:26661` | Resolve workflow output rendering metadata | `hide` | Deleted jobs are absent from this caller’s visible or executable work; no need to read the retained row. |
 | `proxy.py:26688` | Serve public job content | `hide` | Deleted jobs are absent from this caller’s visible or executable work; no need to read the retained row. |
 | `proxy.py:27844` | Job lookup for reports or frontend documents | `hide` | Deleted jobs must not be displayed or used to build a public document. |
+| `proxy.py:28307` | Ask the engine to drop the history of a deleted video (`_forget_video_history`, runs after the tombstone) | `include_deleted` | Added after gate 60: the audit search matched `media_jobs.get(` and missed this call, which passes `media_jobs.get` to `asyncio.to_thread`. Hidden, the prompt id was unreadable and the engine kept the deleted video's history (tests/test_s7_parity_video_lifecycle.py video 83 and 85, and the video lifecycle golden, caught it). |
 
 ## Delete, reap and claims
 

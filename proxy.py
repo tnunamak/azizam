@@ -28302,8 +28302,10 @@ async def _forget_video_history(job_id: str, auth_context: AuthContext) -> None:
     """Best effort, as the old delete was: ask the engine to drop the history entry of the prompt a deleted video ran, so its
     file stops being reachable there. The engine asked is the service the job was pinned to, which holds that history even
     after a priority change gave the videos family another winner. A job the engine never took, or that pinned no service,
-    has none; a service no longer configured cannot be asked; a failure is not the caller's."""
-    job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", path=media_jobs.DB_PATH)
+    has none; a service no longer configured cannot be asked; a failure is not the caller's. It runs after the delete wrote
+    the tombstone, so it reads the deleted job on purpose."""
+    job = await asyncio.to_thread(media_jobs.get, job_id, audience="internal", include_deleted=True,
+                                  path=media_jobs.DB_PATH)
     kept = (job or {}).get("metadata") or {}
     prompt_id = kept.get("protocol_job") or kept.get(node_graph_runner.ENGINE_PROMPT_KEY)
     if not prompt_id:
