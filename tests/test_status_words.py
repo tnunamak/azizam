@@ -137,7 +137,7 @@ def test_other_speech_words_change_what_is_tried_and_how_it_is_named(monkeypatch
 QUEUE = {"running": 1, "pending": 2, "running_ids": ["a"], "pending_ids": []}
 QUEUE_HTML = (
     '<div><span class="pill ok">1 running</span> <span class="pill">2 pending</span></div>'
-    '<div class="mono small muted">running_ids=[\'a\'] pending_ids=[]</div>'
+    '<div class="mono small muted">running_ids=[&#x27;a&#x27;] pending_ids=[]</div>'
 )
 
 
