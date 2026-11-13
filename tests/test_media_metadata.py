@@ -111,11 +111,10 @@ class KindTests(unittest.TestCase):
         for key, want in cases.items():
             self.assertEqual(mm.media_kind(key), want, key)
 
-    def test_unknown_unchanged(self):
-        self.assertEqual(mm.strip_metadata(b"abc", ".txt"), b"abc")
-        self.assertEqual(mm.strip_metadata(b"abc", ".png"), b"abc")
-        self.assertEqual(mm.strip_metadata(b"abc", ".jpg"), b"abc")
-        self.assertEqual(mm.strip_metadata(b"abc", ".webp"), b"abc")
+    def test_unknown_refused(self):
+        for suffix in (".txt", ".png", ".jpg", ".webp"):
+            with self.assertRaises(mm.MediaMetadataError):
+                mm.strip_metadata(b"abc", suffix)
 
 
 class PngTests(unittest.TestCase):
@@ -695,3 +694,111 @@ class AnonymousBufferTests(unittest.TestCase):
             os.__dict__.pop("memfd_create", None)
             self.assertFalse(hasattr(os, "memfd_create"))
             self._assert_anonymous()
+
+# Fail-closed regressions: all fixtures are synthetic.
+import pytest
+from gateway import media_delivery
+
+
+@pytest.mark.parametrize("declared", [".png", ".jpg", ".webp", ".gif", ".bin"])
+@pytest.mark.parametrize("actual", ["PNG", "JPEG", "WEBP"])
+def test_real_bytes_choose_image_handler(tmp_path, declared, actual):
+    path = tmp_path / "synthetic"
+    _image().save(path, actual, exif=mm.exif_bytes({"prompt": "PRIVATE_MARKER"}))
+    source = path.read_bytes()
+    if actual == "PNG":
+        source = mm.embed_png_text(source, {"prompt": "PRIVATE_MARKER"})
+    clean = mm.strip_metadata(source, declared)
+    assert b"PRIVATE_MARKER" not in clean
+    assert _px(clean) == _px(source)
+
+
+@pytest.mark.parametrize("declared", [".bin", ".png", ".jpg", ".webp", ".gif"])
+def test_unknown_bytes_refused(declared):
+    with pytest.raises(mm.MediaMetadataError):
+        mm.strip_metadata(b"unknown private bytes", declared)
+
+
+def test_jpeg_app_allowlist(tmp_path):
+    path = tmp_path / "synthetic.jpg"
+    _image().save(path, "JPEG")
+    original = path.read_bytes()
+    def segment(marker, value):
+        return bytes([255, marker]) + struct.pack(">H", len(value) + 2) + value
+    discarded = b"".join(segment(0xe0 + i, b"PRIVATE_MARKER") for i in range(16))
+    kept = segment(0xe2, b"ICC_PROFILE\x00\x01\x01profile") + segment(0xee, b"Adobe\x00\x64\x00\x00\x00\x00\x00")
+    clean = mm.strip_metadata(original[:2] + discarded + kept + original[2:], ".jpg")
+    assert b"PRIVATE_MARKER" not in clean
+    assert kept in clean
+    assert _px(clean) == _px(original)
+
+
+def test_gif_extensions_and_frames(tmp_path):
+    path = tmp_path / "synthetic.gif"
+    frames = [Image.new("RGB", (8, 8), color) for color in ("red", "blue")]
+    frames[0].save(path, "GIF", save_all=True, append_images=frames[1:], loop=2, comment=b"PRIVATE_MARKER")
+    original = path.read_bytes()
+    source = original[:-1] + b"\x21\xff\x0bXMP DataXMP\x0ePRIVATE_MARKER\x00" + b"\x3b"
+    clean = mm.strip_metadata(source, ".gif")
+    assert b"PRIVATE_MARKER" not in clean
+    assert b"NETSCAPE2.0" in clean
+    def pixels(data):
+        from PIL import ImageSequence
+        return [frame.convert("RGBA").tobytes() for frame in ImageSequence.Iterator(Image.open(io.BytesIO(data)))]
+    assert pixels(clean) == pixels(original)
+
+
+def test_glb_json_and_bin_preserved(tmp_path):
+    value = {"asset": {"version": "2.0", "generator": "PRIVATE_MARKER", "copyright": "PRIVATE_MARKER"},
+             "extras": {"secret": 1}, "nodes": [{"extras": {"private": 1}, "name": "mesh"}],
+             "buffers": [{"byteLength": 4}]}
+    raw = json.dumps(value).encode()
+    raw += b" " * (-len(raw) % 4)
+    binary = b"\x00\x01\x02\x03"
+    body = struct.pack("<I4s", len(raw), b"JSON") + raw + struct.pack("<I4s", 4, b"BIN\x00") + binary
+    source = b"glTF" + struct.pack("<II", 2, len(body) + 12) + body
+    path = tmp_path / "mesh.glb"
+    path.write_bytes(media_delivery.deliver_bytes(source, ".glb", "none"))
+    clean = path.read_bytes()
+    assert struct.unpack_from("<I", clean, 8)[0] == len(clean)
+    size = struct.unpack_from("<I", clean, 12)[0]
+    decoded = json.loads(clean[20:20 + size])
+    assert decoded == {"asset": {"version": "2.0"}, "nodes": [{"name": "mesh"}], "buffers": [{"byteLength": 4}]}
+    assert clean[20 + size:] == struct.pack("<I4s", 4, b"BIN\x00") + binary
+
+
+@pytest.mark.parametrize("mode", [None, "", "ful", "provenance"])
+def test_invalid_delivery_mode(mode):
+    with pytest.raises(ValueError, match="invalid media metadata mode"):
+        media_delivery.deliver_bytes(b"private", ".png", mode)
+
+
+@pytest.mark.parametrize("codec", ["libx264", "libx265", "mpeg4"])
+@pytest.mark.skipif(not HAVE_FFMPEG, reason=SKIP_FF)
+def test_codec_userdata_removed_or_codec_refused(tmp_path, codec):
+    path = tmp_path / "tagged.mp4"
+    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True).stdout
+    if codec.encode() not in encoders:
+        pytest.skip(f"{codec} encoder unavailable")
+    command = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "color=size=16x16:rate=1",
+               "-frames:v", "1", "-threads", "1", "-c:v", codec]
+    if codec == "libx264":
+        command += ["-bsf:v", "h264_metadata=sei_user_data=00112233-4455-6677-8899-aabbccddeeff+SYNTHETIC_CAMERA_LOCATION"]
+    if codec == "libx265":
+        command += ["-x265-params", "pools=none:frame-threads=1"]
+    subprocess.run(command + [str(path)], check=True, capture_output=True)
+    source = path.read_bytes()
+    if codec == "mpeg4":
+        with pytest.raises(mm.MediaMetadataError, match="codec"):
+            mm.strip_metadata(source, ".mp4")
+        return
+    marker = b"SYNTHETIC_CAMERA_LOCATION" if codec == "libx264" else b"x265 (build"
+    assert marker in source
+    clean = mm.strip_metadata(source, ".mp4")
+    assert marker not in clean
+    stripped = tmp_path / "stripped.mp4"
+    stripped.write_bytes(clean)
+    def pixels(filename):
+        return subprocess.run(["ffmpeg", "-v", "error", "-i", str(filename), "-frames:v", "1",
+                               "-threads", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], check=True, capture_output=True).stdout
+    assert pixels(path) == pixels(stripped)

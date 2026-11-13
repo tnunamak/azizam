@@ -138,3 +138,12 @@ def test_every_handler_has_strip_code():
     body = inspect.getsource(mm.strip_metadata)
     for handler in mm._HANDLERS:
         assert f'"{handler}"' in body, handler
+
+
+@pytest.mark.parametrize("handler", ["audio", "video"])
+def test_stream_handler_requires_muxer(tmp_path, handler):
+    path = write_rows(tmp_path, {"schema_version": 1, "formats": [
+        {"handler": handler, "suffixes": [".bad"], "mime_types": []},
+    ]})
+    with pytest.raises(ValueError, match="formats row 1.*muxer"):
+        mm.load_media_metadata_formats(path)
