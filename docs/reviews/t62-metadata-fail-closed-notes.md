@@ -265,7 +265,7 @@ other case still goes by the bytes:
   photo is HEIC and carries GPS, so passing it as a File would leak what this train closes.
 - A name or type that declares media while the bytes match no family is refused.
 
-The pass-through is labelled. A Library item carries `metadata_handling` (`removed` or
+The pass-through is labelled. A Library item carries `metadata_handling` (`removed`, `refused` or
 `unchanged`) and a `metadata_note` sentence; an `md=none` download carries the
 `X-Azizam-Metadata` header with the same value. `unchanged` says the gateway left the
 bytes as they were and removed no metadata, so `md=none` does not read as "clean" for a
