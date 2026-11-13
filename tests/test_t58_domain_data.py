@@ -110,7 +110,8 @@ def test_identity_reference_schema_is_data_and_shipped_shape_is_identical(monkey
     schema = identity_api._identity_reference_schema()
     assert schema == {"type": "object", "required": ["image", "prompt"], "properties": {
         "image": {"type": "array", "items": {"type": "string", "format": "binary"},
-                  "description": "Reference photo(s) at full resolution. Never send tiny face crops: the gateway crops roomy heads itself. Several photos of one person are welcome: list them in people[].images."}}}
+                  "description": "Reference photo(s) at full resolution. Never send tiny face crops: the gateway crops roomy heads itself. Several photos of one person are welcome: list them in people[].images."},
+        "prompt": {"type": "string", "description": "The new scene, poses and gaze. People are tagged for you."}}}
     fragments = copy.deepcopy(openai_media_schemas._SCHEMA_FRAGMENTS)
     fragments["POST " + identity_api.IDENTITY_PATH]["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"]["image"]["description"] = "Changed reference help."
     monkeypatch.setattr(openai_media_schemas, "_SCHEMA_FRAGMENTS", fragments)
@@ -152,9 +153,6 @@ def test_recommendation_copy_reaches_both_video_routes(tmp_path, monkeypatch):
             "model": MODEL, "prompt": "waves", "shots": [{"prompt": "waves", "seconds": 5}]})
         assert response.status_code == 400, response.text
         assert response.json()["error"]["message"].startswith("Select configured long renderer for ")
-        response = await world.call("POST", "/v1/videos/extensions", json_body={
-            "model": MODEL, "prompt": "waves", "video": {"id": "video_absent"}})
-        # A missing source is checked first; use the real rig's completed source below instead.
         from tests.test_s7_parity_video_texts import make_video, finish
         vid = await make_video(world)
         await finish(world, vid)
@@ -173,7 +171,7 @@ def test_transcription_settings_use_frontend_intent(tmp_path, monkeypatch):
                             get_service_registry_snapshot=lambda: ({"services": {"s": record}}, 0),
                             update_service=lambda **kwargs: seen.append(kwargs) or {"operator_settings_generation": 1})
     result = engine_admin.EngineService(store).configure_stt(
-        SimpleNamespace(roles=("owner",)), "s", {}, expected_generation=0)
+        SimpleNamespace(roles=("owner",)), "s", {"native_long_audio_offline": True}, expected_generation=0)
     assert result["revision"] == '"os-1"'
     assert seen[0]["service_id"] == "s"
 

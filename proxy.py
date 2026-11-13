@@ -352,6 +352,7 @@ from gateway.transforms import (
     ENABLE_THINKING_KEY as _ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
 )
+from gateway import toolcall_detection
 from gateway.toolcall_detection import (
     detect_unlifted_toolcalls as _detect_unlifted_toolcalls,
     advisory_for_backend as _toolcall_advisory_for_backend,
@@ -12304,8 +12305,8 @@ async def _proxy_graph_video_create(
             chain_name, chain_cfg = _chain_workflow_for(requested_model)
             if chain_cfg is None:
                 return _gateway_input_error(
-                    f"Model {workflow_name} cannot render shots or clips longer than "
-                    f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
+                    toolcall_detection.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                        model=workflow_name, max_seconds=f"{workflow_cfg.get('max_seconds', 8):g}"),
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported",
                     job_message=f"This model cannot render shots or clips longer than "
@@ -13278,7 +13279,7 @@ async def proxy_graph_video_extend(
         requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
-        return _json_error(400, f"model {requested!r} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3",
+        return _json_error(400, toolcall_detection.GATEWAY_MESSAGES["video_extend_not_supported"].format(model=repr(requested)),
                            param="model", code="video_extend_not_supported")
     public_model = str(body.get("model") or source_model or "video-long")
     return await _with_request_media_inputs(lambda holder: _submit_video_chain(
@@ -17059,8 +17060,21 @@ async def _live_probe_evidence() -> dict[str, dict[str, Any]]:
     return evidence
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
-IDENTITY_MODEL_ID = "image-identity"
-IDENTITY_MANIFEST_ID = "image.edit.image-identity"
+def _identity_workflow_record():
+    records = [record for record in GATEWAY_WORKFLOW_REGISTRY.records()
+               if (record.manifest.get("bindings", {}).get("gateway", {}).get("route")
+                   == identity_api.IDENTITY_PATH)]
+    if len(records) != 1:
+        raise ValueError("identity route must have exactly one workflow gateway binding")
+    return records[0]
+
+
+def _identity_workflow_ids() -> tuple[str, str]:
+    record = _identity_workflow_record()
+    return record.id, record.manifest["bindings"]["gateway"]["model_id"]
+
+
+IDENTITY_MANIFEST_ID, IDENTITY_MODEL_ID = _identity_workflow_ids()
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
@@ -17229,7 +17243,7 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
 
 
 
-_IDENTITY_JOB_INTENT = "image.identity"
+_IDENTITY_JOB_INTENT = media_job_intents.execution_intent(identity_api.IDENTITY_PATH)
 _identity_job_semaphore = asyncio.Semaphore(1)
 _identity_job_tasks: set[asyncio.Task] = set()
 

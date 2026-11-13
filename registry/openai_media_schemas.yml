@@ -8,7 +8,8 @@
     "segment_chain": {"source_clip": "video"}
   },
   "wire_error_param_endpoints": {
-    "segment_chain": "POST /v1/videos/extensions"
+    "segment_chain": "POST /v1/videos/extensions",
+    "identity_scene": "POST /gateway/v1/images/identity"
   },
   "endpoints": {
     "POST /v1/images/edits": {
@@ -251,6 +252,33 @@
             }
           },
           "description": "Deletion confirmation."
+        }
+      }
+    },
+    "POST /gateway/v1/images/identity": {
+      "requestBody": {
+        "required": true,
+        "content": {
+          "multipart/form-data": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "image",
+                "prompt"
+              ],
+              "properties": {
+                "image": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "description": "Reference photo(s) at full resolution. Never send tiny face crops: the gateway crops roomy heads itself. Several photos of one person are welcome: list them in people[].images."
+                },
+                "prompt": {"type": "string", "description": "The new scene, poses and gaze. People are tagged for you."}
+              }
+            }
+          }
         }
       }
     }

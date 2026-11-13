@@ -29,6 +29,7 @@ class IntentRow:
     submittable: bool
     route: str | None = None
     component: str | None = None
+    execution_route: str | None = None
 
 
 def parse_rows(document: Any) -> tuple[IntentRow, ...]:
@@ -38,7 +39,7 @@ def parse_rows(document: Any) -> tuple[IntentRow, ...]:
         jsonschema.Draft202012Validator(schema).validate(document)
     except jsonschema.ValidationError as exc:
         raise ValueError(f"{DATA_PATH.name}: {exc.message}") from exc
-    rows = tuple(IntentRow(r["intent"], r["modality"], r["submittable"], r.get("route"), r.get("component"))
+    rows = tuple(IntentRow(r["intent"], r["modality"], r["submittable"], r.get("route"), r.get("component"), r.get("execution_route"))
                  for r in document["intents"])
     names = [r.intent for r in rows]
     for name in names:
@@ -88,3 +89,11 @@ def request_description() -> str:
     parts = [f"`{route}` ({', '.join(intents)})" for _component, route, intents in submit_routes()]
     body = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} or {parts[-1]}"
     return f"The body you would send to the matching sync route: {body}."
+
+
+def execution_intent(route: str) -> str:
+    """The internal job intent declared for a native execution route; ambiguity fails closed."""
+    rows = [row for row in ROWS if row.execution_route == route]
+    if len(rows) != 1:
+        raise ValueError(f"{DATA_PATH.name}: execution route {route!r} must name exactly one intent")
+    return rows[0].intent
