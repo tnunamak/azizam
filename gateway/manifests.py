@@ -17,6 +17,8 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import yaml
 
+from gateway import yaml_files
+
 
 class ManifestError(ValueError):
     """Raised when a manifest or backend binding is invalid."""
@@ -361,8 +363,7 @@ class BackendBindingResult:
 
 def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
     manifest_path = Path(path)
-    with manifest_path.open("r", encoding="utf-8") as f:
-        manifest = yaml.safe_load(f)
+    manifest = yaml_files.load_yaml(manifest_path)
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
     enforce_contract(manifest)

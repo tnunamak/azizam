@@ -33,9 +33,7 @@ from pathlib import Path
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 from typing import Any
 
-import yaml
-
-from gateway import admin_store, engine_check, native_lane, projection, record_carriers, registry_layers, url_binding
+from gateway import admin_store, engine_check, native_lane, projection, record_carriers, registry_layers, url_binding, yaml_files
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
@@ -3168,7 +3166,7 @@ def load_catalog_records(
 ) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = yaml_files.load_yaml(path) or {}
     if isinstance(raw, Mapping) and isinstance(raw.get("records"), list):
         iterable = raw["records"]
     elif isinstance(raw, Mapping):

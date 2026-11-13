@@ -118,6 +118,10 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy.WORKFLOW_REGISTRY_STORE, "_path", path)
     monkeypatch.setattr(proxy.WORKFLOW_REGISTRY_STORE, "_cached", None)
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
+    # A test that runs the lifespan starts the metrics sampler, which reads the GPUs on each 10 s boundary. The
+    # hermetic runner refuses that host command, so a test that crosses a boundary would fail by the clock.
+    import status_endpoint
+    monkeypatch.setattr(status_endpoint, "_gpus_raw", lambda: [])
     # A service-registry write through the real app fires the hot reload, which
     # swaps `proxy.config` and every backend constant for ones built from this
     # test's temporary registry. Registering each name with monkeypatch puts the
