@@ -933,7 +933,8 @@ class TestEngineKnowledgeRatchet:
         sources["proxy.py"] += '\n\ndef _mutant(engine_id):\n    if engine_id == "newengine-flux9":\n        return 1\n'
         sources["gateway/brand_new_module.py"] = 'DEFAULT = "chatterbox"\n'
         violations = _ratchet_violations(_engine_knowledge_counts(sources), _load_baseline())
-        assert any("proxy.py" in v and "rose" in v for v in violations)
+        # proxy.py has no baseline entry left, so its first hit reads as a new file.
+        assert any(v.startswith("proxy.py:") and ("rose" in v or "new file" in v) for v in violations)
         assert any("gateway/brand_new_module.py" in v and "new file" in v for v in violations)
 
 

@@ -226,11 +226,6 @@ sites:
     category: wire_enum
     reason: OpenAI speech stream_format value and the config file's section key, a file-format
       contract shared with the config schema.
-  - file: proxy.py
-    literal: comfyui-media
-    count: 1
-    category: wire_enum
-    reason: Published queue name in admission-denial bodies and decision evidence.
   - file: gateway/backends/llm_execution.py
     literal: audio
     count: 1

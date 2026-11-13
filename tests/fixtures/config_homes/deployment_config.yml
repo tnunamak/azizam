@@ -46,7 +46,8 @@ backends:
     base_path: /v1
     host: 127.0.0.1
     port: 5051
-    state_type: llama_cpp
+    # The server reports its loaded model at /props, under model_path.
+    loaded_model_probe: {endpoint: /props, model_key: model_path}
     # The server reports its loaded model as a filesystem path, which is
     # compared with the path being activated (instead of an HTTP model id).
     loaded_model_identity: path

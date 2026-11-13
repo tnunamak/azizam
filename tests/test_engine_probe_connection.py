@@ -132,14 +132,14 @@ def test_the_switch_readiness_probe_reads_the_loaded_model_through_the_saved_con
     # The loaded-state seed is a synchronous read, so this engine listens on a real loopback port.
     engine = fake_upstreams.loopback(_engine("/provider/v1/models", MODELS, times=2))
     _saved_registry(monkeypatch, "probe-llm", _saved(engine.base_url),
-                    state_type="openai_compatible", loaded_model_identity="path")
+                    loaded_model_identity="path")
     assert asyncio.run(proxy._currently_loaded_model_for("probe-llm")) == "served-id"
     assert asyncio.run(proxy.current_llm_model_for_backend("probe-llm")) == "served-id"
 
 
 def test_the_current_model_and_context_window_probes_use_the_saved_connection(monkeypatch, fake_upstreams):
     fake_upstreams.asgi(_engine("/provider/v1/models", MODELS, times=2), host=HOST)
-    _saved_registry(monkeypatch, "probe-llm", _saved(), state_type="openai_compatible",
+    _saved_registry(monkeypatch, "probe-llm", _saved(),
                     context_window_probe={"endpoint": "/v1/models"})
     assert asyncio.run(proxy.current_llm_model_for_backend("probe-llm")) == "served-id"
     assert asyncio.run(proxy._probed_context_window("probe-llm")) == 32768

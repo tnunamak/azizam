@@ -741,34 +741,31 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
         print(f"[proxy] WARNING: LiteLLM config generation failed: {e}", flush=True)
 
 
-# Per-state_type seed strategies.  Each entry describes how to ask a live backend
-# what model it has loaded.  Add a new entry here when wiring up a new backend type
-# (vllm, ollama, etc.) — no other code needs to change.
+# How a service reports the model it has loaded. A service record may declare
+# ``loaded_model_probe: {endpoint, model_key}`` (data the operator writes); a record
+# that declares none is read through the OpenAI-compatible model list.
 #
-# Keys:
-#   endpoint     – path to GET; response must be JSON
-#   model_key    – dot-path into the JSON to the loaded model identifier
+#   endpoint   – path to GET; the response must be JSON
+#   model_key  – dot-path into the JSON to the loaded model identifier
 #
 # The aux (vision projector) file is not probed here: a service that has one
 # declares it in its `aux` field (see _aux_from_process).
 #
 # Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
-_BACKEND_STATE_STRATEGIES: dict = {
-    "llama_cpp": {
-        "endpoint": "/props",
-        "model_key": "model_path",
-    },
-    # vllm exposes /v1/models (list); take the first model id.
-    "vllm": {
-        "endpoint": "/v1/models",
-        "model_key": "data.0.id",
-    },
-    # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
-    "openai_compatible": {
-        "endpoint": "/v1/models",
-        "model_key": "data.0.id",
-    },
-}
+_DEFAULT_LOADED_MODEL_PROBE: Mapping[str, str] = {"endpoint": "/v1/models", "model_key": "data.0.id"}
+
+
+def _loaded_model_probe(record_config: Any) -> Mapping[str, str] | None:
+    """The service's loaded-model probe: its declared one, the default when it declares none, None when malformed."""
+    declared = record_config.get("loaded_model_probe") if isinstance(record_config, Mapping) else None
+    if declared is None:
+        return dict(_DEFAULT_LOADED_MODEL_PROBE)
+    if not isinstance(declared, Mapping):
+        return None
+    endpoint, model_key = declared.get("endpoint"), declared.get("model_key")
+    if not (isinstance(endpoint, str) and endpoint.startswith("/") and isinstance(model_key, str) and model_key):
+        return None
+    return {"endpoint": endpoint, "model_key": model_key}
 
 
 def _project_egress(backends: Mapping[str, Any] | None) -> engine_egress.Projection:
@@ -777,16 +774,14 @@ def _project_egress(backends: Mapping[str, Any] | None) -> engine_egress.Project
     Pure: nothing goes live until the caller installs the result, and it installs the map before the config that
     enables a domain, so a request never sees an enabled domain without its map entry.
 
-    A service's loaded-state endpoint (by its ``state_type``) is a metadata read it declares, so a probe of it counts.
-    A service that names no ``state_type`` is seeded by the default strategy, so any endpoint of the table may be read.
+    A service's loaded-model probe endpoint (``loaded_model_probe``, or the default) is a metadata read it declares,
+    so a probe of it counts.
     """
 
     def state_paths(record: Mapping[str, Any]) -> list[str]:
         scope = record.get("config")
-        state_type = str((scope if isinstance(scope, Mapping) else record).get("state_type") or "")
-        strategies = [_BACKEND_STATE_STRATEGIES[state_type]] if state_type in _BACKEND_STATE_STRATEGIES else (
-            list(_BACKEND_STATE_STRATEGIES.values()) if not state_type else [])
-        return [str(strategy["endpoint"]) for strategy in strategies]
+        probe = _loaded_model_probe(scope if isinstance(scope, Mapping) else record)
+        return [probe["endpoint"]] if probe else []
 
     return engine_egress.project(backends, extra_probe_paths=state_paths)
 
@@ -1195,12 +1190,12 @@ def _normalize_models_catalog(raw) -> dict:
         if backend not in known_backends or not path:
             continue
         projector_raw = item.get("mmproj")
-        mmproj_path = str(projector_raw).strip() if projector_raw else None
+        projector_path = str(projector_raw).strip() if projector_raw else None
         out[mid] = {
             "id": mid,
             "backend": backend,
             "path": str(path).strip(),
-            "mmproj": mmproj_path or None,
+            "mmproj": projector_path or None,
             "description": str(item.get("description", "") or ""),
         }
     return out
@@ -2194,13 +2189,12 @@ def _aux_from_process(backend: str, aux: Mapping[str, Any]) -> Optional[str]:
 def _seed_loaded_state(backend: str) -> None:
     """Populate the backend's loaded-state entry by querying the live backend.
 
-    The model strategy is selected by `state_type` in the service config; the
-    aux file is read as the service's `aux` field says. Called when the cache
+    The model is read through the service's `loaded_model_probe` (or the
+    default probe); the aux file is read as the service's `aux` field says. Called when the cache
     is cold (startup or TTL expiry) — synchronous but cheap relative to a model
     swap.
     """
-    state_type = ((config.get("backends") or {}).get(backend) or {}).get("state_type", "llama_cpp")
-    strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
+    strategy = _loaded_model_probe((config.get("backends") or {}).get(backend))
 
     model: Optional[str] = None
     aux_file: Optional[str] = None
@@ -2214,8 +2208,8 @@ def _seed_loaded_state(backend: str) -> None:
             pass  # server not up yet, or wrong endpoint — state stays None
     else:
         print(
-            f"[proxy] _seed_loaded_state: unknown state_type={state_type!r}; "
-            "add an entry to _BACKEND_STATE_STRATEGIES to fix this",
+            f"[proxy] _seed_loaded_state: service {backend!r} has a malformed loaded_model_probe; "
+            "it needs an endpoint path and a model_key",
             flush=True,
         )
 
@@ -2257,16 +2251,6 @@ def currently_loaded_model(backend: str) -> Optional[str]:
     return _loaded_state_for(backend)["model"]
 
 
-def is_literal_gguf_path(value: str) -> bool:
-    """Return True if `value` looks like an absolute path to an existing .gguf file."""
-    if not value:
-        return False
-    try:
-        return value.endswith(".gguf") and os.path.isabs(value) and os.path.exists(value)
-    except Exception:
-        return False
-
-
 async def _currently_loaded_model_for(backend: str) -> Optional[str]:
     """Return the model a swap-managed backend currently has loaded.
 
@@ -2294,10 +2278,10 @@ def _currently_loaded_aux_for(backend: str) -> Optional[str]:
 async def ensure_target(
     backend: str,
     model: Optional[str],
-    mmproj: Optional[str] = None,
+    aux: Optional[str] = None,
     profile: Optional[str] = None,
 ) -> bool:
-    """Make a (backend, model, mmproj, profile) target real before forwarding.
+    """Make a (backend, model, aux, profile) target real before forwarding.
 
     Every backend goes through its LifecycleDriver — there is no per-engine
     special-case anymore. The driver is resolved from the service's
@@ -2313,7 +2297,7 @@ async def ensure_target(
         the per-service lock. The driver does the already-loaded short-circuit
         and pin-loaded skip from SwapContext.
 
-    `mmproj` is the optional aux file (vision). Pass None for text-only.
+    `aux` is the optional aux file (vision). Pass None for text-only.
     `profile` is an optional named engine profile selected by model data. The
     lifecycle driver owns its meaning and rejects unknown names.
 
@@ -2326,14 +2310,14 @@ async def ensure_target(
     SwapRecoveryFailed when a failed swap could not be rolled back either
     (the backend may be down); callers answer 503 backend_recovery_failed.
     """
-    ready, _lease = await _ensure_target(backend, model, mmproj, profile, take_lease=False)
+    ready, _lease = await _ensure_target(backend, model, aux, profile, take_lease=False)
     return ready
 
 
 async def _ensure_target(
     backend: str,
     model: Optional[str],
-    mmproj: Optional[str],
+    aux: Optional[str],
     profile: Optional[str],
     *,
     take_lease: bool,
@@ -2449,7 +2433,7 @@ async def _ensure_target(
     activation = driver.build_activation(
         bcfg,
         model=model,
-        aux=mmproj or None,
+        aux=aux or None,
         profile=profile,
     )
     if activation is None:
@@ -2462,7 +2446,7 @@ async def _ensure_target(
             loaded_model=await _currently_loaded_model_for(backend),
             target_model=model,
             loaded_aux=_currently_loaded_aux_for(backend),
-            target_aux=mmproj or None,
+            target_aux=aux or None,
             pin_loaded=bool(bcfg.get("pin_loaded_model", _pin_loaded_model())),
             target_profile=profile,
         )
@@ -2512,10 +2496,10 @@ async def _ensure_target_leased(
     )
     if (not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process"
             and not contract_lease and not _transition_policy(backend).enabled):
-        ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
+        ready = await ensure_target(backend, activation.model, activation.aux, profile=activation.profile)
         return ready, None
     return await _ensure_target(
-        backend, activation.model, activation.mmproj, activation.profile,
+        backend, activation.model, activation.aux, activation.profile,
         take_lease=True, offering_id=activation.offering_id,
     )
 
@@ -3828,7 +3812,7 @@ class LocalModelActivation:
 
     backend: str
     model: Optional[str]
-    mmproj: Optional[str] = None
+    aux: Optional[str] = None
     profile: Optional[str] = None
     backend_model: Optional[str] = None
     offering_id: Optional[str] = None
@@ -3906,7 +3890,7 @@ def _configured_litellm_local_model_target(
                 or item.get("path")
                 or ""
             ).strip()
-            activation_mmproj = str(
+            activation_aux = str(
                 item.get("activation_mmproj")
                 or item.get("mmproj")
                 or ""
@@ -3921,7 +3905,7 @@ def _configured_litellm_local_model_target(
             return LocalModelActivation(
                 backend=backend,
                 model=activation_model or None,
-                mmproj=activation_mmproj or None,
+                aux=activation_aux or None,
                 profile=activation_profile or None,
             )
 
@@ -4031,7 +4015,7 @@ async def _prepare_litellm_local_llm_request(
     )
     target_backend = local_activation.backend if local_activation else None
     target_model = local_activation.model if local_activation else None
-    target_projector = local_activation.mmproj if local_activation else None
+    target_projector = local_activation.aux if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if resolved_target is None:
         try:
@@ -4143,7 +4127,7 @@ async def _activate_prepared_litellm_local_target(
     )
     target_backend = local_activation.backend if local_activation else None
     target_model = local_activation.model if local_activation else None
-    target_projector = local_activation.mmproj if local_activation else None
+    target_projector = local_activation.aux if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if not target_backend or (
         enforce_gateway_policy and _target_activation(auth_context) == "existing_only"
@@ -4260,8 +4244,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not host or not isinstance(backend_cfg, Mapping):
         return ""
-    state_type = str(backend_cfg.get("state_type") or "openai_compatible")
-    strategy = _BACKEND_STATE_STRATEGIES.get(state_type)
+    strategy = _loaded_model_probe(backend_cfg)
     if not strategy:
         return ""
     try:
@@ -6573,8 +6556,8 @@ def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
 
 def _graph_binding_artifact(record: Any) -> str | None:
     bindings = record.manifest.get("bindings")
-    comfy = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
-    artifact = comfy.get("workflow") if isinstance(comfy, Mapping) else None
+    binding = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
     return artifact if isinstance(artifact, str) and artifact else None
 
 
@@ -24795,7 +24778,7 @@ def _media_job_prompt_body(payload: Mapping[str, Any], body: Mapping[str, Any]) 
 
 _ADMISSION_WORKER: contextvars.ContextVar[bool] = contextvars.ContextVar("admission_worker", default=False)
 
-_MEDIA_JOB_QUEUE_KEY = "comfyui-media"
+_MEDIA_JOB_QUEUE_KEY = "media"
 # Every intent the gateway runs as a media job, and its admission resource
 # class. Jobs with these intents count toward the media queue depth.
 # The resource classes of media job, each served by one graph family.
@@ -30310,16 +30293,15 @@ async def list_models(request: Request):
         data = []
         upstream_payload["data"] = data
 
-    # Drop the full-absolute-path duplicate from the local backend's payload — it's
-    # redundant with the filename-only entry and LibreChat shows both as
-    # separate options, which is confusing.
+    # Drop ids that are absolute file paths: a local backend can list the model file's
+    # full path next to its filename-only entry, and clients show both as separate
+    # options, which is confusing. A filesystem path is never a public model id.
     data = [
         item for item in data
         if not (
             isinstance(item, dict)
             and isinstance(item.get("id"), str)
             and item["id"].startswith("/")
-            and item["id"].endswith(".gguf")
         )
     ]
 
@@ -32652,7 +32634,7 @@ def _litellm_local_activation_target(
         if activation_model:
             candidates.add(os.path.basename(activation_model))
         if requested in {normalize_model_id(candidate) for candidate in candidates if candidate}:
-            activation_mmproj = str(
+            activation_aux = str(
                 item.get("activation_mmproj") or item.get("mmproj") or ""
             ).strip()
             activation_profile = str(item.get("activation_profile") or "").strip()
@@ -32668,7 +32650,7 @@ def _litellm_local_activation_target(
             return LocalModelActivation(
                 backend=backend,
                 model=activation_model or requested_model,
-                mmproj=activation_mmproj or None,
+                aux=activation_aux or None,
                 profile=activation_profile or None,
                 backend_model=backend_model or requested_model,
                 offering_id=resolved_offering_id,

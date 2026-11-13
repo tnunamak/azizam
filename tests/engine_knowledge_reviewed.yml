@@ -72,3 +72,13 @@ sites:
     count: 1
     category: protocol_field
     reason: Comment written into a systemd drop-in; names the role config fields; pinned byte for byte by golden tests.
+  - file: proxy.py
+    literal: mmproj
+    count: 4
+    category: protocol_field
+    reason: Names the models-catalog field an operator writes to hold a projector-file path.
+  - file: proxy.py
+    literal: activation_mmproj
+    count: 2
+    category: protocol_field
+    reason: Names the configured projector-file path used during model activation.

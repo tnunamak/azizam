@@ -604,7 +604,10 @@
     "priority": 100,
     "protocol": "openai-compatible",
     "role": "required",
-    "state_type": "llama_cpp",
+    "loaded_model_probe": {
+     "endpoint": "/props",
+     "model_key": "model_path"
+    },
     "transforms": [
      "reasoning-effort-final-chat"
     ],

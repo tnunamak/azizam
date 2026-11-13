@@ -3,6 +3,11 @@
 **Status:** Design (architect's recommendation). Operationalizes the owner's binding principle.
 **Last verified against code:** 2026-06-16, branch `ideogram4-quality-tuning`.
 
+**Status update — 2026-11-13 (train 63):** the engine-name ratchet baseline is empty. The last table,
+the loaded-model probe keyed by `state_type`, became the service-record field `loaded_model_probe`
+(`endpoint`, `model_key`; default: the OpenAI-compatible `/v1/models`, `data.0.id`). The named admin step
+`loaded-model-probe` (`gateway/loaded_model_probe_migration.py`) rewrote stored records once.
+
 **Status update — 2026-10-12 (S2):** `gateway/engine_quarantine.py` is deleted. Its six
 tables became service-record fields, seeded by `scripts/migrations/engine_service_fields.py`
 and `proxy_config.yml`: the local-swap set is derived from the lifecycle driver;
@@ -117,7 +122,7 @@ P2-3 property destinations, each independent of backend names:
 | `_ACTIVATION_FROM_UPSTREAM_ID` | Lifecycle `driver_config.activation_model_source` (proposed) |
 | `_ACTIVATION_REQUIRES_ABS_PATH` | Lifecycle `driver_config.activation_requires_absolute_path` (proposed) |
 | `_HAS_AUX_MMPROJ` | Service `config.aux` probe declaration (proposed) |
-| `_LOADED_MODEL_IS_PATH` / `_LOADED_MODEL_IS_HTTP_ID` | Service `config.state_type` and probe field/path/auth configuration (proposed) |
+| `_LOADED_MODEL_IS_PATH` / `_LOADED_MODEL_IS_HTTP_ID` | Service `config.loaded_model_identity` and `config.loaded_model_probe` (done, train 63) |
 | `_ROLES_MAY_BE_UNPINNED` | Service `config.roles_allow_unpinned` (proposed) |
 | `_VISION_VIA_AUX` | Capability metadata plus the configured aux probe result |
 | `_CONTEXT_WINDOW_FROM_MODEL_PARAMS` / `_CONTEXT_WINDOW_FROM_LIVE_PROBE` | Service `config.context_window_source` and probe field configuration (proposed) |
