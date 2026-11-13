@@ -166,7 +166,7 @@ def test_rise_new_file_and_fall_fail() -> None:
     assert "rose 2 -> 3" in ratchet_violations({"a.py": {"gguf": 3}}, base)[0]
     assert "fell 2 -> 1" in ratchet_violations({"a.py": {"gguf": 1}}, base)[0]
     assert "fell 2 -> 0" in ratchet_violations({}, base)[0]
-    assert "new file" in ratchet_violations({"a.py": {"gguf": 2}, "b.py": {"GPU0": 1}}, base)[1]
+    assert ratchet_violations({"a.py": {"gguf": 2}, "b.py": {"GPU0": 1}}, base) == ["b.py: new file with implicit markers {'GPU0': 1}"]
 
 
 def test_lower_tool_refuses_a_raise() -> None:
