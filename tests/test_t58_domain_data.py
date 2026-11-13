@@ -38,6 +38,7 @@ def test_published_queue_name_is_preserved():
 
 
 def test_identity_manifest_and_model_follow_gateway_binding(monkeypatch):
+    assert proxy._identity_workflow_ids() == ("image.edit.image-identity", "image-identity")
     record = SimpleNamespace(id="portrait.compose.new", manifest={"bindings": {"gateway": {
         "route": identity_api.IDENTITY_PATH, "compose": "identity_scene", "model_id": "portrait-new"}}})
     monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", SimpleNamespace(records=lambda: [record]))
