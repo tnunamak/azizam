@@ -16,7 +16,8 @@ import {
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
 import { accountApi } from "@/lib/account-api";
-import { capabilityLabels as terms, preferredTerms, taskNames } from "@/lib/terms";
+import { preferredTerms } from "@/lib/terms";
+import { capabilityMemberLabels, capabilityModelsExplainers } from "@/lib/capability-words";
 import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -102,36 +103,10 @@ const taskOrder: Task[] = [
  * embeddings use the plain task names Try uses, which the sweep requires on
  * member screens; the sentence under each name says what it is for.
  */
-const taskLabels: Record<Task, string> = {
-  chat: terms.chat,
-  image: terms.image,
-  video: terms.video,
-  mesh: terms.mesh,
-  music: terms.music,
-  sfx: terms.sfx,
-  speech: terms.speech,
-  audio: terms.audio,
-  transcribe: terms.transcribe,
-  decide: taskNames.decisions,
-  embed: taskNames.embeddings,
-  rerank: terms.rerank,
-};
+const taskLabels: Record<Task, string> = capabilityMemberLabels;
 
 /** One plain sentence per task: what an app uses it for. */
-const taskExplainers: Record<Task, string> = {
-  chat: "Answers, writing and code, for chat apps and agents.",
-  image: "Make or edit a picture from a description.",
-  video: "Make a short video from a description or a picture.",
-  mesh: "Make a 3D model from one picture.",
-  music: "Songs and instrumentals from a description.",
-  sfx: "Short sounds from a description.",
-  speech: "Read text aloud.",
-  audio: "Music and sounds from a description.",
-  transcribe: "Turn a recording into text.",
-  decide: "Pick one answer from options you give, for routing and yes-or-no checks.",
-  embed: "Vectors that let apps search text and find similar passages.",
-  rerank: "Sort search results by how well they match.",
-};
+const taskExplainers: Record<Task, string> = capabilityModelsExplainers;
 
 const tagLabels: Record<ModelTag, string> = {
   reasoning: "Thinks through questions",

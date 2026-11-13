@@ -158,7 +158,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        comfy_enabled = derived_patch("COMFY_ENABLED", True)
+        comfy_enabled = derived_patch("GRAPH_ENABLED", True)
         comfy_enabled.start()
         self.addCleanup(comfy_enabled.stop)
         overrides = patch.object(proxy.ADMIN_STORE, "operator_overrides",
@@ -194,7 +194,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         # The workflow writes FLAC (its manifest output), as the live backend does.
         fake = self.fakes.asgi(_audio_scenario("sfx_00001_.flac", "audio/flac"))
         auth = self.caller(caller)
-        with derived_patch("COMFY_HOST", fake.base_url), \
+        with derived_patch("GRAPH_HOST", fake.base_url), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()):
             job_id = await self.submit_as_mcp("audio.generate.sa3-small-sfx", {"prompt": "a door creaks"}, auth)
             self.assertEqual(self.scheduled, [job_id])
@@ -206,7 +206,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         auth = self.caller(caller)
         # "auto" background asks a chat model whether to cut out the subject; no chat backend here.
         no_cutout = AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))
-        with derived_patch("COMFY_HOST", fake.base_url), \
+        with derived_patch("GRAPH_HOST", fake.base_url), \
                 patch.object(proxy, "resolve_image_background_decision", no_cutout), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()):
             job_id = await self.submit_as_mcp("image.generate.flux2-klein-4b", {"prompt": "a red fox"}, auth)
@@ -224,7 +224,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         # The body MCP builds for the video route, sent as a durable media job.
         built = await build_request(lambda *_: None, None, auth, entry, submit, {"prompt": "waves at dusk"},
                                     wrap_intent=None)
-        with derived_patch("COMFY_HOST", fake.base_url), \
+        with derived_patch("GRAPH_HOST", fake.base_url), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()), \
                 patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0):
             response = await proxy._dispatch_gateway_media_job_submission(

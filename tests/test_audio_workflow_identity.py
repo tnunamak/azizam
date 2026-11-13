@@ -73,7 +73,7 @@ def test_a_listed_name_without_a_record_is_not_offered():
 
 def test_the_route_policy_request_carries_the_records_id():
     seen, spy = _spy_policy_requests()
-    with _registry(_record(ODD_ID, "audio.generate", "fx")), spy, derived_patch("COMFY_ENABLED", True), \
+    with _registry(_record(ODD_ID, "audio.generate", "fx")), spy, derived_patch("GRAPH_ENABLED", True), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_resolve_audio_workflow", return_value=("fx", {"file": "x.json"})), \
             patch.object(proxy, "_load_audio_workflow_file", new=lambda _cfg: {"1": {"inputs": {"text": ""}}}), \
@@ -83,7 +83,7 @@ def test_the_route_policy_request_carries_the_records_id():
 
 
 def test_a_resolved_name_with_no_record_is_an_unknown_model_on_the_route():
-    with _registry(), derived_patch("COMFY_ENABLED", True), \
+    with _registry(), derived_patch("GRAPH_ENABLED", True), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_resolve_audio_workflow", return_value=("fx", {"file": "x.json"})):
         response = asyncio.run(proxy.proxy_audio_generate(_Json({"model": "fx", "prompt": "x"}), access_context()))
@@ -94,7 +94,7 @@ def _queued_run(pinned_id: str, *, record_id: str = ODD_ID, resolves_to: str = "
     """A queued job's run with the pin the accepted job stored; a 502 means it got past the pin to the stubbed wire."""
     manifest = _record(record_id, "audio.generate", "fx").manifest
     pin = SimpleNamespace(manifest=lambda _binding: manifest, envelope=SimpleNamespace(source_id="job-1"))
-    with _registry(_record(record_id, "audio.generate", "fx")), derived_patch("COMFY_ENABLED", True), \
+    with _registry(_record(record_id, "audio.generate", "fx")), derived_patch("GRAPH_ENABLED", True), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_resolve_audio_workflow", return_value=(resolves_to, {"file": "x.json"})), \
             patch.object(proxy, "_pinned_graph", new=lambda _pin: {"1": {"inputs": {"text": ""}}}), \

@@ -352,6 +352,7 @@ from gateway.transforms import (
     ENABLE_THINKING_KEY as _ENABLE_THINKING_KEY,
     normalize_chat_completion_payload as _normalize_chat_completion_payload,
 )
+from gateway import toolcall_detection
 from gateway.toolcall_detection import (
     detect_unlifted_toolcalls as _detect_unlifted_toolcalls,
     advisory_for_backend as _toolcall_advisory_for_backend,
@@ -525,7 +526,7 @@ def runtime() -> config_runtime.RuntimeSnapshot:
 class _DerivedValues:
     """The values the published snapshot derived from its config and the registry (``RuntimeSnapshot.derived``).
 
-    ``DERIVED.COMFY_HOST`` is read from the snapshot of the call (the request's own, else the latest), never from a
+    ``DERIVED.GRAPH_HOST`` is read from the snapshot of the call (the request's own, else the latest), never from a
     module name that a reload assigns, so a reader sees one snapshot whole and a registry edit reaches it without a
     restart. Each name is a key ``_derive_backend_constants`` returns (docs/design/CONFIG_HOMES.md, 5.1, class A and B).
     """
@@ -1191,8 +1192,8 @@ def _normalize_models_catalog(raw) -> dict:
         # Require a known backend AND a local path (GGUF catalog — path is mandatory).
         if backend not in known_backends or not path:
             continue
-        mmproj_raw = item.get("mmproj")
-        mmproj_path = str(mmproj_raw).strip() if mmproj_raw else None
+        projector_raw = item.get("mmproj")
+        mmproj_path = str(projector_raw).strip() if projector_raw else None
         out[mid] = {
             "id": mid,
             "backend": backend,
@@ -1224,7 +1225,7 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
 # The embeddings, ComfyUI (graph engine) and speech/transcription addresses, timeouts, workflow directories and default
 # model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
 # edit reaches every reader without a restart. Video workflows live separately from image workflows so they are
-# version-controlled next to proxy.py rather than inside the ComfyUI directory (``DERIVED.COMFY_VIDEO_WORKFLOWS_DIR``).
+# version-controlled next to proxy.py rather than inside the ComfyUI directory (``DERIVED.GRAPH_VIDEO_WORKFLOWS_DIR``).
 # The graph engine's service is selected per route family by the capability that family needs (``_graph_service``), never
 # by a fixed id: an install may name it anything, and the three families may be served by three different records. The
 # adapter and protocol description come from the selected record and the family's capability; the manifest binding key
@@ -1582,12 +1583,12 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "STT_HOST": service_registry.engine_base_address(stt_c),
         "EMBEDDINGS_HOST": service_registry.engine_base_address(emb_c),
         "GRAPH_SERVICES": graph,
-        "COMFY_HOST": images.host,
+        "GRAPH_HOST": images.host,
         "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True) and bool(service_registry.engine_base_address(tts_c)),
         "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True) and bool(service_registry.engine_base_address(stt_c)),
         "STT_TIMEOUT": int(_record_default(_TRANSCRIPTION_CAPABILITY, stt_c, "timeout")),
         "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)) and bool(service_registry.engine_base_address(emb_c)),
-        "COMFY_ENABLED": images.enabled,
+        "GRAPH_ENABLED": images.enabled,
         # Build the host maps from the new config.
         "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
@@ -1595,11 +1596,11 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         "EMBEDDINGS_HEALTH_ENDPOINT": _record_default(_EMBEDDINGS_CAPABILITY, emb_c, "health_endpoint"),
         "EMBEDDINGS_TIMEOUT": int(_record_default(_EMBEDDINGS_CAPABILITY, emb_c, "timeout")),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
-        "COMFY_TIMEOUT": images.timeout,
-        "COMFY_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, images.record, "default_model"),
-        "COMFY_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_timeout")),
-        "COMFY_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, images.record, "workflows_dir")),
-        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_workflows_dir")),
+        "GRAPH_TIMEOUT": images.timeout,
+        "GRAPH_DEFAULT_MODEL": _record_default(_GRAPH_CAPABILITY, images.record, "default_model"),
+        "GRAPH_VIDEO_TIMEOUT": int(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_timeout")),
+        "GRAPH_WORKFLOWS_DIR": _workflows_directory(_record_default(_GRAPH_CAPABILITY, images.record, "workflows_dir")),
+        "GRAPH_VIDEO_WORKFLOWS_DIR": _workflows_directory(_record_default(_VIDEO_GRAPH_CAPABILITY, videos.record, "video_workflows_dir")),
         "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(images.record, _GRAPH_CAPABILITY).binding,
         # The route policies the registry's protocol frontends describe.
         "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
@@ -3618,7 +3619,7 @@ def is_openai_model_alias(model_name: str) -> bool:
 
 def _image_default_model() -> str:
     """The workflow a generation request runs when it names none: the deployment's configured default."""
-    return DERIVED.COMFY_DEFAULT_MODEL
+    return DERIVED.GRAPH_DEFAULT_MODEL
 
 
 def default_model_for_operation(operation: str, requested_model: str = "") -> str:
@@ -3963,7 +3964,7 @@ async def _ensure_litellm_local_backend_target(
     requested_model: str,
     backend: Optional[str],
     target_model: Optional[str],
-    target_mmproj: Optional[str] = None,
+    target_projector: Optional[str] = None,
     target_profile: Optional[str] = None,
     enforce_gateway_policy: bool = True,
 ) -> Response | None:
@@ -3976,7 +3977,7 @@ async def _ensure_litellm_local_backend_target(
         ready = await ensure_target(
             backend,
             target_model,
-            target_mmproj,
+            target_projector,
             profile=target_profile,
         )
     except SwapDeferred as deferred:
@@ -4028,7 +4029,7 @@ async def _prepare_litellm_local_llm_request(
     )
     target_backend = local_activation.backend if local_activation else None
     target_model = local_activation.model if local_activation else None
-    target_mmproj = local_activation.mmproj if local_activation else None
+    target_projector = local_activation.mmproj if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if resolved_target is None:
         try:
@@ -4069,7 +4070,7 @@ async def _prepare_litellm_local_llm_request(
             target_backend in _vision_members
         ) or (
             _aux_grants_vision(target_backend)
-            and bool(target_mmproj)
+            and bool(target_projector)
         )
         if not target_can_serve_vision:
             return Response(
@@ -4116,7 +4117,7 @@ async def _prepare_litellm_local_llm_request(
         requested_model=model_name,
         backend=target_backend,
         target_model=target_model,
-        target_mmproj=target_mmproj,
+        target_projector=target_projector,
         target_profile=target_profile,
         enforce_gateway_policy=enforce_gateway_policy,
     )
@@ -4140,7 +4141,7 @@ async def _activate_prepared_litellm_local_target(
     )
     target_backend = local_activation.backend if local_activation else None
     target_model = local_activation.model if local_activation else None
-    target_mmproj = local_activation.mmproj if local_activation else None
+    target_projector = local_activation.mmproj if local_activation else None
     target_profile = local_activation.profile if local_activation else None
     if not target_backend or (
         enforce_gateway_policy and _target_activation(auth_context) == "existing_only"
@@ -4151,7 +4152,7 @@ async def _activate_prepared_litellm_local_target(
         requested_model=requested_model,
         backend=target_backend,
         target_model=target_model,
-        target_mmproj=target_mmproj,
+        target_projector=target_projector,
         target_profile=target_profile,
         enforce_gateway_policy=enforce_gateway_policy,
     )
@@ -4547,7 +4548,7 @@ def _backend_banner_lines(derived: Mapping[str, Any]) -> list[str]:
     """The startup lines for the speech, transcription and ComfyUI backends; each address is shown without user info or query."""
     return [
         f"[proxy] {label} backend: {projection.public_url(str(derived[key + '_HOST'] or ''))} (enabled: {derived[key + '_ENABLED']})"
-        for label, key in (("TTS", "TTS"), ("STT", "STT"), (_graph_engine_label(derived), "COMFY"))
+        for label, key in (("TTS", "TTS"), ("STT", "STT"), (_graph_engine_label(derived), "GRAPH"))
     ]
 
 
@@ -6524,7 +6525,7 @@ def _load_graph_workflow_outcome(model_name: str, intent: str | None) -> tuple[O
             print(f"[proxy] WARNING: graph for {model_name!r} refused: {exc}", flush=True)
             return None, True
     else:
-        workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        workflow_path = DERIVED.GRAPH_WORKFLOWS_DIR / f"{model_name}.json"
         if not workflow_path.exists() and found is not None:
             workflow_path = _resolve_workflow_artifact_path(*found)
     if not workflow_path.exists():
@@ -6771,7 +6772,7 @@ def _manifest_job_envelope(
     )
 
 
-async def check_comfy_health(capability: str) -> bool:
+async def check_graph_engine_health(capability: str) -> bool:
     """Check if the graph service selected for family *capability* is healthy: false when none is selected, it is
     disabled or it names no address, without a probe."""
     service = _graph_service(capability)
@@ -7017,7 +7018,7 @@ def record_vram_estimate(
 
     ``bytes_per_image`` is flux's *marginal* per-image contribution (the
     per-image slice of ``comfy_used_peak - comfy_used_before`` or
-    ``comfy_used_peak - comfy_baseline``), NOT whole-GPU peak occupancy. This
+    ``comfy_used_peak - graph_baseline``), NOT whole-GPU peak occupancy. This
     is insensitive to concurrent voxtral / desktop / TTS activity because the
     sample stream is per-process (filtered to ComfyUI PID(s) on GPU0 via
     ``nvidia-smi --query-compute-apps``).
@@ -7186,7 +7187,7 @@ def _resolve_gpu0_uuid() -> Optional[str]:
         return None
 
 
-def _resolve_comfy_pids() -> set[int]:
+def _resolve_graph_pids() -> set[int]:
     """Identify all ComfyUI processes by scanning /proc.
 
     A process is considered "ComfyUI" if its cmdline contains ``main.py`` AND
@@ -7245,11 +7246,11 @@ def _resolve_comfy_pids() -> set[int]:
     return all_pids
 
 
-def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> Optional[int]:
+def _sample_graph_vram_bytes(graph_pids: set[int], gpu0_uuid: Optional[str]) -> Optional[int]:
     """Return ComfyUI's per-process VRAM occupancy on GPU0, in bytes.
 
     Sums ``used_memory`` rows from ``nvidia-smi --query-compute-apps`` where
-    the PID is in ``comfy_pids`` and (if ``gpu0_uuid`` is known) the gpu_uuid
+    the PID is in ``graph_pids`` and (if ``gpu0_uuid`` is known) the gpu_uuid
     matches GPU0. Returns None on nvidia-smi failure so the probe can flag
     the run as untrusted.
     """
@@ -7265,7 +7266,7 @@ def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> 
             timeout=2.0,
         )
     except Exception as e:
-        print(f"[proxy] _sample_comfy_vram_bytes: nvidia-smi failed: {e}", flush=True)
+        print(f"[proxy] _sample_graph_vram_bytes: nvidia-smi failed: {e}", flush=True)
         return None
     if p.returncode != 0:
         return None
@@ -7280,7 +7281,7 @@ def _sample_comfy_vram_bytes(comfy_pids: set[int], gpu0_uuid: Optional[str]) -> 
             used_mb = int(parts[2])
         except ValueError:
             continue
-        if pid not in comfy_pids:
+        if pid not in graph_pids:
             continue
         if gpu0_uuid and parts[1] != gpu0_uuid:
             continue
@@ -7299,8 +7300,8 @@ class _VramProbe:
     Marginal cost semantics (replacing the older whole-GPU ``total - min_free``):
 
       - ``comfy_used_before``    = first sample, taken before the /prompt POST.
-      - ``comfy_used_baseline``  = min comfy_used during the first ~2 s window.
-      - ``comfy_used_peak``      = max comfy_used across all samples.
+      - ``comfy_used_baseline``  = min graph_used during the first ~2 s window.
+      - ``comfy_used_peak``      = max graph_used across all samples.
 
     Marginal = ``peak - before`` for a warm run. When the run is cold (the
     model loaded for the first time), ``before`` already includes the loaded
@@ -7327,16 +7328,16 @@ class _VramProbe:
         self._stop = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._gpu0_uuid: Optional[str] = None
-        self._comfy_pids: set[int] = set()
+        self._graph_pids: set[int] = set()
         self._t_start: float = 0.0
         self.samples = 0
         # Whole-GPU view (legacy): retained for "system pressure" reporting.
         self.min_free: Optional[int] = None
         self.total: Optional[int] = None
         # Per-ComfyUI-process view: the new source of truth for the batcher.
-        self.comfy_before: Optional[int] = None
-        self.comfy_baseline_min: Optional[int] = None  # min within baseline window
-        self.comfy_peak: Optional[int] = None
+        self.graph_before: Optional[int] = None
+        self.graph_baseline_min: Optional[int] = None  # min within baseline window
+        self.graph_peak: Optional[int] = None
         self.error: Optional[str] = None
         # Set to True if at least one per-process sample succeeded.
         self.have_per_process_data = False
@@ -7355,25 +7356,25 @@ class _VramProbe:
         # Per-process side: poll nvidia-smi in a worker thread so we don't
         # block the event loop. ~5-15 ms per call on this box.
         try:
-            comfy_used = await asyncio.to_thread(
-                _sample_comfy_vram_bytes, self._comfy_pids, self._gpu0_uuid
+            graph_used = await asyncio.to_thread(
+                _sample_graph_vram_bytes, self._graph_pids, self._gpu0_uuid
             )
         except Exception as e:
             self.error = log_scrub.describe_error(e)
-            comfy_used = None
+            graph_used = None
 
-        if isinstance(comfy_used, int):
+        if isinstance(graph_used, int):
             self.have_per_process_data = True
-            if self.comfy_before is None:
-                self.comfy_before = comfy_used
-            if self.comfy_peak is None or comfy_used > self.comfy_peak:
-                self.comfy_peak = comfy_used
+            if self.graph_before is None:
+                self.graph_before = graph_used
+            if self.graph_peak is None or graph_used > self.graph_peak:
+                self.graph_peak = graph_used
             # Baseline window: only the first ~2 s after probe start. We
             # specifically want the MIN here (model may already be in the
             # process of loading on the very first sample of a cold run).
             if (time.monotonic() - self._t_start) <= _VRAM_BASELINE_WINDOW_S:
-                if self.comfy_baseline_min is None or comfy_used < self.comfy_baseline_min:
-                    self.comfy_baseline_min = comfy_used
+                if self.graph_baseline_min is None or graph_used < self.graph_baseline_min:
+                    self.graph_baseline_min = graph_used
 
         self.samples += 1
 
@@ -7382,15 +7383,15 @@ class _VramProbe:
             # Resolve identifiers once. Cheap; both calls are short subprocess
             # invocations gated by 2s timeouts.
             self._gpu0_uuid = await asyncio.to_thread(_resolve_gpu0_uuid)
-            self._comfy_pids = await asyncio.to_thread(_resolve_comfy_pids)
-            if not self._comfy_pids:
+            self._graph_pids = await asyncio.to_thread(_resolve_graph_pids)
+            if not self._graph_pids:
                 self.error = f"no {_graph_adapter(_GRAPH_CAPABILITY).label} PIDs resolved"
                 # Continue sampling anyway — at least the whole-GPU fields
                 # will be populated for the legacy fallback path.
 
             # Capture an immediate "before" baseline so we have at least one
             # data point even on very short rounds. This sample becomes
-            # ``comfy_before``.
+            # ``graph_before``.
             await self._record_sample()
             while not self._stop.is_set():
                 try:
@@ -7446,19 +7447,19 @@ class _VramProbe:
         """
         if not self.have_per_process_data:
             return None, "unknown"
-        if not isinstance(self.comfy_before, int) or not isinstance(self.comfy_peak, int):
+        if not isinstance(self.graph_before, int) or not isinstance(self.graph_peak, int):
             return None, "unknown"
         baseline = (
-            self.comfy_baseline_min
-            if isinstance(self.comfy_baseline_min, int)
-            else self.comfy_before
+            self.graph_baseline_min
+            if isinstance(self.graph_baseline_min, int)
+            else self.graph_before
         )
-        cold = (self.comfy_before - baseline) > _VRAM_COLD_LOAD_THRESHOLD_BYTES
+        cold = (self.graph_before - baseline) > _VRAM_COLD_LOAD_THRESHOLD_BYTES
         if cold:
-            marginal = self.comfy_peak - baseline
+            marginal = self.graph_peak - baseline
             state = "cold"
         else:
-            marginal = self.comfy_peak - self.comfy_before
+            marginal = self.graph_peak - self.graph_before
             state = "warm"
         if marginal <= 0:
             return None, state
@@ -8851,7 +8852,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
     measurement_trusted = False
     source = "probe"
     model_state = "unknown"
-    comfy_baseline = 0
+    graph_baseline = 0
     samples_count = probe.samples if probe is not None else 0
     free_after, _ = await graph_vram_snapshot(client, _GRAPH_CAPABILITY)
     if probe is not None and probe.trustworthy():
@@ -8861,7 +8862,7 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
             per_image_cost = marginal // max(1, batch_target)
             measurement_trusted = True
             source = "probe"
-        comfy_baseline = probe.comfy_baseline_min if isinstance(probe.comfy_baseline_min, int) else 0
+        graph_baseline = probe.graph_baseline_min if isinstance(probe.graph_baseline_min, int) else 0
     elif probe is not None and probe.error:
         print(f"[proxy] VRAM probe error for {workflow_name} {width}x{height}: {probe.error}", flush=True)
     if per_image_cost <= 0:
@@ -8874,13 +8875,13 @@ async def _measure_first_round_vram(client: httpx.AsyncClient, *, probe: Optiona
         source = "endpoint_diff"
     record_vram_estimate(
         workflow_name, width, height, per_image_cost, trusted=measurement_trusted, source=source, model_state=model_state,
-        comfy_baseline_bytes=comfy_baseline, samples_count=samples_count)
+        comfy_baseline_bytes=graph_baseline, samples_count=samples_count)
     sys_peak = probe.system_peak_used_bytes() if probe is not None else None
     gib = lambda value: f"{value / (1024**3):.2f} GiB" if isinstance(value, int) else "n/a"  # noqa: E731
     print(f"[proxy] VRAM estimate for {workflow_name} {width}x{height}: {per_image_cost / (1024**2):.1f} MiB/image marginal "
           f"(trusted={measurement_trusted}, source={source}, model_state={model_state}, probe_samples={samples_count}, "
-          f"comfy_before={gib(probe.comfy_before if probe is not None else None)}, "
-          f"comfy_peak={gib(probe.comfy_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
+          f"graph_before={gib(probe.graph_before if probe is not None else None)}, "
+          f"graph_peak={gib(probe.graph_peak if probe is not None else None)}, system_peak={gib(sys_peak)})", flush=True)
     # Re-read; None when the measurement was untrusted (no scheduling decision is made from it).
     return get_vram_estimate(workflow_name, width, height)
 
@@ -10448,7 +10449,7 @@ VIDEO_ID_PREFIX = "video_"
 
 # Stable client_id used for both the websocket connection and the /prompt POST
 # body. ComfyUI routes events for a submission to the matching client_id.
-COMFY_CLIENT_ID = uuid.uuid4().hex
+GRAPH_CLIENT_ID = uuid.uuid4().hex
 
 # prompt_id -> {status, percent, step, total, node, phase, error, updated_at}
 _video_progress: dict[str, dict] = {}
@@ -11048,7 +11049,7 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
 
     while not stop_event.is_set():
         try:
-            async with contextlib.aclosing(adapter.watch(conn, COMFY_CLIENT_ID, on_open=opened, stop=stop_event.is_set)) as events:
+            async with contextlib.aclosing(adapter.watch(conn, GRAPH_CLIENT_ID, on_open=opened, stop=stop_event.is_set)) as events:
                 async for evt in events:
                     if stop_event.is_set():
                         break
@@ -11940,7 +11941,7 @@ async def _submit_video_graph(
                 return admission
             # client_id routes ws events for this submission to our listener.
             resp = await _graph(client, "videos").submit(
-                _build_graph_submit_payload(workflow, _VIDEO_GRAPH_CAPABILITY, client_id=COMFY_CLIENT_ID), headers=headers,
+                _build_graph_submit_payload(workflow, _VIDEO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID), headers=headers,
             )
             if resp.status != 200:
                 # Do NOT record _video_progress here: no prompt_id means there
@@ -12304,8 +12305,8 @@ async def _proxy_graph_video_create(
             chain_name, chain_cfg = _chain_workflow_for(requested_model)
             if chain_cfg is None:
                 return _gateway_input_error(
-                    f"Model {workflow_name} cannot render shots or clips longer than "
-                    f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
+                    toolcall_detection.GATEWAY_MESSAGES["long_video_not_supported"].format(
+                        model=workflow_name, max_seconds=f"{workflow_cfg.get('max_seconds', 8):g}"),
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported",
                     job_message=f"This model cannot render shots or clips longer than "
@@ -13278,7 +13279,7 @@ async def proxy_graph_video_extend(
         requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
-        return _json_error(400, f"model {requested!r} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3",
+        return _json_error(400, toolcall_detection.GATEWAY_MESSAGES["video_extend_not_supported"].format(model=repr(requested)),
                            param="model", code="video_extend_not_supported")
     public_model = str(body.get("model") or source_model or "video-long")
     return await _with_request_media_inputs(lambda holder: _submit_video_chain(
@@ -14364,7 +14365,7 @@ async def _serve(app: FastAPI):
     print(f"[proxy] Model compatibility: {'enabled' if model_compat_enabled() else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
-    node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
+    node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "graph_object_info"
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -14388,13 +14389,13 @@ async def _serve(app: FastAPI):
 
     # ComfyUI websocket listener for real-time video progress. Optional —
     # /v1/videos/{id} falls back to /history polling if this can't connect.
-    comfy_ws_stop = asyncio.Event()
-    comfy_ws_task = None
+    graph_ws_stop = asyncio.Event()
+    graph_ws_task = None
     video_reconcile_stop = asyncio.Event()
     video_reconcile_task = None
     if _graph_service(_VIDEO_GRAPH_CAPABILITY).enabled:
-        comfy_ws_task = asyncio.create_task(_graph_ws_listener(comfy_ws_stop))
-        print(f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
+        graph_ws_task = asyncio.create_task(_graph_ws_listener(graph_ws_stop))
+        print(f"[proxy] {_graph_adapter(_GRAPH_CAPABILITY).label} ws listener started (client_id={GRAPH_CLIENT_ID})", flush=True)
 
         # Startup reconciliation: safety net for any persisted/hydrated
         # _video_progress (currently in-memory only, so this is usually a
@@ -14520,11 +14521,11 @@ async def _serve(app: FastAPI):
         task.cancel()
     if owned_job_tasks:
         await asyncio.gather(*owned_job_tasks, return_exceptions=True)
-    if comfy_ws_task is not None:
-        comfy_ws_stop.set()
-        comfy_ws_task.cancel()
+    if graph_ws_task is not None:
+        graph_ws_stop.set()
+        graph_ws_task.cancel()
         try:
-            await comfy_ws_task
+            await graph_ws_task
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -17059,8 +17060,27 @@ async def _live_probe_evidence() -> dict[str, dict[str, Any]]:
     return evidence
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
-IDENTITY_MODEL_ID = "image-identity"
-IDENTITY_MANIFEST_ID = "image.edit.image-identity"
+def _identity_workflow_record():
+    records = [record for record in GATEWAY_WORKFLOW_REGISTRY.records()
+               if (record.manifest.get("bindings", {}).get("gateway", {}).get("route")
+                   == identity_api.IDENTITY_PATH)]
+    if len(records) != 1:
+        raise ValueError("identity route must have exactly one workflow gateway binding")
+    return records[0]
+
+
+def _identity_workflow_ids() -> tuple[str, str]:
+    record = _identity_workflow_record()
+    return record.id, record.manifest["bindings"]["gateway"]["model_id"]
+
+
+try:
+    IDENTITY_MANIFEST_ID, IDENTITY_MODEL_ID = _identity_workflow_ids()
+except ValueError as _identity_error:
+    # Only the identity route depends on this binding: it answers "identity workflow manifest is missing" and the
+    # rest of the gateway serves.
+    print(f"[proxy] Identity scene unavailable: {_identity_error}", flush=True)
+    IDENTITY_MANIFEST_ID = IDENTITY_MODEL_ID = None
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
@@ -17229,7 +17249,7 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
 
 
 
-_IDENTITY_JOB_INTENT = "image.identity"
+_IDENTITY_JOB_INTENT = media_job_intents.execution_intent(identity_api.IDENTITY_PATH)
 _identity_job_semaphore = asyncio.Semaphore(1)
 _identity_job_tasks: set[asyncio.Task] = set()
 
@@ -18472,11 +18492,19 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
         except Exception:  # noqa: BLE001
             records = {}
+        declared_capabilities = declared_operation_job.capabilities(records)
+        capability_sets = []
+        for auth_context in auth_contexts:
+            # Declared jobs belong to this member listing only; the shared catalog also drives routing and discovery.
+            viewed = [_capability_for_access(capability, auth_context, protocol="gateway.media", registry=records)
+                      for capability in declared_capabilities]
+            capability_sets.append([
+                *_gateway_capabilities_for_auth_context(auth_context),
+                *(capability for capability in viewed
+                  if not category_enforcement.is_hidden(capability.policy_reasons)),
+            ])
         records = _workflow_availability_services(records)
-        return activity, records, [
-            _gateway_capabilities_for_auth_context(auth_context)
-            for auth_context in auth_contexts
-        ]
+        return activity, records, capability_sets
 
     activity, service_records, capability_sets = await asyncio.to_thread(load_catalog_inputs)
     visible_service_ids = {
@@ -20561,8 +20589,8 @@ async def admin_logout(request: Request):
 async def admin_config_reload(request: Request):
     """Hot-reload the runtime config from the DB service registry.
 
-    Re-derives all backend host constants (LLM_BACKEND_HOSTS, TTS_HOST,
-    STT_HOST, EMBEDDINGS_HOST, COMFY_HOST …) without a process restart.
+    Re-derives every backend address from the service records without a
+    process restart.
     Requests that arrive after this returns will see the new values.
 
     Note: the LiteLLM subprocess still requires a separate restart to pick up
@@ -20589,7 +20617,7 @@ async def admin_config_reload(request: Request):
                     "tts": public(updates["TTS_HOST"]),
                     "stt": public(updates["STT_HOST"]),
                     "embeddings": public(updates["EMBEDDINGS_HOST"]),
-                    updates["_GRAPH_BINDING"]: public(updates["COMFY_HOST"]),
+                    updates["_GRAPH_BINDING"]: public(updates["GRAPH_HOST"]),
                 },
             },
         )
@@ -25876,7 +25904,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 path=media_jobs.DB_PATH,
             )
 
-        deadline = time.monotonic() + max(1, DERIVED.COMFY_VIDEO_TIMEOUT)
+        deadline = time.monotonic() + max(1, DERIVED.GRAPH_VIDEO_TIMEOUT)
         last_progress = 5
         while time.monotonic() < deadline:
             await asyncio.sleep(_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS)
@@ -28884,7 +28912,7 @@ async def proxy_audio_generate(
             if admission is not None:
                 return admission
             resp = await graph.submit(
-                _build_graph_submit_payload(workflow, _AUDIO_GRAPH_CAPABILITY, client_id=COMFY_CLIENT_ID),
+                _build_graph_submit_payload(workflow, _AUDIO_GRAPH_CAPABILITY, client_id=GRAPH_CLIENT_ID),
                 headers=headers,
             )
             if resp.status != 200:

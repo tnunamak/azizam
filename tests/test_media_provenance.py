@@ -496,7 +496,7 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         _patch_route_stores(self, Path(self.tmp.name))
-        patcher = derived_patch("COMFY_ENABLED", True)
+        patcher = derived_patch("GRAPH_ENABLED", True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -687,7 +687,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         class Req(StubRequest):
             query_params = __import__("starlette.datastructures", fromlist=["QueryParams"]).QueryParams(query)
 
-        with derived_patch("COMFY_ENABLED", True), patch.object(
+        with derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy, "_prompt_id_from_video_id", lambda _v: prompt_id
         ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
             proxy, "_graph_history", AsyncMock(return_value={"outputs": {}})
@@ -893,7 +893,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
         for patcher in (
             section_key_published("audio", "workflows", {"fx": {"file": str(graph)}}),
-            derived_patch("COMFY_ENABLED", True),
+            derived_patch("GRAPH_ENABLED", True),
             patch.object(proxy, "_load_audio_workflow_manifest",
                          lambda name: audio_manifest(name, {"prompt": [("1", "text")], "seed": [("1", "seed")]},
                                                       workflow=str(graph), result=("9", "audio"))),
@@ -1131,7 +1131,7 @@ class VideoSubmitProvenanceTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.tmp.cleanup)
         _patch_route_stores(self, Path(self.tmp.name))
         for patcher in (
-            derived_patch("COMFY_ENABLED", True),
+            derived_patch("GRAPH_ENABLED", True),
             patch.object(proxy, "_video_job_records", {}),
             patch.object(proxy, "_video_progress", {}),
             patch.object(proxy, "_persist_video_record", lambda *_a, **_k: None),

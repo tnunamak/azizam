@@ -43,6 +43,7 @@ from gateway.exclusive_pool import (
     observation_from_document,
     parse_resource_capacity,
 )
+from gateway.frontend_shapes.media_job import GPU_BUSY_COPY
 from gateway.http_multipart import (
     KIND_CONNECT,
     KIND_MALFORMED,
@@ -73,10 +74,12 @@ SERVICE_DISABLED = "service is disabled"
 
 
 class RunError(Exception):
-    """A run that failed. ``code`` and ``category`` are what the job records; the text never reaches the job."""
+    """A run that failed. ``code`` and ``category`` are what the job records. The text of the exception never reaches the
+    job; only ``client_message`` does, and only an outcome a person can act on sets it."""
 
-    def __init__(self, code: str, category: str, *, retryable: bool = False) -> None:
+    def __init__(self, code: str, category: str, *, retryable: bool = False, client_message: str | None = None) -> None:
         super().__init__(code)
+        self.client_message = client_message
         self.code = code
         self.category = category
         self.retryable = retryable
@@ -298,7 +301,7 @@ class MultipartRunner:
             except (PoolCapacityError, PoolObserverError) as error:
                 LOG.info("multipart capacity refused: %s", error)
                 self._tell_retry_after(ctx.job_id, spec)
-                raise RunError(RESOURCE_UNAVAILABLE, "capacity", retryable=True) from error
+                raise RunError(RESOURCE_UNAVAILABLE, "capacity", retryable=True, client_message=GPU_BUSY_COPY) from error
             except MultipartFailure as error:
                 LOG.warning("multipart downstream failed: %s", error)
                 raise _run_error(error) from error

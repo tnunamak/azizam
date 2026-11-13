@@ -76,7 +76,7 @@ class derived_patch:
     """Patch one value of the published snapshot's ``derived`` mapping (``proxy.DERIVED.<name>``), for a ``with`` block or
     ``start``/``stop``.
 
-    A test that patched a module constant a reader used to read (``patch.object(proxy, "COMFY_ENABLED", True)``) patches the
+    A test that patched a module constant a reader used to read (``patch.object(proxy, "GRAPH_ENABLED", True)``) patches the
     snapshot the reader now takes it from. The snapshot is the one published when ``start`` runs, so a list of patchers that
     starts a ``section_published`` first patches that snapshot. A test that publishes another snapshot afterwards (a reload,
     ``publish_config``) must patch after that.

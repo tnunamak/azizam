@@ -998,7 +998,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
     def test_existing_only_target_policy_uses_workflow_availability(self) -> None:
         existing_only = plan_for("workflow-existing-only", caps=('image',), load=False)
 
-        with authenticated_profile(existing_only) as identity, derived_patch("COMFY_ENABLED", True
+        with authenticated_profile(existing_only) as identity, derived_patch("GRAPH_ENABLED", True
         ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
@@ -1014,7 +1014,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertIsNone(allowed)
 
-        with authenticated_profile(existing_only) as identity, derived_patch("COMFY_ENABLED", False
+        with authenticated_profile(existing_only) as identity, derived_patch("GRAPH_ENABLED", False
         ):
             auth_context = proxy.AuthContext(identity)
             denied = proxy._workflow_target_policy_decision(
@@ -1424,7 +1424,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         declared = {
             "native": {"allow": [{"method": "POST", "path": "/prompt", "class": "generate"}]},
             "connection": {"credentials": {"inference": {
-                "secret_env": "FIXTURE_COMFY_KEY", "header": "x-comfy-key", "origin": proxy.DERIVED.COMFY_HOST,
+                "secret_env": "FIXTURE_COMFY_KEY", "header": "x-comfy-key", "origin": proxy.DERIVED.GRAPH_HOST,
             }}},
         }
         with authenticated_profile(profile, downstream=downstream), patch.dict(
@@ -1447,7 +1447,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         call = _CaptureNativePassthroughClient.calls[0]
         self.assertEqual(call["method"], "POST")
-        self.assertEqual(call["url"], f"{proxy.DERIVED.COMFY_HOST}/prompt")
+        self.assertEqual(call["url"], f"{proxy.DERIVED.GRAPH_HOST}/prompt")
         self.assertIn(b'"prompt"', call["content"])
         forwarded_headers = {
             key.lower(): value

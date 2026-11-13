@@ -19,7 +19,8 @@
           "modality": {"enum": ["image", "audio", "video"]},
           "submittable": {"type": "boolean"},
           "route": {"type": "string", "pattern": "^/v1/[a-z/]+$"},
-          "component": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$"}
+          "component": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$"},
+          "execution_route": {"type": "string", "pattern": "^/gateway/v1/[a-z/]+$"}
         },
         "if": {"properties": {"submittable": {"const": true}}},
         "then": {"required": ["route", "component"]},

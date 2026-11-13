@@ -19,7 +19,7 @@ GRAPH_SERVICE_ID = "comfyui"
 # The families one record serves; every fixture record declares all three.
 GRAPH_CAPABILITIES = ["images", "generations", "videos", "audio.generate"]
 # The derived names a test used to patch to move the engine, and the view field each one is.
-GRAPH_MIRROR = {"COMFY_ENABLED": "enabled", "COMFY_HOST": "host", "COMFY_TIMEOUT": "timeout"}
+GRAPH_MIRROR = {"GRAPH_ENABLED": "enabled", "GRAPH_HOST": "host", "GRAPH_TIMEOUT": "timeout"}
 
 
 def graph_record(**fields: Any) -> dict[str, Any]:
@@ -42,7 +42,7 @@ def set_derived(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
     monkeypatch.setitem(derived, name, value)
     if name in GRAPH_MIRROR:
         monkeypatch.setitem(derived, "GRAPH_SERVICES", mirror(derived["GRAPH_SERVICES"], name, value))
-    if name == "COMFY_TIMEOUT":
+    if name == "GRAPH_TIMEOUT":
         # A run waits as long as the record it was pinned to says, so every graph record in the config carries the value.
         backends = {service_id: {**record, "timeout": value} if record.get("protocol") == "node-graph" or
                     set(GRAPH_CAPABILITIES) & set(record.get("capabilities") or ()) else record

@@ -368,7 +368,7 @@ def test_video_1_01_capability_off_is_503_before_any_engine_call(tmp_path):
 
     def setup(rig):
         _comfy(rig)
-        set_derived(rig.monkeypatch, "COMFY_ENABLED", False)
+        set_derived(rig.monkeypatch, "GRAPH_ENABLED", False)
         record = dict(proxy.config["backends"]["comfy"], enabled=False)       # the service record is off, as an operator turns it off
         rig.monkeypatch.setitem(proxy.config, "backends", {**proxy.config["backends"], "comfy": record})
 

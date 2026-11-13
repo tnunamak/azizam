@@ -25,7 +25,7 @@ from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, 
 from tests.support.config_snapshot import publish_section
 from tests.test_adapter_differential import _wav
 
-COMFY_HOST = "comfy.fk.test"
+GRAPH_HOST = "comfy.fk.test"
 
 
 @pytest.fixture
@@ -34,8 +34,8 @@ def rig(tmp_path: Path):
         made.set(proxy, "_schedule_audio_media_job", lambda job_id: made.scheduled.append(job_id) or True)
         fake = made.engine("comfy", scenario("comfyui", "audio-from-pin", comfy_exchanges(
             history=history_done("audios", "tone_00001_.wav", node="3"), views=[(_wav(), "audio/wav")], strict=False)),
-            host=COMFY_HOST)
-        made.set(proxy, "COMFY_HOST", fake.base_url)
+            host=GRAPH_HOST)
+        made.set(proxy, "GRAPH_HOST", fake.base_url)
         yield made
 
 

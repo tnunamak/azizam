@@ -284,7 +284,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Before it the digest was 738e100d24ecf08ff89af488ba8c4a950e73cb8a789aafca2d066a1c3412d5b1.
         # Re-captured 2026-11-12 for the tags help/description split: only the yue2-song tags description changes.
         # Restoring its old text recovers eda3623f3ef8ff74c1669284e7c874458611f7f6a6d9ba16a82bdc6881964bd6 exactly.
-        assert route_graph.openapi_digest(proxy.app) == "edc09ca0a021187cca165df63dc2f61656dddf52d7eb02ff9e20f2f2a0d5e7ff"
+        # Re-captured 2026-11-13: the hot-reload description names no constants (it listed the backend host constants,
+        # one of them named for the graph engine); nothing else moved (tests/fixtures/headless_openapi.json shows the
+        # same one-line change). Before it the digest was edc09ca0a021187cca165df63dc2f61656dddf52d7eb02ff9e20f2f2a0d5e7ff.
+        assert route_graph.openapi_digest(proxy.app) == "ae4713d9972d8d4bfa57dc6b5ecf5a105d8d87941921b83db272c40cff60154c"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -344,4 +347,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-12 for the optional ``tag`` filter of GET /gateway/v1/requests and the yue2-song help text (train 54,
     # L3). Before it the frozen digest was e0ced55193c55dc91c29855089e549e72237db7b8417357427e8c7b0bb3fb390.
     # Re-captured 2026-11-12 for the same tags copy split; the full document changes only that input description.
+    # Re-captured 2026-11-13: the hot-reload description names no constants; nothing else moved. Before it the frozen
+    # digest was 7d81428411342e23f215edb6dbb07fe321c3122f79198a349161fb47ae643ab0.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

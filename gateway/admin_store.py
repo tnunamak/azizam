@@ -696,7 +696,11 @@ def _grant_mesh_to_starter_plan(conn: sqlite3.Connection) -> None:
 
     if conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (MESH_STARTER_STEP,)).fetchone():
         return
-    before = {capability for capability in CAPABILITIES if capability != "mesh"}
+    from gateway import capability_ids
+    from gateway.mesh_manifest import MESH_MEDIA_TYPE
+
+    capability_added = capability_ids.MEDIA_TYPE_MODALITIES[MESH_MEDIA_TYPE]
+    before = {capability for capability in CAPABILITIES if capability != capability_added}
     for plan_id, plan_json in conn.execute(
         "SELECT id, plan_json FROM access_plans WHERE name=?", (STARTER_PLAN_NAME,)
     ).fetchall():
@@ -704,7 +708,7 @@ def _grant_mesh_to_starter_plan(conn: sqlite3.Connection) -> None:
         can_use = document.get("can_use") if isinstance(document.get("can_use"), dict) else {}
         if set(can_use) != before or any(can_use[capability] != {"items": "all"} for capability in before):
             continue
-        can_use["mesh"] = {"items": "all"}
+        can_use[capability_added] = {"items": "all"}
         conn.execute(
             "UPDATE access_plans SET plan_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(document, ensure_ascii=False, sort_keys=True), _now(), plan_id),

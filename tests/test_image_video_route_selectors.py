@@ -24,7 +24,7 @@ from tests.support.video_rig import Engine, World, drive, install_runner_clock, 
 from tests.support.video_row_engine import edited_workflows
 from tests.test_adapter_differential import _png
 
-COMFY_HOST = "comfy.fk.test"
+GRAPH_HOST = "comfy.fk.test"
 IMAGE_BODY = {"prompt": "a red fox", "response_format": "b64_json", "background": "opaque"}
 VIDEO_BODY = {"prompt": "waves at dusk", "model": "ltx-2.5-t2v"}
 
@@ -57,8 +57,8 @@ def build(tmp_path: Path, answer: dict[str, Any], view: tuple[bytes, str], **set
     rig = GatewayRig("image-video-route-selectors", tmp_path)
     made = rig.__enter__()
     fake = made.engine("comfy", scenario("comfyui", "image-video-route-selectors", comfy_exchanges(
-        history=answer, views=[view], strict=False)), host=COMFY_HOST)
-    made.set(proxy, "COMFY_HOST", fake.base_url)
+        history=answer, views=[view], strict=False)), host=GRAPH_HOST)
+    made.set(proxy, "GRAPH_HOST", fake.base_url)
     made.set(proxy, "_schedule_image_media_job", lambda job_id: made.scheduled.append(job_id) or True)
     made.set(proxy, "_schedule_video_media_job", lambda job_id: made.scheduled.append(job_id) or True)
     made.set(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0)

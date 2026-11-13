@@ -72,15 +72,15 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
         self.patches.enter_context(patch.dict(sys.modules, {"__main__": proxy, "proxy": proxy}))
         for name, result in {
             "_backend_grid": [{"key": "test", "name": "Test", "role": "required", "live_status": "up"}],
-            "_comfy_queue_and_stats": (None, None),
-            "_llama_props_and_slots": (None, None),
+            "_graph_queue_and_stats": (None, None),
+            "_chat_props_and_slots": (None, None),
             "_enriched_aux_health": {},
         }.items():
             self.patches.enter_context(patch.object(status, name, AsyncMock(return_value=result)))
         for name, result in {
             "_run": (1, "", "unavailable"), "_gpus_raw": [],
             "_vram_attribution": {}, "_ram_attribution": {}, "_repo_state": {},
-            "_comfy_custom_nodes": [], "_disk_partitions": [], "_dir_summary": {},
+            "_graph_custom_nodes": [], "_disk_partitions": [], "_dir_summary": {},
             "_read_sensors": {}, "_cpu_usage_quick": {}, "_recent_renders_videos": [],
             "_recent_renders_images": [], "_read_vram_estimates": {}, "_read_gpu_budget": {},
             "_record_backend_health_samples": None, "_metrics_section": {},

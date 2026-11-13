@@ -1277,8 +1277,8 @@ class TestBuildActivationGolden(unittest.TestCase):
         self.assertIsNone(result, "Missing GGUF must return None from build_activation")
         # Print message must contain the missing path (same wording as legacy).
         self.assertTrue(
-            any("GGUF not found" in p and _GGUF in p for p in printed),
-            f"Expected 'GGUF not found at {_GGUF}' in print output; got: {printed}",
+            any("model file not found" in p and _GGUF in p for p in printed),
+            f"Expected 'model file not found at {_GGUF}' in print output; got: {printed}",
         )
 
     def test_kobold_precheck_missing_aux_returns_none(self):
@@ -1304,8 +1304,8 @@ class TestBuildActivationGolden(unittest.TestCase):
 
         self.assertIsNone(result, "Missing aux must return None from build_activation")
         self.assertTrue(
-            any("mmproj not found" in p for p in printed),
-            f"Expected 'mmproj not found' in print output; got: {printed}",
+            any("aux file not found" in p for p in printed),
+            f"Expected 'aux file not found' in print output; got: {printed}",
         )
 
     # -----------------------------------------------------------------------

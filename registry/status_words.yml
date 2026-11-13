@@ -1,0 +1,72 @@
+# What the status page and the metrics sampler call the services of a capability role, as data.
+#
+# Keys are capability role keys (images, chat, audio.speech), not service ids: the service a role selects is read from
+# the registry. A word here is a fact about the page or about a series a reader may already hold (a payload key, a
+# stored metric series name, a card title); the code that reads it holds no name of its own. registry/status_words.schema.json
+# closes the file: a missing role, a missing word or an extra word is an error.
+#
+# images: the graph engine (node-graph protocol).
+#   label / backend_names: the engine's name on cards and details, and the backend-grid names its card reads.
+#   gpu_budget_var: the variable the operator's GPU budget file holds for the graph engine's share.
+#   *_key: keys of the /v1/status payload (queue, custom nodes, system view, websocket state, the view's version field)
+#          and of its errors map (stats_error_key), the GPU budget figure (gpu_budget_key), and the disk hot spots.
+#   *_series: metric series the sampler stores.
+#   dir_env / output_dir_env / custom_nodes_env: the environment variables that place the engine's directory, its
+#          output directory and its custom-nodes directory (the first is the parent the other two default to).
+#   baseline_field: the field of the stored VRAM measurements that holds the engine's baseline.
+#   audio_decode_class / two_stage_class: the graph node classes that mark a workflow as making audio or as two-stage.
+#   client_id_attr: the attribute of the gateway module that holds the engine's websocket client id.
+# chat: the chat engine.
+#   props_section: the name of the status section that reads the engine's properties (it shows in the errors map).
+#   card_name / crash_event / crash_title: the firehose card and the crash event in the recent-events ring.
+#   *_series: metric series the sampler stores.
+#   aux_path_key / aux_path_label: the models-section key and the page label of the loaded auxiliary (projector) file.
+#   tensor_split_note: how the status page says the GPU split ratio is read.
+# audio.speech: the speech engine.
+#   unit_candidates: the systemd user units the status page tries, in order, to name the active speech service.
+#   exec_labels: the first row whose `contains` is in the unit's lowercased ExecStart names the framework.
+#   native_voice_source: the voice-catalog source name for a voice the engine ships.
+#   example_model: the model id the voice catalog's copy-paste example names.
+status_words:
+  images:
+    label: ComfyUI
+    short_label: Comfy
+    backend_names: [comfyui, comfy]
+    queue_key: comfy_queue
+    custom_nodes_key: comfy_custom_nodes
+    view_key: comfy_view
+    ws_state_key: comfy_ws_state
+    version_key: comfyui_version
+    stats_error_key: comfy_stats
+    gpu_budget_key: comfyui_gb
+    gpu_budget_var: GPU0_COMFYUI
+    output_root_key: comfy_output_root
+    output_video_key: comfy_output_video
+    queue_running_series: comfy_queue_running
+    queue_pending_series: comfy_queue_pending
+    dir_env: AZIZAM_COMFY_DIR
+    output_dir_env: AZIZAM_COMFY_OUTPUT_DIR
+    custom_nodes_env: AZIZAM_COMFY_CUSTOM_NODES_DIR
+    baseline_field: comfy_baseline_bytes
+    audio_decode_class: LTXVAudioVAEDecode
+    two_stage_class: LTXVCropGuides
+    client_id_attr: GRAPH_CLIENT_ID
+  chat:
+    card_name: llama-turbo
+    props_section: llama_props_slots
+    crash_event: llama_crash
+    crash_title: llama crash
+    slots_active_series: llama_slots_active
+    slots_total_series: llama_slots_total
+    aux_path_key: mmproj_path
+    aux_path_label: mmproj path
+    tensor_split_note: ratio (llama.cpp default; values are relative weights)
+  audio.speech:
+    unit_candidates: [voxtral-int4-tts.service, voxtral-tts.service, tts.service]
+    exec_labels:
+      - {contains: vllm, label: vLLM}
+      - {contains: voxtral-int4, label: "voxtral-int4 (custom serve.py, flow-matching)"}
+      - {contains: voxtral, label: "Voxtral (vLLM-Omni)"}
+      - {contains: tts, label: "tts (custom)"}
+    native_voice_source: voxtral_native
+    example_model: voxtral-4b-tts

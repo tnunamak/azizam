@@ -96,7 +96,8 @@ def test_shipped_rows_are_the_literal_display_order_with_only_protocol_overrides
     document = yaml.safe_load(DATA.read_text(encoding="utf-8"))
     rows = document.get("capabilities")
     base_fields = {"id", "label", "policy_protocol"}
-    allowed_fields = base_fields | {"icon", "recommended_alias", "summary", "hidden_by", "display_order", "alias_hides_declared_names"}
+    allowed_fields = base_fields | {"icon", "recommended_alias", "summary", "hidden_by", "display_order", "alias_hides_declared_names",
+                                   "member_label", "task_name"}
     assert isinstance(rows, list)
     assert [row["display_order"] for row in rows] == [0, 1, 2, 6, 8, 4, 5, 7, 9, 10, 11, 3]
     assert all(isinstance(row, dict) and set(row) <= allowed_fields for row in rows)

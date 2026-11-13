@@ -38,7 +38,7 @@ def test_llama_status_never_probes_task_queue(monkeypatch):
     config = {"backends": {"chat-local": {
         "host": "127.0.0.1", "port": 5051, "capabilities": ["chat"], "lifecycle": {"driver": "systemd"},
     }}}
-    props, slots = asyncio.run(status_endpoint._llama_props_and_slots(config))
+    props, slots = asyncio.run(status_endpoint._chat_props_and_slots(config))
 
     assert props == {"model": "test"}
     assert slots is None

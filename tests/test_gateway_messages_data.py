@@ -24,6 +24,7 @@ EXPECTED_METADATA = {
 }
 MESSAGE_FIELDS = {
     "metadata_description", "tool_call_advisory", "backend_label", "unknown_family",
+    "long_video_not_supported", "video_extend_not_supported", "surface_existing_clients", "surface_new_setup",
 }
 
 

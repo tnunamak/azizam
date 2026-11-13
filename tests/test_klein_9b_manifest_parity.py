@@ -25,7 +25,7 @@ NAMESPACE = "com.azizam.workflow"
 @pytest.fixture
 def _serve_upload(fake_upstreams, monkeypatch):
     fake = fake_upstreams.asgi(load_scenario("comfyui/upload-ok-any"))
-    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
 
 
 class KleinNineBParityTests(IsolatedAsyncioTestCase):
@@ -48,7 +48,7 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
             ("compute_max_batch", Mock(return_value=1)),
         ):
             stack.enter_context(patch.object(proxy, name, value))
-        stack.enter_context(derived_patch("COMFY_ENABLED", True))
+        stack.enter_context(derived_patch("GRAPH_ENABLED", True))
         stack.enter_context(patch.object(proxy.media_delivery, "current", return_value=None))
         stack.enter_context(patch.object(
             proxy, "_build_image_response_payload",

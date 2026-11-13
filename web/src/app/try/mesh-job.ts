@@ -1,7 +1,15 @@
 import { meshPollDelayMs } from "./mesh-mode";
 
 /** What a poll of the job route says. "missing" is a job the gateway no longer knows. */
-export type MeshJobStatus = { status: string; error?: string };
+export type MeshJobStatus = {
+  status: string;
+  error?: string;
+  /** Why a failed job failed, in the job's own word ("capacity" is a refusal for lack of room). */
+  category?: string;
+  retryable?: boolean;
+  /** Seconds the gateway suggests waiting, from the job's `retry_after` event. */
+  retryAfterS?: number;
+};
 
 export type MeshJobDeps = {
   /** One poll. A dropped connection or a server fault throws what `isNetworkFailure` accepts; any other throw ends the follow. */
@@ -22,7 +30,8 @@ export type MeshJobDeps = {
 
 export type MeshJobOutcome =
   | { kind: "done"; blob: Blob }
-  | { kind: "failed"; message: string }
+  /** `tryAgain` is set when the gateway refused for capacity and says asking again can work. */
+  | { kind: "failed"; message: string; tryAgain?: { afterS: number | null } }
   | { kind: "canceled" }
   | { kind: "stopped" }
   /** Every request failed for `unreachableAfterMs`. The job is not touched; asking again may find it. */
@@ -54,7 +63,10 @@ export async function followMeshJob(id: string, deps: MeshJobDeps): Promise<Mesh
         return deps.stopped() ? { kind: "stopped" } : { kind: "done", blob };
       }
       if (job.status === "failed") {
-        return { kind: "failed", message: job.error?.trim() || FAILED_FALLBACK };
+        const message = job.error?.trim() || FAILED_FALLBACK;
+        return job.category === "capacity" && job.retryable === true
+          ? { kind: "failed", message, tryAgain: { afterS: job.retryAfterS ?? null } }
+          : { kind: "failed", message };
       }
       if (job.status === "canceled") return { kind: "canceled" };
       if (job.status === "missing") return { kind: "failed", message: MISSING };

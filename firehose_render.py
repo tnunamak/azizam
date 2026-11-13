@@ -19,7 +19,11 @@ import time
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
+from gateway import status_words
 from gateway.gateway_shell import SHELL_CSS, render_shell_header
+
+_GRAPH_WORDS = status_words.words("images")  # what the page calls the graph engine's keys and figures
+_CHAT_WORDS = status_words.words("chat")
 
 
 def _esc(s: Any) -> str:
@@ -331,7 +335,7 @@ def render_html(
         hide_empty: bool = True,
     ) -> str:
         section_inputs: dict[str, tuple[str, ...]] = {
-            "Swap & websocket state": ("swap_state", "comfy_ws_state"),
+            "Swap & websocket state": ("swap_state", _GRAPH_WORDS["ws_state_key"]),
             "Budgets": ("budgets",),
             "Disk pressure": ("disk",),
             "Thermal": ("thermal",),
@@ -379,7 +383,7 @@ def render_html(
 
     _append_group("Live activity", [
         ("Live video jobs", _render_video_jobs(payload.get("video_jobs") or [])),
-        ("ComfyUI queue", _render_comfy_queue(payload)),
+        (f'{_GRAPH_WORDS["label"]} queue', _render_graph_queue(payload)),
         ("LLM slots", _render_slots((payload.get("models") or {}).get("slots") or [])),
         ("Swap & websocket state", _render_swap_state(payload)),
     ])
@@ -422,7 +426,7 @@ def render_html(
         ("Backend readiness", _render_backend_readiness(payload)),
         ("Recent errors (4xx/5xx)", _render_recent_errors(payload.get("recent_events") or []), True),
         ("Quick test endpoints", _render_quick_test(), True),
-        ("ComfyUI custom nodes", _render_comfy_custom_nodes(payload.get("comfy_custom_nodes") or []), True),
+        (f'{_GRAPH_WORDS["label"]} custom nodes', _render_graph_custom_nodes(payload.get(_GRAPH_WORDS["custom_nodes_key"]) or []), True),
     ])
 
     _append_group("Trends", [
@@ -431,7 +435,7 @@ def render_html(
 
     _append_group("Diagnostics", [
         ("Driver & kernel events", _render_driver(payload.get("driver") or {}), True),
-        ("ComfyUI view (system_stats)", _render_comfy_view(payload.get("comfy_view")), True),
+        (f'{_GRAPH_WORDS["label"]} view (system_stats)', _render_graph_view(payload.get(_GRAPH_WORDS["view_key"])), True),
         ("Daisy audit", _render_daisy(payload.get("daisy") or {}), True),
         ("Workflow drift", _render_workflow_drift(payload.get("workflow_drift")), True),
         ("VRAM measurements (image batcher)", _render_vram_estimates(payload.get("budgets") or {}), True),
@@ -621,7 +625,7 @@ def _render_critical_strip(p: dict) -> str:
     SEV: dict[str, float] = {
         "xid_109": 100.0,
         "xid_other": 60.0,
-        "llama_crash": 80.0,
+        _CHAT_WORDS["crash_event"]: 80.0,
         "daisy_denied": 40.0,
         "swap_in_progress": 25.0,
         "model_swap": 10.0,
@@ -758,8 +762,8 @@ def _render_critical_strip(p: dict) -> str:
 
     # llama-server crashes — recent_events ring, hook for future entries.
     for evt in (p.get("recent_events") or []):
-        if evt.get("type") == "llama_crash":
-            _add("llama_crash", evt.get("ts"), "llama crash",
+        if evt.get("type") == _CHAT_WORDS["crash_event"]:
+            _add(_CHAT_WORDS["crash_event"], evt.get("ts"), _CHAT_WORDS["crash_title"],
                  (evt.get("summary") or "")[:120], "bad")
 
     # Most recent model_swap from the events ring.
@@ -958,8 +962,8 @@ def _render_video_jobs(jobs: list[dict]) -> str:
     return "".join(rows)
 
 
-def _render_comfy_queue(p: dict) -> str:
-    q = p.get("comfy_queue")
+def _render_graph_queue(p: dict) -> str:
+    q = p.get(_GRAPH_WORDS["queue_key"])
     if not q:
         return '<div class="muted">unavailable</div>'
     return (
@@ -979,7 +983,7 @@ def _render_swap_state(p: dict) -> str:
     common-case glance.
     """
     s = p.get("swap_state") or {}
-    ws = p.get("comfy_ws_state") or {}
+    ws = p.get(_GRAPH_WORDS["ws_state_key"]) or {}
     busy = list(s.get("swap_in_progress") or [])
     ws_connected = bool(ws.get("connected"))
     all_quiet = (not busy) and ws_connected
@@ -987,12 +991,12 @@ def _render_swap_state(p: dict) -> str:
     if all_quiet:
         client_id = ws.get("client_id")
         cid_html = (
-            f' <span class="muted small" title="ComfyUI client_id">'
+            f' <span class="muted small" title="{_GRAPH_WORDS["label"]} client_id">'
             f'(ws client {_esc(str(client_id)[:12])}…)</span>'
             if client_id else ""
         )
         return (
-            '<div><span class="pill ok">all swap locks idle, ComfyUI ws '
+            f'<div><span class="pill ok">all swap locks idle, {_GRAPH_WORDS["label"]} ws '
             f'connected</span>{cid_html}</div>'
         )
 
@@ -1000,8 +1004,8 @@ def _render_swap_state(p: dict) -> str:
     if busy:
         rows.append(("Model swap", f"in progress: {', '.join(busy)}"))
     if not ws_connected:
-        rows.append(("ComfyUI websocket", "disconnected"))
-    rows.append(("ComfyUI client_id", ws.get("client_id")))
+        rows.append((f'{_GRAPH_WORDS["label"]} websocket', "disconnected"))
+    rows.append((f'{_GRAPH_WORDS["label"]} client_id', ws.get("client_id")))
     return _kv_table(rows)
 
 
@@ -1290,7 +1294,7 @@ def _render_budgets(b: dict) -> str:
         ("GPU0 total GB", g0.get("total_gb")),
         ("GPU0 desktop GB", g0.get("desktop_gb")),
         ("GPU0 TTS GB", g0.get("tts_gb")),
-        ("GPU0 ComfyUI GB", g0.get("comfyui_gb")),
+        (f'GPU0 {_GRAPH_WORDS["label"]} GB', g0.get(_GRAPH_WORDS["gpu_budget_key"])),
         ("GPU0 headroom GB", g0.get("headroom_gb")),
         ("GPU1 total GB", g1.get("total_gb")),
         ("GPU1 LLM GB", g1.get("llm_gb")),
@@ -1420,7 +1424,7 @@ def _render_models(m: dict, gpus: Optional[list] = None) -> str:
     base_rows = [
         ("Loaded LLM name", m.get("loaded_llm_name")),
         ("Loaded LLM path", m.get("loaded_llm_path")),
-        ("mmproj path", m.get("mmproj_path")),
+        (_CHAT_WORDS["aux_path_label"], m.get(_CHAT_WORDS["aux_path_key"])),
         ("Vision capable", m.get("vision_capable")),
         ("Vision source", m.get("vision_source")),
         ("Context size", m.get("ctx_size")),
@@ -2016,12 +2020,12 @@ def _render_thermal(t: dict) -> str:
     ])
 
 
-def _render_comfy_view(c: Optional[dict]) -> str:
+def _render_graph_view(c: Optional[dict]) -> str:
     if not c:
         return '<div class="muted">unavailable</div>'
     dev = c.get("device") or {}
     return _kv_table([
-        ("ComfyUI version", c.get("comfyui_version")),
+        (f'{_GRAPH_WORDS["label"]} version', c.get(_GRAPH_WORDS["version_key"])),
         ("Python", c.get("python_version")),
         ("PyTorch", c.get("pytorch_version")),
         ("RAM total", _bytes(c.get("ram_total_bytes"))),
@@ -2029,7 +2033,7 @@ def _render_comfy_view(c: Optional[dict]) -> str:
         ("argv", c.get("argv")),
         ("device[0] name", dev.get("name")),
         ("device[0] vram_total", _bytes(dev.get("vram_total"))),
-        ("device[0] vram_free (Comfy view)", _bytes(dev.get("vram_free"))),
+        (f'device[0] vram_free ({_GRAPH_WORDS["short_label"]} view)', _bytes(dev.get("vram_free"))),
         ("device[0] torch_vram_total", _bytes(dev.get("torch_vram_total"))),
         ("device[0] torch_vram_free", _bytes(dev.get("torch_vram_free"))),
     ])
@@ -2476,29 +2480,29 @@ def _render_backend_readiness(payload: dict) -> str:
         total_slots = 0
     if loaded_name and total_slots > 0:
         short = str(loaded_name).split("/")[-1]
-        cards.append(("llama-turbo", _pill("warm"),
+        cards.append((_CHAT_WORDS["card_name"], _pill("warm"),
                       f"{short} · {total_slots} slot(s)", ""))
     elif loaded_name:
         short = str(loaded_name).split("/")[-1]
-        cards.append(("llama-turbo", _pill("warm"), f"{short} loaded", ""))
+        cards.append((_CHAT_WORDS["card_name"], _pill("warm"), f"{short} loaded", ""))
     elif slots:
-        cards.append(("llama-turbo", _pill("warm"),
+        cards.append((_CHAT_WORDS["card_name"], _pill("warm"),
                       f"{len(slots)} slot(s) active", ""))
     else:
-        cards.append(("llama-turbo", _pill("cold"), "no model loaded",
+        cards.append((_CHAT_WORDS["card_name"], _pill("cold"), "no model loaded",
                       "first chat will load weights"))
 
     backends = payload.get("backends") or []
     bmap = {b.get("name"): b for b in backends if isinstance(b, dict)}
 
     # ComfyUI: warm if backend up
-    comfy = bmap.get("comfyui") or bmap.get("comfy")
-    if comfy:
-        live = comfy.get("live_status") or comfy.get("status")
+    graph = next((bmap[name] for name in _GRAPH_WORDS["backend_names"] if bmap.get(name)), None)
+    if graph:
+        live = graph.get("live_status") or graph.get("status")
         if live == "up":
-            cards.append(("ComfyUI", _pill("warm"), "responding to /system_stats", ""))
+            cards.append((_GRAPH_WORDS["label"], _pill("warm"), "responding to /system_stats", ""))
         else:
-            cards.append(("ComfyUI", _pill("down"), str(live or "?"), ""))
+            cards.append((_GRAPH_WORDS["label"], _pill("down"), str(live or "?"), ""))
 
     # One card per declared health panel. A panel whose JSON names a default model reports that model; the others
     # report whether the model is resident (more than 3 GB of VRAM) or only the service is up.
@@ -2627,7 +2631,7 @@ def _render_quick_test() -> str:
     return "".join(parts)
 
 
-def _render_comfy_custom_nodes(nodes: list[dict]) -> str:
+def _render_graph_custom_nodes(nodes: list[dict]) -> str:
     if not nodes:
         return '<div class="muted">none discovered</div>'
     rows = ['<table><thead><tr><th>Name</th><th>Last touched</th>'

@@ -184,7 +184,7 @@ def test_control_a_run_of_a_workflow_without_facts_makes_zero_engine_calls():
     def run() -> Any:
         receipt = proxy.start_image_route_receipt("/v1/images/generations", access_context())
         body = {"model": TILE, "prompt": "painted rock texture", "size": "64x64", "n": 1, "response_format": "b64_json"}
-        with pytest.MonkeyPatch.context() as mp, derived_patch("COMFY_ENABLED", True), patch.object(
+        with pytest.MonkeyPatch.context() as mp, derived_patch("GRAPH_ENABLED", True), patch.object(
             proxy, "configured_downstream_headers", lambda _auth, _service: {}
         ), patch.object(proxy, "_graph_run_round", counting_round):
             install_async_client_stub(mp, counting_post)

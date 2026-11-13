@@ -41,7 +41,7 @@ def _history(fake_upstreams, monkeypatch, in_history):
         "exchanges": [{"id": "history", "match": {"method": "GET", "path": "/history/p"},
                        "response": {"json": {"p": job} if in_history else {}}}],
     }))
-    set_derived(monkeypatch, "COMFY_HOST", fake.base_url)
+    set_derived(monkeypatch, "GRAPH_HOST", fake.base_url)
 
 
 # --- the node of a video status ---------------------------------------------------------------------------------------------

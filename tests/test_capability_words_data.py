@@ -243,3 +243,149 @@ def test_missing_data_fails_import_with_filename(tmp_path):
     data.unlink()
     with pytest.raises(ValueError, match="capability_words.yml"):
         _import(source)
+
+# Member words are a separate projection; existing labels and protocol APIs stay unchanged.
+TASK_NAMES = {
+    "chat": "Chat", "image": "Make a picture", "video": "Make a video",
+    "speech": "Read text aloud", "transcribe": "Transcribe a recording",
+    "music": "Make music", "sfx": "Make a sound effect", "audio": "Make music or sounds",
+    "decide": "Choose an option", "embed": "Turn text into numbers",
+    "rerank": "Sort search results", "mesh": "Make a 3D model",
+}
+
+
+def test_member_words_match_literal_golden_and_row_order(tmp_path):
+    source, data = _tree(tmp_path, DATA.read_text(encoding="utf-8"))
+    module = _import(source)
+    assert dict(module.CAPABILITY_TASK_NAMES) == TASK_NAMES
+    assert list(module.CAPABILITY_TASK_NAMES) == list(TASK_NAMES)
+    labels = {row["id"]: row["label"] for row in _document()["capabilities"]}
+    labels.update(decide="Choose an option", embed="Turn text into numbers")
+    assert dict(module.CAPABILITY_MEMBER_LABELS) == labels
+    assert list(module.CAPABILITY_MEMBER_LABELS) == list(TASK_NAMES)
+    assert module.load_capability_member_words(data) == (
+        module.CAPABILITY_MEMBER_LABELS, module.CAPABILITY_TASK_NAMES,
+    )
+
+
+@pytest.mark.parametrize("field", ["member_label", "task_name"])
+@pytest.mark.parametrize("value", [None, 7, True, [], {}, "", "   ", " padded", "padded ", "\tword\n"])
+def test_invalid_member_word_fails_loading(tmp_path, field, value):
+    document = _document()
+    document["capabilities"][0][field] = value
+    source, _ = _tree(tmp_path, document)
+    with pytest.raises(ValueError, match=field):
+        _import(source)
+
+
+def test_member_word_fallbacks_and_legacy_loader_shapes(tmp_path):
+    document = _document()
+    document["capabilities"][1]["member_label"] = "Member image"
+    document["capabilities"][2].update(member_label="Member video", task_name="Task video")
+    document["capabilities"][3]["task_name"] = "Task speech"
+    source, data = _tree(tmp_path, document)
+    module = _import(source)
+    members, tasks = module.load_capability_member_words(data)
+    assert (members["chat"], tasks["chat"]) == ("Chat", "Chat")
+    assert (members["image"], tasks["image"]) == ("Member image", "Member image")
+    assert (members["video"], tasks["video"]) == ("Member video", "Task video")
+    assert (members["speech"], tasks["speech"]) == ("Voice", "Task speech")
+    assert len(module._load_capability_data(data)) == 4
+    assert len(module.load_capability_presentation(data)) == 3
+    assert len(module.load_capability_classification(data)) == 3
+    assert len(module.load_capability_words(data)) == 2
+    assert dict(module.load_capability_display_order(data)) == {
+        row["id"]: index for index, row in enumerate(document["capabilities"])
+    }
+
+
+@pytest.mark.parametrize("name", ["CAPABILITY_MEMBER_LABELS", "CAPABILITY_TASK_NAMES"])
+def test_member_word_maps_are_immutable(tmp_path, name):
+    source, data = _tree(tmp_path, _document())
+    module = _import(source)
+    maps = [getattr(module, name), *module.load_capability_member_words(data)]
+    for table in maps:
+        with pytest.raises(TypeError):
+            table["chat"] = "Changed"
+        with pytest.raises(TypeError):
+            del table["chat"]
+
+
+def test_generated_capability_words_are_current():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/generate-capability-words-ts.py"), "--check"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+# Byte-exact screen copy, independent of loader/generator projections.
+MODELS_EXPLAINERS = {
+    "chat": "Answers, writing and code, for chat apps and agents.",
+    "image": "Make or edit a picture from a description.",
+    "video": "Make a short video from a description or a picture.",
+    "speech": "Read text aloud.",
+    "transcribe": "Turn a recording into text.",
+    "music": "Songs and instrumentals from a description.",
+    "sfx": "Short sounds from a description.",
+    "audio": "Music and sounds from a description.",
+    "decide": "Pick one answer from options you give, for routing and yes-or-no checks.",
+    "embed": "Vectors that let apps search text and find similar passages.",
+    "rerank": "Sort search results by how well they match.",
+    "mesh": "Make a 3D model from one picture.",
+}
+
+TRY_HELP = {
+    "chat": "Send a message and get a reply.",
+    "image": "Describe the picture you want to make.",
+    "speech": "Enter text to hear it spoken aloud.",
+    "transcribe": "Upload a recording or record your voice to get the words as text.",
+    "decide": "Provide information to help pick one of the options.",
+    "embed": "Turn text into numbers that search tools can use.",
+    "mesh": "Turn a picture into a 3D model you can turn around and download.",
+}
+
+REQUEST_NOUNS = {
+    "image": "Image",
+    "decide": "Decision",
+    "rerank": "Rerank",
+    "mesh": "3D model",
+}
+
+
+def test_screen_words_match_literal_goldens_and_data_order(tmp_path):
+    source, data = _tree(tmp_path, DATA.read_text(encoding="utf-8"))
+    module = _import(source)
+    actual = module.load_capability_screen_words(data)
+    for table, expected in zip(actual, (MODELS_EXPLAINERS, TRY_HELP, REQUEST_NOUNS), strict=True):
+        assert dict(table) == expected
+        assert list(table) == list(expected)
+
+
+@pytest.mark.parametrize("field", ["models_explainer", "try_help", "request_noun"])
+@pytest.mark.parametrize("value", [None, 7, True, [], {}, "", "   ", " padded", "padded ", "\tword\n"])
+def test_invalid_screen_word_fails_loading(tmp_path, field, value):
+    document = _document()
+    document["capabilities"][0][field] = value
+    source, _ = _tree(tmp_path, document)
+    with pytest.raises(ValueError, match=field):
+        _import(source)
+
+
+def test_screen_words_are_optional_and_preserve_member_loader(tmp_path):
+    source, data = _tree(tmp_path, _document())
+    module = _import(source)
+    assert module.load_capability_screen_words(data) == ({}, {}, {})
+    assert len(module.load_capability_member_words(data)) == 2
+    assert len(module._load_capability_data(data)) == 4
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_screen_word_maps_are_immutable(tmp_path, index):
+    source, data = _tree(tmp_path, DATA.read_text(encoding="utf-8"))
+    table = _import(source).load_capability_screen_words(data)[index]
+    with pytest.raises(TypeError):
+        table["chat"] = "Changed"

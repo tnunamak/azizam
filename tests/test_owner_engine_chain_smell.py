@@ -2,8 +2,7 @@
 
 The direct test (tests/test_smell_infer_offering.py) builds the connection and the adapter by hand. This module starts
 where an owner starts: install the d0-smell description, add an engine record that names it, list it in the catalog,
-then submit through a public route. Each step is its own test, so the first step that cannot work today is the one
-marked as an expected failure, with the missing piece named in its reason.
+then submit through a public route. Each step is its own test, including policy-filtered member discovery.
 """
 
 from __future__ import annotations
@@ -388,3 +387,87 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     off = client.patch("/admin/api/operator/services/smell-box", headers=_write_headers(client), json={"enabled": False})
     assert off.status_code == 200, off.text
     assert _public_documents(public, key) == off_documents
+
+
+def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner, gateway, fake_upstreams, monkeypatch, tmp_path):  # noqa: F811
+    """The member Models catalog must carry the operation, not only /v1/models."""
+    import proxy
+    from gateway import declared_operation_job, receipt_store
+
+    client, _, owner_id, plan_id = owner
+    key = _app_key(client, owner_id, plan_id)
+    public = gateway.client()
+    # The catalog reads the member's recent receipts; give it an empty store of its own.
+    receipts = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipts)
+    fake_upstreams.router.add("127.0.0.1:4011", EmptyModelCatalog())
+
+    # This test is about which rows the catalog lists, not their health: the fixture config's other services
+    # (the face service on 8021) have no listener here, so the catalog's health probes answer "no evidence".
+    async def no_evidence(*_args, **_kwargs):
+        return {}
+
+    async def rows_unchanged(payload, *_args, **_kwargs):
+        return payload
+
+    monkeypatch.setattr(proxy, "_live_probe_evidence", no_evidence)
+    monkeypatch.setattr(proxy, "_models_catalog_health_evidence", no_evidence)
+    monkeypatch.setattr(proxy, "_status_payload_with_service_rows", rows_unchanged)
+
+    def catalog_rows():
+        response = client.get("/me/api/models/catalog")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert isinstance(payload["models"], list), payload
+        assert isinstance(payload["aliases"], list), payload
+        return [*payload["models"], *payload["aliases"]]
+
+    def smell_rows():
+        return [
+            row for row in catalog_rows()
+            if row["id"] == "smell-1"
+            or any(cap["intent"] == "smell.infer" for cap in row["capabilities"])
+        ]
+
+    assert smell_rows() == []
+    assert _install_description(client).status_code == 201
+    assert smell_rows() == []
+    created = _add_engine(
+        client, capabilities=["smell.infer"],
+        models=[{"id": "smell-1", "public_name": "smell-1"}],
+    )
+    assert created.status_code == 201, created.text
+    assert smell_rows() == [], "a disabled engine must not publish its described task"
+
+    enabled = client.patch(
+        "/admin/api/operator/services/smell-box", headers=_write_headers(client),
+        json={"enabled": True},
+    )
+    assert enabled.status_code == 200, enabled.text
+    public_documents = _public_documents(public, key)
+    rows = smell_rows()
+    concrete = [row for row in rows if row["id"] == "smell-1" and not row["alias"]]
+    assert len(concrete) == 1, rows
+    assert "smell.infer" in {cap["intent"] for cap in concrete[0]["capabilities"]}
+    capability = next(cap for cap in concrete[0]["capabilities"] if cap["intent"] == "smell.infer")
+    projected = declared_operation_job.capabilities(proxy.ADMIN_STORE.get_service_registry())
+    assert [(cap.intent, cap.backend, cap.model, cap.execution) for cap in projected] == [
+        ("smell.infer", "smell-box", "smell-1", "async")]
+    assert capability["input_modalities"] == capability["output_modalities"] == []
+    assert _public_documents(public, key) == public_documents
+
+    # A plan limited to known work types hides the operation even though the engine is still enabled.
+    from tests.support.access import access, plan
+
+    with monkeypatch.context() as denied:
+        denied.setattr(proxy, "_access_for_auth_context", lambda _auth: access(plan()))
+        assert smell_rows() == []
+    assert any(row["id"] == "smell-1" for row in smell_rows())
+
+    disabled = client.patch(
+        "/admin/api/operator/services/smell-box", headers=_write_headers(client),
+        json={"enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert smell_rows() == []

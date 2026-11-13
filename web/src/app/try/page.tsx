@@ -73,6 +73,7 @@ import {
 } from "@/lib/prompt-memory";
 import { periodWords, type RequestHistoryChoice } from "@/lib/request-history";
 import { taskNames } from "@/lib/terms";
+import { capabilityTryHelp } from "@/lib/capability-words";
 import { modelDisplayName } from "@/lib/model-name";
 import { useUnsavedWork, type UnsavedKind } from "@/lib/unsaved-work";
 import { Button } from "@/components/ui/button";
@@ -325,37 +326,37 @@ const TAB_ITEMS: Array<{
     value: "chat",
     label: taskNames.chat,
     icon: MessageSquare,
-    help: "Send a message and get a reply.",
+    help: capabilityTryHelp.chat,
   },
   {
     value: "image",
     label: taskNames.image,
     icon: ImageIcon,
-    help: "Describe the picture you want to make.",
+    help: capabilityTryHelp.image,
   },
   {
     value: "speech",
     label: taskNames.speech,
     icon: AudioLines,
-    help: "Enter text to hear it spoken aloud.",
+    help: capabilityTryHelp.speech,
   },
   {
     value: "transcribe",
     label: taskNames.transcribe,
     icon: Mic,
-    help: "Upload a recording or record your voice to get the words as text.",
+    help: capabilityTryHelp.transcribe,
   },
   {
     value: "decide",
     label: taskNames.decisions,
     icon: GitBranch,
-    help: "Provide information to help pick one of the options.",
+    help: capabilityTryHelp.decide,
   },
   {
     value: "embed",
     label: taskNames.embeddings,
     icon: Layers,
-    help: "Turn text into numbers that search tools can use.",
+    help: capabilityTryHelp.embed,
   },
   {
     value: "workflow",
@@ -367,7 +368,7 @@ const TAB_ITEMS: Array<{
     value: "mesh",
     label: "Photo to 3D",
     icon: Box,
-    help: "Turn a picture into a 3D model you can turn around and download.",
+    help: capabilityTryHelp.mesh,
   },
 ];
 

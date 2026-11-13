@@ -300,19 +300,19 @@ def disable_service(rig) -> None:
     """Switch the video service off as an operator does: the service record says so, and the flag derived from it follows."""
     record = dict(proxy.config["backends"]["comfy"], enabled=False)
     rig.monkeypatch.setitem(proxy.config, "backends", {**proxy.config["backends"], "comfy": record})
-    rig.set(proxy, "COMFY_ENABLED", False)
+    rig.set(proxy, "GRAPH_ENABLED", False)
 
 
 def run(tmp_path: Path, exercise) -> None:
     with GatewayRig(exercise.__name__, tmp_path) as rig:
         engine = Engine()
         rig.fakes.router.add_transport(HOST, HandlerTransport(engine.handle))
-        rig.set(proxy, "COMFY_HOST", f"http://{HOST}")
+        rig.set(proxy, "GRAPH_HOST", f"http://{HOST}")
         rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
             "enabled": True, "host": HOST, "port": 80, "protocol": "node-graph"}})
         # The rig's sleeps cost no time, so a runner polling an engine the test has not driven yet would spend its whole wait in
         # no real time. The wait is made so long that only a state the test sets ends a run.
-        set_derived(rig.monkeypatch, "COMFY_TIMEOUT", 10 ** 9)
+        set_derived(rig.monkeypatch, "GRAPH_TIMEOUT", 10 ** 9)
         # A delete waits for the run to stop for the row's ``cancel_wait_s``; a run the engine cannot cancel never stops, so
         # the wait is cut to a moment and the 409 comes at once.
         row = proxy._video_row()

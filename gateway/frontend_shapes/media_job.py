@@ -14,6 +14,11 @@ JOB_FAILURE_COPY = {
 }
 
 
+# A job refused because the graphics card has too little free memory for it (the exclusive pool). The refusal is
+# retryable, so the words say that waiting works; the job's category and code stay ``capacity`` / ``resource_unavailable``.
+# The words name no time: the pool's own delay reaches the caller as the job's ``retry_after`` event.
+GPU_BUSY_COPY = "The graphics card is busy with other work. Try again soon."
+
 UPSTREAM_FAILURE_COPY = "Media generation failed (upstream HTTP {status})."
 UPSTREAM_FAILURE_CODE = "upstream_error"
 

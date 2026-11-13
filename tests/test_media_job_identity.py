@@ -90,7 +90,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        comfy_enabled = derived_patch("COMFY_ENABLED", True)
+        comfy_enabled = derived_patch("GRAPH_ENABLED", True)
         comfy_enabled.start()
         self.addCleanup(comfy_enabled.stop)
         overrides = patch.object(proxy.ADMIN_STORE, "operator_overrides",
@@ -376,7 +376,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload), \
                 patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0), \
-                derived_patch("COMFY_VIDEO_TIMEOUT", 1), \
+                derived_patch("GRAPH_VIDEO_TIMEOUT", 1), \
                 patch.object(proxy, "proxy_graph_video_status", status), \
                 patch.object(proxy, "proxy_graph_video_content", content):
             await asyncio.wait_for(proxy._run_video_media_job(job.job_id), 10)
