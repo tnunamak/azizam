@@ -410,3 +410,23 @@ def test_cli_without_a_target_and_with_an_unknown_target_keeps_refusing_retained
     assert result.returncode == 2
     assert json.loads(result.stdout)["target_reads_tombstones"] is False
     assert json.loads(result.stdout)["reason"] == "retained_deleted_jobs"
+
+
+def test_a_graft_does_not_make_an_older_target_look_newer(tmp_path, monkeypatch):
+    readiness = _load_script()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    shas = []
+    for name in ("before", "reader"):
+        _git(repo, "commit", "-q", "--allow-empty", "-m", name)
+        shas.append(_git(repo, "rev-parse", "HEAD"))
+    before, reader = shas
+    monkeypatch.setattr(readiness, "TOMBSTONE_READER_COMMIT", reader)
+    grafts = repo / ".git" / "info" / "grafts"
+    grafts.parent.mkdir(exist_ok=True)
+    grafts.write_text(f"{before} {reader}\n")  # claims reader is the parent of before
+    _git(repo, "commit-graph", "write", "--reachable")
+    assert readiness.target_reads_tombstones(before, repo) is False
+    monkeypatch.setenv("GIT_GRAFT_FILE", str(grafts))  # an inherited graft file must not count either
+    assert readiness.target_reads_tombstones(before, repo) is False
