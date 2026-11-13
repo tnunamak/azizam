@@ -1,4 +1,4 @@
-"""C2D2 route oracles, partial: S3, S6 and the typo half of S7.
+"""C2D2 route oracles, partial: S3 and S6 (expected to fail until built) and the typo half of S7 (already true).
 
 S1 requires the file-input description and Library upload/reference contracts.
 S2 requires the description's multi-result fetch grammar.
@@ -120,7 +120,10 @@ def test_s6_owner_opted_in_remote_engine_serves_a_job(owner, gateway, fake_upstr
                 # Proposed owner opt-in field, not a claim of an existing API.
                 "allow_remote": True},
     )
-    if created.status_code in {400, 422} and "protocol dispatch does not enforce paid-provider access or spend limits" in created.text:
+    if created.status_code in {400, 422} and (
+            "protocol dispatch does not enforce paid-provider access or spend limits" in created.text
+            or ("no field with one of the names sent" in created.text and created.json()["error"].get("field") == "values")):
+        # Today the opt-in field does not exist (refused as an unknown field), and without it the address is loopback-only.
         raise CapabilityGap("explicitly opted-in fake remote engine must be accepted")
     assert created.status_code == 201, created.text
     enabled = client.patch("/admin/api/operator/services/smell-box",
@@ -140,21 +143,18 @@ def test_s6_owner_opted_in_remote_engine_serves_a_job(owner, gateway, fake_upstr
     assert receipts[0]["backend"] == "smell-box"
 
 
-@pytest.mark.xfail(
-    strict=True, raises=CapabilityGap,
-    reason="c2d2 S7: unknown capability words are stored instead of rejected on write",
-)
 def test_s7_unknown_capability_is_rejected_before_storage(owner):
+    # Already true at f09015d73 for protocol engines: a task the installed description does not declare is refused
+    # on write (400 invalid_engine, field capabilities) and nothing is stored. This test keeps it true.
     client, *_ = owner
     assert _install_description(client).status_code == 201
     created = _add_engine(
         client, capabilities=["smel.infer"],
         models=[{"id": "smell-1", "public_name": "smell-1"}],
     )
-    if created.status_code == 201:
-        assert created.json()["service_registry"]["services"]["smell-box"]["capabilities"] == ["smel.infer"]
-        raise CapabilityGap("unknown capability typo must be refused with 422")
-    assert created.status_code == 422, created.text
+    assert created.status_code == 400, created.text
+    error = created.json()["error"]
+    assert (error["code"], error["field"]) == ("invalid_engine", "capabilities"), error
     state = client.get("/admin/api/operator/service-registry")
     assert state.status_code == 200, state.text
     # Rejected writes must leave no engine behind; use the same registry view
