@@ -107,8 +107,8 @@ def test_invalid_primary_is_a_visible_refusal_without_any_probe(lower, invalid, 
     rows = asyncio.run(status_endpoint._backend_grid(config))
     asyncio.run(status_endpoint._sample_backend_health(config))
     assert asyncio.run(status_endpoint._enriched_aux_health(config)) == {"voxtral": None, "parakeet": None}
-    assert asyncio.run(status_endpoint._comfy_queue_and_stats(config)) == (None, None)
-    assert asyncio.run(status_endpoint._llama_props_and_slots(config)) == (None, None)
+    assert asyncio.run(status_endpoint._graph_queue_and_stats(config)) == (None, None)
+    assert asyncio.run(status_endpoint._chat_props_and_slots(config)) == (None, None)
     assert calls == [] and samples == [] and lifecycle == []
     assert {row["key"] for row in rows} == set(config["backends"])
     assert all(row["status"] == row["live_status"] == "not_configured" for row in rows)

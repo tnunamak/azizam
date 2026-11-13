@@ -66,7 +66,7 @@ def test_derived_constants_use_the_record_as_written():
 def test_status_probe_dials_the_address_the_record_names(probed):
     config = _config(tts=NON_DEFAULT, stt=NON_DEFAULT, comfyui=NON_DEFAULT)
     asyncio.run(status_endpoint._enriched_aux_health(config))
-    asyncio.run(status_endpoint._comfy_queue_and_stats(config))
+    asyncio.run(status_endpoint._graph_queue_and_stats(config))
     assert sorted(probed) == sorted([
         "http://203.0.113.7:9999/health", "http://203.0.113.7:9999/health",
         "http://203.0.113.7:9999/queue", "http://203.0.113.7:9999/system_stats"])
@@ -74,7 +74,7 @@ def test_status_probe_dials_the_address_the_record_names(probed):
 
 def test_status_probe_of_the_chat_engine_dials_its_record(probed):
     config = _config(chat={**NON_DEFAULT, "capabilities": ["chat"], "lifecycle": {"driver": "systemd"}})
-    asyncio.run(status_endpoint._llama_props_and_slots(config))
+    asyncio.run(status_endpoint._chat_props_and_slots(config))
     assert probed == ["http://203.0.113.7:9999/props"]
 
 
@@ -108,8 +108,8 @@ def test_a_record_with_no_address_is_not_configured():
 def test_status_probe_sends_nothing_for_a_record_with_no_address(probed):
     config = _config(tts={}, stt={}, comfyui={}, chat={"capabilities": ["chat"], "lifecycle": {"driver": "systemd"}})
     assert asyncio.run(status_endpoint._enriched_aux_health(config)) == {"voxtral": None, "parakeet": None}
-    assert asyncio.run(status_endpoint._comfy_queue_and_stats(config)) == (None, None)
-    assert asyncio.run(status_endpoint._llama_props_and_slots(config)) == (None, None)
+    assert asyncio.run(status_endpoint._graph_queue_and_stats(config)) == (None, None)
+    assert asyncio.run(status_endpoint._chat_props_and_slots(config)) == (None, None)
     assert probed == []
 
 

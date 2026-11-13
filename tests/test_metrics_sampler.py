@@ -223,8 +223,8 @@ class TestMetricsSampler(unittest.TestCase):
             return None, [{"is_processing": True}, {"is_processing": False}]
 
         with (
-            patch.object(metrics_sampler.status_endpoint, "_comfy_queue_and_stats", comfy),
-            patch.object(metrics_sampler.status_endpoint, "_llama_props_and_slots", llama),
+            patch.object(metrics_sampler.status_endpoint, "_graph_queue_and_stats", comfy),
+            patch.object(metrics_sampler.status_endpoint, "_chat_props_and_slots", llama),
             patch("builtins.print") as printed,
         ):
             asyncio.run(metrics_sampler._emit_fast_async(self._writer, 1_800_000_000, config))
