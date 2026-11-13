@@ -72,8 +72,8 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
         self.patches.enter_context(patch.dict(sys.modules, {"__main__": proxy, "proxy": proxy}))
         for name, result in {
             "_backend_grid": [{"key": "test", "name": "Test", "role": "required", "live_status": "up"}],
-            "_comfy_queue_and_stats": (None, None),
-            "_llama_props_and_slots": (None, None),
+            "_graph_queue_and_stats": (None, None),
+            "_chat_props_and_slots": (None, None),
             "_enriched_aux_health": {},
         }.items():
             self.patches.enter_context(patch.object(status, name, AsyncMock(return_value=result)))
