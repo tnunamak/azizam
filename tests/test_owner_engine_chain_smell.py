@@ -2,8 +2,7 @@
 
 The direct test (tests/test_smell_infer_offering.py) builds the connection and the adapter by hand. This module starts
 where an owner starts: install the d0-smell description, add an engine record that names it, list it in the catalog,
-then submit through a public route. Each step is its own test, so the first step that cannot work today is the one
-marked as an expected failure, with the missing piece named in its reason.
+then submit through a public route. Each step is its own test, including policy-filtered member discovery.
 """
 
 from __future__ import annotations
@@ -390,16 +389,14 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
     assert _public_documents(public, key) == off_documents
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Missing piece: the member catalog (/me/api/models/catalog) builds its rows from the capability catalog, which "
-    "has no source for a protocol engine's declared operations; /v1/models adds them through "
-    "declared_operation_job.model_rows, so the catalog never lists smell-1."))
-def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner, fake_upstreams, monkeypatch, tmp_path):  # noqa: F811
+def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner, gateway, fake_upstreams, monkeypatch, tmp_path):  # noqa: F811
     """The member Models catalog must carry the operation, not only /v1/models."""
     import proxy
     from gateway import receipt_store
 
-    client, *_ = owner
+    client, _, owner_id, plan_id = owner
+    key = _app_key(client, owner_id, plan_id)
+    public = gateway.client()
     # The catalog reads the member's recent receipts; give it an empty store of its own.
     receipts = tmp_path / "receipts.db"
     receipt_store.init_db(receipts)
@@ -448,10 +445,23 @@ def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner,
         json={"enabled": True},
     )
     assert enabled.status_code == 200, enabled.text
+    public_documents = _public_documents(public, key)
     rows = smell_rows()
     concrete = [row for row in rows if row["id"] == "smell-1" and not row["alias"]]
     assert len(concrete) == 1, rows
     assert "smell.infer" in {cap["intent"] for cap in concrete[0]["capabilities"]}
+    capability = next(cap for cap in concrete[0]["capabilities"] if cap["intent"] == "smell.infer")
+    assert capability["execution"] == "async"
+    assert capability["input_modalities"] == capability["output_modalities"] == []
+    assert _public_documents(public, key) == public_documents
+
+    # A plan without direct engine access hides the operation even though the engine is still enabled.
+    from tests.support.access import access, plan
+
+    with monkeypatch.context() as denied:
+        denied.setattr(proxy, "_access_for_auth_context", lambda _auth: access(plan()))
+        assert smell_rows() == []
+    assert any(row["id"] == "smell-1" for row in smell_rows())
 
     disabled = client.patch(
         "/admin/api/operator/services/smell-box", headers=_write_headers(client),
