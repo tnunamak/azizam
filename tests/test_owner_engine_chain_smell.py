@@ -392,7 +392,7 @@ def test_step5_an_installed_engine_makes_its_operation_public_and_no_engine_chan
 def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner, gateway, fake_upstreams, monkeypatch, tmp_path):  # noqa: F811
     """The member Models catalog must carry the operation, not only /v1/models."""
     import proxy
-    from gateway import receipt_store
+    from gateway import declared_operation_job, receipt_store
 
     client, _, owner_id, plan_id = owner
     key = _app_key(client, owner_id, plan_id)
@@ -451,11 +451,13 @@ def test_step3_member_catalog_lists_the_described_task_only_while_enabled(owner,
     assert len(concrete) == 1, rows
     assert "smell.infer" in {cap["intent"] for cap in concrete[0]["capabilities"]}
     capability = next(cap for cap in concrete[0]["capabilities"] if cap["intent"] == "smell.infer")
-    assert capability["execution"] == "async"
+    projected = declared_operation_job.capabilities(proxy.ADMIN_STORE.get_service_registry())
+    assert [(cap.intent, cap.backend, cap.model, cap.execution) for cap in projected] == [
+        ("smell.infer", "smell-box", "smell-1", "async")]
     assert capability["input_modalities"] == capability["output_modalities"] == []
     assert _public_documents(public, key) == public_documents
 
-    # A plan without direct engine access hides the operation even though the engine is still enabled.
+    # A plan limited to known work types hides the operation even though the engine is still enabled.
     from tests.support.access import access, plan
 
     with monkeypatch.context() as denied:
