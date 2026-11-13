@@ -389,3 +389,21 @@ def test_screen_word_maps_are_immutable(tmp_path, index):
     table = _import(source).load_capability_screen_words(data)[index]
     with pytest.raises(TypeError):
         table["chat"] = "Changed"
+
+
+@pytest.mark.parametrize("value", [None, 7, "", "   ", " openai.images", "openai.images ", "openai images"])
+def test_a_blank_or_spaced_policy_protocol_fails_loading(tmp_path, value):
+    document = _document()
+    document["capabilities"][1]["policy_protocol"] = value
+    source, _ = _tree(tmp_path, document)
+    with pytest.raises(ValueError, match="policy_protocol must be a nonempty word without whitespace"):
+        _import(source)
+
+
+def test_a_repeated_key_fails_loading_instead_of_the_last_one_winning(tmp_path):
+    text = yaml.safe_dump(_document(), sort_keys=False).replace(
+        "- id: image\n  label: Images\n", "- id: image\n  label: Images\n  label: Pictures\n", 1)
+    assert "label: Pictures" in text
+    source, _ = _tree(tmp_path, text)
+    with pytest.raises(ValueError, match="(?s)capability_words.yml.*duplicate key 'label'"):
+        _import(source)

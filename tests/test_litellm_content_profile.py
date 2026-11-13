@@ -693,3 +693,41 @@ def test_failed_first_check_window_ends_refused(monkeypatch):
         refusal = await content.execution_refusal(base)
         assert refusal is not None and 'profile_check_unavailable' in refusal.body.decode()
     asyncio.run(run())
+
+
+def _profile_file(tmp_path, text):
+    path = tmp_path / "litellm_no_content.yml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_the_shipped_profile_loads_through_the_checked_loader():
+    assert content.load_profile() == content.profile()
+
+
+@pytest.mark.parametrize("change, where", [
+    (lambda d: d.pop("router_settings"), "missing sections: router_settings"),
+    (lambda d: d.update(extra={}), "unknown sections: extra"),
+    (lambda d: d.update(general_settings={}), "general_settings: must be a nonempty mapping"),
+    (lambda d: d["litellm_settings"].update({"turn off": True}), "setting name must be a word"),
+    (lambda d: d["litellm_settings"].update(cache=None), "litellm_settings.cache: must be"),
+    (lambda d: d["environment"].update(LITELLM_LOG=" "), "environment.LITELLM_LOG: must be a nonblank string"),
+    (lambda d: d["environment"].update(litellm_log="CRITICAL"), "variable name must be an upper-case word"),
+    (lambda d: d["environment"].update(NO_DOCS=True), "environment.NO_DOCS: must be a nonblank string"),
+])
+def test_a_malformed_profile_is_refused_naming_the_field(tmp_path, change, where):
+    document = yaml.safe_load(content.PROFILE_PATH.read_text(encoding="utf-8"))
+    change(document)
+    path = _profile_file(tmp_path, yaml.safe_dump(document, sort_keys=False))
+    with pytest.raises(ValueError) as error:
+        content.load_profile(path)
+    assert str(path) in str(error.value)
+    assert where in str(error.value)
+
+
+def test_a_repeated_profile_key_is_refused_instead_of_the_last_one_winning(tmp_path):
+    text = content.PROFILE_PATH.read_text(encoding="utf-8").replace(
+        "  disable_spend_logs: true\n", "  disable_spend_logs: true\n  disable_spend_logs: false\n", 1)
+    assert "disable_spend_logs: false" in text
+    with pytest.raises(ValueError, match="(?s)could not read the profile.*duplicate key 'disable_spend_logs'"):
+        content.load_profile(_profile_file(tmp_path, text))

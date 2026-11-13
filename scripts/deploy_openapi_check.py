@@ -7,7 +7,9 @@ check reads the pin at the commit that was live before the deploy and at the dep
 the gate re-pinned passes here too, with no second list of allowed moves to keep in step.
 
 Documents are compared entry by entry: one entry per operation ("<path> <method>"), one per component
-("components <section>/<name>"), and "document" for everything else at the top level (info, servers, security, tags).
+("components <section>/<name>"), one presence entry per path item and per section (so an empty one still counts),
+and "document" for everything else at the top level (info, servers, security, tags). Values compare as canonical JSON
+text, so true and 1, or null and a missing entry, differ.
 Every entry in any of the four documents is checked:
 
 - live matched the old pin before the deploy (or both lacked the entry): live must match the new pin after it, so the
@@ -31,49 +33,69 @@ from typing import Any, Mapping
 
 PIN = "tests/fixtures/headless_openapi.json"
 REPO = Path(__file__).resolve().parents[1]
-ABSENT = None  # an entry missing from a document; OpenAPI entries are objects, never null
+ABSENT = None  # an entry missing from a document; a present entry is JSON text, so null is "null"
 
 
-def _short(value: Any) -> str:
+def _short(value: str | None) -> str:
     if value is ABSENT:
         return "absent"
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
-def entries(document: Any) -> dict[str, Any]:
-    """Split an OpenAPI document into the entries this check compares. Refuses anything that is not one."""
+def _canonical(value: Any) -> str:
+    """JSON text with sorted keys: true and 1, 1 and 1.0, null and a missing entry all stay different."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def entries(document: Any) -> dict[str, str]:
+    """Split an OpenAPI document into the entries this check compares, each as canonical JSON text. Besides one entry per
+    operation and per component, "paths <path>", "components" and "components <section>" record that a path item or a
+    section exists, so an empty one still counts. Refuses anything that is not an
+    OpenAPI document, and any document whose entry names would collide."""
     if not isinstance(document, Mapping) or not isinstance(document.get("paths"), Mapping):
         raise ValueError("not an OpenAPI document (no paths object)")
-    out: dict[str, Any] = {}
+    out: dict[str, str] = {}
+
+    def put(name: str, value: Any) -> None:
+        if name in out:
+            raise ValueError(f"ambiguous entry name {name!r}")
+        out[name] = _canonical(value)
+
     for path, operations in document["paths"].items():
-        if not isinstance(operations, Mapping):
-            raise ValueError(f"path {path!r} is not an object")
+        if not isinstance(path, str) or not isinstance(operations, Mapping):
+            raise ValueError(f"path {path!r} is not a string naming an object")
+        if not all(isinstance(method, str) for method in operations):
+            raise ValueError(f"path {path!r} has a key that is not a string")
+        put(f"paths {path}", "object")
         for method, operation in operations.items():
-            out[f"{path} {method}"] = operation
-    components = document.get("components") or {}
-    if not isinstance(components, Mapping):
-        raise ValueError("components is not an object")
-    for section, items in components.items():
-        if not isinstance(items, Mapping):
-            raise ValueError(f"components {section!r} is not an object")
-        for name, value in items.items():
-            out[f"components {section}/{name}"] = value
-    out["document"] = {key: value for key, value in document.items() if key not in ("paths", "components")}
+            put(f"{path} {method}", operation)
+    if "components" in document:
+        components = document["components"]
+        if not isinstance(components, Mapping) or not all(isinstance(k, str) and "/" not in k for k in components):
+            raise ValueError("components is not an object of named sections")
+        put("components", "object")
+        for section, items in components.items():
+            if not isinstance(items, Mapping) or not all(isinstance(name, str) for name in items):
+                raise ValueError(f"components {section!r} is not an object")
+            put(f"components {section}", "object")
+            for name, value in items.items():
+                put(f"components {section}/{name}", value)
+    put("document", {key: value for key, value in document.items() if key not in ("paths", "components")})
     return out
 
 
-def expected_after(live_before: Mapping[str, Any], pin_before: Mapping[str, Any],
-                   pin_after: Mapping[str, Any], live_after: Mapping[str, Any]) -> dict[str, Any]:
+def expected_after(live_before: Mapping[str, str], pin_before: Mapping[str, str],
+                   pin_after: Mapping[str, str], live_after: Mapping[str, str]) -> dict[str, str | None]:
     """The value each entry must have after the deploy (ABSENT: the entry must not exist)."""
-    expected: dict[str, Any] = {}
+    expected: dict[str, str | None] = {}
     for key in set(live_before) | set(pin_before) | set(pin_after) | set(live_after):
         before, old_pin, new_pin = live_before.get(key), pin_before.get(key), pin_after.get(key)
         expected[key] = before if before != old_pin and old_pin == new_pin else new_pin
     return expected
 
 
-def compare(live_before: Mapping[str, Any], live_after: Mapping[str, Any], pin_before: Mapping[str, Any],
-            pin_after: Mapping[str, Any]) -> tuple[list[str], list[str]]:
+def compare(live_before: Mapping[str, str], live_after: Mapping[str, str], pin_before: Mapping[str, str],
+            pin_after: Mapping[str, str]) -> tuple[list[str], list[str]]:
     """Return (failures, notes); each line names one entry."""
     failures: list[str] = []
     notes: list[str] = []
@@ -88,13 +110,13 @@ def compare(live_before: Mapping[str, Any], live_after: Mapping[str, Any], pin_b
     return failures, notes
 
 
-def pin_at(commit: str, repo: Path) -> dict[str, Any]:
+def pin_at(commit: str, repo: Path) -> dict[str, str]:
     text = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:{PIN}"],
                           capture_output=True, check=True, text=True).stdout
     return entries(json.loads(text))
 
 
-def _load(path: str) -> dict[str, Any]:
+def _load(path: str) -> dict[str, str]:
     return entries(json.loads(Path(path).read_text(encoding="utf-8")))
 
 

@@ -30,8 +30,10 @@ def _modality_words(document: Mapping[str, Any], path: Path) -> frozenset[str]:
 
 def load_modality_words(path: Path = CAPABILITY_WORDS_PATH) -> frozenset[str]:
     """The registered wire-facing modality vocabulary; not capability aliases or MIME types."""
+    from gateway.strict_yaml import safe_load_strict
+
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = safe_load_strict(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         raise ValueError(f"{path.name}: modality_words could not be loaded: {error}") from error
     if not isinstance(document, dict):
@@ -75,8 +77,10 @@ def _load_capability_tables(path: Path) -> tuple[
     def invalid_table(section: str, row: object, reason: str) -> ValueError:
         return ValueError(f"{path.name}: row {row!r} in {section} {reason}")
 
+    from gateway.strict_yaml import safe_load_strict
+
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document = safe_load_strict(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         raise invalid("<document>", f"could not be loaded: {error}") from error
     if not isinstance(document, dict):
@@ -140,8 +144,8 @@ def _load_capability_tables(path: Path) -> tuple[
         display_order[capability] = rank
         if "policy_protocol" in row:
             protocol = row["policy_protocol"]
-            if not isinstance(protocol, str):
-                raise invalid_row(index, "policy_protocol must be a string")
+            if not isinstance(protocol, str) or not protocol or any(char.isspace() for char in protocol):
+                raise invalid_row(index, "policy_protocol must be a nonempty word without whitespace")
             policy_protocols[capability] = protocol
         for field in ("icon", "recommended_alias", "summary"):
             if field in row and (not isinstance(row[field], str) or not row[field].strip()):
