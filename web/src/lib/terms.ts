@@ -1,20 +1,10 @@
-import { capabilityTaskNames } from "./capability-words";
+import { capabilityLabels as generatedCapabilityLabels, capabilityTaskNames } from "./capability-words";
 
-/** Capability labels use the gateway capability IDs and VOICE.md vocabulary. */
-export const capabilityLabels = {
-  chat: "Chat",
-  image: "Images",
-  video: "Video",
-  mesh: "3D models",
-  speech: "Voice",
-  transcribe: "Transcription",
-  music: "Music",
-  sfx: "Sound effects",
-  audio: "Audio",
-  decide: "Decisions",
-  embed: "Document search",
-  rerank: "Reranking",
-} as const;
+/**
+ * Capability labels use the gateway capability IDs and VOICE.md vocabulary. The
+ * words live in registry/capability_words.yml (label); this re-exports them.
+ */
+export const capabilityLabels = generatedCapabilityLabels;
 
 type CapabilityId = keyof typeof capabilityLabels;
 

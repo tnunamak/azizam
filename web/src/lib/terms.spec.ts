@@ -55,3 +55,20 @@ it("preserves the complete member task-name contract", () => {
     reranking: "Sort search results",
   });
 });
+
+it("preserves the complete capability label contract", () => {
+  expect(capabilityLabels).toEqual({
+    chat: "Chat",
+    image: "Images",
+    video: "Video",
+    mesh: "3D models",
+    speech: "Voice",
+    transcribe: "Transcription",
+    music: "Music",
+    sfx: "Sound effects",
+    audio: "Audio",
+    decide: "Decisions",
+    embed: "Document search",
+    rerank: "Reranking",
+  });
+});
