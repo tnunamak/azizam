@@ -5,6 +5,7 @@ import asyncio
 from unittest.mock import patch
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 
 PROPS = {"endpoint": "/props", "model_key": "model_path"}
 BODY = {"model_path": "/models/a.bin", "data": [{"id": "served-id"}]}
@@ -43,7 +44,7 @@ def test_the_current_model_reads_each_service_through_its_probe():
 
     backends = {"declared": {"loaded_model_probe": PROPS}, "plain": {}, "broken": {"loaded_model_probe": {"endpoint": "/p"}}}
     with patch.object(proxy, "config", {"backends": backends}), patch.object(proxy, "_engine_probe_json", probe), \
-            patch.object(proxy.DERIVED, "LLM_BACKEND_HOSTS", {name: "127.0.0.1" for name in backends}), \
+            derived_patch("LLM_BACKEND_HOSTS", {name: "http://127.0.0.1:5051" for name in backends}), \
             patch.dict(proxy._ENGINE_SERVED_ALIASES, clear=True):
         assert asyncio.run(proxy.current_llm_model_for_backend("declared")) == "/models/a.bin"
         assert asyncio.run(proxy.current_llm_model_for_backend("plain")) == "served-id"

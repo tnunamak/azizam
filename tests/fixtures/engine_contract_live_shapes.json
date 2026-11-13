@@ -458,10 +458,7 @@
       "priority": "<number>",
       "protocol": "<string>",
       "role": "<string>",
-      "loaded_model_probe": {
-        "endpoint": "<string>",
-        "model_key": "<string>"
-      },
+      "state_type": "<string>",
       "transforms": [
         "<string>"
       ],
