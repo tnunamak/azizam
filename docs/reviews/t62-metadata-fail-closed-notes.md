@@ -225,3 +225,28 @@ touched production paths and test diffs were read for consistency. git diff --ch
 Confidence: 90% for the specified buffered formats, based on synthetic end-to-end delivery,
 lossless payload checks and caller coverage. Real backend and arbitrary-file fuzz testing
 remain outside this lane. Review should focus on HEVC's header-rebuild intermediate.
+
+## Review follow-up (dot review 2886)
+
+Fixed in this train:
+
+- JPEG kept only a segment prefix and copied the rest of the payload. The JFIF header now
+  leaves without its thumbnail, JFXX is dropped, and an Adobe segment must have its fixed
+  12-byte payload or the file is refused (dropping it would change how CMYK decodes).
+- A dropped GIF plain-text block now takes the graphic control block that governs it, so
+  that block no longer retimes the next frame.
+- An H.264 MP4 strip was not a fixed point: the bitrate hint box carried the source's
+  maximum through the filtered copy, so a second strip changed it. The MP4 and MOV
+  rewrites now leave that box out.
+- The UI fixture's subprocess guard did not know the codec probe or the stream filters,
+  so the household Library video answered 500 under the e2e suite.
+
+Not fixed here, open:
+
+- GLB node, mesh and material names are kept. They are model content, not a known
+  prompt location, but a file can carry text there.
+- ICC profiles are kept whole, including their description and copyright tags.
+- MP3 keeps bytes after the audio frames apart from a final ID3v1 tag, and FLAC keeps bytes
+  after its last metadata block; an appended tag can survive. This predates train 62.
+- WAV keeps a LIST chunk's sub-chunks without checking each one.
+- A few-frame HEVC clip fails the probe after the MPEG-TS rebuild and is refused (no leak).
