@@ -347,4 +347,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # Re-captured 2026-11-12 for the optional ``tag`` filter of GET /gateway/v1/requests and the yue2-song help text (train 54,
     # L3). Before it the frozen digest was e0ced55193c55dc91c29855089e549e72237db7b8417357427e8c7b0bb3fb390.
     # Re-captured 2026-11-12 for the same tags copy split; the full document changes only that input description.
+    # Re-captured 2026-11-13: the hot-reload description names no constants; nothing else moved. Before it the frozen
+    # digest was 7d81428411342e23f215edb6dbb07fe321c3122f79198a349161fb47ae643ab0.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
