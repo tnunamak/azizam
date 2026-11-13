@@ -63,6 +63,7 @@ def _load_capability_tables(path: Path) -> tuple[
     Mapping[str, str], Mapping[str, str], Mapping[str, str],
     Mapping[str, str], Mapping[str, Any], Mapping[str, tuple[str, ...]], Mapping[str, int], frozenset[str],
     Mapping[str, str], Mapping[str, str],
+    Mapping[str, str], Mapping[str, str], Mapping[str, str],
 ]:
     """Validate capability, presentation and classification rows together."""
     def invalid(word: object, reason: str) -> ValueError:
@@ -95,6 +96,9 @@ def _load_capability_tables(path: Path) -> tuple[
         raise invalid_row("capabilities", "must be a non-empty list")
     member_labels: dict[str, str] = {}
     task_names: dict[str, str] = {}
+    models_explainers: dict[str, str] = {}
+    try_help: dict[str, str] = {}
+    request_nouns: dict[str, str] = {}
     labels: dict[str, str] = {}
     policy_protocols: dict[str, str] = {}
     icons: dict[str, str] = {}
@@ -107,7 +111,7 @@ def _load_capability_tables(path: Path) -> tuple[
         if not isinstance(row, dict):
             raise invalid_row(index, "must be a mapping")
         for key in row:
-            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order", "alias_hides_declared_names", "member_label", "task_name"}:
+            if key not in {"id", "label", "policy_protocol", "icon", "recommended_alias", "summary", "hidden_by", "display_order", "alias_hides_declared_names", "member_label", "task_name", "models_explainer", "try_help", "request_noun"}:
                 raise invalid_row(index, f"has unknown key {key!r}")
         capability = row.get("id")
         if not isinstance(capability, str) or not capability.strip():
@@ -117,13 +121,16 @@ def _load_capability_tables(path: Path) -> tuple[
         label = row.get("label")
         if not isinstance(label, str) or not label.strip():
             raise invalid_row(index, "label must be a non-empty string")
-        for field in ("member_label", "task_name"):
+        for field in ("member_label", "task_name", "models_explainer", "try_help", "request_noun"):
             if field in row:
                 value = row[field]
                 if not isinstance(value, str) or not value.strip() or value != value.strip():
                     raise invalid_row(index, f"{field} must be a non-empty string without surrounding whitespace")
         member_labels[capability] = row.get("member_label", label)
         task_names[capability] = row.get("task_name", member_labels[capability])
+        for field, table in (("models_explainer", models_explainers), ("try_help", try_help), ("request_noun", request_nouns)):
+            if field in row:
+                table[capability] = row[field]
         labels[capability] = label
         rank = row.get("display_order", index - 1)
         if type(rank) is not int or rank < 0:
@@ -222,7 +229,8 @@ def _load_capability_tables(path: Path) -> tuple[
             MappingProxyType(icons), MappingProxyType(aliases), MappingProxyType(summaries),
             MappingProxyType(dict(types)), MappingProxyType(audio), MappingProxyType(hidden_by),
             MappingProxyType(display_order), frozenset(alias_hides_names),
-            MappingProxyType(member_labels), MappingProxyType(task_names))
+            MappingProxyType(member_labels), MappingProxyType(task_names),
+            MappingProxyType(models_explainers), MappingProxyType(try_help), MappingProxyType(request_nouns))
 
 
 def _load_capability_data(path: Path) -> tuple[
@@ -261,6 +269,13 @@ def load_capability_member_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Ma
     return _load_capability_tables(path)[12:14]
 
 
+def load_capability_screen_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[
+    Mapping[str, str], Mapping[str, str], Mapping[str, str],
+]:
+    """Read optional Models explainers, Try help and request nouns in row order."""
+    return _load_capability_tables(path)[14:17]
+
+
 def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[str, str], Mapping[str, str]]:
     """Read the word maps after validating their capability rows; preserve the two-map API."""
     _, _, protocol, intents = _load_capability_data(path)
@@ -270,7 +285,7 @@ def load_capability_words(path: Path = CAPABILITY_WORDS_PATH) -> tuple[Mapping[s
 (CAPABILITY_LABELS, POLICY_PROTOCOLS, PROTOCOL_CAPABILITIES, INTENT_CAPABILITIES,
  CAPABILITY_ICON_KEYS, RECOMMENDED_ALIASES, CAPABILITY_DESCRIPTIONS,
  TYPE_CAPABILITIES, AUDIO_RULE, CAPABILITY_HIDDEN_BY, CAPABILITY_DISPLAY_ORDER, CAPABILITY_ALIAS_HIDES_NAMES,
- CAPABILITY_MEMBER_LABELS, CAPABILITY_TASK_NAMES) = _load_capability_tables(CAPABILITY_WORDS_PATH)
+ CAPABILITY_MEMBER_LABELS, CAPABILITY_TASK_NAMES) = _load_capability_tables(CAPABILITY_WORDS_PATH)[:14]
 
 MODALITY_WORDS = load_modality_words()
 MEDIA_TYPE_MODALITIES = load_media_type_modalities()

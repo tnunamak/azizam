@@ -1227,3 +1227,22 @@ describe("filter option counts", () => {
     }
   });
 });
+
+
+it("keeps the complete capabilityModelsExplainers map byte-identical", async () => {
+  const { capabilityModelsExplainers } = await import("@/lib/capability-words");
+  expect(capabilityModelsExplainers).toEqual({
+    "chat": "Answers, writing and code, for chat apps and agents.",
+    "image": "Make or edit a picture from a description.",
+    "video": "Make a short video from a description or a picture.",
+    "mesh": "Make a 3D model from one picture.",
+    "music": "Songs and instrumentals from a description.",
+    "sfx": "Short sounds from a description.",
+    "speech": "Read text aloud.",
+    "audio": "Music and sounds from a description.",
+    "transcribe": "Turn a recording into text.",
+    "decide": "Pick one answer from options you give, for routing and yes-or-no checks.",
+    "embed": "Vectors that let apps search text and find similar passages.",
+    "rerank": "Sort search results by how well they match."
+  });
+});
