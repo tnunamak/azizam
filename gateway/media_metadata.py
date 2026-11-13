@@ -46,6 +46,10 @@ from gateway.strict_yaml import safe_load_strict
 __all__ = [
     "MediaMetadataError",
     "media_kind",
+    "metadata_handling",
+    "METADATA_REMOVED",
+    "METADATA_UNCHANGED",
+    "METADATA_NOTES",
     "strip_metadata",
     "embed_png_text",
     "copy_png_text",
@@ -611,19 +615,43 @@ def strip_audio(content: bytes, suffix_or_mime: str, *, workdir: Path | None = N
     return _ffmpeg_rewrite(content, suffix_or_mime, workdir, ["-an"])
 
 
+# Families that carry metadata (EXIF, XMP, GPS, an author) but have no handler here. They are
+# refused, never passed through as a File: an iPhone photo is HEIC and carries GPS.
+_UNHANDLED_FAMILIES = frozenset({"tiff", "heif", "pdf", "jxl"})
+_HEIF_BRANDS = frozenset({b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx",
+                          b"mif1", b"mif2", b"msf1", b"avif", b"avis"})
+
+METADATA_REMOVED = "removed"
+METADATA_UNCHANGED = "unchanged"
+METADATA_NOTES = {
+    METADATA_REMOVED: "Azizam removed the metadata it knows how to find in this file.",
+    METADATA_UNCHANGED: "Azizam left this file's bytes unchanged and did not remove any metadata from it.",
+}
+
+
+def _ftyp_brands(content: bytes) -> set[bytes]:
+    size = int.from_bytes(content[:4], "big")
+    end = min(size if size >= 16 else 16, len(content))
+    return {content[8:12]} | {content[i:i + 4] for i in range(16, end - 3, 4)}
+
+
 def sniff_metadata_type(content: bytes) -> str | None:
     """Identify a container from its bytes, never from a filename or MIME hint."""
     for signature, kind in ((_PNG_SIG, "png"), (b"\xff\xd8", "jpeg"),
                             (b"GIF87a", "gif"), (b"GIF89a", "gif"),
                             (b"glTF", "glb"), (b"fLaC", "flac"),
                             (b"OggS", "ogg"), (b"ID3", "mp3"),
-                            (b"\x1a\x45\xdf\xa3", "ebml")):
+                            (b"\x1a\x45\xdf\xa3", "ebml"),
+                            (b"II*\x00", "tiff"), (b"MM\x00*", "tiff"),
+                            (b"II+\x00", "tiff"), (b"MM\x00+", "tiff"),
+                            (b"%PDF-", "pdf"), (b"\xff\x0a", "jxl"),
+                            (b"\x00\x00\x00\x0cJXL \r\n\x87\n", "jxl")):
         if content.startswith(signature):
             return kind
     if len(content) >= 12 and content[:4] == b"RIFF":
         return {b"WEBP": "webp", b"WAVE": "wav", b"AVI ": "avi"}.get(content[8:12])
     if len(content) >= 12 and content[4:8] == b"ftyp":
-        return "bmff"
+        return "heif" if _ftyp_brands(content) & _HEIF_BRANDS else "bmff"
     if len(content) >= 2 and content[0] == 0xff:
         if content[1] & 0xf6 == 0xf0:
             return "adts"
@@ -788,6 +816,16 @@ def _codec_strip_options(streams: list[dict[str, str]]) -> tuple[list[str], bool
     return options, rebuild_headers
 
 
+def metadata_handling(content: bytes, suffix_or_mime: str) -> str:
+    """What strip_metadata does to these bytes: METADATA_UNCHANGED for a pass-through, else METADATA_REMOVED.
+
+    A prefix of the file is enough (the sniff reads the first bytes only).
+    """
+    if sniff_metadata_type(content) is None and media_kind(suffix_or_mime) in (None, "content"):
+        return METADATA_UNCHANGED
+    return METADATA_REMOVED
+
+
 def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None = None) -> bytes:
     """Strip by actual bytes; refuse unknown or contradictory container declarations."""
     actual = sniff_metadata_type(content)
@@ -795,9 +833,15 @@ def strip_metadata(content: bytes, suffix_or_mime: str, *, workdir: Path | None 
                 "gif": _strip_gif, "glb": _strip_glb}
     if actual in handlers:
         return handlers[actual](content)
+    if actual in _UNHANDLED_FAMILIES:
+        raise MediaMetadataError("media metadata format has no handler")
     kind = media_kind(suffix_or_mime)
-    if kind == "content" and actual is None:
-        return content  # Explicit metadata-free format row (headerless PCM).
+    if actual is None:
+        if kind in (None, "content"):
+            # A File that is not media (an upload or an engine result) or the explicit headerless PCM row:
+            # no known metadata channel, so the bytes pass unchanged and metadata_handling says so.
+            return content
+        raise MediaMetadataError("declared media has unrecognised bytes")
     if kind not in ("audio", "video"):
         raise MediaMetadataError("unsupported media metadata format")
     suffix = _suffix(suffix_or_mime)

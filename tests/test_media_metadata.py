@@ -769,7 +769,7 @@ def test_metadata_bearing_formats_with_no_handler_never_pass_as_files(make, decl
     # An iPhone photo (HEIC) carries GPS; a TIFF or PDF carries author and EXIF.
     # Uploaded under a non-media name they are refused, never kept as a File.
     source = make()
-    assert b"PRIVATE_MARKER" in source
+    assert b"PRIVATE_MARKER" in source or "PRIVATE_MARKER".encode("utf-16-be") in source
     with pytest.raises(mm.MediaMetadataError):
         mm.strip_metadata(source, declared)
 
