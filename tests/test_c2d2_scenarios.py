@@ -34,12 +34,17 @@ class CapabilityGap(AssertionError):
 
 
 class PngEngine(SmellEngine):
+    def __init__(self, content=PNG, media_type="image/png"):
+        super().__init__()
+        self.result_content = content
+        self.result_media_type = media_type
+
     async def __call__(self, scope, receive, send):
         if scope["method"] == "GET" and scope["path"] == "/v1/infer/smell-1/molecule":
             await send({"type": "http.response.start", "status": 200,
-                        "headers": [(b"content-type", b"image/png"),
-                                    (b"content-length", str(len(PNG)).encode())]})
-            await send({"type": "http.response.body", "body": PNG})
+                        "headers": [(b"content-type", self.result_media_type.encode()),
+                                    (b"content-length", str(len(self.result_content)).encode())]})
+            await send({"type": "http.response.body", "body": self.result_content})
             return
         await super().__call__(scope, receive, send)
 
@@ -241,3 +246,40 @@ def test_s5_partial_direct_engine_name_does_not_inherit_alias_fallbacks():
                       engine_available=lambda engine_id, _spec: engine_id == "second")
     assert refused.value.code == "model_not_deployed"
     assert refused.value.fallback_declared is False
+
+
+
+def test_s2_partial_conservative_single_wav_result_is_audio(owner, gateway, fake_upstreams):
+    """Multiple ordered heterogeneous job assets still need an end-to-end oracle."""
+    # Conservative assumption: the demonstrated v1 description fetches one file.
+    import struct
+
+    samples = bytes(2)
+    wav = (b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVEfmt "
+           + struct.pack("<IHHIIHH", 16, 1, 1, 8000, 16000, 2, 16)
+           + b"data" + struct.pack("<I", len(samples)) + samples)
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    engine = PngEngine(content=wav, media_type="audio/wav")
+    fake_upstreams.router.add("127.0.0.1:18302", engine)
+    created = _add_engine(
+        client, capabilities=["smell.infer"],
+        models=[{"id": "smell-1", "public_name": "smell-1"}],
+        values={"address": "http://127.0.0.1:18302", "dispatch": "protocol",
+                "protocol_description": "d0-smell"},
+    )
+    assert created.status_code == 201, created.text
+    enabled = client.patch("/admin/api/operator/services/smell-box",
+                           headers=_write_headers(client), json={"enabled": True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, job = _job(public, key, engine)
+        content = public.get(submitted["content_url"], headers=_headers(key))
+        assert content.status_code == 200, content.text
+        assert content.content == wav
+        assert len(job["assets"]) == 1, job
+        asset = job["assets"][0]
+        assert asset["media_type"] == "audio/wav", asset
+        assert asset["size_bytes"] == len(wav), asset
+        assert asset["kind"] == "audio", asset
