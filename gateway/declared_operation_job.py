@@ -9,7 +9,7 @@ document and a refusal's supported intents name them while an enabled engine dec
 those three are what the table alone gives.
 
 The job runs on the versioned job runner (``engine_protocol.jobs.run``). The wrapper publishes a version 1 runner's
-single fetched file; version 2 bundles and terminal replays already belong to the runner's completion transaction.
+fetched files in engine order; version 2 bundles and terminal replays already belong to the runner's completion transaction.
 """
 from __future__ import annotations
 
@@ -102,17 +102,16 @@ def model_rows(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *, job_id: str) -> None:
-    """Run the job and keep the fetched file as its asset. ``body`` is the caller's input object; the description's
+    """Run the job and keep each fetched file as its own asset. ``body`` is the caller's input object; the description's
     submit map decides which of its fields reach the engine."""
     refs = await protocol_jobs.run(runtime, intent, body, job_id=job_id)
     if refs is None or isinstance(refs, ResultBundle):
         # A terminal replay or a committed bundle has no second completion owner.
         return
-    if len(refs) != 1:
-        raise ProtocolError("The engine must return exactly one result file.", code="malformed_response")
-    ref = refs[0]
+    if not refs:
+        raise ProtocolError("The engine returned no result file.", code="malformed_response")
     media_jobs.update_status(
         job_id, media_jobs.STATUS_SUCCEEDED, progress=100, path=media_jobs.DB_PATH,
         add_assets=[{"asset_id": ref.id, "kind": kind_for_media_type(ref.content_type),
-                     "media_type": ref.content_type, "size_bytes": ref.size}])
+                     "media_type": ref.content_type, "size_bytes": ref.size} for ref in refs])
     media_jobs.append_event(job_id, "succeeded", {"status": "succeeded"}, path=media_jobs.DB_PATH)
