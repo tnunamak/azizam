@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -18,6 +23,46 @@ from gateway.chat_extensions import (  # noqa: E402
 
 
 class TestChatExtensions(unittest.TestCase):
+    def test_standard_container_field_follows_temporary_registry(self) -> None:
+        import gateway.chat_extensions as module
+
+        registry = ROOT / "registry" / "thinking_controls.yml"
+        original = yaml.safe_load(registry.read_text(encoding="utf-8"))
+        original_field = original["container_field"]
+        self.assertIn(original_field, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+        body = {"model": "default", "messages": [], "backend": {"nested": [1]}}
+        self.assertFalse(module.validate_chat_completions_extensions(body).ok)
+        changed = dict(original, container_field="backend")
+        real_open = Path.open
+        reads = []
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory) / "thinking_controls.yml"
+            temporary.write_text(yaml.safe_dump(changed), encoding="utf-8")
+
+            def redirected_open(path, *args, **kwargs):
+                if path == registry:
+                    reads.append(path)
+                    return real_open(temporary, *args, **kwargs)
+                return real_open(path, *args, **kwargs)
+
+            try:
+                with patch.object(Path, "open", redirected_open):
+                    importlib.reload(module)
+                    self.assertTrue(reads)
+                    self.assertNotIn(original_field, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+                    self.assertIn("backend", module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+                    result = module.validate_chat_completions_extensions(body)
+                    self.assertTrue(result.ok)
+                    self.assertEqual(result.request, body)
+                    self.assertIsNot(result.request["backend"], body["backend"])
+                    self.assertFalse(module.validate_responses_extensions(
+                        {"model": "default", "input": "hello", "backend": {}}
+                    ).ok)
+            finally:
+                importlib.reload(module)
+        self.assertIn(original_field, module.STANDARD_CHAT_COMPLETIONS_FIELDS)
+        self.assertFalse(module.validate_chat_completions_extensions(body).ok)
+
     @staticmethod
     def _request_body(validate, extensions):
         body = {"model": "default", "extensions": extensions}

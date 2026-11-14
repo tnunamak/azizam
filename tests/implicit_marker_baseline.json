@@ -14,9 +14,6 @@
     "gateway/category_api.py": {
       "/history": 1
     },
-    "gateway/chat_extensions.py": {
-      "chat_template_kwargs": 1
-    },
     "gateway/engine_protocol/node_catalog.py": {
       "class_type": 5
     },
