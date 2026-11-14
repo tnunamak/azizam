@@ -22,3 +22,27 @@ fields:
   - {key: pcie_link_gen_max, type: optional_int}
   - {key: pcie_link_width, type: optional_int}
   - {key: pcie_link_width_max, type: optional_int}
+devices:
+  - index: 0
+    label: GPU0
+    order: 0
+    budget_key: gpu0
+    roles:
+      - {label: total, key: total_gb}
+      - {label: desktop, key: desktop_gb}
+      - {label: TTS, key: tts_gb}
+      - {label: "{label}", key: "{gpu_budget_key}"}
+      - {label: headroom, key: headroom_gb}
+  - index: 1
+    label: GPU1
+    order: 1
+    budget_key: gpu1
+    roles:
+      - {label: total, key: total_gb}
+      - {label: LLM, key: llm_gb}
+      - {label: headroom, key: headroom_gb}
+runtime_display:
+  device_index: 0
+  device_label: device[0]
+  python_label: Python
+  runtime_label: PyTorch

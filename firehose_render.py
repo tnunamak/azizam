@@ -1287,18 +1287,15 @@ def _render_ram_attribution(r: dict) -> str:
 
 def _render_budgets(b: dict) -> str:
     parts = []
-    g0 = b.get("gpu0") or {}
-    g1 = b.get("gpu1") or {}
     img = b.get("images") or {}
-    parts.append(_kv_table([
-        ("GPU0 total GB", g0.get("total_gb")),
-        ("GPU0 desktop GB", g0.get("desktop_gb")),
-        ("GPU0 TTS GB", g0.get("tts_gb")),
-        (f'GPU0 {_GRAPH_WORDS["label"]} GB', g0.get(_GRAPH_WORDS["gpu_budget_key"])),
-        ("GPU0 headroom GB", g0.get("headroom_gb")),
-        ("GPU1 total GB", g1.get("total_gb")),
-        ("GPU1 LLM GB", g1.get("llm_gb")),
-        ("GPU1 headroom GB", g1.get("headroom_gb")),
+    rows = []
+    for device in gpu_observation.display_config()["devices"]:
+        budget = b.get(device["budget_key"]) or {}
+        for role in device["roles"]:
+            label = role["label"].format_map(_GRAPH_WORDS)
+            key = role["key"].format_map(_GRAPH_WORDS)
+            rows.append((f'{device["label"]} {label} GB', budget.get(key)))
+    parts.append(_kv_table(rows + [
         ("Image max_batch_size", img.get("max_batch_size")),
         ("Image VRAM reserve", _bytes(img.get("vram_reserve_bytes"))),
         ("Image signed_url_ttl (s)", img.get("signed_url_ttl")),
@@ -2024,18 +2021,20 @@ def _render_graph_view(c: Optional[dict]) -> str:
     if not c:
         return '<div class="muted">unavailable</div>'
     dev = c.get("device") or {}
+    display = gpu_observation.display_config()["runtime"]
+    device_label = display["device_label"]
     return _kv_table([
         (f'{_GRAPH_WORDS["label"]} version', c.get(_GRAPH_WORDS["version_key"])),
-        ("Python", c.get("python_version")),
-        ("PyTorch", c.get("pytorch_version")),
+        (display["python_label"], c.get("python_version")),
+        (display["runtime_label"], c.get("pytorch_version")),
         ("RAM total", _bytes(c.get("ram_total_bytes"))),
         ("RAM free", _bytes(c.get("ram_free_bytes"))),
         ("argv", c.get("argv")),
-        ("device[0] name", dev.get("name")),
-        ("device[0] vram_total", _bytes(dev.get("vram_total"))),
-        (f'device[0] vram_free ({_GRAPH_WORDS["short_label"]} view)', _bytes(dev.get("vram_free"))),
-        ("device[0] torch_vram_total", _bytes(dev.get("torch_vram_total"))),
-        ("device[0] torch_vram_free", _bytes(dev.get("torch_vram_free"))),
+        (f'{device_label} name', dev.get("name")),
+        (f'{device_label} vram_total', _bytes(dev.get("vram_total"))),
+        (f'{device_label} vram_free ({_GRAPH_WORDS["short_label"]} view)', _bytes(dev.get("vram_free"))),
+        (f'{device_label} torch_vram_total', _bytes(dev.get("torch_vram_total"))),
+        (f'{device_label} torch_vram_free', _bytes(dev.get("torch_vram_free"))),
     ])
 
 

@@ -2,8 +2,6 @@
   "files": {
     "firehose_render.py": {
       "/system_stats": 1,
-      "GPU0": 5,
-      "GPU1": 3,
       "class_type": 7,
       "model_path": 1
     },

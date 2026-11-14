@@ -69,3 +69,43 @@ def observe(runner, path=DEFAULT_REGISTRY):
         except ValueError:
             continue
     return rows or None
+
+
+def display_config(path=DEFAULT_REGISTRY):
+    """Validate display data separately so observation-only callers stay compatible."""
+    config = load_registry(path)
+    devices, runtime = config.get("devices"), config.get("runtime_display")
+    if not isinstance(devices, list) or not devices:
+        raise ValueError("observation_devices_invalid")
+    indexes, orders = set(), set()
+    for device in devices:
+        if not isinstance(device, dict):
+            raise ValueError("observation_device_invalid")
+        index, order = device.get("index"), device.get("order")
+        if type(index) is not int or index < 0 or index in indexes:
+            raise ValueError("observation_device_index_invalid")
+        if type(order) is not int or order < 0 or order in orders:
+            raise ValueError("observation_device_order_invalid")
+        indexes.add(index)
+        orders.add(order)
+        if any(not isinstance(device.get(key), str) or not device[key]
+               for key in ("label", "budget_key")):
+            raise ValueError("observation_device_label_invalid")
+        roles = device.get("roles")
+        if not isinstance(roles, list) or not roles:
+            raise ValueError("observation_device_roles_invalid")
+        for role in roles:
+            if not isinstance(role, dict) or any(
+                not isinstance(role.get(key), str) or not role[key] for key in ("label", "key")
+            ):
+                raise ValueError("observation_device_role_invalid")
+            if ("{" in role["label"] or "}" in role["label"]) and role["label"] != "{label}":
+                raise ValueError("observation_device_role_template_invalid")
+            if ("{" in role["key"] or "}" in role["key"]) and role["key"] != "{gpu_budget_key}":
+                raise ValueError("observation_device_role_template_invalid")
+    if (not isinstance(runtime, dict) or type(runtime.get("device_index")) is not int
+            or runtime["device_index"] not in indexes
+            or any(not isinstance(runtime.get(key), str) or not runtime[key]
+                   for key in ("device_label", "python_label", "runtime_label"))):
+        raise ValueError("observation_runtime_display_invalid")
+    return {"devices": sorted(devices, key=lambda row: row["order"]), "runtime": runtime}
