@@ -1309,17 +1309,6 @@ REGISTRY.register_builtin("reasoning-field-normalize", ReasoningFieldNormalizeTr
 # These are additive — they attach to NEW backends or are opt-in.
 # They do NOT alter the current 8-service config.
 
-# ---- ollama-unsupported-params -------------------------------------------
-# Ollama /v1/chat/completions rejects these OpenAI params with 400/422.
-# Source: ENGINE_QUIRK_FINDINGS.md §2.2 + r/LocalLLaMA audit.
-REGISTRY.register(
-    "ollama-unsupported-params",
-    {
-        "kind": "drop-params",
-        "drop": ["n", "logprobs", "top_logprobs", "logit_bias", "tool_choice", "user"],
-    },
-)
-
 # ---- drop-null-params -----------------------------------------------------
 # Some strict backends 422 on keys whose value is null rather than ignoring
 # them.  This is a value-test built-in (see DropNullParamsTransform above).
