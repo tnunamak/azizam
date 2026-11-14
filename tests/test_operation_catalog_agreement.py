@@ -8,7 +8,9 @@ import sys
 import pytest
 import yaml
 
-from gateway.operation_catalog import CatalogError, load, project_capability_words
+from gateway.operation_catalog import (
+    CatalogError, load, project_capability_words, project_media_job_intents,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,30 +103,14 @@ def test_projection_sorts_order(tmp_path):
     assert list(project_capability_words(catalog)["route_intents"]) == ["first", "second"]
 
 
-def _rebuild_media_rows(catalog):
-    """Rebuild the media job intents table from catalog operations and their relations."""
-    rows = []
-    for row in sorted(catalog.relations("admission"), key=lambda row: row["order"]):
-        operation = catalog.operations[row["operation"]]
-        rebuilt = {"intent": row["intent"], "modality": operation["modality"],
-                   "submittable": operation["submittable_as_job"]}
-        for binding in catalog.relations("binding"):
-            if binding["operation"] != operation["id"]:
-                continue
-            if "execution" in binding["modes"]:
-                rebuilt["execution_route"] = binding["path"]
-            else:
-                rebuilt["route"] = binding["path"]
-                rebuilt["component"] = operation["request"]["schema"].removeprefix("openapi:")
-        rows.append(rebuilt)
-    return rows
-
-
 def test_media_job_intents_table_rebuilds_from_the_catalog():
+    from gateway import media_job_intents
+
     media = ROOT / "registry" / "media_job_intents.yml"
     rows = yaml.safe_load(media.read_text(encoding="utf-8"))["intents"]
     catalog = load(CATALOG)
-    assert _rebuild_media_rows(catalog) == rows
+    assert project_media_job_intents(catalog) == rows
+    assert media_job_intents.load_rows() == media_job_intents.parse_rows({"intents": rows})
     assert [row for row in catalog.unexpressed if row["source"] == media.name] == []
 
 

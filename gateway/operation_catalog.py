@@ -188,3 +188,22 @@ def project_models_legacy_spellings(catalog: Catalog) -> dict[str, str]:
         for row in catalog.relations("spelling", "legacy")
         if row["operation"] in catalog.operations
     }
+
+
+def project_media_job_intents(catalog: Catalog) -> list[dict[str, Any]]:
+    """Rebuild the media job intents table from catalog operations and their relations."""
+    rows = []
+    for row in sorted(catalog.relations("admission"), key=lambda row: row["order"]):
+        operation = catalog.operations[row["operation"]]
+        rebuilt = {"intent": row["intent"], "modality": operation["modality"],
+                   "submittable": operation["submittable_as_job"]}
+        for binding in catalog.relations("binding"):
+            if binding["operation"] != operation["id"]:
+                continue
+            if "execution" in binding["modes"]:
+                rebuilt["execution_route"] = binding["path"]
+            else:
+                rebuilt["route"] = binding["path"]
+                rebuilt["component"] = operation["request"]["schema"].removeprefix("openapi:")
+        rows.append(rebuilt)
+    return rows

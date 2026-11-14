@@ -160,3 +160,41 @@ def test_conservative_reader_roundtrip_preserves_order_and_non_submittable_rows(
     document["intents"].reverse()
     path.write_text(json.dumps(document), encoding="utf-8")
     assert media_job_intents.load_rows(path) == tuple(reversed(expected))
+
+
+def test_reader_intents_follow_temporary_catalog_modality(tmp_path, monkeypatch):
+    """Import-time reader tables follow catalog facts, not the legacy table."""
+    import importlib
+    import yaml
+    from gateway import operation_catalog
+
+    catalog_path = media_job_intents.DATA_PATH.with_name("operations.yml")
+    document = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    target = next(row for row in document["operations"] if row["id"] == "image.edit")
+    assert target["modality"] == "image"
+    target["modality"] = "audio"
+    temporary = tmp_path / "catalog.yml"
+    temporary.write_text(yaml.safe_dump(document), encoding="utf-8")
+    original_load = operation_catalog.load
+    changed = original_load(temporary)
+    assert changed.operations["image.edit"]["modality"] == "audio"
+    calls = []
+
+    def load_temporary(path):
+        calls.append(path)
+        return original_load(temporary)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(operation_catalog, "load", load_temporary)
+            importlib.reload(media_job_intents)
+            assert "image.edit" in media_job_intents.intents_of("audio")
+            assert "image.edit" not in media_job_intents.intents_of("image")
+            assert media_job_intents.MODALITY_BY_INTENT["image.edit"] == "audio"
+            assert "image.edit" in media_job_intents.AUDIO_INTENTS
+            assert list(media_job_intents.SUBMITTABLE_INTENTS) == ORACLE_ENUM
+            assert media_job_intents.request_description() == ORACLE_PROSE
+            assert calls == [catalog_path]
+    finally:
+        # Do not leak substituted import-time globals into other tests.
+        importlib.reload(media_job_intents)
