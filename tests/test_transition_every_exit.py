@@ -186,11 +186,14 @@ def policy_for(cell):
         block = profile["restore"]["reset"] if cell.stage == "reset" else profile[cell.stage]
         block["failure_semantics"] = "no_change" if cell.fault == "N" else "unknown"
     profile["servable_check"] = "servable"
+    # A deadline is short only where the cell injects a fault. With no fault nothing should time out, and 10 ms is less
+    # than one stalled step on a loaded host: gate t65 run 2 saw a success cell abort.
+    d = 5.0 if cell.fault == "success" else .01
     return {"profile": profile, "checkpoint_policy": cell.policy,
-            "drain_deadline_s": .01, "idle_poll_s": .001,
-            "release_deadline_s": .01, "load_deadline_s": .01,
-            "probe_deadline_s": .01, "query_deadline_s": .01,
-            "deadlines": {name: .01 for name in (*EFFECTS, "query")}}
+            "drain_deadline_s": d, "idle_poll_s": .001,
+            "release_deadline_s": d, "load_deadline_s": d,
+            "probe_deadline_s": d, "query_deadline_s": d,
+            "deadlines": {name: d for name in (*EFFECTS, "query")}}
 
 
 class Engine:
