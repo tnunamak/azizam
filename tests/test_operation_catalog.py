@@ -194,3 +194,58 @@ def test_catalog_cannot_supply_its_own_schema(tmp_path):
     document["schema_version"] = 99
     with pytest.raises(CatalogError, match="catalog row root: rule schema."):
         load(_write(tmp_path, document))
+
+@pytest.mark.parametrize("row", ["not a mapping", [], None], ids=["string", "list", "null"])
+def test_non_mapping_relation_names_position(tmp_path, row):
+    document = _document()
+    document["relations"][1] = row
+    with pytest.raises(CatalogError, match="relations row 1: rule relation_mapping"):
+        load(_write(tmp_path, document))
+
+
+@pytest.mark.parametrize("index", range(7))
+def test_exact_duplicate_relation_names_both_positions(tmp_path, index):
+    document = _document()
+    document["relations"].append(dict(reversed(list(document["relations"][index].items()))))
+    with pytest.raises(CatalogError) as error:
+        load(_write(tmp_path, document))
+    assert "rule unique_relation_row" in str(error.value)
+    assert "relations row 7" in str(error.value)
+    assert f"relations row {index}" in str(error.value)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("operation", "work.two"), ("path", "/other"), ("method", "PUT"),
+])
+def test_distinct_binding_relations_are_not_duplicates(tmp_path, field, value):
+    document = _document()
+    document["relations"].append({**document["relations"][1], field: value})
+    assert len(load(_write(tmp_path, document)).relations("binding")) == 2
+
+
+def test_family_relation_need_not_match_operation_family(tmp_path):
+    document = _document()
+    document["relations"].append({**document["relations"][6], "family": "other"})
+    assert len(load(_write(tmp_path, document)).relations("family")) == 2
+
+
+def test_nan_yaml_value_refused(tmp_path):
+    path = _write(tmp_path, _document())
+    path.write_text(path.read_text().replace('"requests.work"', '.nan', 1))
+    with pytest.raises(CatalogError, match="rule parse"):
+        load(path)
+
+
+def test_yaml_anchor_and_alias_refused(tmp_path):
+    path = _write(tmp_path, _document())
+    text = path.read_text().replace('"requests.work"', '&shared "requests.work"', 1)
+    path.write_text(text.replace('"results.work"', '*shared', 1))
+    with pytest.raises(CatalogError, match="rule parse"):
+        load(path)
+
+
+def test_unquoted_timestamp_refused(tmp_path):
+    path = _write(tmp_path, _document())
+    path.write_text(path.read_text().replace('"requests.work"', '2026-11-14', 1))
+    with pytest.raises(CatalogError, match="rule parse"):
+        load(path)

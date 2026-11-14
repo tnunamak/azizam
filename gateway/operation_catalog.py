@@ -70,6 +70,12 @@ def _location(path: Any) -> str:
 
 
 def _validate(document: Any, schema: dict) -> None:
+    if isinstance(document, dict) and isinstance(document.get("relations"), list):
+        for index, row in enumerate(document["relations"]):
+            if not isinstance(row, dict):
+                raise CatalogError(
+                    f"relations row {index}: rule relation_mapping: expected a mapping"
+                )
     validator = Draft202012Validator(schema)
     error = next(validator.iter_errors(document), None)
     if error is None:
@@ -116,7 +122,11 @@ def load(path: str | Path) -> Catalog:
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
-        document = yaml.load(source.read_text(encoding="utf-8"), Loader=_UniqueLoader)
+        text = source.read_text(encoding="utf-8")
+        if any(isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken))
+               for token in yaml.scan(text)):
+            raise CatalogError("catalog row root: rule parse: YAML anchors and aliases are not allowed")
+        document = yaml.load(text, Loader=_UniqueLoader)
         # Reject recursive aliases, non-finite numbers and YAML-only values.
         json.dumps(document, allow_nan=False)
     except CatalogError:
@@ -131,6 +141,24 @@ def load(path: str | Path) -> Catalog:
         if identifier in operations:
             raise CatalogError(f"operations row {index}: rule unique_operation_id: {identifier}")
         operations[identifier] = _freeze(row)
+
+    # Compare every field, including kind and nested values.
+    relation_positions = {}
+    for index, row in enumerate(document["relations"]):
+        identity = json.dumps(row, sort_keys=True, allow_nan=False)
+        if identity in relation_positions:
+            first = relation_positions[identity]
+            # Keep older diagnostic prefixes compatible.
+            prior_rule = ""
+            if row["kind"] == "spelling":
+                prior_rule = "rule unique_spelling_in_context: "
+            elif row["kind"] == "family" and "word" in row:
+                prior_rule = "rule unique_family_word_in_context: "
+            raise CatalogError(
+                f"relations row {index}: {prior_rule}rule unique_relation_row: "
+                f"duplicates relations row {first}"
+            )
+        relation_positions[identity] = index
 
     seen = set()
     seen_family_words = set()
