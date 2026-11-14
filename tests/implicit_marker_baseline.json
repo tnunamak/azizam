@@ -85,9 +85,6 @@
     "gateway/transition_gate.py": {
       "activation_": 1
     },
-    "gateway/vram_observer.py": {
-      "nvidia-smi": 1
-    },
     "proxy.py": {
       "/view": 2,
       "GPU0": 1,

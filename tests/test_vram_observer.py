@@ -154,3 +154,28 @@ def test_the_server_binds_loopback_only():
 def test_a_non_loopback_host_is_refused():
     with pytest.raises(ValueError):
         vram_observer.make_server("0.0.0.0", 0, gpu_index=0, timeout_s=3.0, run=FakeRun())
+
+
+def test_command_executable_comes_from_configured_data(monkeypatch, tmp_path):
+    from gateway import gpu_observation
+
+    registry = tmp_path / "observation.yml"
+    registry.write_text(
+        'argv: [fixture-observer]\nfields: [{key: free, type: int}]\n',
+        encoding="utf-8",
+    )
+    configured_executable = gpu_observation.executable
+    monkeypatch.setattr(
+        gpu_observation, "executable", lambda: configured_executable(registry),
+    )
+    run = FakeRun(stdout="12, 24\n")
+
+    reading = vram_observer.read_gpu_memory(2, timeout_s=1.25, run=run)
+
+    assert run.calls == [([
+        "fixture-observer", "--query-gpu=memory.free,memory.total",
+        "--format=csv,noheader,nounits", "-i", "2",
+    ], 1.25)]
+    assert reading == vram_observer.GpuMemory(
+        gpu_index=2, memory_free_bytes=12 * MIB, memory_total_bytes=24 * MIB,
+    )
