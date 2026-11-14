@@ -175,12 +175,15 @@ def test_yaml_fixture_loads(tmp_path):
     assert not load(path).operations
 
 
-def test_shipped_empty_catalog_loads():
+def test_shipped_catalog_loads_with_only_word_family_rows():
+    # Step 1 generates word-family rows only; operations and the other relation kinds come in later steps.
     path = Path(__file__).resolve().parents[1] / "registry" / "operations.yml"
     catalog = load(path)
     assert not catalog.operations
-    for kind in ("spelling", "binding", "admission", "runtime_policy", "receipt", "catalog_group", "family"):
+    for kind in ("spelling", "binding", "admission", "runtime_policy", "receipt", "catalog_group"):
         assert catalog.relations(kind) == ()
+    families = catalog.relations("family")
+    assert families and all("word" in row and "operation" not in row for row in families)
 
 
 def test_catalog_cannot_supply_its_own_schema(tmp_path):
