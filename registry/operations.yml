@@ -639,6 +639,86 @@
       "source": "local_capability_rows.yml",
       "key": "workflow_defaults",
       "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "schema_version",
+      "reason": "Source format version, not an operation fact."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "row_id_placeholder",
+      "reason": "Example substitution marker, not an operation fact."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[0]:chat",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[1]:completions",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[2]:embeddings",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[3]:images",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[4]:image_edits",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[5]:audio_generate",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[6]:speech",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[7]:transcriptions",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[8]:translations",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[9]:videos",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[10]:video_generate",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[11]:video_edit",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[12]:rerank",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+    },
+    {
+      "source": "models_catalog_operations.yml",
+      "key": "operations[13]:decisions",
+      "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
     }
   ]
 }

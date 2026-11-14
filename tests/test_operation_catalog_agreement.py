@@ -175,3 +175,61 @@ def test_local_gaps_reject_unclassified_sections_and_bad_rows(tmp_path):
         source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
         with pytest.raises(ValueError):
             local_capability_gaps(source)
+
+
+def test_conservative_models_examples_are_gaps_not_operation_contracts():
+    # Assumption: examples/prefixes do not define request/result contracts.
+    source = ROOT / "registry" / "models_catalog_operations.yml"
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    expected = [
+        {"source": source.name, "key": "schema_version",
+         "reason": "Source format version, not an operation fact."},
+        {"source": source.name, "key": "row_id_placeholder",
+         "reason": "Example substitution marker, not an operation fact."},
+    ]
+    expected.extend({
+        "source": source.name, "key": f"operations[{index}]:{row['id']}",
+        "reason": "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations.",
+    } for index, row in enumerate(document["operations"]))
+    catalog = load(CATALOG)
+    assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
+    from gateway.operation_catalog import project_models_legacy_spellings
+    assert project_models_legacy_spellings(catalog) == {}
+    assert not catalog.operations
+    assert not catalog.relations("spelling", "legacy")
+
+
+def test_models_legacy_projection_uses_literal_relation_rows_without_folding():
+    from gateway.operation_catalog import Catalog, project_models_legacy_spellings
+
+    catalog = Catalog({"sample": {"id": "sample"}}, (
+        {"kind": "spelling", "context": "legacy", "word": "Sample_Word", "operation": "sample"},
+        {"kind": "spelling", "context": "legacy", "word": "sample.word", "operation": "sample"},
+        {"kind": "spelling", "context": "route", "word": "excluded", "operation": "sample"},
+    ))
+    assert list(project_models_legacy_spellings(catalog).items()) == [
+        ("Sample_Word", "sample"), ("sample.word", "sample"),
+    ]
+    assert "sample_word" not in project_models_legacy_spellings(catalog)
+
+
+def test_models_gap_rejects_unclassified_fields_and_duplicate_ids(tmp_path):
+    from scripts.gen_operation_catalog import models_catalog_gaps
+
+    source = tmp_path / "models.yml"
+    row = {"id": "sample", "words": ["Sample_Word"], "intent_prefixes": ["sample."]}
+    document = {"schema_version": 1, "row_id_placeholder": "$row", "operations": [row]}
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    assert [gap["key"] for gap in models_catalog_gaps(source)] == [
+        "schema_version", "row_id_placeholder", "operations[0]:sample",
+    ]
+    for invalid in (
+        {**document, "extra": []},
+        {**document, "schema_version": True},
+        {**document, "operations": [row, row]},
+        {**document, "operations": [{**row, "extra": "ignored"}]},
+        {**document, "operations": [{**row, "words": "not-a-list"}]},
+    ):
+        source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+        with pytest.raises(ValueError):
+            models_catalog_gaps(source)

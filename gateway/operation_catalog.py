@@ -179,3 +179,12 @@ def project_capability_words(catalog: Catalog) -> dict[str, dict[str, str]]:
         )
         result[name] = {row["word"]: row["family"] for row in rows}
     return result
+
+
+def project_models_legacy_spellings(catalog: Catalog) -> dict[str, str]:
+    """Project only explicitly recorded legacy spellings, without normalization."""
+    return {
+        row["word"]: row["operation"]
+        for row in catalog.relations("spelling", "legacy")
+        if row["operation"] in catalog.operations
+    }

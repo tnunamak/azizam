@@ -85,7 +85,44 @@ def local_capability_gaps(source: Path) -> list[dict[str, str]]:
     return gaps
 
 
-def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None) -> str:
+
+MODELS_GAP_REASON = "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
+
+
+def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
+    """Assume examples are not contracts; count rows instead of fabricating targets."""
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"schema_version", "row_id_placeholder", "operations"}:
+        raise ValueError("Every models source top-level key must be classified")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError("Unsupported models source version")
+    if not isinstance(document["row_id_placeholder"], str) or not document["row_id_placeholder"]:
+        raise ValueError("Models placeholder must be nonempty text")
+    rows = document["operations"]
+    if not isinstance(rows, list):
+        raise ValueError("Models operations must be a list")
+    gaps = [
+        {"source": source.name, "key": "schema_version", "reason": "Source format version, not an operation fact."},
+        {"source": source.name, "key": "row_id_placeholder", "reason": "Example substitution marker, not an operation fact."},
+    ]
+    seen = set()
+    for order, row in enumerate(rows):
+        if not isinstance(row, dict) or not {"id", "words", "intent_prefixes"} <= set(row) or set(row) - {"id", "words", "intent_prefixes", "examples"}:
+            raise ValueError("Every models operation field must be classified")
+        identifier = row["id"]
+        if not isinstance(identifier, str) or not identifier or identifier in seen:
+            raise ValueError("Models operation IDs must be unique nonempty text")
+        seen.add(identifier)
+        for key in ("words", "intent_prefixes"):
+            if not isinstance(row[key], list) or any(not isinstance(word, str) or not word for word in row[key]):
+                raise ValueError("Models words and prefixes must be text lists")
+        if "examples" in row and (not isinstance(row["examples"], list) or any(not isinstance(example, dict) for example in row["examples"])):
+            raise ValueError("Models examples must be mappings")
+        gaps.append({"source": source.name, "key": f"operations[{order}]:{identifier}", "reason": MODELS_GAP_REASON})
+    return gaps
+
+
+def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None, models_source: Path | None = None) -> str:
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
     expected = {name for name, _ in PROJECTED} | {name for name, _ in UNEXPRESSED}
     if not isinstance(document, dict) or set(document) != expected:
@@ -115,6 +152,8 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         catalog["unexpressed"].extend(media_intent_gaps(media_source))
     if local_source is not None:
         catalog["unexpressed"].extend(local_capability_gaps(local_source))
+    if models_source is not None:
+        catalog["unexpressed"].extend(models_catalog_gaps(models_source))
     # JSON is a YAML subset, with stable key order and explicit string quoting.
     return json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
 
@@ -126,8 +165,9 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=root / "registry" / "operations.yml")
     parser.add_argument("--media-source", type=Path, default=root / "registry" / "media_job_intents.yml")
     parser.add_argument("--local-source", type=Path, default=root / "registry" / "local_capability_rows.yml")
+    parser.add_argument("--models-source", type=Path, default=root / "registry" / "models_catalog_operations.yml")
     args = parser.parse_args()
-    args.output.write_bytes(generate(args.source, args.media_source, args.local_source).encode("utf-8"))
+    args.output.write_bytes(generate(args.source, args.media_source, args.local_source, args.models_source).encode("utf-8"))
 
 
 if __name__ == "__main__":
