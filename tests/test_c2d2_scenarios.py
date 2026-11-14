@@ -1,7 +1,7 @@
 """C2D2 route oracles, partial: S3, S6 (expected to fail until built), and the typo half of S7.
 
 S1 requires the file-input description and Library upload/reference contracts.
-S2 requires the description's multi-result fetch grammar.
+S2's multi-result fetch grammar exists; its ordered pair scenario is covered here.
 S4/S5 require the owner alias write route and target/fallback schema.
 The other half of S7 requires the audio job request shape; the smell JSON
 fixture alone does not establish that contract. Do not replace these gaps
@@ -16,9 +16,9 @@ import time
 import pytest
 
 from tests.support.fake_upstream import fake_upstreams  # noqa: F401
-from tests.test_signin_who_can_enter import gateway  # noqa: F401
+from tests.test_signin_who_can_enter import csrf_for, gateway  # noqa: F401
 from tests.test_owner_engine_chain_smell import (
-    HOST, MOLECULE, SmellEngine, _add_engine, _app_key, _enabled_engine,
+    HOST, MOLECULE, SMELL, SmellEngine, _add_engine, _app_key, _enabled_engine,
     _install_description, _write_headers, owner, smell_engine,
 )  # noqa: F401 - imported fixtures are deliberately registered here
 
@@ -71,6 +71,72 @@ def _job(public, key, engine):
     assert job["status"] == "succeeded", job
     assert engine.posts == [{"input": {"vector": VECTOR}}]
     return submitted, job
+
+
+class PairEngine(SmellEngine):
+    """The existing synthetic wire, with two ordered result handles."""
+
+    def __init__(self):
+        super().__init__()
+        self.fetches = []
+        self.wav = bytes.fromhex(
+            "524946462600000057415645666d74201000000001000100"
+            "401f0000803e00000200100064617461020000000000"
+        )
+
+    async def __call__(self, scope, receive, send):
+        path = scope["path"]
+        responses = {
+            "/v1/infer/smell-1": (
+                json.dumps({"state": "ready", "files": ["a", "b"]}).encode(),
+                "application/json",
+            ),
+            "/v1/infer/smell-1/files/a": (PNG, "image/png"),
+            "/v1/infer/smell-1/files/b": (self.wav, "audio/wav"),
+        }
+        if scope["method"] == "GET" and path in responses:
+            content, media_type = responses[path]
+            if "/files/" in path:
+                self.fetches.append(path)
+            await send({"type": "http.response.start", "status": 200,
+                        "headers": [(b"content-type", media_type.encode()),
+                                    (b"content-length", str(len(content)).encode())]})
+            await send({"type": "http.response.body", "body": content})
+            return
+        await super().__call__(scope, receive, send)
+
+
+def test_s2_one_job_returns_png_and_wav_in_engine_order(owner, gateway, fake_upstreams):
+    client, _, owner_id, plan_id = owner
+    installed = client.put(
+        "/admin/api/engine-protocols/d0-smell-pair",
+        content=SMELL.with_name("smell-pair.yml").read_text(encoding="utf-8"),
+        headers={**csrf_for(client), "Content-Type": "application/yaml",
+                 "If-None-Match": "*"},
+    )
+    assert installed.status_code == 201, installed.text
+    engine = PairEngine()
+    fake_upstreams.router.add("127.0.0.1:18302", engine)
+    created = _add_engine(
+        client, capabilities=["smell.infer"],
+        models=[{"id": "smell-1", "public_name": "smell-1"}],
+        values={"address": "http://127.0.0.1:18302", "dispatch": "protocol",
+                "protocol_description": "d0-smell-pair"},
+    )
+    assert created.status_code == 201, created.text
+    enabled = client.patch("/admin/api/operator/services/smell-box",
+                           headers=_write_headers(client), json={"enabled": True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, job = _job(public, key, engine)
+        assert engine.fetches == ["/v1/infer/smell-1/files/a", "/v1/infer/smell-1/files/b"]
+        assert len(job["assets"]) == 2, job
+        assert [(asset["kind"], asset["media_type"], asset["size_bytes"])
+                for asset in job["assets"]] == [
+                    ("image", "image/png", len(PNG)),
+                    ("audio", "audio/wav", len(engine.wav)),
+                ], job
 
 
 def test_s3_one_png_is_an_image_asset(owner, gateway, fake_upstreams):
