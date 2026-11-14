@@ -556,3 +556,51 @@ def test_explicit_registry_pipeline_composes_noncommuting_primitives(pipeline, p
 
     assert forward == {"keep": "sentinel", "result": 3}
     assert reverse == {"keep": "sentinel", "x": 3}
+
+
+def test_thinking_controls_follow_temporary_registry_copy(tmp_path, monkeypatch):
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    import yaml
+    import gateway.transforms as original
+
+    source = Path(original.__file__).resolve()
+    controls = source.parent.parent / "registry" / "thinking_controls.yml"
+    data = yaml.safe_load(controls.read_text(encoding="utf-8"))
+    data.update(container_field="options_fixture", switch_field="quiet_fixture",
+                open_marker="<private>", close_marker="</private>")
+    copied = tmp_path / controls.name
+    copied.write_text(yaml.safe_dump(data), encoding="utf-8")
+    read_text = Path.read_text
+
+    def redirected_read(path, *args, **kwargs):
+        return read_text(copied if path == controls else path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", redirected_read)
+    spec = importlib.util.spec_from_file_location("gateway._controls_fixture", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    body = {"options_fixture": {"keep": 7}}
+    module.apply_thinking_suppression(body)
+    assert body == {"options_fixture": {"keep": 7, "quiet_fixture": False}}
+    explicit = {"options_fixture": {"quiet_fixture": True}}
+    module.apply_thinking_suppression(explicit)
+    assert explicit == {"options_fixture": {"quiet_fixture": True}}
+    assert module.split_reasoning_visible_text("<PRIVATE>hidden</PRIVATE>shown") == ("hidden", "shown")
+    payload = {"choices": [{"message": {"content": "<private>hidden</private>shown"}}]}
+    assert module.normalize_chat_completion_payload(payload)
+    assert payload == {"choices": [{"message": {"content": "shown", "reasoning_content": "hidden"}}]}
+    stream = module.StreamingThinkSplitTransform()
+    output = []
+    for content in ["<pri", "vate>hidden</pri", "vate>shown"]:
+        frame = {"choices": [{"index": 0, "delta": {"content": content}}]}
+        output.append(stream.process_chunk(("data: " + json.dumps(frame) + "\n\n").encode()))
+    output.append(stream.process_chunk(b"data: [DONE]\n\n"))
+    frames = [json.loads(line[6:]) for line in b"".join(output).decode().splitlines()
+              if line.startswith("data: ") and line != "data: [DONE]"]
+    deltas = [choice["delta"] for frame in frames for choice in frame["choices"]]
+    assert "".join(delta.get("content", "") for delta in deltas) == "shown"
+    assert "".join(delta.get("reasoning_content", "") for delta in deltas) == "hidden"
+    assert original.ENABLE_THINKING_KEY != module.ENABLE_THINKING_KEY

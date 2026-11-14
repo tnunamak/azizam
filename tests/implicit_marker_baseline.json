@@ -67,11 +67,6 @@
     "gateway/receipts.py": {
       "response_cost": 1
     },
-    "gateway/transforms.py": {
-      "<think>": 3,
-      "chat_template_kwargs": 1,
-      "enable_thinking": 1
-    },
     "gateway/transition_gate.py": {
       "activation_": 1
     },

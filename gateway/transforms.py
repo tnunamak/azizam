@@ -769,7 +769,27 @@ def run_response_pipeline(
 # ---------------------------------------------------------------------------
 
 # The chat-template keyword that turns reasoning off — single source of truth.
-ENABLE_THINKING_KEY: str = "enable_thinking"
+def _read_thinking_controls() -> dict[str, str]:
+    path = Path(__file__).resolve().parent.parent / "registry" / "thinking_controls.yml"
+    data = safe_load_strict(path.read_text(encoding="utf-8"))
+    fields = {"container_field", "switch_field", "open_marker", "close_marker"}
+    if (not isinstance(data, dict) or set(data) != fields | {"schema_version"}
+            or type(data["schema_version"]) is not int or data["schema_version"] != 1
+            or any(not isinstance(data[key], str) or not data[key] for key in fields)):
+        raise ValueError("Invalid thinking controls registry")
+    # Existing matching folds ASCII and compares literal lowercase delimiters.
+    for key in ("open_marker", "close_marker"):
+        if not data[key].isascii() or data[key].lower() != data[key]:
+            raise ValueError("Thinking delimiters must be lowercase ASCII")
+    if data["open_marker"] == data["close_marker"]:
+        raise ValueError("Thinking delimiters must be distinct")
+    return {key: data[key] for key in fields}
+
+
+_THINKING_CONTROLS = _read_thinking_controls()
+ENABLE_THINKING_KEY: str = _THINKING_CONTROLS["switch_field"]
+_THINK_OPEN_TAG = _THINKING_CONTROLS["open_marker"]
+_THINK_CLOSE_TAG = _THINKING_CONTROLS["close_marker"]
 
 
 def apply_thinking_suppression(body: dict[str, Any]) -> None:
@@ -786,7 +806,7 @@ def apply_thinking_suppression(body: dict[str, Any]) -> None:
     thinking while the /no_think tag alone did not). See
     docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md D-1.
     """
-    kwargs = body.setdefault("chat_template_kwargs", {})
+    kwargs = body.setdefault(_THINKING_CONTROLS["container_field"], {})
     if isinstance(kwargs, dict):
         kwargs.setdefault(ENABLE_THINKING_KEY, False)
 
@@ -919,13 +939,13 @@ def split_reasoning_visible_text(text: Any) -> tuple[Optional[str], Optional[str
     if not isinstance(text, str) or not text:
         return None, None
     lower = text.lower()
-    close = lower.rfind("</think>")
+    close = lower.rfind(_THINK_CLOSE_TAG)
     if close >= 0:
         reasoning = text[:close].strip()
-        open_tag = reasoning.lower().rfind("<think>")
+        open_tag = reasoning.lower().rfind(_THINK_OPEN_TAG)
         if open_tag >= 0:
-            reasoning = reasoning[open_tag + len("<think>"):].strip()
-        visible = text[close + len("</think>"):].strip()
+            reasoning = reasoning[open_tag + len(_THINK_OPEN_TAG):].strip()
+        visible = text[close + len(_THINK_CLOSE_TAG):].strip()
         return reasoning or None, visible or None
     return None, text
 
@@ -960,7 +980,7 @@ def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
         if isinstance(message, dict):
             content = message.get("content")
             reasoning = message.get("reasoning_content")
-            if isinstance(content, str) and "</think>" in content.lower():
+            if isinstance(content, str) and _THINK_CLOSE_TAG in content.lower():
                 # Case 1: think tags leaked into content — strip them out.
                 split_reasoning, visible = split_reasoning_visible_text(content)
                 if visible is not None:
@@ -973,7 +993,7 @@ def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
                 # reasoning_content. Recover only that explicitly marked
                 # visible suffix; plain reasoning-only content stays private.
                 split_r, visible = split_reasoning_visible_text(reasoning)
-                if "</think>" in reasoning.lower() and visible is not None:
+                if _THINK_CLOSE_TAG in reasoning.lower() and visible is not None:
                     message["content"] = visible
                     message["reasoning_content"] = split_r or reasoning
                     changed = True
@@ -981,7 +1001,7 @@ def normalize_chat_completion_payload(payload: dict[str, Any]) -> bool:
         if isinstance(delta, dict):
             content = delta.get("content")
             reasoning = delta.get("reasoning_content")
-            if isinstance(content, str) and "</think>" in content.lower():
+            if isinstance(content, str) and _THINK_CLOSE_TAG in content.lower():
                 # Case 1: think tags leaked into delta content — strip them.
                 _, visible = split_reasoning_visible_text(content)
                 if visible is not None:
@@ -1016,8 +1036,6 @@ class ReasoningFieldNormalizeTransform:
 # ---------------------------------------------------------------------------
 
 # The maximum delimiter length we need to buffer across chunks.
-_THINK_OPEN_TAG = "<think>"
-_THINK_CLOSE_TAG = "</think>"
 _THINK_CLOSE_TAG_LEN = len(_THINK_CLOSE_TAG)
 # str.lower() can change length (U+0130), which shifts tag offsets; fold ASCII only.
 _ASCII_LOWER = {c: c + 32 for c in range(ord("A"), ord("Z") + 1)}
