@@ -23,7 +23,7 @@ UNEXPRESSED = (
 )
 
 
-MEDIA_GAP_REASON = "Operation request/result mapping is not supplied by this table."
+UNDECLARED = "undeclared"
 
 
 class _UniqueMediaLoader(yaml.SafeLoader):
@@ -47,8 +47,13 @@ _UniqueMediaLoader.add_constructor(
 )
 
 
-def media_intent_gaps(source: Path) -> list[dict[str, str]]:
-    """Conservatively count unmapped operations, never infer contracts from routes."""
+def _schema(component: str | None) -> dict[str, str]:
+    # A schema ref names a published OpenAPI component, or says none is declared yet.
+    return {"schema": f"openapi:{component}" if component else UNDECLARED}
+
+
+def media_intent_operations(source: Path) -> tuple[list[dict], list[dict]]:
+    """Project each media job intent into one operation and its relations, in source order."""
     document = yaml.load(source.read_text(encoding="utf-8"), Loader=_UniqueMediaLoader)
     if not isinstance(document, dict) or set(document) != {"intents"}:
         raise ValueError("Every media source top-level key must be classified")
@@ -58,7 +63,8 @@ def media_intent_gaps(source: Path) -> list[dict[str, str]]:
     required = {"intent", "modality", "submittable"}
     optional = {"route", "component", "execution_route"}
     seen = set()
-    gaps = []
+    operations = []
+    relations = []
     for order, row in enumerate(rows):
         if not isinstance(row, dict) or not required <= set(row) or set(row) - required - optional:
             raise ValueError("Every media intent field must be classified")
@@ -69,13 +75,31 @@ def media_intent_gaps(source: Path) -> list[dict[str, str]]:
             raise ValueError("Media intent fields must be nonempty text")
         if row["intent"] in seen:
             raise ValueError("Duplicate media intent")
+        if ("route" in row) != ("component" in row):
+            raise ValueError("A media route and its component come together")
         seen.add(row["intent"])
-        gaps.append({
-            "source": source.name,
-            "key": f"intents[{order}]:{row['intent']}",
-            "reason": MEDIA_GAP_REASON,
+        intent = row["intent"]
+        operations.append({
+            "id": intent,
+            "family": intent.split(".", 1)[0],
+            "request": _schema(row.get("component")),
+            "result": _schema(None),
+            "submittable_as_job": row["submittable"],
+            "modality": row["modality"],
         })
-    return gaps
+        relations.append({"kind": "admission", "operation": intent, "intent": intent, "order": order})
+        if "route" in row:
+            relations.append({
+                "kind": "binding", "operation": intent, "method": "POST", "path": row["route"],
+                "representation": "json", "modes": ["sync", "job"], "order": order,
+            })
+        if "execution_route" in row:
+            relations.append({
+                "kind": "binding", "operation": intent, "method": "POST",
+                "path": row["execution_route"], "representation": "json",
+                "modes": ["execution"], "order": order,
+            })
+    return operations, relations
 
 
 LOCAL_GAP_REASON = "Local routing/default rows lack a closed operation request/result mapping."
@@ -197,7 +221,9 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         ],
     }
     if media_source is not None:
-        catalog["unexpressed"].extend(media_intent_gaps(media_source))
+        operations, media_relations = media_intent_operations(media_source)
+        catalog["operations"].extend(operations)
+        catalog["relations"].extend(media_relations)
     if local_source is not None:
         catalog["unexpressed"].extend(local_capability_gaps(local_source))
     if models_source is not None:

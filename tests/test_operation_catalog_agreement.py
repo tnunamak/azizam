@@ -20,11 +20,16 @@ UNEXPRESSED = (
 )
 
 
+def _media_intents():
+    media = ROOT / "registry" / "media_job_intents.yml"
+    return {row["intent"] for row in yaml.safe_load(media.read_text(encoding="utf-8"))["intents"]}
+
+
 def test_projection_matches_source_order():
     source = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
     catalog = load(CATALOG)
     projected = project_capability_words(catalog)
-    assert not catalog.operations
+    assert set(catalog.operations) == _media_intents()
     assert not catalog.relations("spelling")
     assert set(projected) == set(PROJECTED)
     for name in PROJECTED:
@@ -96,40 +101,70 @@ def test_projection_sorts_order(tmp_path):
     assert list(project_capability_words(catalog)["route_intents"]) == ["first", "second"]
 
 
-def test_conservative_missing_contracts_are_exact_media_gaps():
-    # Assumption: absence of request/result contracts is a gap, not an invented operation.
+def _rebuild_media_rows(catalog):
+    """Rebuild the media job intents table from catalog operations and their relations."""
+    rows = []
+    for row in sorted(catalog.relations("admission"), key=lambda row: row["order"]):
+        operation = catalog.operations[row["operation"]]
+        rebuilt = {"intent": row["intent"], "modality": operation["modality"],
+                   "submittable": operation["submittable_as_job"]}
+        for binding in catalog.relations("binding"):
+            if binding["operation"] != operation["id"]:
+                continue
+            if "execution" in binding["modes"]:
+                rebuilt["execution_route"] = binding["path"]
+            else:
+                rebuilt["route"] = binding["path"]
+                rebuilt["component"] = operation["request"]["schema"].removeprefix("openapi:")
+        rows.append(rebuilt)
+    return rows
+
+
+def test_media_job_intents_table_rebuilds_from_the_catalog():
     media = ROOT / "registry" / "media_job_intents.yml"
     rows = yaml.safe_load(media.read_text(encoding="utf-8"))["intents"]
     catalog = load(CATALOG)
-    expected = [
-        {"source": media.name, "key": f"intents[{index}]:{row['intent']}",
-         "reason": "Operation request/result mapping is not supplied by this table."}
-        for index, row in enumerate(rows)
-    ]
-    actual = [dict(row) for row in catalog.unexpressed if row["source"] == media.name]
-    assert actual == expected
-    assert not catalog.operations
+    assert _rebuild_media_rows(catalog) == rows
+    assert [row for row in catalog.unexpressed if row["source"] == media.name] == []
 
 
-def test_conservative_media_gap_uses_explicit_boolean_not_route(tmp_path):
-    from scripts.gen_operation_catalog import media_intent_gaps
+def test_media_operations_name_a_published_component_or_say_undeclared():
+    catalog = load(CATALOG)
+    media = {row["operation"] for row in catalog.relations("admission")}
+    assert len(media) == 11
+    for identifier in media:
+        operation = catalog.operations[identifier]
+        for side in ("request", "result"):
+            schema = operation[side]["schema"]
+            assert schema == "undeclared" or schema.startswith("openapi:")
+        assert operation["family"] == identifier.split(".", 1)[0]
+        submit = [b for b in catalog.relations("binding")
+                  if b["operation"] == identifier and "job" in b["modes"]]
+        assert bool(submit) == (operation["request"]["schema"] != "undeclared")
+
+
+def test_media_operation_uses_explicit_boolean_not_route(tmp_path):
+    from scripts.gen_operation_catalog import media_intent_operations
 
     source = tmp_path / "media.yml"
-    row = {"intent": "sample", "modality": "sample", "submittable": False,
+    row = {"intent": "sample.make", "modality": "sample", "submittable": False,
            "route": "/sample", "component": "SampleRequest"}
     source.write_text(yaml.safe_dump({"intents": [row]}), encoding="utf-8")
-    assert media_intent_gaps(source) == [{
-        "source": source.name, "key": "intents[0]:sample",
-        "reason": "Operation request/result mapping is not supplied by this table.",
+    operations, relations = media_intent_operations(source)
+    assert operations == [{
+        "id": "sample.make", "family": "sample",
+        "request": {"schema": "openapi:SampleRequest"}, "result": {"schema": "undeclared"},
+        "submittable_as_job": False, "modality": "sample",
     }]
+    assert [r["kind"] for r in relations] == ["admission", "binding"]
     row["submittable"] = "false"
     source.write_text(yaml.safe_dump({"intents": [row]}), encoding="utf-8")
     with pytest.raises(ValueError, match="explicit boolean"):
-        media_intent_gaps(source)
+        media_intent_operations(source)
 
 
-def test_media_gap_rejects_unclassified_fields_and_duplicate_intents(tmp_path):
-    from scripts.gen_operation_catalog import media_intent_gaps
+def test_media_source_rejects_unclassified_fields_duplicates_and_half_routes(tmp_path):
+    from scripts.gen_operation_catalog import media_intent_operations
 
     source = tmp_path / "media.yml"
     row = {"intent": "sample", "modality": "sample", "submittable": False}
@@ -137,10 +172,11 @@ def test_media_gap_rejects_unclassified_fields_and_duplicate_intents(tmp_path):
         ({"intents": [{**row, "unclassified": "value"}]}, "field must be classified"),
         ({"intents": [row, row]}, "Duplicate media intent"),
         ({"intents": [], "unclassified": []}, "top-level key must be classified"),
+        ({"intents": [{**row, "route": "/sample"}]}, "route and its component"),
     ]:
         source.write_text(yaml.safe_dump(document), encoding="utf-8")
         with pytest.raises(ValueError, match=message):
-            media_intent_gaps(source)
+            media_intent_operations(source)
 
 def test_conservative_local_contract_gaps_are_exact():
     # No closed operation contracts may be inferred from routing/default rows.
@@ -157,7 +193,7 @@ def test_conservative_local_contract_gaps_are_exact():
     } for key in expected_keys]
     catalog = load(CATALOG)
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
-    assert not catalog.operations
+    assert set(catalog.operations) == _media_intents()
     assert {row["context"] for row in catalog.relations("family")} == {"protocol", "route", "type"}
 
 
@@ -195,7 +231,7 @@ def test_conservative_models_examples_are_gaps_not_operation_contracts():
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
     from gateway.operation_catalog import project_models_legacy_spellings
     assert project_models_legacy_spellings(catalog) == {}
-    assert not catalog.operations
+    assert set(catalog.operations) == _media_intents()
     assert not catalog.relations("spelling", "legacy")
 
 
@@ -245,7 +281,7 @@ def test_conservative_frontend_bindings_are_exact_gaps_not_equivalences():
       for index, row in enumerate(document[section])]
     catalog = load(CATALOG)
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
-    assert not catalog.operations
+    assert set(catalog.operations) == _media_intents()
     assert not catalog.relations("spelling")
 
 
@@ -283,16 +319,16 @@ def test_frontend_gap_does_not_equate_admission_and_runtime_policy(tmp_path):
 ])
 def test_conservative_media_source_rejects_duplicate_keys_before_projection(tmp_path, document):
     # Conservative assumption: no last-key-wins interpretation of source facts.
-    from scripts.gen_operation_catalog import media_intent_gaps
+    from scripts.gen_operation_catalog import media_intent_operations
 
     source = tmp_path / "media.yml"
     source.write_text(document, encoding="utf-8")
     with pytest.raises(ValueError, match="Duplicate media mapping key"):
-        media_intent_gaps(source)
+        media_intent_operations(source)
 
 
 def test_conservative_media_source_preserves_order_without_duplicate_keys(tmp_path):
-    from scripts.gen_operation_catalog import media_intent_gaps
+    from scripts.gen_operation_catalog import media_intent_operations
 
     source = tmp_path / "media.yml"
     rows = [
@@ -301,6 +337,5 @@ def test_conservative_media_source_preserves_order_without_duplicate_keys(tmp_pa
          "component": "SampleRequest", "route": "/sample"},
     ]
     source.write_text(yaml.safe_dump({"intents": rows}), encoding="utf-8")
-    assert [gap["key"] for gap in media_intent_gaps(source)] == [
-        "intents[0]:second", "intents[1]:first",
-    ]
+    operations, _relations = media_intent_operations(source)
+    assert [operation["id"] for operation in operations] == ["second", "first"]

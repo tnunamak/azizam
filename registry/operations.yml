@@ -1,6 +1,139 @@
 {
   "schema_version": 1,
-  "operations": [],
+  "operations": [
+    {
+      "id": "image.generate",
+      "family": "image",
+      "request": {
+        "schema": "openapi:ImageGenerationRequest"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": true,
+      "modality": "image"
+    },
+    {
+      "id": "image.edit",
+      "family": "image",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "image"
+    },
+    {
+      "id": "image.identity",
+      "family": "image",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "image"
+    },
+    {
+      "id": "image.variation",
+      "family": "image",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "image"
+    },
+    {
+      "id": "audio.generate",
+      "family": "audio",
+      "request": {
+        "schema": "openapi:AudioGenerationRequest"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": true,
+      "modality": "audio"
+    },
+    {
+      "id": "music.generate",
+      "family": "music",
+      "request": {
+        "schema": "openapi:AudioGenerationRequest"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": true,
+      "modality": "audio"
+    },
+    {
+      "id": "sfx.generate",
+      "family": "sfx",
+      "request": {
+        "schema": "openapi:AudioGenerationRequest"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": true,
+      "modality": "audio"
+    },
+    {
+      "id": "video.generate",
+      "family": "video",
+      "request": {
+        "schema": "openapi:VideoGenerationRequest"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": true,
+      "modality": "video"
+    },
+    {
+      "id": "video.extend",
+      "family": "video",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "video"
+    },
+    {
+      "id": "video.remix",
+      "family": "video",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "video"
+    },
+    {
+      "id": "video.edit",
+      "family": "video",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "video"
+    }
+  ],
   "relations": [
     {
       "kind": "family",
@@ -442,6 +575,143 @@
       "family": "decide",
       "context": "type",
       "order": 5
+    },
+    {
+      "kind": "admission",
+      "operation": "image.generate",
+      "intent": "image.generate",
+      "order": 0
+    },
+    {
+      "kind": "binding",
+      "operation": "image.generate",
+      "method": "POST",
+      "path": "/v1/images/generations",
+      "representation": "json",
+      "modes": [
+        "sync",
+        "job"
+      ],
+      "order": 0
+    },
+    {
+      "kind": "admission",
+      "operation": "image.edit",
+      "intent": "image.edit",
+      "order": 1
+    },
+    {
+      "kind": "admission",
+      "operation": "image.identity",
+      "intent": "image.identity",
+      "order": 2
+    },
+    {
+      "kind": "binding",
+      "operation": "image.identity",
+      "method": "POST",
+      "path": "/gateway/v1/images/identity",
+      "representation": "json",
+      "modes": [
+        "execution"
+      ],
+      "order": 2
+    },
+    {
+      "kind": "admission",
+      "operation": "image.variation",
+      "intent": "image.variation",
+      "order": 3
+    },
+    {
+      "kind": "admission",
+      "operation": "audio.generate",
+      "intent": "audio.generate",
+      "order": 4
+    },
+    {
+      "kind": "binding",
+      "operation": "audio.generate",
+      "method": "POST",
+      "path": "/v1/audio/generate",
+      "representation": "json",
+      "modes": [
+        "sync",
+        "job"
+      ],
+      "order": 4
+    },
+    {
+      "kind": "admission",
+      "operation": "music.generate",
+      "intent": "music.generate",
+      "order": 5
+    },
+    {
+      "kind": "binding",
+      "operation": "music.generate",
+      "method": "POST",
+      "path": "/v1/audio/generate",
+      "representation": "json",
+      "modes": [
+        "sync",
+        "job"
+      ],
+      "order": 5
+    },
+    {
+      "kind": "admission",
+      "operation": "sfx.generate",
+      "intent": "sfx.generate",
+      "order": 6
+    },
+    {
+      "kind": "binding",
+      "operation": "sfx.generate",
+      "method": "POST",
+      "path": "/v1/audio/generate",
+      "representation": "json",
+      "modes": [
+        "sync",
+        "job"
+      ],
+      "order": 6
+    },
+    {
+      "kind": "admission",
+      "operation": "video.generate",
+      "intent": "video.generate",
+      "order": 7
+    },
+    {
+      "kind": "binding",
+      "operation": "video.generate",
+      "method": "POST",
+      "path": "/v1/videos",
+      "representation": "json",
+      "modes": [
+        "sync",
+        "job"
+      ],
+      "order": 7
+    },
+    {
+      "kind": "admission",
+      "operation": "video.extend",
+      "intent": "video.extend",
+      "order": 8
+    },
+    {
+      "kind": "admission",
+      "operation": "video.remix",
+      "intent": "video.remix",
+      "order": 9
+    },
+    {
+      "kind": "admission",
+      "operation": "video.edit",
+      "intent": "video.edit",
+      "order": 10
     }
   ],
   "unexpressed": [
@@ -469,61 +739,6 @@
       "source": "capability_words.yml",
       "key": "audio_rule",
       "reason": "Source-specific classification rule, not an operation fact."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[0]:image.generate",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[1]:image.edit",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[2]:image.identity",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[3]:image.variation",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[4]:audio.generate",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[5]:music.generate",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[6]:sfx.generate",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[7]:video.generate",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[8]:video.extend",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[9]:video.remix",
-      "reason": "Operation request/result mapping is not supplied by this table."
-    },
-    {
-      "source": "media_job_intents.yml",
-      "key": "intents[10]:video.edit",
-      "reason": "Operation request/result mapping is not supplied by this table."
     },
     {
       "source": "local_capability_rows.yml",

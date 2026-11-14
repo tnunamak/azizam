@@ -175,12 +175,14 @@ def test_yaml_fixture_loads(tmp_path):
     assert not load(path).operations
 
 
-def test_shipped_catalog_loads_with_only_word_family_rows():
-    # Step 1 generates word-family rows only; operations and the other relation kinds come in later steps.
+def test_shipped_catalog_holds_media_operations_and_word_family_rows():
+    # Media job intents are the first operations; the other relation kinds come in later steps.
     path = Path(__file__).resolve().parents[1] / "registry" / "operations.yml"
     catalog = load(path)
-    assert not catalog.operations
-    for kind in ("spelling", "binding", "admission", "runtime_policy", "receipt", "catalog_group"):
+    assert len(catalog.operations) == 11
+    assert len(catalog.relations("admission")) == 11
+    assert catalog.relations("binding")
+    for kind in ("spelling", "runtime_policy", "receipt", "catalog_group"):
         assert catalog.relations(kind) == ()
     families = catalog.relations("family")
     assert families and all("word" in row and "operation" not in row for row in families)
