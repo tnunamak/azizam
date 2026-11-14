@@ -38,9 +38,7 @@
     "gateway/engine_protocol/node_validation.py": {
       "class_type": 3
     },
-    "gateway/image_graph_roles.py": {
-      "class_type": 1
-    },
+    "gateway/image_graph_roles.py": {},
     "gateway/lifecycle_drivers.py": {
       "activation_": 7,
       "gguf": 2,

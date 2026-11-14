@@ -43,8 +43,10 @@ def _object(value: Any, graph: str, key: str, allowed: set[str],
 def _node(nodes: Mapping[str, Any], node_id: Any, graph: str, key: str) -> Mapping[str, Any]:
     if not isinstance(node_id, str) or not node_id or node_id.startswith("_"):
         _fail(graph, key, "must name a graph node")
+    from gateway.engine_protocol.node_graph import node_type
+
     node = nodes.get(node_id)
-    if not isinstance(node, Mapping) or not isinstance(node.get("class_type"), str):
+    if not isinstance(node, Mapping) or not isinstance(node_type(node), str):
         _fail(graph, key, f"node {node_id!r} is missing")
     return node
 

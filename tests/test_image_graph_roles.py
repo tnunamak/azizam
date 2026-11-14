@@ -79,6 +79,45 @@ def _refuses(section, registry, graph, key):
     assert key in str(exc.value)
 
 
+def test_node_type_accessor_preserves_raw_values():
+    from gateway.engine_protocol import node_graph
+
+    for value in ("", "synthetic", 0, False, None, [], {}):
+        node = {"class_type": value}
+        assert node_graph.node_type(node) is value
+        if isinstance(value, str):
+            assert image_graph_roles._node({"n": node}, "n", "graph", "role") is node
+        else:
+            with pytest.raises(ValueError, match="node 'n' is missing"):
+                image_graph_roles._node({"n": node}, "n", "graph", "role")
+
+
+def test_loader_follows_node_type_in_temporary_graph_data(tmp_path):
+    from types import SimpleNamespace
+
+    graph_path = "workflows/images/synthetic.json"
+    path = tmp_path / graph_path
+    path.parent.mkdir(parents=True)
+    node = {"class_type": "", "inputs": {"batch_size": 1}}
+    path.write_text(json.dumps({"n": node}), encoding="utf-8")
+    record = SimpleNamespace(
+        source_path=tmp_path / "manifests/workflows/synthetic.yml",
+        contract={"bindings": {"synthetic": {"workflow": graph_path, "map": {}}}},
+    )
+    registry = SimpleNamespace(records=lambda: [record])
+    section = {"graph_roles": {graph_path: {
+        "batch_size": [{"node": "n", "input": "batch_size"}],
+    }}}
+    expected = image_graph_roles.load(section, registry, "synthetic")
+    node["class_type"] = 7
+    path.write_text(json.dumps({"n": node}), encoding="utf-8")
+    with pytest.raises(ValueError, match="node 'n' is missing"):
+        image_graph_roles.load(section, registry, "synthetic")
+    node["class_type"] = "another-synthetic-type"
+    path.write_text(json.dumps({"n": node}), encoding="utf-8")
+    assert image_graph_roles.load(section, registry, "synthetic") == expected
+
+
 def test_all_eighteen_shipped_entries_load(corpus):
     section, registry, _ = corpus
     result = load(section, registry)

@@ -71,9 +71,15 @@ GRAPH_SUBMIT = "graph.submit"
 CONTROL_TIMEOUT_S = 5.0          # the read timeout of a status look or a cancel; callers may pass their own
 
 
+def node_type(node: Mapping[str, Any]) -> Any:
+    """Return the raw node type; callers retain their existing validation policy."""
+    # ComfyUI graph envelopes use this type field.
+    return node.get("class_type")
+
+
 def chain_node_error(node: Any) -> str | None:
     """Validate a template node envelope without interpreting its input expressions."""
-    if not isinstance(node, Mapping) or not isinstance(node.get("class_type"), str) \
+    if not isinstance(node, Mapping) or not isinstance(node_type(node), str) \
             or not isinstance(node.get("inputs"), Mapping):
         return "a node needs a class_type and inputs"
     return None
