@@ -33,7 +33,7 @@ def test_projection_matches_source_order():
 
 def test_unexpressed_and_source_classification():
     source = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
-    rows = load(CATALOG).unexpressed
+    rows = [row for row in load(CATALOG).unexpressed if row["source"] == SOURCE.name]
     assert [row["key"] for row in rows] == list(UNEXPRESSED)
     assert all(row["source"] == SOURCE.name for row in rows)
     assert all(row["reason"].strip() and "\n" not in row["reason"] for row in rows)
@@ -94,3 +94,50 @@ def test_projection_sorts_order(tmp_path):
     ]
     catalog = load(_catalog(tmp_path, rows))
     assert list(project_capability_words(catalog)["route_intents"]) == ["first", "second"]
+
+
+def test_conservative_missing_contracts_are_exact_media_gaps():
+    # Assumption: absence of request/result contracts is a gap, not an invented operation.
+    media = ROOT / "registry" / "media_job_intents.yml"
+    rows = yaml.safe_load(media.read_text(encoding="utf-8"))["intents"]
+    catalog = load(CATALOG)
+    expected = [
+        {"source": media.name, "key": f"intents[{index}]:{row['intent']}",
+         "reason": "Operation request/result mapping is not supplied by this table."}
+        for index, row in enumerate(rows)
+    ]
+    actual = [dict(row) for row in catalog.unexpressed if row["source"] != SOURCE.name]
+    assert actual == expected
+    assert not catalog.operations
+
+
+def test_conservative_media_gap_uses_explicit_boolean_not_route(tmp_path):
+    from scripts.gen_operation_catalog import media_intent_gaps
+
+    source = tmp_path / "media.yml"
+    row = {"intent": "sample", "modality": "sample", "submittable": False,
+           "route": "/sample", "component": "SampleRequest"}
+    source.write_text(yaml.safe_dump({"intents": [row]}), encoding="utf-8")
+    assert media_intent_gaps(source) == [{
+        "source": source.name, "key": "intents[0]:sample",
+        "reason": "Operation request/result mapping is not supplied by this table.",
+    }]
+    row["submittable"] = "false"
+    source.write_text(yaml.safe_dump({"intents": [row]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="explicit boolean"):
+        media_intent_gaps(source)
+
+
+def test_media_gap_rejects_unclassified_fields_and_duplicate_intents(tmp_path):
+    from scripts.gen_operation_catalog import media_intent_gaps
+
+    source = tmp_path / "media.yml"
+    row = {"intent": "sample", "modality": "sample", "submittable": False}
+    for document, message in [
+        ({"intents": [{**row, "unclassified": "value"}]}, "field must be classified"),
+        ({"intents": [row, row]}, "Duplicate media intent"),
+        ({"intents": [], "unclassified": []}, "top-level key must be classified"),
+    ]:
+        source.write_text(yaml.safe_dump(document), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            media_intent_gaps(source)

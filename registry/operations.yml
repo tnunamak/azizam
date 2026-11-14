@@ -469,6 +469,61 @@
       "source": "capability_words.yml",
       "key": "audio_rule",
       "reason": "Source-specific classification rule, not an operation fact."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[0]:image.generate",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[1]:image.edit",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[2]:image.identity",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[3]:image.variation",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[4]:audio.generate",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[5]:music.generate",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[6]:sfx.generate",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[7]:video.generate",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[8]:video.extend",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[9]:video.remix",
+      "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "media_job_intents.yml",
+      "key": "intents[10]:video.edit",
+      "reason": "Operation request/result mapping is not supplied by this table."
     }
   ]
 }
