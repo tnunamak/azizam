@@ -116,7 +116,7 @@
       "LoadImage": 1,
       "class_type": 15,
       "model_path": 3,
-      "nvidia-smi": 3
+      "nvidia-smi": 2
     }
   }
 }

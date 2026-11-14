@@ -42,6 +42,7 @@ import httpx
 import yaml
 
 from gateway import engine_egress, engine_record_defaults, lifecycle_drivers, service_priority, service_registry, status_words
+from gateway import gpu_observation
 from gateway import http_tls
 from gateway.engine_protocol import reviewed as reviewed_adapters
 from gateway.resource_awareness import ResourceObserver, age_resource_view
@@ -830,48 +831,7 @@ def _gpus_raw() -> Optional[list[dict]]:
     includes kernel/driver overhead and display surfaces, not just compute
     apps), so attribution can compute unattributed = total − sum(apps).
     """
-    rc, out, _err = _run([
-        "nvidia-smi",
-        "--query-gpu="
-        "index,uuid,name,memory.used,memory.total,utilization.gpu,"
-        "temperature.gpu,power.draw,power.limit,power.default_limit,power.max_limit,"
-        "clocks.gr,clocks.mem,fan.speed,clocks_throttle_reasons.active,"
-        "pcie.link.gen.current,pcie.link.gen.max,"
-        "pcie.link.width.current,pcie.link.width.max",
-        "--format=csv,noheader,nounits",
-    ])
-    if rc != 0 or not out.strip():
-        return None
-    gpus: list[dict] = []
-    for line in out.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 19:
-            continue
-        try:
-            gpus.append({
-                "index": int(parts[0]),
-                "uuid": parts[1],
-                "name": parts[2],
-                "memory_used_mb": int(parts[3]),
-                "memory_total_mb": int(parts[4]),
-                "instantaneous_util_pct": _safe_int(parts[5]),
-                "temp_c": _safe_int(parts[6]),
-                "power_draw_w": _safe_float(parts[7]),
-                "power_limit_w": _safe_float(parts[8]),
-                "power_default_limit_w": _safe_float(parts[9]),
-                "power_max_limit_w": _safe_float(parts[10]),
-                "clocks_gr_mhz": _safe_int(parts[11]),
-                "clocks_mem_mhz": _safe_int(parts[12]),
-                "fan_speed_pct": _safe_int(parts[13]),
-                "throttle_reasons_hex": parts[14],
-                "pcie_link_gen": _safe_int(parts[15]),
-                "pcie_link_gen_max": _safe_int(parts[16]),
-                "pcie_link_width": _safe_int(parts[17]),
-                "pcie_link_width_max": _safe_int(parts[18]),
-            })
-        except ValueError:
-            continue
-    return gpus or None
+    return gpu_observation.observe(_run)
 
 
 def _safe_int(s: str) -> Optional[int]:

@@ -1,0 +1,24 @@
+argv:
+  - nvidia-smi
+  - --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw,power.limit,power.default_limit,power.max_limit,clocks.gr,clocks.mem,fan.speed,clocks_throttle_reasons.active,pcie.link.gen.current,pcie.link.gen.max,pcie.link.width.current,pcie.link.width.max
+  - --format=csv,noheader,nounits
+fields:
+  - {key: index, type: int}
+  - {key: uuid, type: str}
+  - {key: name, type: str}
+  - {key: memory_used_mb, type: int}
+  - {key: memory_total_mb, type: int}
+  - {key: instantaneous_util_pct, type: optional_int}
+  - {key: temp_c, type: optional_int}
+  - {key: power_draw_w, type: optional_float}
+  - {key: power_limit_w, type: optional_float}
+  - {key: power_default_limit_w, type: optional_float}
+  - {key: power_max_limit_w, type: optional_float}
+  - {key: clocks_gr_mhz, type: optional_int}
+  - {key: clocks_mem_mhz, type: optional_int}
+  - {key: fan_speed_pct, type: optional_int}
+  - {key: throttle_reasons_hex, type: str}
+  - {key: pcie_link_gen, type: optional_int}
+  - {key: pcie_link_gen_max, type: optional_int}
+  - {key: pcie_link_width, type: optional_int}
+  - {key: pcie_link_width_max, type: optional_int}
