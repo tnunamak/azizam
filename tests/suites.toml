@@ -413,11 +413,6 @@ reason = "strict xfail ratchet: KNOWN_GAPS in the test; it fails the gate when t
 # Code-to-data train (release 2026-11-08, 35): strict parity xfails, each turned green by the work its reason names.
 [[xfail]]
 framework = "pytest"
-case = "tests/test_c2d2_scenarios.py::test_s3_one_png_is_an_image_asset"
-reason = "code to data phase 2 scenario S3, strict: a stored PNG is not yet typed as an image asset on the generic path"
-
-[[xfail]]
-framework = "pytest"
 case = "tests/test_c2d2_scenarios.py::test_s6_owner_opted_in_remote_engine_serves_a_job"
 reason = "code to data phase 2 scenario S6, strict: the generic path serves loopback engines only"
 

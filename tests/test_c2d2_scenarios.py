@@ -1,4 +1,4 @@
-"""C2D2 route oracles, partial: S3 and S6 (expected to fail until built) and the typo half of S7 (already true).
+"""C2D2 route oracles, partial: S3, S6 (expected to fail until built), and the typo half of S7.
 
 S1 requires the file-input description and Library upload/reference contracts.
 S2 requires the description's multi-result fetch grammar.
@@ -68,10 +68,6 @@ def _job(public, key, engine):
     return submitted, job
 
 
-@pytest.mark.xfail(
-    strict=True, raises=CapabilityGap,
-    reason="c2d2 S3: declared_operation_job.run stores every single result with kind=file",
-)
 def test_s3_one_png_is_an_image_asset(owner, gateway, fake_upstreams):
     client, _, owner_id, plan_id = owner
     assert _install_description(client).status_code == 201
@@ -97,8 +93,7 @@ def test_s3_one_png_is_an_image_asset(owner, gateway, fake_upstreams):
         asset = job["assets"][0]
         assert asset["media_type"] == "image/png", asset
         assert asset["size_bytes"] == len(PNG), asset
-        if asset["kind"] == "file":
-            raise CapabilityGap("a fetched PNG must have kind=image, not file")
+        assert asset["kind"] != "file", "a fetched PNG must have kind=image, not file"
         assert asset["kind"] == "image", asset
 
 

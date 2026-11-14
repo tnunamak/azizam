@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from gateway import media_job_intents, media_jobs
+from gateway.asset_types import kind_for_media_type
 from gateway.capabilities import Capability
 from gateway.engine_contract_view import connection_config
 from gateway.engine_protocol import description, dispatch
@@ -112,5 +113,6 @@ async def run(runtime: dispatch.Runtime, intent: str, body: Mapping[str, Any], *
     ref = refs[0]
     media_jobs.update_status(
         job_id, media_jobs.STATUS_SUCCEEDED, progress=100, path=media_jobs.DB_PATH,
-        add_assets=[{"asset_id": ref.id, "kind": "file", "media_type": ref.content_type, "size_bytes": ref.size}])
+        add_assets=[{"asset_id": ref.id, "kind": kind_for_media_type(ref.content_type),
+                     "media_type": ref.content_type, "size_bytes": ref.size}])
     media_jobs.append_event(job_id, "succeeded", {"status": "succeeded"}, path=media_jobs.DB_PATH)
