@@ -1068,7 +1068,7 @@ class StreamingThinkSplitTransform:
     SSE frames (``{"content":"...</thi"}`` then ``{"content":"nk>answer"}``).  The
     transform therefore works on the decoded ``delta.content`` text, not on raw
     bytes: per choice it holds back a trailing partial tag (at most
-    ``len("</think>") - 1`` characters), routes text inside the tags to
+    the longest delimiter length minus one characters), routes text inside the tags to
     ``reasoning_content`` and text outside to ``content``.  A held remainder is
     released on the choice's ``finish_reason`` frame or at ``[DONE]``.  It also
     carries an incomplete trailing SSE line to the next read.
@@ -1095,7 +1095,8 @@ class StreamingThinkSplitTransform:
     def _partial_tag_len(cls, text: str) -> int:
         """Length of the longest suffix of *text* that is a proper prefix of a tag."""
         lowered = text.translate(_ASCII_LOWER)
-        for length in range(min(_THINK_CLOSE_TAG_LEN - 1, len(lowered)), 0, -1):
+        max_partial = max(len(tag) for tag in cls._TAGS) - 1
+        for length in range(min(max_partial, len(lowered)), 0, -1):
             suffix = lowered[-length:]
             if any(tag.startswith(suffix) and len(tag) > length for tag in cls._TAGS):
                 return length
