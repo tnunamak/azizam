@@ -52,6 +52,41 @@ def write_rows(tmp_path, value):
     return path
 
 
+def test_decoded_rows_match_legacy_loader_order_without_reading(monkeypatch):
+    # Preparatory parity only: no catalog projection is claimed by this test.
+    decoded = document()
+    expected = local._parse_local_capability_rows(deepcopy(decoded), "synthetic.yml")
+    calls = []
+
+    def read_text(source, **kwargs):
+        calls.append(str(source))
+        return yaml.safe_dump(decoded, sort_keys=False)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    actual = local._load_local_capability_rows("synthetic.yml")
+    assert len(calls) == 1
+    assert actual == expected
+    assert repr(actual) == repr(expected)
+
+    def no_read(*args, **kwargs):
+        raise AssertionError("decoded-row validation must not read files")
+
+    monkeypatch.setattr(Path, "read_text", no_read)
+    assert repr(local._parse_local_capability_rows(decoded, "synthetic.yml")) == repr(expected)
+
+
+def test_decoded_rows_keep_exact_legacy_validation_message(tmp_path):
+    decoded = document()
+    decoded["alias_operations"][0]["execution"] = "invalid"
+    path = write_rows(tmp_path, decoded)
+    with pytest.raises(ValueError) as legacy:
+        local._load_local_capability_rows(path)
+    with pytest.raises(ValueError) as parsed:
+        local._parse_local_capability_rows(decoded, path)
+    assert str(parsed.value) == str(legacy.value)
+    assert str(parsed.value) == f"{path}: alias_operations row 1: execution must be sync or job"
+
+
 def test_shipped_alias_rows_keep_literal_contents_and_order():
     aliases, _ = local.load_local_capability_rows(ROWS)
     assert list(aliases.items()) == list(EXPECTED_ALIASES.items())

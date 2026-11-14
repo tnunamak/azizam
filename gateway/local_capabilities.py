@@ -114,6 +114,19 @@ _LOCAL_CAPABILITY_ROWS_PATH = (
 
 def _load_local_capability_rows(
     path: str | Path = _LOCAL_CAPABILITY_ROWS_PATH,
+):
+    """Load package rows, retaining the legacy read-error boundary."""
+    source = Path(path)
+    try:
+        document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"{source}: document row 0: could not read rows: {error}")
+    return _parse_local_capability_rows(document, source)
+
+
+def _parse_local_capability_rows(
+    document: Any,
+    path: str | Path,
 ) -> tuple[
     Mapping[str, tuple[str, tuple[str, ...], tuple[str, ...], str, str | None]],
     tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...],
@@ -123,7 +136,7 @@ def _load_local_capability_rows(
     Mapping[str, Any],
     tuple[Mapping[str, Any], ...],
 ]:
-    """Load ordered package facts; errors identify the file and logical row."""
+    """Validate ordered decoded facts without reading a table or probing a backend."""
     source = Path(path)
 
     def fail(where: str, message: str) -> None:
@@ -155,10 +168,6 @@ def _load_local_capability_rows(
             fail(where, f"{key} must be a non-empty list of non-empty strings")
         return tuple(value)
 
-    try:
-        document = yaml.safe_load(source.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError) as error:
-        fail("document row 0", f"could not read rows: {error}")
     fields(
         document, {
             "schema_version", "alias_operations", "workflow_families",

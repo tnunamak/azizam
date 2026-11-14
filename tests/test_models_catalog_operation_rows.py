@@ -186,3 +186,35 @@ def test_loaded_maps_are_deeply_read_only_and_examples_are_fresh(tmp_path, monke
         "body": {"model": "second", "options": [{"label": "literal"}]},
         "files": ["canvas"],
     }]
+
+
+def test_assumption_legacy_folding_and_insertion_order_remain_until_catalog_migration(tmp_path):
+    """Characterize the existing contract, not a completed catalog migration."""
+    document = _document()
+    document["operations"][0]["words"] = [" Z_PAINT ", "Paint_PREVIEW"]
+    second = copy.deepcopy(document["operations"][0])
+    second["id"] = "other"
+    second["words"] = [" A_PAINT "]
+    second["intent_prefixes"] = ["other.second.", "other.first."]
+    second["examples"][0]["intent"] = "other.preview"
+    document["operations"].append(second)
+
+    prefixes, intents, placeholder = catalog.load_models_catalog_operations(
+        _write(tmp_path, document)
+    )
+
+    assert list(prefixes.items()) == [
+        ("z.paint", ("test.paint.", "test.brush.")),
+        ("paint.preview", ("test.paint.", "test.brush.")),
+        ("a.paint", ("other.second.", "other.first.")),
+    ]
+    assert list(intents) == ["test.paint.preview", "other.preview"]
+    for entry in intents.values():
+        assert list(entry) == ["kind", "body", "path", "files"]
+        assert entry["kind"] == "paint-preview"
+        assert list(entry["body"]) == ["model", "options"]
+        assert entry["body"]["model"] == "$row_id"
+        assert tuple(entry["body"]["options"][0].items()) == (("label", "literal"),)
+        assert entry["path"] == "/v1/test-paint"
+        assert entry["files"] == ("canvas",)
+    assert placeholder == "$row_id"
