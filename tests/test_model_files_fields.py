@@ -50,10 +50,10 @@ def test_registry_defaults_preserve_scope_order_and_dedup(tmp_path, monkeypatch)
     module, rows = _load(tmp_path, monkeypatch)
     host, managed, required = rows["host"], rows["managed"], rows["required"]
     first, second = tmp_path / "first", tmp_path / "second"
-    # Nested lookup order differs from host-field order in the original module.
+    # Nested keys are read in data order (path, file, model_path), as before the move.
     nested = rows["nested"]
     third = tmp_path / "third"
-    assert module._paths_from_value({nested[0]: str(third), nested[1]: str(first), nested[2]: str(second)}) == [first, second, third]
+    assert module._paths_from_value({nested[0]: str(third), nested[1]: str(first), nested[2]: str(second)}) == [third, first, second]
     model = {host[0]: str(first), host[1]: [str(first)], required[0]: str(second)}
     assert module._model_file_paths(model, (), service=None) == (first, second)
     assert module._model_file_paths({**model, "model_file_scope": "backend"}, (), service=None) == ()
