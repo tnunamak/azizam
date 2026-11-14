@@ -301,3 +301,71 @@ def test_v4_a_repeated_index_followed_by_literal_digits_loads_composes_and_rever
     assert sc.prefix_index(prefix, f"p1.1{digits}.cat") == 1
     assert video_extend.segment_of_node(units, f"p1.1{digits}.cat", node_prefix=prefix) == 1
     assert sc.prefix_index(prefix, f"p1.2{digits}.cat") is None
+
+
+@pytest.mark.parametrize("source_index,first,count", [
+    (0, None, 1), (0, "a.png", 3), (1, None, 3), (2, "a.png", 2),
+])
+def test_node_adapter_extraction_preserves_chain_json(monkeypatch, source_index, first, count):
+    """Compare the extracted helpers with the pre-move expressions, not themselves."""
+    import json
+    from gateway.engine_protocol import node_graph
+
+    document = _document()
+    before_document = copy.deepcopy(document)
+    spec = _spec(*([13] + [8] * (count - 1)),
+                 source=_sources()[source_index], first_frame_image=first)
+    actual = _compose(document, spec)
+
+    # Frozen originals from the composer: intentionally independent of adapter helpers.
+    def old_node_error(node):
+        from collections.abc import Mapping
+        if not isinstance(node, Mapping) or not isinstance(node.get("class_type"), str) \
+                or not isinstance(node.get("inputs"), Mapping):
+            return "a node needs a class_type and inputs"
+        return None
+
+    def old_join_error(join):
+        from collections.abc import Mapping
+        if not isinstance(join, Mapping) or "{k}" not in str(join.get("id")) \
+                or not {"class_type", "first", "next"} <= set(join):
+            return "needs an id with {k}, a class_type, first and next"
+        return None
+
+    def old_node(template, inputs):
+        return {"class_type": template["class_type"], "inputs": inputs}
+
+    def old_join(join, first, following):
+        return {"class_type": join["class_type"],
+                "inputs": {**copy.deepcopy(join.get("inputs", {})),
+                           join["first"]: first, join["next"]: following}}
+
+    with monkeypatch.context() as patch:
+        patch.setattr(node_graph, "chain_node_error", old_node_error)
+        patch.setattr(node_graph, "chain_join_error", old_join_error)
+        patch.setattr(node_graph, "make_chain_node", old_node)
+        patch.setattr(node_graph, "make_chain_join_node", old_join)
+        expected = _compose(document, spec)
+
+    assert json.dumps(actual.graph, separators=(",", ":")) == json.dumps(expected.graph, separators=(",", ":"))
+    assert actual.units == expected.units
+    assert actual.save_node == expected.save_node
+    assert actual.total_frames == expected.total_frames
+    assert document == before_document
+
+
+@pytest.mark.parametrize("invalid", [None, {}, {"class_type": 7, "inputs": {}},
+                                      {"class_type": "Toy", "inputs": []}])
+def test_node_adapter_extraction_preserves_invalid_node_error(invalid):
+    document = _document()
+    document["template"]["shared"]["load"] = invalid
+    with pytest.raises(sc.ChainTemplateError, match="template.shared.load: a node needs a class_type and inputs"):
+        sc.load(document)
+
+
+@pytest.mark.parametrize("invalid", [[], {}, {"id": "join{k}", "first": "a", "next": "b"}])
+def test_node_adapter_extraction_preserves_invalid_join_error(invalid):
+    document = _document()
+    document["template"]["finish"]["sound_join"] = invalid
+    with pytest.raises(sc.ChainTemplateError, match="needs an id with"):
+        sc.load(document)

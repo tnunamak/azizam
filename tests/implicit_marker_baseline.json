@@ -27,7 +27,7 @@
       "/system_stats": 1,
       "/upload/image": 1,
       "/view": 2,
-      "class_type": 3,
+      "class_type": 8,
       "extra_pnginfo": 1
     },
     "gateway/engine_protocol/node_info.py": {
@@ -71,9 +71,6 @@
     },
     "gateway/receipts.py": {
       "response_cost": 1
-    },
-    "gateway/segment_chain.py": {
-      "class_type": 6
     },
     "gateway/transforms.py": {
       "<think>": 3,

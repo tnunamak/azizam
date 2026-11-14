@@ -139,13 +139,15 @@ def _scan(value: Any, where: str, local: frozenset[str], finish: bool = False) -
 
 
 def _scan_nodes(nodes: Any, where: str, *, local: frozenset[str], finish: bool = False) -> None:
+    from gateway.engine_protocol.node_graph import chain_node_error
+
     if not isinstance(nodes, Mapping):
         raise _bad(where, "must be a mapping of nodes")
     for node_id, node in nodes.items():
         spot = f"{where}.{node_id}"
-        if not isinstance(node, Mapping) or not isinstance(node.get("class_type"), str) \
-                or not isinstance(node.get("inputs"), Mapping):
-            raise _bad(spot, "a node needs a class_type and inputs")
+        error = chain_node_error(node)
+        if error is not None:
+            raise _bad(spot, error)
         for gate in ("if", "unless"):
             if gate in node and node[gate] not in FACTS:
                 raise _bad(spot, f"unknown fact {node[gate]}")
@@ -227,10 +229,13 @@ def load(document: Mapping[str, Any]) -> ChainTemplate:
         _scan_exports(source.get("exports"), "template.source.exports", frozenset())
     if not isinstance(finish, Mapping):
         raise _bad("template.finish", "is required")
+    from gateway.engine_protocol.node_graph import chain_join_error
+
     join = finish.get("sound_join")
-    if join is not None and (not isinstance(join, Mapping) or "{k}" not in str(join.get("id"))
-                             or not {"class_type", "first", "next"} <= set(join)):
-        raise _bad("template.finish.sound_join", "needs an id with {k}, a class_type, first and next")
+    if join is not None:
+        error = chain_join_error(join)
+        if error is not None:
+            raise _bad("template.finish.sound_join", error)
     _scan_nodes(finish.get("nodes"), "template.finish.nodes", local=frozenset(), finish=True)
     if finish.get("save_node") not in (finish.get("nodes") or {}):
         raise _bad("template.finish.save_node", "must name a finish node")
@@ -398,13 +403,14 @@ def _resolve(value: Any, params: Mapping[str, Any], facts: Mapping[str, Any], pr
 
 def _add_nodes(graph: dict[str, Any], nodes: Mapping[str, Any], params: Mapping[str, Any],
                facts: Mapping[str, Any], prefix: str) -> None:
+    from gateway.engine_protocol.node_graph import make_chain_node
+
     for node_id, node in nodes.items():
         if ("if" in node and not facts[node["if"]]) or ("unless" in node and facts[node["unless"]]):
             continue
         if prefix + node_id in graph:
             raise ChainTemplateError(f"node {prefix + node_id!r} is made twice")
-        graph[prefix + node_id] = {"class_type": node["class_type"],
-                                   "inputs": _resolve(node["inputs"], params, facts, prefix)}
+        graph[prefix + node_id] = make_chain_node(node, _resolve(node["inputs"], params, facts, prefix))
 
 
 def _exports(exports: Mapping[str, Any], params: Mapping[str, Any], facts: Mapping[str, Any], prefix: str) -> dict[str, Any]:
@@ -435,6 +441,8 @@ def compose(template: ChainTemplate, spec: Any, *, context: int, negative: str) 
 
     ``negative`` is the text of the negative prompt. ``context`` is the number of frames of the clip so far that pin each added segment.
     """
+    from gateway.engine_protocol.node_graph import make_chain_join_node
+
     binding = template.binding
     fps = float(spec.fps)
     source = spec.source
@@ -498,8 +506,7 @@ def compose(template: ChainTemplate, spec: Any, *, context: int, negative: str) 
             node_id = join["id"].replace("{k}", str(k))
             if node_id in graph:
                 raise ChainTemplateError(f"node {node_id!r} is made twice")
-            graph[node_id] = {"class_type": join["class_type"],
-                              "inputs": {**copy.deepcopy(join.get("inputs", {})), join["first"]: sound, join["next"]: part}}
+            graph[node_id] = make_chain_join_node(join, sound, part)
             sound = [node_id, 0]
     elif sound_parts:
         sound = sound_parts[0]

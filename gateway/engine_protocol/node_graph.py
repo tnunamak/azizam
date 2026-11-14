@@ -71,6 +71,35 @@ GRAPH_SUBMIT = "graph.submit"
 CONTROL_TIMEOUT_S = 5.0          # the read timeout of a status look or a cancel; callers may pass their own
 
 
+def chain_node_error(node: Any) -> str | None:
+    """Validate a template node envelope without interpreting its input expressions."""
+    if not isinstance(node, Mapping) or not isinstance(node.get("class_type"), str) \
+            or not isinstance(node.get("inputs"), Mapping):
+        return "a node needs a class_type and inputs"
+    return None
+
+
+def chain_join_error(join: Any) -> str | None:
+    """Preserve the chain join descriptor's existing presence-only validation."""
+    if not isinstance(join, Mapping) or "{k}" not in str(join.get("id")) \
+            or not {"class_type", "first", "next"} <= set(join):
+        return "needs an id with {k}, a class_type, first and next"
+    return None
+
+
+def make_chain_node(template: Mapping[str, Any], inputs: Any) -> dict[str, Any]:
+    """Build only the submitted node envelope; the caller already resolved inputs."""
+    return {"class_type": template["class_type"], "inputs": inputs}
+
+
+def make_chain_join_node(join: Mapping[str, Any], first: Any, following: Any) -> dict[str, Any]:
+    """Copy join defaults, then bind the two input names supplied by the descriptor."""
+    from copy import deepcopy
+
+    return make_chain_node(join, {**deepcopy(join.get("inputs", {})),
+                                  join["first"]: first, join["next"]: following})
+
+
 def _output_keys(description: ProtocolDescription) -> tuple[str, ...]:
     descriptor = description.result_selectors
     field = descriptor.fields.get("key") if descriptor is not None else None
