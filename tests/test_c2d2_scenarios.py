@@ -102,6 +102,55 @@ def test_s3_one_png_is_an_image_asset(owner, gateway, fake_upstreams):
         assert asset["kind"] == "image", asset
 
 
+@pytest.mark.parametrize(
+    "payload, media_type, expected_kind",
+    [
+        pytest.param(
+            # Mono PCM WAV with one silent sample.
+            bytes.fromhex(
+                "524946462600000057415645666d74201000000001000100"
+                "401f0000803e00000200100064617461020000000000"
+            ),
+            "audio/wav", "audio", id="wav",
+        ),
+        pytest.param(
+            b"\x00unclassified-result\xff\x01",
+            "application/octet-stream", "file", id="unknown",
+        ),
+    ],
+)
+def test_s3_non_image_results_keep_bytes_type_size_and_kind(
+    owner, gateway, fake_upstreams, payload, media_type, expected_kind,
+):
+    # Partial coverage: successful MP4/GLB fixtures still require qualification.
+    # Do not turn failed jobs into passes or replace storage with a mock.
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    engine = PngEngine(content=payload, media_type=media_type)
+    fake_upstreams.router.add("127.0.0.1:18302", engine)
+    created = _add_engine(
+        client, capabilities=["smell.infer"],
+        models=[{"id": "smell-1", "public_name": "smell-1"}],
+        values={"address": "http://127.0.0.1:18302", "dispatch": "protocol",
+                "protocol_description": "d0-smell"},
+    )
+    assert created.status_code == 201, created.text
+    enabled = client.patch("/admin/api/operator/services/smell-box",
+                           headers=_write_headers(client), json={"enabled": True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, job = _job(public, key, engine)
+        content = public.get(submitted["content_url"], headers=_headers(key))
+        assert content.status_code == 200, content.text
+        assert content.content == payload
+        assert len(job["assets"]) == 1, job
+        asset = job["assets"][0]
+        assert asset["media_type"] == media_type, asset
+        assert asset["size_bytes"] == len(payload), asset
+        assert asset["kind"] == expected_kind, asset
+
+
 @pytest.mark.xfail(
     strict=True, raises=CapabilityGap,
     reason="c2d2 S6: validate_protocol_dispatch_local_only rejects non-loopback addresses",
