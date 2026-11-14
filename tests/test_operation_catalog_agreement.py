@@ -106,7 +106,7 @@ def test_conservative_missing_contracts_are_exact_media_gaps():
          "reason": "Operation request/result mapping is not supplied by this table."}
         for index, row in enumerate(rows)
     ]
-    actual = [dict(row) for row in catalog.unexpressed if row["source"] != SOURCE.name]
+    actual = [dict(row) for row in catalog.unexpressed if row["source"] == media.name]
     assert actual == expected
     assert not catalog.operations
 
@@ -141,3 +141,37 @@ def test_media_gap_rejects_unclassified_fields_and_duplicate_intents(tmp_path):
         source.write_text(yaml.safe_dump(document), encoding="utf-8")
         with pytest.raises(ValueError, match=message):
             media_intent_gaps(source)
+
+def test_conservative_local_contract_gaps_are_exact():
+    # No closed operation contracts may be inferred from routing/default rows.
+    source = ROOT / "registry" / "local_capability_rows.yml"
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    expected_keys = ["schema_version"]
+    for section in ("alias_operations", "workflow_families", "backend_rows", "image_rows"):
+        expected_keys.extend(f"{section}[{i}]" for i in range(len(document[section])))
+    expected_keys.extend(("image_defaults", "workflow_defaults"))
+    expected = [{
+        "source": source.name, "key": key,
+        "reason": ("Source format version, not an operation fact." if key == "schema_version"
+                   else "Local routing/default rows lack a closed operation request/result mapping."),
+    } for key in expected_keys]
+    catalog = load(CATALOG)
+    assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
+    assert not catalog.operations
+    assert {row["context"] for row in catalog.relations("family")} == {"protocol", "route", "type"}
+
+
+def test_local_gaps_reject_unclassified_sections_and_bad_rows(tmp_path):
+    from scripts.gen_operation_catalog import local_capability_gaps
+
+    source = tmp_path / "local.yml"
+    document = {"schema_version": 1, "alias_operations": [{}], "workflow_families": [],
+                "backend_rows": [], "image_rows": [], "image_defaults": {}, "workflow_defaults": {}}
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    assert [row["key"] for row in local_capability_gaps(source)] == [
+        "schema_version", "alias_operations[0]", "image_defaults", "workflow_defaults"]
+    for invalid in ({**document, "extra": []}, {**document, "backend_rows": [None]},
+                    {**document, "schema_version": True}):
+        source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+        with pytest.raises(ValueError):
+            local_capability_gaps(source)

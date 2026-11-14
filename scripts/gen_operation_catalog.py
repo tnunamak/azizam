@@ -57,7 +57,35 @@ def media_intent_gaps(source: Path) -> list[dict[str, str]]:
     return gaps
 
 
-def generate(source: Path, media_source: Path | None = None) -> str:
+LOCAL_GAP_REASON = "Local routing/default rows lack a closed operation request/result mapping."
+LOCAL_LISTS = ("alias_operations", "workflow_families", "backend_rows", "image_rows")
+LOCAL_DEFAULTS = ("image_defaults", "workflow_defaults")
+
+
+def local_capability_gaps(source: Path) -> list[dict[str, str]]:
+    """Conservatively enumerate gaps without copying payloads or inventing relations."""
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"schema_version", *LOCAL_LISTS, *LOCAL_DEFAULTS}:
+        raise ValueError("Every local source top-level key must be classified")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
+        raise ValueError("Unsupported local source version")
+    gaps = [{"source": source.name, "key": "schema_version",
+             "reason": "Source format version, not an operation fact."}]
+    for name in LOCAL_LISTS:
+        rows = document[name]
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ValueError("Local rows must be lists of mappings")
+        # Original positions remain explicit, even though payloads are unexpressed.
+        gaps.extend({"source": source.name, "key": f"{name}[{order}]",
+                     "reason": LOCAL_GAP_REASON} for order, _row in enumerate(rows))
+    for name in LOCAL_DEFAULTS:
+        if not isinstance(document[name], dict):
+            raise ValueError("Local defaults must be mappings")
+        gaps.append({"source": source.name, "key": name, "reason": LOCAL_GAP_REASON})
+    return gaps
+
+
+def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None) -> str:
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
     expected = {name for name, _ in PROJECTED} | {name for name, _ in UNEXPRESSED}
     if not isinstance(document, dict) or set(document) != expected:
@@ -85,6 +113,8 @@ def generate(source: Path, media_source: Path | None = None) -> str:
     }
     if media_source is not None:
         catalog["unexpressed"].extend(media_intent_gaps(media_source))
+    if local_source is not None:
+        catalog["unexpressed"].extend(local_capability_gaps(local_source))
     # JSON is a YAML subset, with stable key order and explicit string quoting.
     return json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
 
@@ -95,8 +125,9 @@ def main() -> None:
     parser.add_argument("--source", type=Path, default=root / "registry" / "capability_words.yml")
     parser.add_argument("--output", type=Path, default=root / "registry" / "operations.yml")
     parser.add_argument("--media-source", type=Path, default=root / "registry" / "media_job_intents.yml")
+    parser.add_argument("--local-source", type=Path, default=root / "registry" / "local_capability_rows.yml")
     args = parser.parse_args()
-    args.output.write_bytes(generate(args.source, args.media_source).encode("utf-8"))
+    args.output.write_bytes(generate(args.source, args.media_source, args.local_source).encode("utf-8"))
 
 
 if __name__ == "__main__":

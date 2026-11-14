@@ -524,6 +524,121 @@
       "source": "media_job_intents.yml",
       "key": "intents[10]:video.edit",
       "reason": "Operation request/result mapping is not supplied by this table."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "schema_version",
+      "reason": "Source format version, not an operation fact."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[0]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[1]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[2]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[3]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[4]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[5]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[6]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[7]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[8]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "alias_operations[9]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "workflow_families[0]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "workflow_families[1]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "backend_rows[0]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "backend_rows[1]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "backend_rows[2]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "backend_rows[3]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "backend_rows[4]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "backend_rows[5]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "image_rows[0]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "image_rows[1]",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "image_defaults",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+    },
+    {
+      "source": "local_capability_rows.yml",
+      "key": "workflow_defaults",
+      "reason": "Local routing/default rows lack a closed operation request/result mapping."
     }
   ]
 }
