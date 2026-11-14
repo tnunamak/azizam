@@ -1,6 +1,6 @@
 """C2D2 route oracles, partial: S3, S6 (expected to fail until built), and the typo half of S7.
 
-S1 requires the file-input description and Library upload/reference contracts.
+S1 lacks the public media-job link from library assets to named engine file inputs.
 S2's multi-result fetch grammar exists; its ordered pair scenario is covered here.
 S4/S5 require the owner alias write route and target/fallback schema.
 The other half of S7 requires the audio job request shape; the smell JSON
@@ -137,6 +137,70 @@ def test_s2_one_job_returns_png_and_wav_in_engine_order(owner, gateway, fake_ups
                     ("image", "image/png", len(PNG)),
                     ("audio", "audio/wav", len(engine.wav)),
                 ], job
+
+
+
+@pytest.mark.xfail(
+    strict=True, raises=CapabilityGap,
+    reason="c2d2 S1: public media jobs cannot bind library assets to named file inputs",
+)
+def test_s1_library_png_requires_public_job_file_binding(owner, gateway, fake_upstreams):
+    client, _, owner_id, plan_id = owner
+    assert _install_description(client).status_code == 201
+    engine = PngEngine()
+    fake_upstreams.router.add("127.0.0.1:18302", engine)
+    created = _add_engine(
+        client, capabilities=["smell.infer"],
+        models=[{"id": "smell-1", "public_name": "smell-1"}],
+        values={"address": "http://127.0.0.1:18302", "dispatch": "protocol",
+                "protocol_description": "d0-smell"},
+    )
+    assert created.status_code == 201, created.text
+    enabled = client.patch("/admin/api/operator/services/smell-box",
+                           headers=_write_headers(client), json={"enabled": True})
+    assert enabled.status_code == 200, enabled.text
+    key = _app_key(client, owner_id, plan_id)
+    with gateway.client() as public:
+        submitted, job = _job(public, key, engine)
+        content = public.get(submitted["content_url"], headers=_headers(key))
+        assert content.status_code == 200, content.text
+        assert content.content == PNG
+        assert len(job["assets"]) == 1, job
+        asset = job["assets"][0]
+        assert (asset["kind"], asset["media_type"], asset["size_bytes"]) == (
+            "image", "image/png", len(PNG))
+        asset_id = asset["asset_id"]
+        assert asset_id, asset
+        response = public.post(
+            "/gateway/v1/media/jobs", headers=_headers(key),
+            json={"intent": "smell.infer", "model": "smell-1",
+                  "input": {"vector": VECTOR},
+                  # Proposed binding, not a claim of an existing product field.
+                  "files": {"image": {"asset_id": asset_id}}},
+        )
+        refusal = response.text.lower()
+        if response.status_code in {400, 422} and (
+                "files" in refusal
+                or ("body" in refusal and "not allowed" in refusal)):
+            raise CapabilityGap(
+                "Public media jobs lack the library-asset to named-file input link."
+            )
+        assert response.status_code == 202, response.text
+        accepted = response.json()
+        for _ in range(100):
+            response = public.get("/gateway/v1/media/jobs/" + accepted["id"],
+                                  headers=_headers(key))
+            assert response.status_code == 200, response.text
+            second_job = response.json()
+            if second_job["status"] in {"succeeded", "failed", "cancelled"}:
+                break
+            time.sleep(0.1)
+        assert second_job["status"] in {"succeeded", "failed", "cancelled"}, second_job
+        assert engine.posts[1:] == [{"input": {"vector": VECTOR}}], (
+            "Expected the existing engine request with no file; observed",
+            engine.posts[1:], second_job,
+        )
+        pytest.fail("The accepted job silently ignored files and sent no file to the engine.")
 
 
 def test_s3_one_png_is_an_image_asset(owner, gateway, fake_upstreams):

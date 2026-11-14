@@ -418,6 +418,11 @@ reason = "code to data phase 2 scenario S6, strict: the generic path serves loop
 
 [[xfail]]
 framework = "pytest"
+case = "tests/test_c2d2_scenarios.py::test_s1_library_png_requires_public_job_file_binding"
+reason = "code to data phase 2 scenario S1, strict: public media jobs lack the library-asset to named-file input link"
+
+[[xfail]]
+framework = "pytest"
 case = "tests/test_s7_parity_audio.py::test_audio_03_restart_closes_the_open_run_receipt_as_gateway_restarted"
 reason = "needs RH open_receipt"
 
