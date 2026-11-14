@@ -425,6 +425,7 @@ class FfmpegTests(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory(dir=Path.home() / ".tmp" if (Path.home() / ".tmp").is_dir() else None)
         cls.tmp = Path(cls._tmp.name)
         cls.work = cls.tmp / "work"
+        cls.work.mkdir()   # each test checks it is left empty; a test may run first on its worker
 
     @classmethod
     def tearDownClass(cls):
