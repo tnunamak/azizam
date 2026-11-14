@@ -84,6 +84,10 @@ async def _pause(wake: asyncio.Event, interval_s: float) -> None:
 _CLEANUP_UNKNOWN = 'Cleanup is unknown; the upstream may still run.'
 
 
+class _PersistedCancel(Exception):
+    """The job's owner asked to cancel it; the runner leaves its wait loop to stop the upstream."""
+
+
 def _consume_cancel_result(task: asyncio.Future) -> None:
     with contextlib.suppress(asyncio.CancelledError, Exception):
         task.result()
@@ -222,8 +226,7 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
             while True:
                 current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH) or {}
                 if (current.get('metadata') or {}).get('cancel_requested_at'):
-                    await adapter.cancel(conn, ref)
-                    raise media_jobs.CancellationPending()
+                    raise _PersistedCancel()
                 try:
                     status = await adapter.poll(conn, ref)
                 except (TransportFailure, UpstreamError) as exc:
@@ -244,6 +247,10 @@ async def run(runtime, op, body, *, job_id, follow_events: bool = False):
                         # status.detail is what the engine said about the failure; it stays in the status and out of the error (decision D44).
                         raise ProtocolError('The upstream job did not succeed.', code='upstream_job_failed')
                 await _pause(wake, interval_s)
+    except _PersistedCancel:
+        # Outside the wait budget's block, so a slow or stubborn upstream stop gets one bounded attempt, not two.
+        cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
+        raise media_jobs.CancellationPending('' if cleaned else _CLEANUP_UNKNOWN) from None
     except TimeoutError:
         cleaned = await _cancel_with_deadline(adapter, conn, ref, max_wait_s)
         detail = 'The upstream job exceeded its wait limit.'

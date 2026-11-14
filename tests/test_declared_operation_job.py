@@ -206,3 +206,58 @@ def test_unresponsive_cancel_does_not_hold_terminal_accounting(job_store, caller
             await asyncio.sleep(0)
 
     asyncio.run(scenario())
+
+
+def test_persisted_cancel_resistant_cleanup_settles_without_success(job_store):
+    async def scenario():
+        cancel_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+        cancel_tasks = set()
+
+        async def cancel(_conn, _ref):
+            cancel_tasks.add(asyncio.current_task())
+            cancel_started.set()
+            try:
+                while not release_cleanup.is_set():
+                    try:
+                        await release_cleanup.wait()
+                    except asyncio.CancelledError:
+                        # Model an adapter that does not acknowledge task cancellation.
+                        continue
+            finally:
+                cleanup_finished.set()
+
+        adapter = SimpleNamespace(
+            submit=AsyncMock(return_value=SimpleNamespace(id="upstream-job")),
+            poll=AsyncMock(return_value=SimpleNamespace(state=protocol_jobs.JobState.succeeded)),
+            fetch_assets=AsyncMock(return_value=[_file()]),
+            cancel=AsyncMock(side_effect=cancel),
+        )
+        job_store.snapshot["metadata"]["cancel_requested_at"] = "synthetic-cancel-request"
+        task = asyncio.create_task(protocol_jobs.run(_runtime(adapter), INTENT, {}, job_id=JOB_ID))
+        try:
+            done, _pending = await asyncio.wait({task}, timeout=OUTER_WAIT_S)
+            assert task in done, "Persisted cancellation held the runner beyond its outer deadline"
+            with pytest.raises(media_jobs.CancellationPending):
+                await task
+            assert cancel_started.is_set()
+            assert not cleanup_finished.is_set(), "The resistant upstream stop is still unconfirmed"
+            adapter.cancel.assert_awaited_once()
+            adapter.submit.assert_awaited_once()
+            adapter.poll.assert_not_awaited()
+            adapter.fetch_assets.assert_not_awaited()
+            assert all(call.args[1] != media_jobs.STATUS_SUCCEEDED
+                       for call in job_store.status.call_args_list)
+            assert all("add_assets" not in call.kwargs for call in job_store.status.call_args_list)
+            job_store.event.assert_not_called()
+        finally:
+            release_cleanup.set()
+            # Release before cancelling/joining, including the old direct-await failing path.
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if cancel_tasks:
+                await asyncio.gather(*cancel_tasks, return_exceptions=True)
+
+    asyncio.run(scenario())
