@@ -135,3 +135,28 @@ def test_one_route_naming_two_components_is_refused():
                            "route": "/v1/images/generations", "component": "OtherRequest"})
     with pytest.raises(ValueError, match="names two components"):
         media_job_intents.parse_rows(doc)
+
+
+def test_conservative_reader_roundtrip_preserves_order_and_non_submittable_rows(tmp_path):
+    """Keep all reader fields until a lossless catalog projection is available."""
+    import json
+    from dataclasses import asdict
+
+    expected = media_job_intents.ROWS
+    assert expected
+    assert any(row.submittable for row in expected)
+    assert any(not row.submittable for row in expected)
+    assert any(row.execution_route is not None for row in expected)
+    document = {"intents": [
+        {key: value for key, value in asdict(row).items() if value is not None}
+        for row in expected
+    ]}
+    path = tmp_path / "intents.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    actual = media_job_intents.load_rows(path)
+    assert actual == expected
+    assert [asdict(row) for row in actual] == [asdict(row) for row in expected]
+    # A second read must not reuse a cached table or normalize its order.
+    document["intents"].reverse()
+    path.write_text(json.dumps(document), encoding="utf-8")
+    assert media_job_intents.load_rows(path) == tuple(reversed(expected))
