@@ -58,3 +58,55 @@ def test_registry_loads_and_rejects_unknown_type(tmp_path):
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     with pytest.raises(ValueError, match="observation_field_type_unknown"):
         load_registry(path)
+
+
+def test_executable_comes_from_registry(monkeypatch):
+    from gateway import gpu_observation
+
+    monkeypatch.setattr(gpu_observation, "load_registry", lambda path: {"argv": ["alternate-probe"]})
+    assert gpu_observation.executable() == "alternate-probe"
+
+
+def test_sampler_pci_query_uses_configured_executable(monkeypatch):
+    import metrics_sampler
+    from gateway import gpu_observation
+
+    calls = []
+    monkeypatch.setattr(gpu_observation, "executable", lambda: "alternate-probe")
+    output = (
+        "0, 00000000:01:00.0\n"
+        "2, 0000:ab:02.0\n"
+        "3, 0001:01:00.0\n"
+        "bad, 0000:03:00.0\n"
+        "4, malformed\n"
+        "5, 0000:01:00.0\n"
+    )
+    def runner(argv):
+        calls.append(argv)
+        return 0, output, ""
+    monkeypatch.setattr(metrics_sampler.status_endpoint, "_run", runner)
+    assert metrics_sampler._gpu_index_by_drm_id() == {0x100: 5, 0xab02: 2}
+    assert calls == [["alternate-probe", "--query-gpu=index,pci.bus_id", "--format=csv,noheader"]]
+    monkeypatch.setattr(metrics_sampler.status_endpoint, "_run", lambda argv: (1, output, "failure"))
+    assert metrics_sampler._gpu_index_by_drm_id() == {}
+
+
+def test_renderer_tooltip_uses_configured_executable(monkeypatch):
+    import firehose_render
+    from gateway import gpu_observation
+
+    tool = load_registry()["argv"][0]
+    expected = (
+        '<span class="muted" title="processes hold /dev/nvidia* via DRM '
+        "(Xwayland, plasmashell, browsers, etc.) but don't appear in "
+        + tool + ' --query-compute-apps because they have no CUDA '
+        'context">[graphics + system, no CUDA context]</span>'
+    )
+    assert firehose_render._vram_row_label({"service": "__unattributed"}) == expected
+    monkeypatch.setattr(gpu_observation, "executable", lambda: 'alternate<&"probe')
+    assert firehose_render._vram_row_label({"service": "__unattributed"}) == expected.replace(
+        tool + " --query-compute-apps", "alternate&lt;&amp;&quot;probe --query-compute-apps"
+    )
+    assert firehose_render._vram_row_label({"service": "__total"}) == (
+        '<b title="GPU memory.used (authoritative)">[total]</b>'
+    )

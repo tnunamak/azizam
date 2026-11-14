@@ -19,7 +19,7 @@ import time
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-from gateway import status_words
+from gateway import gpu_observation, status_words
 from gateway.gateway_shell import SHELL_CSS, render_shell_header
 
 _GRAPH_WORDS = status_words.words("images")  # what the page calls the graph engine's keys and figures
@@ -1047,7 +1047,7 @@ def _vram_row_label(s: dict) -> str:
         return (
             '<span class="muted" title="processes hold /dev/nvidia* via DRM '
             "(Xwayland, plasmashell, browsers, etc.) but don't appear in "
-            'nvidia-smi --query-compute-apps because they have no CUDA '
+            f'{_esc(gpu_observation.executable())} --query-compute-apps because they have no CUDA '
             'context">[graphics + system, no CUDA context]</span>'
         )
     if name == "__headroom":

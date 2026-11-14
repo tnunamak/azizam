@@ -5,8 +5,7 @@
       "GPU0": 5,
       "GPU1": 3,
       "class_type": 7,
-      "model_path": 1,
-      "nvidia-smi": 1
+      "model_path": 1
     },
     "gateway/a1111_api.py": {
       "model_path": 1
@@ -87,9 +86,6 @@
       "activation_": 1
     },
     "gateway/vram_observer.py": {
-      "nvidia-smi": 1
-    },
-    "metrics_sampler.py": {
       "nvidia-smi": 1
     },
     "proxy.py": {

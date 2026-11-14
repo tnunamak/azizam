@@ -30,6 +30,11 @@ def load_registry(path=DEFAULT_REGISTRY):
     return config
 
 
+def executable(path=DEFAULT_REGISTRY):
+    """The observation command's executable, shared by related probes and labels."""
+    return load_registry(path)["argv"][0]
+
+
 def _convert(value, kind):
     if kind == "str":
         return value
