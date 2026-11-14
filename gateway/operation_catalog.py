@@ -49,6 +49,7 @@ def _freeze(value: Any) -> Any:
 class Catalog:
     operations: Mapping[str, Mapping[str, Any]]
     _rows: tuple[Mapping[str, Any], ...]
+    unexpressed: tuple[Mapping[str, Any], ...] = ()
 
     def relations(
         self, kind: str, context: str | None = None
@@ -87,6 +88,10 @@ def _validate(document: Any, schema: dict) -> None:
             )
             if not isinstance(kind, str) or kind not in kinds:
                 raise CatalogError(f"{location}: rule relation_kind: unknown or missing kind")
+            if kind == "family" and (("operation" in row) == ("word" in row)):
+                raise CatalogError(
+                    f"{location}: rule family_target: exactly one of operation and word is required"
+                )
             typed = Draft202012Validator({
                 "$ref": "#/$defs/" + kind, "$defs": schema["$defs"]
             })
@@ -128,9 +133,19 @@ def load(path: str | Path) -> Catalog:
         operations[identifier] = _freeze(row)
 
     seen = set()
+    seen_family_words = set()
     for index, row in enumerate(document["relations"]):
         kind = row["kind"]
-        targets = row["operations"] if kind == "catalog_group" else (row["operation"],)
+        if kind == "family" and "word" in row:
+            key = (row.get("context"), row["word"])
+            if key in seen_family_words:
+                raise CatalogError(
+                    f"relations row {index}: rule unique_family_word_in_context: {key}"
+                )
+            seen_family_words.add(key)
+            targets = ()
+        else:
+            targets = row["operations"] if kind == "catalog_group" else (row["operation"],)
         for target in targets:
             if target not in operations:
                 raise CatalogError(
@@ -143,4 +158,24 @@ def load(path: str | Path) -> Catalog:
                     f"relations row {index}: rule unique_spelling_in_context: {key}"
                 )
             seen.add(key)
-    return Catalog(MappingProxyType(operations), tuple(_freeze(row) for row in document["relations"]))
+    return Catalog(
+        MappingProxyType(operations),
+        tuple(_freeze(row) for row in document["relations"]),
+        tuple(_freeze(row) for row in document.get("unexpressed", [])),
+    )
+
+
+def project_capability_words(catalog: Catalog) -> dict[str, dict[str, str]]:
+    """Project inert display words in source-map order, never executable facts."""
+    result = {}
+    for name, context in (
+        ("protocol_words", "protocol"),
+        ("route_intents", "route"),
+        ("type_capabilities", "type"),
+    ):
+        rows = sorted(
+            (row for row in catalog.relations("family", context) if "word" in row),
+            key=lambda row: row.get("order", 0),
+        )
+        result[name] = {row["word"]: row["family"] for row in rows}
+    return result

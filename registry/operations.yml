@@ -1,3 +1,474 @@
-schema_version: 1
-operations: []
-relations: []
+{
+  "schema_version": 1,
+  "operations": [],
+  "relations": [
+    {
+      "kind": "family",
+      "word": "llm.execution",
+      "family": "chat",
+      "context": "protocol",
+      "order": 0
+    },
+    {
+      "kind": "family",
+      "word": "typesafe-systemone",
+      "family": "decide",
+      "context": "protocol",
+      "order": 1
+    },
+    {
+      "kind": "family",
+      "word": "chat",
+      "family": "chat",
+      "context": "protocol",
+      "order": 2
+    },
+    {
+      "kind": "family",
+      "word": "completions",
+      "family": "chat",
+      "context": "protocol",
+      "order": 3
+    },
+    {
+      "kind": "family",
+      "word": "chat.completions",
+      "family": "chat",
+      "context": "protocol",
+      "order": 4
+    },
+    {
+      "kind": "family",
+      "word": "vision",
+      "family": "chat",
+      "context": "protocol",
+      "order": 5
+    },
+    {
+      "kind": "family",
+      "word": "speech",
+      "family": "speech",
+      "context": "protocol",
+      "order": 6
+    },
+    {
+      "kind": "family",
+      "word": "tts",
+      "family": "speech",
+      "context": "protocol",
+      "order": 7
+    },
+    {
+      "kind": "family",
+      "word": "audio.speech",
+      "family": "speech",
+      "context": "protocol",
+      "order": 8
+    },
+    {
+      "kind": "family",
+      "word": "speech.synthesis",
+      "family": "speech",
+      "context": "protocol",
+      "order": 9
+    },
+    {
+      "kind": "family",
+      "word": "transcriptions",
+      "family": "transcribe",
+      "context": "protocol",
+      "order": 10
+    },
+    {
+      "kind": "family",
+      "word": "transcription",
+      "family": "transcribe",
+      "context": "protocol",
+      "order": 11
+    },
+    {
+      "kind": "family",
+      "word": "stt",
+      "family": "transcribe",
+      "context": "protocol",
+      "order": 12
+    },
+    {
+      "kind": "family",
+      "word": "audio.transcriptions",
+      "family": "transcribe",
+      "context": "protocol",
+      "order": 13
+    },
+    {
+      "kind": "family",
+      "word": "speech.transcription",
+      "family": "transcribe",
+      "context": "protocol",
+      "order": 14
+    },
+    {
+      "kind": "family",
+      "word": "speech.translation",
+      "family": "transcribe",
+      "context": "protocol",
+      "order": 15
+    },
+    {
+      "kind": "family",
+      "word": "images",
+      "family": "image",
+      "context": "protocol",
+      "order": 16
+    },
+    {
+      "kind": "family",
+      "word": "image",
+      "family": "image",
+      "context": "protocol",
+      "order": 17
+    },
+    {
+      "kind": "family",
+      "word": "generations",
+      "family": "image",
+      "context": "protocol",
+      "order": 18
+    },
+    {
+      "kind": "family",
+      "word": "image.generate",
+      "family": "image",
+      "context": "protocol",
+      "order": 19
+    },
+    {
+      "kind": "family",
+      "word": "image.edit",
+      "family": "image",
+      "context": "protocol",
+      "order": 20
+    },
+    {
+      "kind": "family",
+      "word": "videos",
+      "family": "video",
+      "context": "protocol",
+      "order": 21
+    },
+    {
+      "kind": "family",
+      "word": "video",
+      "family": "video",
+      "context": "protocol",
+      "order": 22
+    },
+    {
+      "kind": "family",
+      "word": "video.generate",
+      "family": "video",
+      "context": "protocol",
+      "order": 23
+    },
+    {
+      "kind": "family",
+      "word": "embeddings",
+      "family": "embed",
+      "context": "protocol",
+      "order": 24
+    },
+    {
+      "kind": "family",
+      "word": "text.embeddings",
+      "family": "embed",
+      "context": "protocol",
+      "order": 25
+    },
+    {
+      "kind": "family",
+      "word": "rerank",
+      "family": "rerank",
+      "context": "protocol",
+      "order": 26
+    },
+    {
+      "kind": "family",
+      "word": "text.rerank",
+      "family": "rerank",
+      "context": "protocol",
+      "order": 27
+    },
+    {
+      "kind": "family",
+      "word": "decisions",
+      "family": "decide",
+      "context": "protocol",
+      "order": 28
+    },
+    {
+      "kind": "family",
+      "word": "decision.systemone",
+      "family": "decide",
+      "context": "protocol",
+      "order": 29
+    },
+    {
+      "kind": "family",
+      "word": "music",
+      "family": "music",
+      "context": "protocol",
+      "order": 30
+    },
+    {
+      "kind": "family",
+      "word": "sfx",
+      "family": "sfx",
+      "context": "protocol",
+      "order": 31
+    },
+    {
+      "kind": "family",
+      "word": "audio",
+      "family": "audio",
+      "context": "protocol",
+      "order": 32
+    },
+    {
+      "kind": "family",
+      "word": "audio.generate",
+      "family": "audio",
+      "context": "protocol",
+      "order": 33
+    },
+    {
+      "kind": "family",
+      "word": "mesh",
+      "family": "mesh",
+      "context": "protocol",
+      "order": 34
+    },
+    {
+      "kind": "family",
+      "word": "text.completions",
+      "family": "chat",
+      "context": "route",
+      "order": 0
+    },
+    {
+      "kind": "family",
+      "word": "chat.responses",
+      "family": "chat",
+      "context": "route",
+      "order": 1
+    },
+    {
+      "kind": "family",
+      "word": "chat.generate",
+      "family": "chat",
+      "context": "route",
+      "order": 2
+    },
+    {
+      "kind": "family",
+      "word": "chat.messages",
+      "family": "chat",
+      "context": "route",
+      "order": 3
+    },
+    {
+      "kind": "family",
+      "word": "chat.messages.count_tokens",
+      "family": "chat",
+      "context": "route",
+      "order": 4
+    },
+    {
+      "kind": "family",
+      "word": "music.generate",
+      "family": "music",
+      "context": "route",
+      "order": 5
+    },
+    {
+      "kind": "family",
+      "word": "sfx.generate",
+      "family": "sfx",
+      "context": "route",
+      "order": 6
+    },
+    {
+      "kind": "family",
+      "word": "image.variation",
+      "family": "image",
+      "context": "route",
+      "order": 7
+    },
+    {
+      "kind": "family",
+      "word": "video.remix",
+      "family": "video",
+      "context": "route",
+      "order": 8
+    },
+    {
+      "kind": "family",
+      "word": "video.edit",
+      "family": "video",
+      "context": "route",
+      "order": 9
+    },
+    {
+      "kind": "family",
+      "word": "video.extend",
+      "family": "video",
+      "context": "route",
+      "order": 10
+    },
+    {
+      "kind": "family",
+      "word": "image.analyze",
+      "family": "image",
+      "context": "route",
+      "order": 11
+    },
+    {
+      "kind": "family",
+      "word": "mesh.generate",
+      "family": "mesh",
+      "context": "route",
+      "order": 12
+    },
+    {
+      "kind": "family",
+      "word": "mesh.edit",
+      "family": "mesh",
+      "context": "route",
+      "order": 13
+    },
+    {
+      "kind": "family",
+      "word": "embedding",
+      "family": "embed",
+      "context": "route",
+      "order": 14
+    },
+    {
+      "kind": "family",
+      "word": "images.generate",
+      "family": "image",
+      "context": "route",
+      "order": 15
+    },
+    {
+      "kind": "family",
+      "word": "images.generations",
+      "family": "image",
+      "context": "route",
+      "order": 16
+    },
+    {
+      "kind": "family",
+      "word": "images.edit",
+      "family": "image",
+      "context": "route",
+      "order": 17
+    },
+    {
+      "kind": "family",
+      "word": "images.edits",
+      "family": "image",
+      "context": "route",
+      "order": 18
+    },
+    {
+      "kind": "family",
+      "word": "audio.transcribe",
+      "family": "transcribe",
+      "context": "route",
+      "order": 19
+    },
+    {
+      "kind": "family",
+      "word": "audio.translations",
+      "family": "transcribe",
+      "context": "route",
+      "order": 20
+    },
+    {
+      "kind": "family",
+      "word": "videos.generate",
+      "family": "video",
+      "context": "route",
+      "order": 21
+    },
+    {
+      "kind": "family",
+      "word": "language",
+      "family": "chat",
+      "context": "type",
+      "order": 0
+    },
+    {
+      "kind": "family",
+      "word": "image",
+      "family": "image",
+      "context": "type",
+      "order": 1
+    },
+    {
+      "kind": "family",
+      "word": "video",
+      "family": "video",
+      "context": "type",
+      "order": 2
+    },
+    {
+      "kind": "family",
+      "word": "embedding",
+      "family": "embed",
+      "context": "type",
+      "order": 3
+    },
+    {
+      "kind": "family",
+      "word": "reranking",
+      "family": "rerank",
+      "context": "type",
+      "order": 4
+    },
+    {
+      "kind": "family",
+      "word": "decision",
+      "family": "decide",
+      "context": "type",
+      "order": 5
+    }
+  ],
+  "unexpressed": [
+    {
+      "source": "capability_words.yml",
+      "key": "schema_version",
+      "reason": "Source format version, not an operation fact."
+    },
+    {
+      "source": "capability_words.yml",
+      "key": "modality_words",
+      "reason": "Presentation vocabulary for modalities."
+    },
+    {
+      "source": "capability_words.yml",
+      "key": "media_type_modalities",
+      "reason": "Media-type presentation classification."
+    },
+    {
+      "source": "capability_words.yml",
+      "key": "capabilities",
+      "reason": "Display labels, explainers, order, aliases and policy hints."
+    },
+    {
+      "source": "capability_words.yml",
+      "key": "audio_rule",
+      "reason": "Source-specific classification rule, not an operation fact."
+    }
+  ]
+}

@@ -46,6 +46,29 @@
           }
         ]
       }
+    },
+    "unexpressed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "key",
+          "reason"
+        ],
+        "properties": {
+          "source": {
+            "$ref": "#/$defs/text"
+          },
+          "key": {
+            "$ref": "#/$defs/text"
+          },
+          "reason": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -129,6 +152,10 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -170,6 +197,10 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -193,6 +224,10 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -216,6 +251,10 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -239,6 +278,10 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -266,6 +309,10 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -274,7 +321,6 @@
       "additionalProperties": false,
       "required": [
         "kind",
-        "operation",
         "family"
       ],
       "properties": {
@@ -289,8 +335,34 @@
         },
         "why": {
           "$ref": "#/$defs/text"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "word": {
+          "type": "string"
+        },
+        "context": {
+          "enum": [
+            "protocol",
+            "route",
+            "type"
+          ]
         }
-      }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "operation"
+          ]
+        },
+        {
+          "required": [
+            "word"
+          ]
+        }
+      ]
     }
   }
 }
