@@ -55,11 +55,6 @@
     "gateway/me_media.py": {
       "response_cost": 1
     },
-    "gateway/model_files.py": {
-      "activation_": 2,
-      "mmproj": 2,
-      "model_path": 3
-    },
     "gateway/model_ids.py": {
       "gguf": 1
     },
