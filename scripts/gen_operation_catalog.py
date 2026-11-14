@@ -26,9 +26,30 @@ UNEXPRESSED = (
 MEDIA_GAP_REASON = "Operation request/result mapping is not supplied by this table."
 
 
+class _UniqueMediaLoader(yaml.SafeLoader):
+    """Conservative source parsing: duplicate keys are not operation facts."""
+
+
+def _media_mapping(loader, node, deep=False):
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str):
+            raise ValueError("Media mapping keys must be strings")
+        if key in result:
+            raise ValueError("Duplicate media mapping key: " + key)
+        result[key] = loader.construct_object(value_node, deep=deep)
+    return result
+
+
+_UniqueMediaLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _media_mapping
+)
+
+
 def media_intent_gaps(source: Path) -> list[dict[str, str]]:
     """Conservatively count unmapped operations, never infer contracts from routes."""
-    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    document = yaml.load(source.read_text(encoding="utf-8"), Loader=_UniqueMediaLoader)
     if not isinstance(document, dict) or set(document) != {"intents"}:
         raise ValueError("Every media source top-level key must be classified")
     rows = document["intents"]

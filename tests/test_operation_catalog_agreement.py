@@ -273,3 +273,34 @@ def test_frontend_gap_does_not_equate_admission_and_runtime_policy(tmp_path):
         source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
         with pytest.raises(ValueError):
             protocol_frontend_gaps(source)
+
+
+
+@pytest.mark.parametrize("document", [
+    "intents: []\nintents: []\n",
+    "intents:\n  - {intent: first, intent: second, modality: sample, submittable: false}\n",
+    "intents:\n  - {intent: sample, modality: sample, submittable: false, component: First, component: Second}\n",
+])
+def test_conservative_media_source_rejects_duplicate_keys_before_projection(tmp_path, document):
+    # Conservative assumption: no last-key-wins interpretation of source facts.
+    from scripts.gen_operation_catalog import media_intent_gaps
+
+    source = tmp_path / "media.yml"
+    source.write_text(document, encoding="utf-8")
+    with pytest.raises(ValueError, match="Duplicate media mapping key"):
+        media_intent_gaps(source)
+
+
+def test_conservative_media_source_preserves_order_without_duplicate_keys(tmp_path):
+    from scripts.gen_operation_catalog import media_intent_gaps
+
+    source = tmp_path / "media.yml"
+    rows = [
+        {"intent": "second", "modality": "sample", "submittable": False},
+        {"intent": "first", "modality": "sample", "submittable": True,
+         "component": "SampleRequest", "route": "/sample"},
+    ]
+    source.write_text(yaml.safe_dump({"intents": rows}), encoding="utf-8")
+    assert [gap["key"] for gap in media_intent_gaps(source)] == [
+        "intents[0]:second", "intents[1]:first",
+    ]
