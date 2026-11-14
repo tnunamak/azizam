@@ -155,3 +155,89 @@ def test_s7_unknown_capability_is_rejected_before_storage(owner):
     # Rejected writes must leave no engine behind; use the same registry view
     # returned by the owner service route.
     assert '"smell-box"' not in json.dumps(state.json())
+
+
+# Conservative partial S4/S5 evidence: pure boundaries only, not owner/API or
+# post-acceptance retry qualification. No invented capability-gap xfail.
+def test_s4_partial_declared_alias_resolves_one_service_without_mutating_policy():
+    """Owner API admission for operation aliases still needs an end-to-end oracle."""
+    import copy
+    from gateway.alias_policy import AliasPolicyResolutionError, resolve_request_target
+
+    config = {"backends": {"fixture-service": {"models": [
+        {"id": "base", "transforms": ["base-transform"]},
+        {"id": "public-alias", "base_model_id": "base",
+         "policy_overlay": ["alias-transform"]},
+    ]}}}
+    before = copy.deepcopy(config)
+    target = resolve_request_target("public-alias", runtime_config=config,
+                                    aliases_only=True, required=True)
+    assert target is not None
+    assert (target.requested_model, target.logical_service_id, target.base_model_id) == (
+        "public-alias", "fixture-service", "base")
+    assert target.base_transform_specs == ("base-transform",)
+    assert target.alias_overlay_specs == ("alias-transform",)
+    # A reference cannot silently resolve against a different declared service.
+    with pytest.raises(AliasPolicyResolutionError, match="no declared logical alias policy"):
+        resolve_request_target("public-alias", runtime_config=config,
+                               service_id="other-service", aliases_only=True, required=True)
+    assert config == before
+
+
+def test_s5_partial_pre_execution_availability_preserves_order_and_remaining_candidates():
+    """Post-acceptance timeout retry safety still needs an execution-outcome oracle."""
+    import copy
+    from gateway.stable_aliases import resolve_alias
+
+    # This is resolver input, not a claim that an owner API accepts this section.
+    config = {"smell.infer": {
+        "stable": {"public-alias": ["first", "second", "third"]},
+        "engines": {
+            "first": {"service": "service-a", "model": "model-a"},
+            "second": {"service": "service-b", "model": "model-b"},
+            "third": {"service": "service-c", "model": "model-c"},
+        },
+    }}
+    before = copy.deepcopy(config)
+    all_ready = resolve_alias(config, "smell.infer", "public-alias",
+                              engine_available=lambda _id, _spec: True)
+    assert all_ready is not None
+    assert (all_ready.engine, all_ready.service, all_ready.upstream_model) == (
+        "first", "service-a", "model-a")
+    assert all_ready.fallbacks == (("second", "service-b"), ("third", "service-c"))
+    assert all_ready.skipped_engines == ()
+    assert all_ready.fallback_declared is True
+
+    unavailable_first = resolve_alias(
+        config, "smell.infer", "public-alias",
+        engine_available=lambda engine_id, _spec: engine_id != "first")
+    assert unavailable_first is not None
+    assert (unavailable_first.engine, unavailable_first.service,
+            unavailable_first.upstream_model) == ("second", "service-b", "model-b")
+    assert unavailable_first.skipped_engines == ("first",)
+    assert unavailable_first.fallbacks == (("third", "service-c"),)
+    assert unavailable_first.fallback_declared is True
+    assert config == before
+
+
+def test_s5_partial_direct_engine_name_does_not_inherit_alias_fallbacks():
+    """Execution refusal versus uncertain acceptance still needs a dispatch oracle."""
+    from gateway.stable_aliases import AliasUnavailableError, resolve_alias
+
+    config = {"smell.infer": {
+        "stable": {"public-alias": ["first", "second"]},
+        "engines": {
+            "first": {"service": "service-a", "model": "model-a"},
+            "second": {"service": "service-b", "model": "model-b"},
+        },
+    }}
+    direct = resolve_alias(config, "smell.infer", "first")
+    assert direct is not None
+    assert direct.engine == "first"
+    assert direct.fallbacks == ()
+    assert direct.fallback_declared is False
+    with pytest.raises(AliasUnavailableError) as refused:
+        resolve_alias(config, "smell.infer", "first",
+                      engine_available=lambda engine_id, _spec: engine_id == "second")
+    assert refused.value.code == "model_not_deployed"
+    assert refused.value.fallback_declared is False
