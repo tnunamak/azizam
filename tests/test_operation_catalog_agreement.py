@@ -233,3 +233,43 @@ def test_models_gap_rejects_unclassified_fields_and_duplicate_ids(tmp_path):
         source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
         with pytest.raises(ValueError):
             models_catalog_gaps(source)
+
+
+def test_conservative_frontend_bindings_are_exact_gaps_not_equivalences():
+    source = ROOT / "registry" / "protocol_frontends.yml"
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    expected = [{
+        "source": source.name, "key": f"{section}[{index}]:{row['id']}",
+        "reason": "Admission, runtime policy and receipt bindings need defined operation targets and closed relation field contracts; they are not spelling equivalences.",
+    } for section in ("records", "frontends")
+      for index, row in enumerate(document[section])]
+    catalog = load(CATALOG)
+    assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
+    assert not catalog.operations
+    assert not catalog.relations("spelling")
+
+
+def test_frontend_gap_does_not_equate_admission_and_runtime_policy(tmp_path):
+    from scripts.gen_operation_catalog import protocol_frontend_gaps
+
+    source = tmp_path / "frontends.yml"
+    row = {"id": "sample", "registered_routes": [{
+        "operation": "operation-a", "intent": "admission-b",
+        "runtime_policy": {"intent": "runtime-c"},
+    }]}
+    document = {"records": [row], "frontends": [], "input_contract": {}}
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    gaps = protocol_frontend_gaps(source)
+    assert gaps == [{
+        "source": source.name, "key": "records[0]:sample",
+        "reason": "Admission, runtime policy and receipt bindings need defined operation targets and closed relation field contracts; they are not spelling equivalences.",
+    }]
+    assert all("operation" not in gap and "word" not in gap for gap in gaps)
+    for invalid in (
+        {**document, "records": [row, row]},
+        {**document, "records": [{**row, "registered_routes": [None]}]},
+        {**document, "unexpected": {}},
+    ):
+        source.write_text(yaml.safe_dump(invalid), encoding="utf-8")
+        with pytest.raises(ValueError):
+            protocol_frontend_gaps(source)

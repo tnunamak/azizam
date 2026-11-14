@@ -122,7 +122,34 @@ def models_catalog_gaps(source: Path) -> list[dict[str, str]]:
     return gaps
 
 
-def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None, models_source: Path | None = None) -> str:
+
+FRONTEND_GAP_REASON = "Admission, runtime policy and receipt bindings need defined operation targets and closed relation field contracts; they are not spelling equivalences."
+
+
+def protocol_frontend_gaps(source: Path) -> list[dict[str, str]]:
+    """Count unresolved operation bindings without rewriting frontend behavior."""
+    document = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or set(document) != {"records", "frontends", "input_contract"}:
+        raise ValueError("Every frontend source section must be classified")
+    gaps = []
+    for section, route_key in (("records", "registered_routes"), ("frontends", "routes")):
+        rows = document[section]
+        if not isinstance(rows, list):
+            raise ValueError("Frontend sections must be lists")
+        seen = set()
+        for order, row in enumerate(rows):
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] or row["id"] in seen:
+                raise ValueError("Frontend IDs must be unique nonempty text")
+            seen.add(row["id"])
+            routes = row.get(route_key, [])
+            if not isinstance(routes, list) or any(not isinstance(route, dict) for route in routes):
+                raise ValueError("Frontend operation routes must be mappings")
+            # Position records source precedence without copying executable policy payloads.
+            gaps.append({"source": source.name, "key": f"{section}[{order}]:{row['id']}", "reason": FRONTEND_GAP_REASON})
+    return gaps
+
+
+def generate(source: Path, media_source: Path | None = None, local_source: Path | None = None, models_source: Path | None = None, frontends_source: Path | None = None) -> str:
     document = yaml.safe_load(source.read_text(encoding="utf-8"))
     expected = {name for name, _ in PROJECTED} | {name for name, _ in UNEXPRESSED}
     if not isinstance(document, dict) or set(document) != expected:
@@ -154,6 +181,8 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         catalog["unexpressed"].extend(local_capability_gaps(local_source))
     if models_source is not None:
         catalog["unexpressed"].extend(models_catalog_gaps(models_source))
+    if frontends_source is not None:
+        catalog["unexpressed"].extend(protocol_frontend_gaps(frontends_source))
     # JSON is a YAML subset, with stable key order and explicit string quoting.
     return json.dumps(catalog, ensure_ascii=False, indent=2) + "\n"
 
@@ -166,8 +195,9 @@ def main() -> None:
     parser.add_argument("--media-source", type=Path, default=root / "registry" / "media_job_intents.yml")
     parser.add_argument("--local-source", type=Path, default=root / "registry" / "local_capability_rows.yml")
     parser.add_argument("--models-source", type=Path, default=root / "registry" / "models_catalog_operations.yml")
+    parser.add_argument("--frontends-source", type=Path, default=root / "registry" / "protocol_frontends.yml")
     args = parser.parse_args()
-    args.output.write_bytes(generate(args.source, args.media_source, args.local_source, args.models_source).encode("utf-8"))
+    args.output.write_bytes(generate(args.source, args.media_source, args.local_source, args.models_source, args.frontends_source).encode("utf-8"))
 
 
 if __name__ == "__main__":
