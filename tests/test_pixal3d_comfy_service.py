@@ -413,3 +413,50 @@ def test_cancelled_generation_cleans_only_accepted_prompt_before_reraising(relea
                 await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
+
+
+def test_cancellation_during_failed_wait_cleanup_finishes_delete():
+    async def scenario():
+        deleting, release, deleted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def upstream(request):
+            path = request.url.path
+            if path == "/upload/image":
+                return httpx.Response(200, json={"name": "up.png"})
+            if path == "/prompt":
+                return httpx.Response(200, json={"prompt_id": "p1"})
+            if path == "/history/p1":
+                return httpx.Response(200, json={"p1": "malformed"})
+            if path == "/queue" and request.method == "POST":
+                assert json.loads(request.content) == {"delete": ["p1"]}
+                deleting.set()
+                await release.wait()
+                deleted.set()
+            if path == "/interrupt":
+                raise AssertionError("global interrupt is forbidden")
+            return httpx.Response(200, json=IDLE)
+
+        app = svc.create_app(
+            "http://upstream.test", prompt=svc.load_prompt(),
+            client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(upstream)),
+            cleanup_timeout=5,
+        )
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://svc.test") as client:
+            task = asyncio.create_task(client.post("/generate", files={"image": ("in.png", b"image", "image/png")}))
+            try:
+                await asyncio.wait_for(deleting.wait(), 1)
+                task.cancel()
+                # Deliver cancellation while delete is blocked, before release.
+                await asyncio.sleep(0)
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 1)
+                assert deleted.is_set(), "the accepted prompt must be deleted before client teardown"
+                assert task.cancelled()
+            finally:
+                release.set()
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())

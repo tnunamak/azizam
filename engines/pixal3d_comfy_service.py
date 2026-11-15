@@ -131,23 +131,11 @@ class Pixal3DService:
         except PromptEnded:
             raise
         except asyncio.CancelledError:
-            # Preserve the client until cleanup finishes, despite repeated cancellation.
-            cleanup = asyncio.create_task(self._cancel_prompt(client, prompt_id))
-            while not cleanup.done():
-                try:
-                    await asyncio.shield(cleanup)
-                except asyncio.CancelledError:
-                    continue
-                except Exception:
-                    break
-            try:
-                cleanup.result()
-            except (Exception, asyncio.CancelledError):
-                logging.getLogger(__name__).warning("Prompt cleanup failed during cancellation")
+            await self._finish_cleanup(client, prompt_id)
             raise
         except Exception:
-            # Every other failed wait (timeout, a failed or malformed poll) leaves the submitted prompt possibly running.
-            await self._cancel_prompt(client, prompt_id)
+            # Every other failed wait leaves the submitted prompt possibly running.
+            await self._finish_cleanup(client, prompt_id)
             raise
         ref = find_glb(entry.get("outputs") or {})
         if ref is None:
@@ -156,6 +144,24 @@ class Pixal3DService:
         if got.status_code != 200 or not got.content.startswith(b"glTF"):
             raise Refusal(502, f"ComfyUI would not return the GLB ({got.status_code})")
         return got.content
+
+    async def _finish_cleanup(self, client: httpx.AsyncClient, prompt_id: str) -> None:
+        # Keep the client open through cleanup, including repeated caller cancellation.
+        cleanup = asyncio.create_task(self._cancel_prompt(client, prompt_id))
+        cancellation = None
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception:
+                break
+        try:
+            cleanup.result()
+        except (Exception, asyncio.CancelledError):
+            logging.getLogger(__name__).warning("Prompt cleanup failed")
+        if cancellation is not None:
+            raise cancellation
 
     async def _wait(self, client: httpx.AsyncClient, prompt_id: str) -> dict[str, Any]:
         deadline = asyncio.get_running_loop().time() + self.timeout
