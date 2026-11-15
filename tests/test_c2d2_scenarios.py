@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import json
 import time
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -137,6 +138,21 @@ def test_s2_one_job_returns_png_and_wav_in_engine_order(owner, gateway, fake_ups
                     ("image", "image/png", len(PNG)),
                     ("audio", "audio/wav", len(engine.wav)),
                 ], job
+        assert job["assets"][0]["asset_id"] != job["assets"][1]["asset_id"], job
+        # Metadata alone cannot prove that each fetched body survived storage.
+        for asset, expected in zip(job["assets"], (PNG, engine.wav), strict=True):
+            # The content route needs a signed URL; the asset record carries it.
+            record = public.get("/gateway/v1/assets/" + asset["asset_id"], headers=_headers(key))
+            assert record.status_code == 200, record.text
+            signed = urlsplit(record.json()["content_url"])
+            path = signed.path + "?" + signed.query
+            content = public.get(path)
+            evidence = (path, content.status_code, content.content[:160])
+            assert content.status_code == 200, evidence
+            assert content.headers.get("content-type", "").startswith(
+                asset["media_type"]
+            ), (content.headers.get("content-type"), evidence)
+            assert content.content == expected, evidence
 
 
 
