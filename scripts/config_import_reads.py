@@ -161,6 +161,8 @@ def _units(body, prefix: str = "") -> Iterator[_Unit]:
         elif isinstance(st, ast.Match):
             yield _Unit(st.lineno, [st.subject], _walrus_targets([st.subject], prefix))
             for case in st.cases:
+                if case.guard is not None:
+                    yield _Unit(case.guard.lineno, [case.guard], _walrus_targets([case.guard], prefix))
                 yield from _units(case.body, prefix)
         elif isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             raw = st.targets if isinstance(st, ast.Assign) else [st.target]

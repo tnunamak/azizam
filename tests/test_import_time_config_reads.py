@@ -153,6 +153,42 @@ def test_a_container_filled_at_import_and_a_walrus_and_loop_targets_are_followed
     assert _names('with open(config["roles"]) as handle:\n    DATA = handle.read()\n') == {"handle": "roles", "DATA": "roles"}
 
 
+def test_match_guard_walrus_read_and_downstream_alias_are_counted():
+    source = """match 0:
+    case _ if (LIMIT := config["limit"]):
+        pass
+COPY = LIMIT
+"""
+    inventory = scanner.scan(source, hidden={})
+    assert inventory.names == {"LIMIT": "limit", "COPY": "limit"}
+    assert inventory.assigned == frozenset({"LIMIT", "COPY"})
+    assert [(row.line, row.targets, row.reads, row.sections) for row in inventory.rows] == [
+        (2, ("LIMIT",), ("config",), ("limit",)),
+        (4, ("COPY",), ("LIMIT",), ("limit",)),
+    ]
+    assert scanner.assigned_at_module_level(source) == {"LIMIT", "COPY"}
+
+
+def test_each_match_guard_precedes_its_body_and_unguarded_cases_still_scan():
+    source = """match 0:
+    case 0 if (FIRST := config["first"]):
+        FIRST_COPY = FIRST
+    case 1 if config["enabled"]:
+        SECOND = config["second"]
+    case _:
+        LAST = config["last"]
+"""
+    inventory = scanner.scan(source, hidden={})
+    assert inventory.names == {
+        "FIRST": "first", "FIRST_COPY": "first", "SECOND": "second", "LAST": "last",
+    }
+    assert [row.line for row in inventory.rows] == [2, 3, 4, 5, 7]
+    guard = inventory.rows[2]
+    assert guard.targets == ()
+    assert guard.reads == ("config",)
+    assert guard.sections == ("enabled",)
+
+
 def test_the_rule_reads_into_if_and_try_blocks_and_ignores_function_bodies():
     source = (
         'config = {}\n'
