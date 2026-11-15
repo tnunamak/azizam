@@ -103,6 +103,7 @@ def media_intent_operations(source: Path) -> tuple[list[dict], list[dict]]:
 
 
 LOCAL_GAP_REASON = "Local routing/default rows lack a closed operation request/result mapping."
+LOCAL_ALIAS_GAP_REASON = "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
 LOCAL_LISTS = ("alias_operations", "workflow_families", "backend_rows", "image_rows")
 LOCAL_DEFAULTS = ("image_defaults", "workflow_defaults")
 
@@ -122,13 +123,44 @@ def local_capability_gaps(source: Path) -> list[dict[str, str]]:
             raise ValueError("Local rows must be lists of mappings")
         # Original positions remain explicit, even though payloads are unexpressed.
         gaps.extend({"source": source.name, "key": f"{name}[{order}]",
-                     "reason": LOCAL_GAP_REASON} for order, _row in enumerate(rows))
+                     "reason": (LOCAL_ALIAS_GAP_REASON
+                                if name == "alias_operations" and row.get("intent") is not None
+                                else LOCAL_GAP_REASON)}
+                    for order, row in enumerate(rows))
     for name in LOCAL_DEFAULTS:
         if not isinstance(document[name], dict):
             raise ValueError("Local defaults must be mappings")
         gaps.append({"source": source.name, "key": name, "reason": LOCAL_GAP_REASON})
     return gaps
 
+
+def local_alias_operations(source: Path, protocol_words: dict, existing: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Project only alias identity and literal spellings; keep remaining gaps explicit."""
+    rows = yaml.safe_load(source.read_text(encoding="utf-8"))["alias_operations"]
+    seen = {operation["id"] for operation in existing}
+    operations = []
+    relations = []
+    for row in rows:
+        intent = row.get("intent")
+        if intent is None:
+            continue
+        if intent not in protocol_words:
+            raise ValueError("Missing protocol_words family for alias intent: " + str(intent))
+        if intent not in seen:
+            operation = {
+                "id": intent, "family": protocol_words[intent],
+                "request": _schema(None), "result": _schema(None),
+                "submittable_as_job": False,
+            }
+            if row.get("output_modalities"):
+                operation["modality"] = row["output_modalities"][0]
+            operations.append(operation)
+            seen.add(intent)
+        for word in [row["name"], *row.get("shared_operations", [])]:
+            if word != intent:
+                relations.append({"kind": "spelling", "context": "legacy", "word": word,
+                                  "operation": intent, "order": len(relations)})
+    return operations, relations
 
 
 MODELS_GAP_REASON = "Examples and prefixes lack defined operation targets; legacy case/underscore spellings cannot target undefined operations."
@@ -226,6 +258,11 @@ def generate(source: Path, media_source: Path | None = None, local_source: Path 
         catalog["relations"].extend(media_relations)
     if local_source is not None:
         catalog["unexpressed"].extend(local_capability_gaps(local_source))
+        alias_operations, alias_relations = local_alias_operations(
+            local_source, document["protocol_words"], catalog["operations"]
+        )
+        catalog["operations"].extend(alias_operations)
+        catalog["relations"].extend(alias_relations)
     if models_source is not None:
         catalog["unexpressed"].extend(models_catalog_gaps(models_source))
     if frontends_source is not None:

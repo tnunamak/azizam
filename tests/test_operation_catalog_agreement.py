@@ -16,6 +16,7 @@ from gateway.operation_catalog import (
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "registry" / "capability_words.yml"
 CATALOG = ROOT / "registry" / "operations.yml"
+LOCAL_SOURCE = ROOT / "registry" / "local_capability_rows.yml"
 PROJECTED = ("protocol_words", "route_intents", "type_capabilities")
 UNEXPRESSED = (
     "schema_version", "modality_words", "media_type_modalities", "capabilities", "audio_rule",
@@ -27,12 +28,30 @@ def _media_intents():
     return {row["intent"] for row in yaml.safe_load(media.read_text(encoding="utf-8"))["intents"]}
 
 
+def _alias_rows():
+    return yaml.safe_load(LOCAL_SOURCE.read_text(encoding="utf-8"))["alias_operations"]
+
+
+def _catalog_intents():
+    return _media_intents() | {row["intent"] for row in _alias_rows() if row["intent"] is not None}
+
+
+def _alias_spellings():
+    words = []
+    for row in _alias_rows():
+        if row["intent"] is not None:
+            words.extend((word, row["intent"])
+                         for word in [row["name"], *row.get("shared_operations", [])]
+                         if word != row["intent"])
+    return words
+
+
 def test_projection_matches_source_order():
     source = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
     catalog = load(CATALOG)
     projected = project_capability_words(catalog)
-    assert set(catalog.operations) == _media_intents()
-    assert not catalog.relations("spelling")
+    assert set(catalog.operations) == _catalog_intents()
+    assert [(row["word"], row["operation"]) for row in catalog.relations("spelling")] == _alias_spellings()
     assert set(projected) == set(PROJECTED)
     for name in PROJECTED:
         assert list(projected[name].items()) == list(source[name].items())
@@ -177,9 +196,14 @@ def test_conservative_local_contract_gaps_are_exact():
         "reason": ("Source format version, not an operation fact." if key == "schema_version"
                    else "Local routing/default rows lack a closed operation request/result mapping."),
     } for key in expected_keys]
+    for index, row in enumerate(document["alias_operations"]):
+        if row["intent"] is not None:
+            next(gap for gap in expected if gap["key"] == f"alias_operations[{index}]")["reason"] = (
+                "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
+            )
     catalog = load(CATALOG)
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
-    assert set(catalog.operations) == _media_intents()
+    assert set(catalog.operations) == _catalog_intents()
     assert {row["context"] for row in catalog.relations("family")} == {"protocol", "route", "type"}
 
 
@@ -216,9 +240,9 @@ def test_conservative_models_examples_are_gaps_not_operation_contracts():
     catalog = load(CATALOG)
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
     from gateway.operation_catalog import project_models_legacy_spellings
-    assert project_models_legacy_spellings(catalog) == {}
-    assert set(catalog.operations) == _media_intents()
-    assert not catalog.relations("spelling", "legacy")
+    assert list(project_models_legacy_spellings(catalog).items()) == _alias_spellings()
+    assert set(catalog.operations) == _catalog_intents()
+    assert len(catalog.relations("spelling", "legacy")) == len(_alias_spellings())
 
 
 def test_models_legacy_projection_uses_literal_relation_rows_without_folding():
@@ -267,8 +291,8 @@ def test_conservative_frontend_bindings_are_exact_gaps_not_equivalences():
       for index, row in enumerate(document[section])]
     catalog = load(CATALOG)
     assert [dict(row) for row in catalog.unexpressed if row["source"] == source.name] == expected
-    assert set(catalog.operations) == _media_intents()
-    assert not catalog.relations("spelling")
+    assert set(catalog.operations) == _catalog_intents()
+    assert [(row["word"], row["operation"]) for row in catalog.relations("spelling")] == _alias_spellings()
 
 
 def test_frontend_gap_does_not_equate_admission_and_runtime_policy(tmp_path):
@@ -325,3 +349,65 @@ def test_conservative_media_source_preserves_order_without_duplicate_keys(tmp_pa
     source.write_text(yaml.safe_dump({"intents": rows}), encoding="utf-8")
     operations, _relations = media_intent_operations(source)
     assert [operation["id"] for operation in operations] == ["second", "first"]
+
+
+def test_alias_operations_and_legacy_spellings_match_source():
+    catalog = load(CATALOG)
+    source = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    spellings = catalog.relations("spelling", "legacy")
+    assert [(row["word"], row["operation"]) for row in spellings] == _alias_spellings()
+    assert [row["order"] for row in spellings] == list(range(len(spellings)))
+    assert len(spellings) == 11
+    assert len(set(catalog.operations) - _media_intents()) == 5
+    for row in _alias_rows():
+        intent = row["intent"]
+        if intent is None:
+            continue
+        assert intent in catalog.operations
+        assert any(spelling["word"] == row["name"] and spelling["operation"] == intent
+                   for spelling in spellings)
+        if intent not in _media_intents():
+            expected = {"id": intent, "family": source["protocol_words"][intent],
+                        "request": {"schema": "undeclared"}, "result": {"schema": "undeclared"},
+                        "submittable_as_job": False}
+            if row.get("output_modalities"):
+                expected["modality"] = row["output_modalities"][0]
+            assert dict(catalog.operations[intent]) == expected
+    assert dict(_alias_spellings())["translations"] == "speech.transcription"
+    assert "speech.translation" not in catalog.operations
+
+
+def _alias_fixture_sources(tmp_path, rows, words):
+    source = tmp_path / "words.yml"
+    document = {name: {} for name in PROJECTED}
+    document.update({name: [] for name in UNEXPRESSED})
+    document["protocol_words"] = words
+    source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    local = tmp_path / "local.yml"
+    local.write_text(yaml.safe_dump({
+        "schema_version": 1, "alias_operations": rows, "workflow_families": [],
+        "backend_rows": [], "image_rows": [], "image_defaults": {}, "workflow_defaults": {},
+    }), encoding="utf-8")
+    return source, local
+
+
+def test_alias_intent_missing_protocol_family_is_refused(tmp_path):
+    from scripts.gen_operation_catalog import generate
+
+    source, local = _alias_fixture_sources(
+        tmp_path, [{"name": "sample", "intent": "sample.missing"}], {})
+    with pytest.raises(ValueError, match=r"sample\.missing"):
+        generate(source, local_source=local)
+
+
+def test_alias_duplicate_legacy_name_is_refused_by_loader(tmp_path):
+    from scripts.gen_operation_catalog import generate
+
+    source, local = _alias_fixture_sources(tmp_path, [
+        {"name": "duplicate", "intent": "sample.first"},
+        {"name": "duplicate", "intent": "sample.second"},
+    ], {"sample.first": "sample", "sample.second": "sample"})
+    output = tmp_path / "catalog.yml"
+    output.write_text(generate(source, local_source=local), encoding="utf-8")
+    with pytest.raises(CatalogError, match="unique_spelling_in_context"):
+        load(output)

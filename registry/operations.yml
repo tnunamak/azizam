@@ -132,6 +132,65 @@
       },
       "submittable_as_job": false,
       "modality": "video"
+    },
+    {
+      "id": "chat.completions",
+      "family": "chat",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "text"
+    },
+    {
+      "id": "text.embeddings",
+      "family": "embed",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "embedding"
+    },
+    {
+      "id": "speech.synthesis",
+      "family": "speech",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "audio"
+    },
+    {
+      "id": "speech.transcription",
+      "family": "transcribe",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false,
+      "modality": "text"
+    },
+    {
+      "id": "decision.systemone",
+      "family": "decide",
+      "request": {
+        "schema": "undeclared"
+      },
+      "result": {
+        "schema": "undeclared"
+      },
+      "submittable_as_job": false
     }
   ],
   "relations": [
@@ -712,6 +771,83 @@
       "operation": "video.edit",
       "intent": "video.edit",
       "order": 10
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "chat",
+      "operation": "chat.completions",
+      "order": 0
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "completions",
+      "operation": "chat.completions",
+      "order": 1
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "embeddings",
+      "operation": "text.embeddings",
+      "order": 2
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "images",
+      "operation": "image.generate",
+      "order": 3
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "image_edits",
+      "operation": "image.edit",
+      "order": 4
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "videos",
+      "operation": "video.generate",
+      "order": 5
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "speech",
+      "operation": "speech.synthesis",
+      "order": 6
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "transcriptions",
+      "operation": "speech.transcription",
+      "order": 7
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "translations",
+      "operation": "speech.transcription",
+      "order": 8
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "audio_generate",
+      "operation": "audio.generate",
+      "order": 9
+    },
+    {
+      "kind": "spelling",
+      "context": "legacy",
+      "word": "decisions",
+      "operation": "decision.systemone",
+      "order": 10
     }
   ],
   "unexpressed": [
@@ -748,42 +884,42 @@
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[0]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[1]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[2]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[3]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[4]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[5]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[6]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[7]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
@@ -793,7 +929,7 @@
     {
       "source": "local_capability_rows.yml",
       "key": "alias_operations[9]",
-      "reason": "Local routing/default rows lack a closed operation request/result mapping."
+      "reason": "Local alias id and spellings are projected; modalities, execution and flags are not yet expressed."
     },
     {
       "source": "local_capability_rows.yml",
