@@ -23,7 +23,14 @@ def main() -> None:
         elif method == "tools/list":
             reply(request, {"tools": [{"name": "namespace_probe", "description": "Return a deterministic Azizam namespace marker.", "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}}]})
         elif method == "tools/call":
-            reply(request, {"content": [{"type": "text", "text": "azizam namespace probe"}]})
+            params = request.get("params")
+            if (not isinstance(params, dict)
+                    or params.get("name") != "namespace_probe"
+                    or params.get("arguments", {}) != {}
+                    or not isinstance(params.get("arguments", {}), dict)):
+                reply(request, {"isError": True, "content": [{"type": "text", "text": "Invalid namespace_probe call"}]})
+            else:
+                reply(request, {"content": [{"type": "text", "text": "azizam namespace probe"}]})
         elif "id" in request:
             reply(request, {})
 
