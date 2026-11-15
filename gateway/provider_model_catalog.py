@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from gateway.capabilities import Capability
+from gateway.capabilities import RESOURCE_TIERS, Capability
 from gateway import service_registry
 from gateway.engine_protocol import description
 
@@ -35,19 +35,42 @@ def remote_provider_model_capabilities(
         model_id = _public_model_id(row)
         if not model_id:
             continue
+        traits = _model_traits(row, service_id, model_id)
         out.append(
             Capability(
                 intent=intent,
                 backend=service_id,
                 model=model_id,
-                input_modalities=("text",),
-                output_modalities=("text",),
-                streaming=True,
-                resource_tier="expensive",
+                input_modalities=traits["input_modalities"],
+                output_modalities=traits["output_modalities"],
+                streaming=traits["streaming"],
+                resource_tier=traits["resource_tier"],
                 tags=("remote",),
             )
         )
     return out
+
+
+def _model_traits(row: Mapping[str, Any], service_id: str, model_id: str) -> dict[str, Any]:
+    """Validate explicit row facts; defaults apply only when a key is absent."""
+    location = f"service {service_id!r} model row {model_id!r}"
+    traits: dict[str, Any] = {}
+    for key in ("input_modalities", "output_modalities"):
+        value = row.get(key, ["text"])
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or not item.strip() for item in value
+        ):
+            raise ValueError(f"{location}: {key} must be a list of non-empty strings")
+        traits[key] = tuple(value)
+    streaming = row.get("streaming", True)
+    if type(streaming) is not bool:
+        raise ValueError(f"{location}: streaming must be a boolean")
+    traits["streaming"] = streaming
+    tier = row.get("resource_tier", "expensive")
+    if not isinstance(tier, str) or tier not in RESOURCE_TIERS:
+        raise ValueError(f"{location}: resource_tier must be one of {RESOURCE_TIERS!r}")
+    traits["resource_tier"] = tier
+    return traits
 
 
 def remote_provider_model_metadata(
