@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-import yaml
+from gateway.strict_yaml import safe_load_strict
 
 from gateway.extensions import (
     ExtensionError,
@@ -28,7 +28,7 @@ ROUTING_EXTENSION_NAMESPACE = "com.azizam.routing"
 def _standard_container_field() -> str:
     path = Path(__file__).resolve().parent.parent / "registry" / "thinking_controls.yml"
     with path.open(encoding="utf-8") as stream:
-        controls = yaml.safe_load(stream)
+        controls = safe_load_strict(stream)
     value = controls.get("container_field") if isinstance(controls, dict) else None
     if not isinstance(value, str) or not value.strip():
         raise ValueError("thinking controls must define a nonempty container_field")
@@ -119,6 +119,11 @@ GATEWAY_LOOKING_TOP_LEVEL_FIELDS: frozenset[str] = frozenset(
         "routing_preference",
     }
 )
+
+if STANDARD_CHAT_COMPLETIONS_FIELDS & GATEWAY_LOOKING_TOP_LEVEL_FIELDS:
+    raise ValueError(
+        "thinking controls container_field must not be a gateway-owned top-level field"
+    )
 
 CHAT_EXTENSION_SPECS: dict[str, dict[str, Any]] = {
     "receipt_verbosity": {
