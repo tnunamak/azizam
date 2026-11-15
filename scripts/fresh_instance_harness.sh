@@ -91,6 +91,18 @@ fi
 scratch_mark "$TMPDIR_ROOT"
 scratch_on_signal
 
+stop_owned_child() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] || return 0
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in {1..20}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
 cleanup_fixture() {
   if [[ "$FIXTURE_MODE" == 1 && -n "${PROXY_PID:-}" ]]; then
     local pgid
@@ -102,6 +114,11 @@ cleanup_fixture() {
       wait "$PROXY_PID" 2>/dev/null || true
       if kill -0 -- "-$pgid" 2>/dev/null; then echo "ERROR: fixture process group survived cleanup" >&2; return; fi
     fi
+  elif [[ "$FIXTURE_MODE" != 1 ]]; then
+    stop_owned_child "${PROXY_PID:-}"
+    PROXY_PID=
+    stop_owned_child "${TAIL_PID:-}"
+    TAIL_PID=
   fi
   if [[ "$TMPDIR_ROOT" == "$HOME/.tmp/gw-ux-p1b-"* || "$TMPDIR_ROOT" == /tmp/azizam-fresh-* ]]; then
     echo "[harness] Cleaning up $TMPDIR_ROOT"
