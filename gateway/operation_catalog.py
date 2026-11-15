@@ -182,10 +182,19 @@ def load(path: str | Path) -> Catalog:
                 )
             display_orders[order] = key
     display_families = {key for key, row in groups.items() if "display" in row}
+    recommendation_words = set()
     for index, row in enumerate(document["relations"]):
         if row["kind"] != "catalog_group" or "display" not in row:
             continue
         display = row["display"]
+        recommendation = display.get("recommended_alias")
+        if recommendation is not None:
+            word = recommendation["word"]
+            if word in recommendation_words:
+                raise CatalogError(
+                    f"relations row {index}: rule unique_display_recommendation: {word}"
+                )
+            recommendation_words.add(word)
         references = (display.get("icon", row["group"]), *display.get("hidden_by", []))
         for target in references:
             if target not in display_families:

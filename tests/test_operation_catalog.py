@@ -357,3 +357,36 @@ def test_display_forward_references_are_frozen_and_inert(tmp_path):
     assert len(catalog.relations("admission")) == 1
     assert len(catalog.relations("runtime_policy")) == 1
     assert len(catalog.relations("spelling")) == 1
+
+
+def test_display_recommendation_word_unique_in_context(tmp_path):
+    document = _display_document()
+    recommendation = {"word": "choice", "target_kind": "group"}
+    document["relations"][5]["display"]["recommended_alias"] = recommendation
+    document["relations"].append({
+        "kind": "catalog_group", "group": "later", "operations": ["work.two"],
+        "display": {"label": "Later", "recommended_alias": dict(recommendation)},
+    })
+    with pytest.raises(CatalogError, match="unique_display_recommendation.*choice"):
+        load(_write(tmp_path, document))
+
+
+def test_display_recommendation_context_is_separate_and_exact(tmp_path):
+    document = _display_document()
+    document["relations"][5]["display"]["recommended_alias"] = {
+        "word": "work", "target_kind": "group",
+    }
+    document["relations"].append({
+        "kind": "catalog_group", "group": "later", "operations": ["work.two"],
+        "display": {
+            "label": "Later",
+            "recommended_alias": {"word": "Work", "target_kind": "group"},
+        },
+    })
+    catalog = load(_write(tmp_path, document))
+    groups = catalog.relations("catalog_group")
+    assert [g["display"]["recommended_alias"]["word"] for g in groups] == ["work", "Work"]
+    assert catalog.relations("spelling", "catalog")[0]["word"] == "work"
+    assert catalog.relations("spelling", "display") == ()
+    assert groups[0]["operations"] == ("work.one", "work.two")
+    assert len(catalog.relations("admission")) == 1
