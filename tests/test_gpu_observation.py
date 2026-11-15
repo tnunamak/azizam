@@ -110,3 +110,82 @@ def test_renderer_tooltip_uses_configured_executable(monkeypatch):
     assert firehose_render._vram_row_label({"service": "__total"}) == (
         '<b title="GPU memory.used (authoritative)">[total]</b>'
     )
+
+
+def _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes=False):
+    import status_endpoint as status
+    from gateway import gpu_observation
+
+    config = load_registry()
+    if reversed_indexes:
+        for device in config["devices"]:
+            device["index"] = 1 - device["index"]
+        config["runtime_display"]["device_index"] = 1
+    path = tmp_path / "observation.yml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    original = gpu_observation.display_config
+    monkeypatch.setattr(gpu_observation, "display_config", lambda: original(path))
+    budget = tmp_path / "budget.sh"
+    budget.write_text(
+        "GPU_TOTAL_GB=24\nGPU0_DESKTOP=2\nGPU0_TTS=3\n"
+        + status._GRAPH_WORDS["gpu_budget_var"] + "=4\n"
+        "GPU0_HEADROOM=5\nGPU1_LLM=18\nGPU1_HEADROOM=6\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(status, "_GPU_BUDGET_PATH", budget)
+    monkeypatch.setattr(status, "_BUDGET_CACHE", {"ts": 0.0, "data": None})
+    monkeypatch.setattr(status, "_get_compute_apps", lambda **kwargs: [])
+    monkeypatch.setattr(status, "_service_pids", lambda *args, **kwargs: {})
+    return status
+
+
+def _headroom_rows(status, indexes):
+    gpus = [{"index": index, "uuid": str(index), "memory_used_mb": 4096,
+             "memory_total_mb": 24576} for index in indexes]
+    return status._vram_attribution(gpus)["per_gpu"]
+
+
+def test_status_budget_and_headroom_shipped_rows(monkeypatch, tmp_path):
+    status = _status_budget_fixture(monkeypatch, tmp_path)
+    graph_key = status._GRAPH_WORDS["gpu_budget_key"]
+    graph_var = status._GRAPH_WORDS["gpu_budget_var"]
+    assert status._read_gpu_budget() == {
+        "gpu0": {"total_gb": 24, "desktop_gb": 2, "tts_gb": 3,
+                 graph_key: 4, "headroom_gb": 5},
+        "gpu1": {"total_gb": 24, "llm_gb": 18, "headroom_gb": 6},
+        "raw": {"GPU_TOTAL_GB": 24, "GPU0_DESKTOP": 2, "GPU0_TTS": 3,
+                graph_var: 4, "GPU0_HEADROOM": 5, "GPU1_LLM": 18, "GPU1_HEADROOM": 6},
+    }
+    rows = _headroom_rows(status, [0, 1])
+    assert [next(row for row in device["services"] if row["service"] == "__headroom")
+            for device in rows] == [
+        {"service": "__headroom", "used_mb": 20480, "used_gb": 20.0,
+         "budget_gb": 5, "pct_of_budget": 400.0, "over_budget": False,
+         "headroom_short": False, "spillover": False, "note": "free VRAM (total − used)"},
+        {"service": "__headroom", "used_mb": 20480, "used_gb": 20.0,
+         "budget_gb": 6, "pct_of_budget": 333.3, "over_budget": False,
+         "headroom_short": False, "spillover": False, "note": "free VRAM (total − used)"},
+    ]
+    assert [device["services"][-1]["budget_gb"] for device in rows] == [24, 24]
+
+
+def test_status_budget_roles_follow_reversed_indexes(monkeypatch, tmp_path):
+    status = _status_budget_fixture(monkeypatch, tmp_path, reversed_indexes=True)
+    rows = _headroom_rows(status, [0, 1])
+    assert [next(row["budget_gb"] for row in device["services"]
+                 if row["service"] == "__headroom") for device in rows] == [6, 5]
+    import asyncio
+    workloads = asyncio.run(status._gpu_workloads(
+        [{"index": 0}, {"index": 1}], {"running": 1, "pending": 2}, []))
+    assert [row["active_workload"]["label"] for row in workloads] == ["loaded", "running"]
+
+
+def test_status_unmapped_device_has_unknown_role_and_no_budget(monkeypatch, tmp_path):
+    status = _status_budget_fixture(monkeypatch, tmp_path)
+    third = _headroom_rows(status, [0, 1, 2])[2]
+    assert third["role"] == "unknown"
+    assert all(row["budget_gb"] is None for row in third["services"])
+    assert "idle" not in third.values()
+    import asyncio
+    devices = asyncio.run(status._gpu_workloads([{"index": 2}], {"running": 0}, []))
+    assert devices[0]["active_workload"]["label"] == "unknown"

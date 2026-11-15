@@ -909,11 +909,13 @@ async def _gpu_workloads(
 ) -> Optional[list[dict]]:
     if gpus is None:
         return None
+    devices = {row["index"]: row for row in gpu_observation.status_devices(_GRAPH_WORDS)}
     out: list[dict] = []
     for g in gpus:
         idx = g.get("index")
-        workload: dict[str, Any] = {"label": "idle", "detail": None}
-        if idx == 0:
+        device = devices.get(idx, {})
+        workload: dict[str, Any] = {"label": "unknown", "detail": "device role not configured"}
+        if device.get("workload") == "queue":
             if graph_queue is None:
                 workload = {"label": "unknown", "detail": _GRAPH_WORDS["label"].lower() + " queue unavailable"}
             else:
@@ -933,7 +935,7 @@ async def _gpu_workloads(
                         "running": running,
                         "pending": pending,
                     }
-        elif idx == 1:
+        elif device.get("workload") == "slots":
             if slots is not None:
                 active = [s for s in slots if isinstance(s, dict) and s.get("is_processing")]
                 total = len(slots)
@@ -1346,13 +1348,14 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
     # A backend names its budget line with `vram_budget_key` (a gpu_budget.sh
     # variable, e.g. GPU1_LLM) in its own config; the generic buckets are fixed.
     backends = (config or {}).get("backends") or {}
+    devices = {row["index"]: row for row in gpu_observation.status_devices(_GRAPH_WORDS)}
     generic_budget_keys = {
-        (0, "desktop"): "GPU0_DESKTOP", (0, "__headroom"): "GPU0_HEADROOM",
-        (1, "__headroom"): "GPU1_HEADROOM",
+        (row["index"], role["bucket"]): role["source"]
+        for row in devices.values() for role in row["roles"] if role.get("bucket")
     }
 
     def budget_for(idx: int, svc: str) -> Optional[int]:
-        if not budget:
+        if not budget or idx not in devices:
             return None
         cfg = backends.get(svc)
         key = cfg.get("vram_budget_key") if isinstance(cfg, Mapping) else generic_budget_keys.get((idx, svc))
@@ -1436,7 +1439,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
 
         total_budget_gb = None
         if budget:
-            scope = budget.get("gpu0" if idx == 0 else "gpu1") or {}
+            scope = budget.get(devices[idx]["budget_key"]) or {} if idx in devices else {}
             total_budget_gb = scope.get("total_gb")
         services.append({
             "service": "__total",
@@ -1451,6 +1454,7 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
 
         out_gpus.append({
             "index": idx,
+            **({"role": "unknown"} if idx not in devices else {}),
             "uuid": g.get("uuid"),
             "memory_used_mb": total_used_mb,
             "memory_total_mb": total_mb,
@@ -1486,10 +1490,8 @@ def _read_gpu_budget() -> Optional[dict]:
         _BUDGET_CACHE["ts"] = now
         return None
 
-    keys_of_interest = {
-        "GPU_TOTAL_GB", "GPU0_DESKTOP", "GPU0_TTS", _GRAPH_WORDS["gpu_budget_var"], "GPU0_HEADROOM",
-        "GPU1_LLM", "GPU1_HEADROOM",
-    }
+    devices = gpu_observation.status_devices(_GRAPH_WORDS)
+    keys_of_interest = {role["source"] for row in devices for role in row["roles"]}
     found: dict[str, int] = {}
     pattern = re.compile(r"^\s*([A-Z][A-Z0-9_]*)\s*=\s*(\d+)")
     for line in text.splitlines():
@@ -1512,20 +1514,9 @@ def _read_gpu_budget() -> Optional[dict]:
         _BUDGET_CACHE["ts"] = now
         return None
 
-    total = found.get("GPU_TOTAL_GB")
-    gpu0 = {
-        "total_gb": total,
-        "desktop_gb": found.get("GPU0_DESKTOP"),
-        "tts_gb": found.get("GPU0_TTS"),
-        _GRAPH_WORDS["gpu_budget_key"]: found.get(_GRAPH_WORDS["gpu_budget_var"]),
-        "headroom_gb": found.get("GPU0_HEADROOM"),
-    }
-    gpu1 = {
-        "total_gb": total,
-        "llm_gb": found.get("GPU1_LLM"),
-        "headroom_gb": found.get("GPU1_HEADROOM"),
-    }
-    result = {"gpu0": gpu0, "gpu1": gpu1, "raw": found}
+    result = {row["budget_key"]: {role["key"]: found.get(role["source"])
+                                  for role in row["roles"]} for row in devices}
+    result["raw"] = found
     _BUDGET_CACHE["data"] = result
     _BUDGET_CACHE["ts"] = now
     return result
@@ -1637,7 +1628,7 @@ def _read_vram_estimates() -> Optional[dict]:
             "unavailable_reason": (
                 None if any_trusted else (
                     "No trusted VRAM marginal measurements yet. The in-run "
-                    f"probe samples {_GRAPH_WORDS['label']}'s per-process VRAM on GPU0 via "
+                    f"probe samples {_GRAPH_WORDS['label']}'s per-process VRAM on {gpu_observation.sampling_device_label()} via "
                     "nvidia-smi during inference; entries appear here after "
                     "the next image generation completes. Untrusted rows "
                     "(if any) are legacy v1/v2 values or probe-fallback "
@@ -4008,16 +3999,16 @@ async def build_status_payload(config: dict) -> dict:
     recent_videos = first["recent_videos"] or []
     recent_images = first["recent_images"] or []
 
+    devices = gpu_observation.status_devices(_GRAPH_WORDS)
     budgets = {
-        "gpu0": None,
-        "gpu1": None,
+        **{row["budget_key"]: None for row in devices},
         "images": first["images_budget"] or {},
         "vram_estimates": first["vram_estimates"],
     }
     gpu_budget = first["gpu_budget"]
     if gpu_budget:
-        budgets["gpu0"] = gpu_budget.get("gpu0")
-        budgets["gpu1"] = gpu_budget.get("gpu1")
+        for row in devices:
+            budgets[row["budget_key"]] = gpu_budget.get(row["budget_key"])
         budgets["raw"] = gpu_budget.get("raw")
     image_cache = first["image_cache"]
     auth_keys = first["auth_keys"] or []

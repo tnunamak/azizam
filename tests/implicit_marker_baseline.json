@@ -86,8 +86,7 @@
     "status_endpoint.py": {
       "/props": 1,
       "/system_stats": 1,
-      "GPU0": 6,
-      "GPU1": 4,
+
       "LoadImage": 1,
       "class_type": 15,
       "model_path": 3,

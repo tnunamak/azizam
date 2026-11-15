@@ -109,3 +109,30 @@ def display_config(path=DEFAULT_REGISTRY):
                    for key in ("device_label", "python_label", "runtime_label"))):
         raise ValueError("observation_runtime_display_invalid")
     return {"devices": sorted(devices, key=lambda row: row["order"]), "runtime": runtime}
+
+
+def status_devices(words):
+    """Status roles and source variables share the renderer's ordered registry rows."""
+    result = []
+    for row in display_config()["devices"]:
+        roles = []
+        for role in row["roles"]:
+            source = role.get("source")
+            if not isinstance(source, str) or not source:
+                raise ValueError("observation_role_source_invalid")
+            def expanded(value):
+                if value.startswith("{") and value.endswith("}"):
+                    value = words.get(value[1:-1])
+                if not isinstance(value, str) or not value:
+                    raise ValueError("observation_status_word_invalid")
+                return value
+            roles.append({**role, "key": expanded(role["key"]), "source": expanded(source)})
+        result.append({**row, "roles": roles})
+    return result
+
+
+def sampling_device_label():
+    """Unknown configuration is not a guess about another device."""
+    config = display_config()
+    return next((row["label"] for row in config["devices"]
+                 if row["index"] == config["runtime"]["device_index"]), "unknown")
