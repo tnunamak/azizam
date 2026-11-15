@@ -170,9 +170,11 @@ def test_status_probes_join_the_endpoint_before_the_query(field, base, pattern, 
         "tts": _record(field, base), "comfyui": _record(field, base),
         "chat": _record(field, base, capabilities=["chat"], lifecycle={"driver": "systemd"})})}
     asyncio.run(status_endpoint._enriched_aux_health(config))
-    asyncio.run(status_endpoint._graph_queue_and_stats(config))
+    # The graph queue and stats probes go through the protocol adapter, whose Connection refuses an
+    # address holding a query (dispatch refuses the same record), so they report unknown and send nothing.
+    assert asyncio.run(status_endpoint._graph_queue_and_stats(config)) == (None, None)
     asyncio.run(status_endpoint._chat_props_and_slots(config))
-    assert sorted(probed) == sorted(pattern.format(e) for e in ("health", "queue", "system_stats", "props"))
+    assert sorted(probed) == sorted(pattern.format(e) for e in ("health", "props"))
 
 
 @pytest.mark.parametrize("field", FIELDS)
