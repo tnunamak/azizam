@@ -128,11 +128,10 @@ def test_v2_bundle_keeps_the_runner_as_its_only_completion_owner(monkeypatch, jo
     job_store.event.assert_not_called()
 
 
-@pytest.mark.parametrize("count", [0, 2], ids=["no-file", "two-files"])
-def test_v1_requires_exactly_one_file(monkeypatch, job_store, count):
-    monkeypatch.setattr(protocol_jobs, "run", AsyncMock(return_value=[_file() for _ in range(count)]))
+def test_v1_empty_result_refuses_without_completion(monkeypatch, job_store):
+    monkeypatch.setattr(protocol_jobs, "run", AsyncMock(return_value=[]))
 
-    with pytest.raises(ProtocolError) as caught:
+    with pytest.raises(ProtocolError, match="The engine returned no result file") as caught:
         asyncio.run(declared_operation_job.run(object(), INTENT, {}, job_id=JOB_ID))
 
     assert caught.value.code == "malformed_response"
@@ -206,3 +205,44 @@ def test_unresponsive_cancel_does_not_hold_terminal_accounting(job_store, caller
             await asyncio.sleep(0)
 
     asyncio.run(scenario())
+
+
+def test_v1_fetches_and_completes_all_assets_in_engine_order(job_store):
+    # Use the real protocol runner, not a monkeypatch of the function under test.
+    refs = [
+        SimpleNamespace(id="result-z", content_type="image/png", size=31),
+        SimpleNamespace(id="result-a", content_type="audio/wav", size=47),
+        SimpleNamespace(id="result-m", content_type="application/octet-stream", size=5),
+    ]
+    upstream = SimpleNamespace(id="upstream-job")
+    observed = SimpleNamespace(state=protocol_jobs.JobState.succeeded)
+    adapter = SimpleNamespace(
+        submit=AsyncMock(return_value=upstream),
+        poll=AsyncMock(return_value=observed),
+        fetch_assets=AsyncMock(return_value=refs),
+    )
+    runtime = _runtime(adapter, timing=(0.001, 1.0))
+    body = {"input": "synthetic"}
+    asyncio.run(declared_operation_job.run(runtime, INTENT, body, job_id=JOB_ID))
+
+    conn = runtime.connection_for.return_value
+    adapter.submit.assert_awaited_once_with(conn, INTENT, body)
+    adapter.poll.assert_awaited_once_with(conn, upstream)
+    adapter.fetch_assets.assert_awaited_once_with(conn, upstream, observed)
+    completions = [
+        call for call in job_store.status.call_args_list
+        if call.args[1] == media_jobs.STATUS_SUCCEEDED
+    ]
+    assert len(completions) == 1
+    assert completions[0].args == (JOB_ID, media_jobs.STATUS_SUCCEEDED)
+    assert completions[0].kwargs == {
+        "progress": 100, "path": media_jobs.DB_PATH,
+        "add_assets": [
+            {"asset_id": "result-z", "kind": "image", "media_type": "image/png", "size_bytes": 31},
+            {"asset_id": "result-a", "kind": "audio", "media_type": "audio/wav", "size_bytes": 47},
+            {"asset_id": "result-m", "kind": "file", "media_type": "application/octet-stream", "size_bytes": 5},
+        ],
+    }
+    job_store.event.assert_called_once_with(
+        JOB_ID, "succeeded", {"status": "succeeded"}, path=media_jobs.DB_PATH,
+    )

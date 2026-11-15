@@ -791,6 +791,7 @@ def augment_openapi(
         # own intents, so a shipped intent cannot be sent with the declared shape or the other way round.
         declared_body = {
             "type": "object",
+            "additionalProperties": False,
             "required": ["intent", "model", "input"],
             "properties": {
                 "intent": {"type": "string", "enum": list(declared_intents)},
